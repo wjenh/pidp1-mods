@@ -1,0 +1,1609 @@
+// spscale.ac -- the scale module, Edit's Scale row and Scale mode. A lift picks up the line,
+// the circle or arc, the text, the digits or the instance the pseudo pen location locks onto;
+// the pen's moves along a slider drawn below the pick scale it, a line about its midpoint or its
+// fixed end and an arc about its center smoothly, the others stepped through the sizes as Size
+// sets them; the next lift puts it down.
+//
+// Bank 6, after spcensus.ac. Entered from the main bank by jsp i [X:6], at scAct, scTarget,
+// scLost and scEnd from the mode's gates (spmodes.ac), at scDone from setMode, and at scUndo
+// from actUndo. Runs with the extend window open, reaching the other banks' words through their
+// 16-bit addresses. The main bank's routines, whose returns cannot leave bank 4, are called
+// through its trampoline mainCall (scMain); the constraint and instance modules' entries
+// directly (scCon, scIEnt); bank 12's linePick and lineApply and bank 11's lkOff by their own
+// jsp i.
+// Part of sketchpad.am1, included where it stands.
+
+// A main-bank routine's call, as the instruction word mainCall runs, a jsp or a jda.
+#define MCJSP(r) (0620000 | ((r) & 07777))
+#define MCJDA(r) (0170000 | ((r) & 07777))
+
+// The slider's vector word, a doubling rising SCZIG steps at its scale; with down, falling.
+#define SCRISE (visible | deltay(SCZIG) | deltax(SCDOUBLE / (1 << SLIDESCALE)))
+
+// What is picked up. scOn nonzero while a part is, scKind what (SCKLINE, SCKARC, SCKSTEP); a
+// change made (scMoved), the places kept for Undo before it (scSnap).
+scOn, 0
+scKind, 0
+scMoved, 0
+scSnap, 0
+
+// A line, its ends A and B (bank 12's lineEndA and lineEndB, A never fixed), whether B is fixed
+// and so the center, and on each axis B's place at the pick and the sum and the difference
+// (A less B) of the two.
+scA, 0
+scB, 0
+scFixB, 0
+scBX0, 0
+scBY0, 0
+scSumX, 0
+scSumY, 0
+scDifX, 0
+scDifY, 0
+
+// An arc, its start (scA), its center's place, and the start's offset from it at the pick.
+scCX, 0
+scCY, 0
+scOffX, 0
+scOffY, 0
+
+// A text, digits or an instance, penInst at the pick, the text (txPen) for a text or digits, and
+// the size at the pick and now (0 to 3, x1 to x8).
+scInst, 0
+scTx, 0
+scSize0, 0
+scSize, 0
+
+// The slider, the dot's place at the pick (the knob's at a factor of 1), the target's x there,
+// the doublings each side (scNL, scNR) and at most how many (scMaxL, scMaxR), and the pen's
+// offsets bounded to them (scLo, scHi). The offset and the factor applied (scD, scFq, the factor
+// in SCFRAC parts), and a step's (scDTry, scFqN).
+scDotX, 0
+scDotY, 0
+scPen0, 0
+scNL, 0
+scNR, 0
+scMaxL, 0
+scMaxR, 0
+scLo, 0
+scHi, 0
+scD, 0
+scFq, 0
+scDTry, 0
+scFqN, 0
+
+// A line's step, the ends' new places, and scEnds's axis.
+scTAX, 0
+scTAY, 0
+scTBX, 0
+scTBY, 0
+scQ0, 0
+scSum, 0
+scDif, 0
+scP1, 0
+scQ1, 0
+
+// The digits' run, the word being filled (scW), its codes so far less three (scK), and where it
+// goes (scQ).
+scW, 0
+scK, 0
+scQ, 0
+
+// Undo's record of the last scale that changed something (USCALE), what it picked up, its size
+// before, and each constraint entry's value before, 0 for one it did not change.
+scUKind, 0
+scUInst, 0
+scUTx, 0
+scUSize, 0
+scUOld,
+    table NCON, 0
+
+// Counts of parts picked up, picks refused, steps applied and held, and drops that changed
+// something.
+scalePicks, 0
+scaleRefused, 0
+scaleSteps, 0
+scaleHolds, 0
+scaleDrops, 0
+
+// The factor's powers of two, 2^k in SCFRAC parts for k doublings, k from -SCSIDE to SCSIDE
+// (SCSIDE 5).
+scPow,
+    SCFRAC / 0d32
+    SCFRAC / 0d16
+    SCFRAC / 0d8
+    SCFRAC / 4
+    SCFRAC / 2
+    SCFRAC
+    SCFRAC * 2
+    SCFRAC * 4
+    SCFRAC * 0d8
+    SCFRAC * 0d16
+    SCFRAC * 0d32
+
+// The knob's offset at each size from x1, a doubling a size.
+scSizeD,
+    0
+    SCDOUBLE
+    2 * SCDOUBLE
+    3 * SCDOUBLE
+
+// Edit's Scale row. Enter Scale mode, the pseudo pen location hunting the parts Scale takes
+// (scHunt), the dot dimmed while it locks onto none. Nothing is picked up at once; a lift does
+// that, so that the slider is never drawn under a pen still at the menu. A part picked up before
+// is put down first, here rather than by setMode's hook, which would call scDone from inside
+// mainCall. With tracking off, the target first goes to the middle, as Locate does.
+// AC and IO are clobbered. Called via jsp i [scAct:6], from the main bank's actScale.
+scAct,
+    local rtn, saGo
+    dac rtn
+    jsp scDone
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp saGo
+    lio [MCJSP(placeTarget:4)]
+    jda scMain
+saGo,
+    lio [MCJSP(endChain:4)]
+    jda scMain
+    dzm i [trackMiss:0]
+    lac i [now:4]
+    dac i [lastHitAt:0]
+    dzm i [trackLost:4]
+    lac [CEDIT]
+    dac i [newCol:4]
+    lio [MCJDA(setMode:4)]
+    law MSCALE
+    jda scMain
+    jsp scHunt
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Scale mode, a target hit. Arm the next lift; scale the part picked up by the pen's move along
+// the slider (scStep), or with none hunt.
+// AC and IO are clobbered. Called via jsp i [scTarget:6], from the main bank's scaleTarget.
+scTarget,
+    local rtn, stHunt
+    dac rtn
+    law 1
+    dac i [strokeLive:4]
+    lac scOn
+    sza i               // skip if a part is picked up
+    jmp stHunt
+    jsp scStep
+    jmp i rtn
+stHunt,
+    jsp scHunt
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Scale mode, tracking lost (a lifted pen). Put down the part picked up, its scale finished
+// (scDone), and hunt again; or, with none, pick up what the pseudo pen location locks onto
+// (scPick), its lines searched whole however fast the pen moved (atLift). A loss with no target
+// hit since the selection or the last lift does nothing. The program stays in Scale mode.
+// AC and IO are clobbered. Called via jsp i [scLost:6], from the main bank's scaleLost.
+scLost,
+    local rtn, slPick
+    dac rtn
+    lac i [strokeLive:4]
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp i rtn
+    dzm i [strokeLive:4]
+    lac scOn
+    sza i               // skip if a part is picked up
+    jmp slPick
+    jsp scDone
+    jsp scHunt
+    jmp i rtn
+slPick,
+    law 1
+    dac i [atLift:4]
+    jsp scHunt
+    jsp scPick
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Scale mode, Locate (modeLocate), and its dot after an Undo (modeDot). Put down the part
+// picked up, if any, and hunt again; the program stays in Scale mode.
+// AC and IO are clobbered. Called via jsp i [scEnd:6], from the main bank's scaleEnd.
+scEnd,
+    local rtn
+    dac rtn
+    dzm i [strokeLive:4]
+    jsp scDone
+    jsp scHunt
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Place the pseudo pen location for Scale mode, as placeLock, but onto no point alone (lineOnly,
+// as Horv's), so that at a line's end the line locks. It locks onto a line, an arc, an instance,
+// a text or digits, the dot bright on one and dim with none.
+// Exit: penX, penY, penIdx, penLine, penArc, penInst. AC and IO are clobbered. Called via jsp.
+scHunt,
+    local rtn
+    dap rtn
+    law 1
+    dac i [lineOnly:4]
+    lio [MCJSP(placeLock:4)]
+    jda scMain
+    dzm i [lineOnly:4]
+rtn, jmp .
+    endloc
+
+// Pick up what the pseudo pen location locks onto (scHunt), a line (scPkLine), an arc
+// (scPkArc), or an instance, a text or digits (scPkStep); then the slider is drawn below the
+// dot, the knob the dot, the digits beside it (scGrab). Refused, nothing picked up and the dot
+// dimmed, for a line with both ends fixed or with an arc on both its ends, and an arc whose start
+// or end is fixed (scaleRefused counts them). With nothing locked, nothing happens.
+// Entry: penLine, penArc, penInst, as scHunt left them. AC and IO are clobbered. Called via jsp.
+scPick,
+    local rtn, pkArc, pkStep, pkGrab, pkNo
+    dap rtn
+    dzm scMoved
+    dzm scSnap
+    dzm i [dragMoved:4]
+    lac i [penLine:4]
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp pkArc
+    jsp scPkLine
+    jmp pkGrab
+pkArc,
+    lac i [penArc:4]
+    sad [NOPOINT]       // skip if it locks onto an arc
+    jmp pkStep
+    jsp scPkArc
+    jmp pkGrab
+pkStep,
+    lac i [penInst:4]
+    sad [NOPOINT]       // skip if it locks onto an instance, a text or digits
+    jmp rtn
+    jsp scPkStep
+pkGrab,
+    sza                 // skip unless refused
+    jmp pkNo
+    jsp scGrab
+    jmp rtn
+pkNo,
+    idx scaleRefused
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+rtn, jmp .
+    endloc
+
+// Pick up line penLine, refused with both ends fixed, or with an arc on both its ends (a radius
+// or a chord, which could not follow both ends going their own ways, as Move's merge refuses
+// it). Its ends become the main bank's dragIdx and bandIdx, as Move's drag of a whole line takes
+// them (bank 12's linePick), its to end first if its from end is fixed, since the solver holds
+// dragIdx as the pen's point (cDrag), which would unfix a fixed one. A fixed end, bandIdx then,
+// is the center of the scale; otherwise the midpoint is. The arc module lists the lines to
+// redraw (arcPick).
+// Exit: AC = 0 picked, 1 refused. IO is clobbered. Called via jsp.
+scPkLine,
+    local rtn, plArcs, plGo, plKeep, plNo, plL, plI, plT, plFA, plHit
+    dap rtn
+    lac i [penLine:4]
+    dac plL
+    add [lineFrom:3]
+    dac plT
+    lac i plT
+    dac scA
+    lac plL
+    add [lineTo:3]
+    dac plT
+    lac i plT
+    dac scB
+    lac scA
+    jda scFixed
+    dac plFA
+    lac scB
+    jda scFixed
+    dac scFixB
+    and plFA
+    sza                 // skip unless both ends are fixed
+    jmp plNo
+
+    // An arc with a point on each end refuses.
+    dzm plI
+plArcs,
+    lac plI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp plGo
+    add [arcTC:2]
+    dac plT
+    lac i plT
+    jda scOnEnd
+    dac plHit
+    lac plI
+    add [arcTS:2]
+    dac plT
+    lac i plT
+    jda scOnEnd
+    ior plHit
+    dac plHit
+    lac plI
+    add [arcTE:2]
+    dac plT
+    lac i plT
+    jda scOnEnd
+    ior plHit
+    sad [3]             // skip unless on both ends
+    jmp plNo
+    idx plI
+    jmp plArcs
+plGo,
+    lac plFA
+    sza i               // skip if the from end is fixed, so the to end goes first
+    jmp plKeep
+    lac scA
+    lio scB
+    dio scA
+    dac scB
+    lac plFA
+    dac scFixB
+plKeep,
+    lac plL
+    dac i [dragLine:4]
+    jsp i [linePick:014]
+    lac scA
+    dac i [dragIdx:4]
+    dac i [lineEndA:014]
+    lac scB
+    dac i [bandIdx:4]
+    dac i [lineEndB:014]
+    lio [MCJDA(arcCall:4)]
+    law AEPICK
+    jda scMain
+
+    // The places at the pick, on each axis B's, the sum and the difference.
+    lac scB
+    add [pointX:3]
+    dac plT
+    lac i plT
+    dac scBX0
+    lac scA
+    add [pointX:3]
+    dac plT
+    lac i plT
+    sub scBX0
+    dac scDifX
+    lac i plT
+    add scBX0
+    dac scSumX
+    lac scB
+    add [pointY:3]
+    dac plT
+    lac i plT
+    dac scBY0
+    lac scA
+    add [pointY:3]
+    dac plT
+    lac i plT
+    sub scBY0
+    dac scDifY
+    lac i plT
+    add scBY0
+    dac scSumY
+    law SCKLINE
+    dac scKind
+    cla
+    jmp rtn
+plNo,
+    law 1
+rtn, jmp .
+plL, 0
+plI, 0
+plT, 0
+plFA, 0
+plHit, 0
+    endloc
+
+// Pick up arc penArc, scaled about its center, refused with its start or end fixed (its center
+// may be). Its start becomes the main bank's dragIdx, moved as Move's drag of a start moves it,
+// which sets the radius, the end going along its ray (the arc module's arcDrag); the arc module
+// lists the lines to redraw (arcPick).
+// Exit: AC = 0 picked, 1 refused. IO is clobbered. Called via jsp.
+scPkArc,
+    local rtn, paNo, paI, paT, paC
+    dap rtn
+    lac i [penArc:4]
+    dac paI
+    add [arcTE:2]
+    dac paT
+    lac i paT
+    jda scFixed
+    sza                 // skip unless its end is fixed
+    jmp paNo
+    lac paI
+    add [arcTS:2]
+    dac paT
+    lac i paT
+    dac scA
+    jda scFixed
+    sza                 // skip unless its start is fixed
+    jmp paNo
+    lac paI
+    add [arcTC:2]
+    dac paT
+    lac i paT
+    dac paC
+    add [pointX:3]
+    dac paT
+    lac i paT
+    dac scCX
+    lac paC
+    add [pointY:3]
+    dac paT
+    lac i paT
+    dac scCY
+    lac scA
+    add [pointX:3]
+    dac paT
+    lac i paT
+    sub scCX
+    dac scOffX
+    lac scA
+    add [pointY:3]
+    dac paT
+    lac i paT
+    sub scCY
+    dac scOffY
+    lac scA
+    dac i [dragIdx:4]
+    lac [NOPOINT]
+    dac i [bandIdx:4]
+    dac i [dragLine:4]
+    lio [MCJDA(arcCall:4)]
+    law AEPICK
+    jda scMain
+    law SCKARC
+    dac scKind
+    cla
+    jmp rtn
+paNo,
+    law 1
+rtn, jmp .
+paI, 0
+paT, 0
+paC, 0
+    endloc
+
+// Pick up instance, text or digits penInst, stepped through the sizes as Size sets them, its
+// size at the pick the instance's (bank 3's iScale) or the text's (txSc, the text txPen).
+// Exit: AC = 0, picked. IO is clobbered. Called via jsp.
+scPkStep,
+    local rtn, psText, psSize, psT
+    dap rtn
+    lac i [penInst:4]
+    dac scInst
+    sad [TXINST]        // skip unless a text or digits
+    jmp psText
+    add [iScale:3]
+    jmp psSize
+psText,
+    lac i [txPen:012]
+    dac scTx
+    add [txSc:012]
+psSize,
+    dac psT
+    lac i psT
+    dac scSize0
+    dac scSize
+    law SCKSTEP
+    dac scKind
+    cla
+rtn, jmp .
+psT, 0
+    endloc
+
+// The part picked up is held. The lock is let go (no point, line or arc locked, none lit, no
+// lock mark; an instance or a text stays lit), the slider drawn below the dot (scSlide), at most
+// the sizes there are each side for a stepped part, the dot bright as its knob, and the status
+// word's block moved beside it showing the factor at the pick (scKnob), its name line blank.
+// Entry: the dot's words, the target's place. AC and IO are clobbered. Called via jsp.
+scGrab,
+    local rtn, gbSlide, gbPad, gbN, gbQ
+    dap rtn
+    lac [NOPOINT]
+    dac i [penIdx:4]
+    dac i [penLine:4]
+    dac i [pen2Line:4]
+    dac i [penArc:4]
+    jsp i [lkOff:0d11]
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [lockGate:0]
+    lac i [dotX:0]
+    and [01777]
+    dac scDotX
+    lac i [dotY:0]
+    and [01777]
+    dac scDotY
+    lac i [trackX:0]
+    and [01777]
+    dac scPen0
+    dzm scD
+    lac [SCFRAC]
+    dac scFq
+    law SCSIDE
+    dac scMaxL
+    dac scMaxR
+    lac scKind
+    sas [SCKSTEP]       // skip if stepped, for its size's factor and the sizes each side
+    jmp gbSlide
+    lac scSize0
+    dac scMaxL
+    lac [3]
+    sub scSize0         // a sub of equal values gives +0, which sad then matches
+    dac scMaxR
+    lac scSize0
+    add [scPow:6 + SCSIDE]
+    dac gbQ
+    lac i gbQ
+    dac scFq
+gbSlide,
+    jsp scSlide
+    lac [DOTPARAM]
+    dac i [dotBlock:0]
+    dzm i [msgOn:4]     // shown while the part is held, never hidden by the clock
+
+    // A blank name line, as the text module's txSay leaves it.
+    lac [msgName:0]
+    dac gbQ
+    law i NAMEW - 1
+    dac gbN
+gbPad,
+    lac [KBPAD]
+    dac i gbQ
+    idx gbQ
+    isp gbN             // skip once the pads are written
+    jmp gbPad
+    lac [KBBLANK]
+    dac i gbQ
+    jsp scKnob
+    lac [jump msgWord:0 next(parameter)]
+    dac i [statGate:0]
+    law 1
+    dac scOn
+    idx scalePicks
+rtn, jmp .
+gbN, 0
+gbQ, 0
+    endloc
+
+// Draw the slider under the dot, in the band's words, a zigzag of a vector a doubling,
+// SCDOUBLE screen units, its corners at the whole doublings, the pick's on its lower line; its
+// upper line SCGAP below the dot, or its lower line SCGAP above where it would fall under
+// TRKYMIN; at most scMaxL doublings to the left and scMaxR to the right, and only whole ones
+// inside the target's reach (scNL, scNR), the pen's offsets along it bounded to them (scLo,
+// scHi). The last K of the NBAND vector words are written, the last with end, then the start,
+// then the gate, so the display never enters a word not yet written. With no doubling either
+// side there is none.
+// Entry: scDotX, scDotY, scMaxL, scMaxR. AC and IO are clobbered. Called via jsp.
+scSlide,
+    local rtn, slL, slR0, slR, slGo, slEven, slBase, slZSet, slVec, slPut, slEnd, slX, slY, slZ, \
+        slN, slP, slW, slFirst
+    dap rtn
+
+    // The whole doublings to the left, then to the right.
+    dzm scNL
+    dzm scLo
+    lac scDotX
+    sub [TRKXMIN]
+    dac slX
+slL,
+    lac scNL
+    sad scMaxL          // skip while fewer than the most
+    jmp slR0
+    lac slX
+    sub [SCDOUBLE]
+    spa                 // skip if another whole doubling fits
+    jmp slR0
+    dac slX
+    idx scNL
+    lac scLo
+    sub [SCDOUBLE]
+    dac scLo
+    jmp slL
+slR0,
+    dzm scNR
+    dzm scHi
+    lac [TRKXMAX]
+    sub scDotX
+    dac slX
+slR,
+    lac scNR
+    sad scMaxR          // skip while fewer than the most
+    jmp slGo
+    lac slX
+    sub [SCDOUBLE]
+    spa                 // skip if another whole doubling fits
+    jmp slGo
+    dac slX
+    idx scNR
+    lac scHi
+    add [SCDOUBLE]
+    dac scHi
+    jmp slR
+slGo,
+    lac scNL
+    add scNR
+    sza i               // skip if the slider has a doubling
+    jmp rtn
+    cma
+    dac slN
+    add [bandVec:0 + NBAND]
+    dac slP
+    dac slFirst
+
+    // The lower line, its height and SCGAP below the dot, or SCGAP above where that is under
+    // TRKYMIN.
+    lac scDotY
+    sub [SCGAP + (SCZIG << SLIDESCALE)]
+    dac slY
+    sub [TRKYMIN]
+    sma                 // skip if under TRKYMIN
+    jmp slBase
+    lac scDotY
+    add [SCGAP]
+    dac slY
+slBase,
+
+    // The first vector rises from the lower line, or falls from the upper one when the left end
+    // is an odd number of doublings from the pick.
+    lac scNL
+    and [1]
+    sza                 // skip if even
+    jmp slOdd
+    cla
+    jmp slZSet
+slOdd,
+    lac slY
+    add [SCZIG << SLIDESCALE]
+    dac slY
+    lac [down]
+slZSet,
+    dac slZ
+slVec,
+    lac slZ
+    ior [SCRISE]
+    dac slW
+    isp slN             // skip at the last word
+    jmp slPut
+    lac slW
+    ior [end]
+    dac i slP
+    jmp slEnd
+slPut,
+    lac slW
+    dac i slP
+    idx slP
+    lac slZ
+    xor [down]
+    dac slZ
+    jmp slVec
+slEnd,
+    lac [SLIDEPARAM]
+    dac i [bandStart:0]
+    lac slY
+    and [01777]
+    ior [y(0) next(point)]
+    dac i [bandY:0]
+    lac scDotX
+    add scLo
+    and [01777]
+    ior [x(0) next(subroutine)]
+    dac i [bandX:0]
+    lac slFirst
+    ior [jump next(vector)]
+    dac i [bandJmp:0]
+    lac [jump bandStart:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+slX, 0
+slY, 0
+slZ, 0
+slN, 0
+slP, 0
+slW, 0
+slFirst, 0
+    endloc
+
+// Show the knob, the dot, at the factor applied (scD along the slider from the pick), and the
+// factor scFq in the status word's block beside it, as x, its whole part in one or two digits, a
+// point and two places (x1.41, x0.50, x12.34), to the nearest hundredth, padded with upper
+// shifts, SCTEXTDX right of the knob but at most at SCTEXTXMAX, and SCTEXTDY above the dot.
+// AC and IO are clobbered. Called via jsp.
+scKnob,
+    local rtn, knXOk, knOne, knPad, knEnd, knX, knV, knI
+    dap rtn
+    lac scDotY
+    ior [y(0) next(point)]
+    dac i [dotY:0]
+    lac scDotX
+    add scD
+    dac knX
+    and [01777]
+    ior [x(0) show next(parameter)]
+    dac i [dotX:0]
+    lac scDotY
+    add [SCTEXTDY]
+    and [01777]
+    ior [y(0) next(point)]
+    dac i [msgWord:0 + 1]
+    lac knX
+    add [SCTEXTDX]
+    dac knX
+    sub [SCTEXTXMAX]
+    spa                 // skip if at or past SCTEXTXMAX
+    jmp knXOk
+    lac [SCTEXTXMAX]
+    dac knX
+knXOk,
+    lac knX
+    and [01777]
+    ior [x(0) next(character)]
+    dac i [msgWord:0 + 2]
+
+    // The factor in hundredths, rounded, then its whole part and its hundredths.
+    lac scFq
+    mul [0d100]
+    div [SCFRAC / 2]
+    cla                 // runs only on overflow, which no factor up to 32 can make
+    add [1]
+    sar 1s
+    dac knV
+    lio knV
+    cla
+    scl 1s
+    div [0d100]
+    cla                 // runs only on overflow
+    dac knI
+    dio knV
+    lac [msgText:0]
+    dac scQ
+    dzm scW
+    law i 3
+    dac scK
+    law KCLOW
+    jda scPut
+    law KCX
+    jda scPut
+    law KCUP
+    jda scPut
+    lac knI
+    sub [0d10]
+    spa                 // skip if two digits
+    jmp knOne
+    lio knI
+    cla
+    scl 1s
+    div [0d10]
+    cla                 // runs only on overflow
+    dio knI
+    add [KCZERO]
+    jda scPut
+knOne,
+    lac knI
+    add [KCZERO]
+    jda scPut
+    law KCDOT
+    jda scPut
+    lio knV
+    cla
+    scl 1s
+    div [0d10]
+    cla                 // runs only on overflow
+    dio knV
+    add [KCZERO]
+    jda scPut
+    lac knV
+    add [KCZERO]
+    jda scPut
+knPad,
+    lac scQ
+    sad [msgText:0 + 3] // skip unless the three words are written
+    jmp knEnd
+    law KCUP
+    jda scPut
+    jmp knPad
+knEnd,
+    lac [KBBLANK]
+    dac i scQ
+rtn, jmp .
+knX, 0
+knV, 0
+knI, 0
+    endloc
+
+// Pack character code c into the run at scQ, three codes a word, the word written once it holds
+// three (scW, scK counting up to 0 from -3).
+// Entry: AC = c. AC is clobbered, IO preserved. Called via jda.
+scPut, 0
+    local rtn
+    dap rtn
+    lac scW
+    ral 6s
+    ior scPut
+    dac scW
+    isp scK             // skip once the word holds three
+    jmp rtn
+    lac scW             // isp left the count in AC
+    dac i scQ
+    idx scQ
+    dzm scW
+    law i 3
+    dac scK
+rtn, jmp .
+    endloc
+
+// Scale mode, a target hit with a part picked up. The pen's offset along the slider from where it
+// picked up, bounded to the slider's doublings, scales it, a line or an arc by the factor there
+// (scFactor; scLine, scArc), the others by the whole doublings nearest it (scStepSize). A step
+// that cannot be made applies nothing, the part and the knob staying at the last factor applied
+// (scaleHolds counts them).
+// AC and IO are clobbered. Called via jsp.
+scStep,
+    local rtn, spLoOk, spHiOk, spArc, spDone, spHeld, spStepped
+    dap rtn
+    lac i [trackX:0]
+    and [01777]
+    sub scPen0
+    dac scDTry
+    sub scLo
+    sma                 // skip if left of the slider
+    jmp spLoOk
+    lac scLo
+    dac scDTry
+spLoOk,
+    lac scHi
+    sub scDTry
+    sma                 // skip if right of the slider
+    jmp spHiOk
+    lac scHi
+    dac scDTry
+spHiOk,
+    lac scDTry
+    sad scD             // skip if it moved along the slider
+    jmp rtn
+    lac scKind
+    sad [SCKSTEP]       // skip unless stepped
+    jmp spStepped
+    jsp scFactor
+    lac scKind
+    sad [SCKARC]        // skip unless an arc
+    jmp spArc
+    jsp scLine
+    jmp spDone
+spArc,
+    jsp scArc
+spDone,
+    sza                 // skip if applied
+    jmp spHeld
+    lac scDTry
+    dac scD
+    lac scFqN
+    dac scFq
+    idx scaleSteps
+    jsp scKnob
+    jmp rtn
+spHeld,
+    idx scaleHolds
+    jmp rtn
+spStepped,
+    jsp scStepSize
+rtn, jmp .
+    endloc
+
+// The factor at offset scDTry along the slider, in SCFRAC parts, 2^k (1 + r / SCDOUBLE), k whole
+// doublings and r units more, k from -SCSIDE to SCSIDE (scPow), by mul and div.
+// Exit: scFqN. AC and IO are clobbered. Called via jsp.
+scFactor,
+    local rtn, faR, faP
+    dap rtn
+    lac scDTry
+    add [(SCSIDE + 3) * SCDOUBLE] // plus, as k + SCSIDE + 3 doublings and r
+    dac faR
+    lio faR
+    cla
+    scl 1s
+    div [SCDOUBLE]
+    cla                 // runs only on overflow, which no offset on the slider can make
+    dio faR
+    add [scPow:6 - 3]
+    dac faP
+    lac faR
+    add [SCDOUBLE]
+    mul i faP
+    div [SCDOUBLE]
+    cla                 // runs only on overflow, which SCFRAC * 2^(SCSIDE + 1) cannot make
+    dac scFqN
+rtn, jmp .
+faR, 0
+faP, 0
+    endloc
+
+// Offset v at the factor scFqN, to the nearest unit, v * scFqN / SCFRAC, its sign kept, and 0
+// never minus.
+// Entry: AC = v. Exit: AC = the offset scaled. IO is clobbered. Called via jda.
+scMul, 0
+    local rtn, muMinus, muV
+    dap rtn
+    lac scMul
+    dac muV
+    spa                 // skip if plus
+    cma
+    mul scFqN
+    div [SCFRAC / 2]
+    cla                 // runs only on overflow, which no offset on the screen can make
+    add [1]
+    sar 1s
+    lio muV
+    spi                 // skip if v was plus
+    jmp muMinus
+    jmp rtn
+muMinus,
+    sza                 // skip if 0, which keeps no sign
+    cma
+rtn, jmp .
+muV, 0
+    endloc
+
+// A line's ends on one axis at the factor scFqN. With B fixed, A goes its difference scaled from
+// B; otherwise both go about their midpoint, their sum kept, A taking half of the sum and the
+// difference scaled, B the rest of the sum.
+// Entry: scQ0, B's place at the pick; scSum, scDif. Exit: scP1, scQ1, A's and B's places now. AC
+// and IO are clobbered. Called via jsp.
+scEnds,
+    local rtn, enMid, enF
+    dap rtn
+    lac scDif
+    jda scMul
+    dac enF
+    lac scFixB
+    sza i               // skip if B is fixed
+    jmp enMid
+    lac scQ0
+    dac scQ1
+    add enF
+    dac scP1
+    jmp rtn
+enMid,
+    lac scSum
+    add enF
+    sar 1s
+    dac scP1
+    lac scSum
+    sub scP1
+    dac scQ1
+rtn, jmp .
+enF, 0
+    endloc
+
+// Scale the line picked up to the factor scFqN, its ends' new places (scEnds, on each axis),
+// refused where an end would leave the target's reach, TRKXMIN to TRKXMAX and TRKYMIN to TRKYMAX,
+// or the line would be shorter than MINLINE on both axes. A step that moves neither end applies
+// at once. Otherwise the places are kept for Undo before the first change (scKeep), and the ends
+// move as Move's drag of a whole line moves them, by bank 12's lineArc and lineApply, with a step
+// of 0 and the ends' places the targets, the arcs on them following first (the arc module's
+// arcDrag, which may refuse); then the lines are redrawn, and the solver takes up the move
+// holding both ends (cDrag2, cDrag), a fixed B left to its fix, which cDrag2 would undo.
+// Exit: AC = 0 applied, 1 refused. IO is clobbered. Called via jsp.
+scLine,
+    local rtn, lnLong, lnMove, lnHeld, lnNo, lnT
+    dap rtn
+    lac scBX0
+    dac scQ0
+    lac scSumX
+    dac scSum
+    lac scDifX
+    dac scDif
+    jsp scEnds
+    lac scP1
+    dac scTAX
+    lac scQ1
+    dac scTBX
+    lac scBY0
+    dac scQ0
+    lac scSumY
+    dac scSum
+    lac scDifY
+    dac scDif
+    jsp scEnds
+    lac scP1
+    dac scTAY
+    lac scQ1
+    dac scTBY
+    lac scTAX
+    jda scOutX
+    sza                 // skip if inside the reach
+    jmp lnNo
+    lac scTBX
+    jda scOutX
+    sza                 // skip if inside the reach
+    jmp lnNo
+    lac scTAY
+    jda scOutY
+    sza                 // skip if inside the reach
+    jmp lnNo
+    lac scTBY
+    jda scOutY
+    sza                 // skip if inside the reach
+    jmp lnNo
+    lac scTAX
+    sub scTBX
+    jda scAbs
+    sub [MINLINE]
+    sma                 // skip if shorter than MINLINE in x
+    jmp lnLong
+    lac scTAY
+    sub scTBY
+    jda scAbs
+    sub [MINLINE]
+    spa                 // skip unless shorter in y too
+    jmp lnNo
+lnLong,
+    lac scA
+    add [pointX:3]
+    dac lnT
+    lac i lnT
+    sas scTAX           // skip if A's x is unchanged
+    jmp lnMove
+    lac scA
+    add [pointY:3]
+    dac lnT
+    lac i lnT
+    sas scTAY           // skip if A's y is unchanged
+    jmp lnMove
+    lac scB
+    add [pointX:3]
+    dac lnT
+    lac i lnT
+    sas scTBX           // skip if B's x is unchanged
+    jmp lnMove
+    lac scB
+    add [pointY:3]
+    dac lnT
+    lac i lnT
+    sas scTBY           // skip if B's y is unchanged
+    jmp lnMove
+    cla
+    jmp rtn
+lnMove,
+    jsp scKeep
+    dzm i [lineStepX:014]
+    dzm i [lineStepY:014]
+    lac scTAX
+    dac i [lineAX:014]
+    lac scTAY
+    dac i [lineAY:014]
+    lac scTBX
+    dac i [lineBX:014]
+    lac scTBY
+    dac i [lineBY:014]
+    lio [MCJDA(arcCall:4)]
+    law AEDRAG
+    jda scMain
+    sza                 // skip unless an arc holds the line
+    jmp lnNo
+    jsp i [lineApply:014]
+    jsp scRedraw
+    lac scFixB
+    sza                 // skip unless B is fixed
+    jmp lnHeld
+    lac scB
+    lio [CEDRAG2]
+    jda scCon
+lnHeld,
+    lac scA
+    lio [CEDRAG]
+    jda scCon
+    law 1
+    dac i [conWake:4]   // as for Move's line, so the solver follows a tie point on an end
+    cla
+    jmp rtn
+lnNo,
+    law 1
+rtn, jmp .
+lnT, 0
+    endloc
+
+// Scale the arc picked up to the factor scFqN about its center, its start's new place, refused
+// outside the target's reach; a step that does not move it applies at once. Otherwise the places
+// are kept for Undo first (scKeep), and the start moves as Move's drag of a point moves it. The
+// arcs on it follow first (the arc module's arcDrag, to the main bank's penX, penY), refused if
+// one would leave the canvas or ARCRMIN to ARCRMAX, its end going along its ray; then the point
+// is written, the lines redrawn, and the solver takes up the move (cDrag).
+// Exit: AC = 0 applied, 1 refused. IO is clobbered. Called via jsp.
+scArc,
+    local rtn, arMove, arNo, arX, arY, arT
+    dap rtn
+    lac scOffX
+    jda scMul
+    add scCX
+    dac arX
+    jda scOutX
+    sza                 // skip if inside the reach
+    jmp arNo
+    lac scOffY
+    jda scMul
+    add scCY
+    dac arY
+    jda scOutY
+    sza                 // skip if inside the reach
+    jmp arNo
+    lac scA
+    add [pointX:3]
+    dac arT
+    lac i arT
+    sas arX             // skip if its x is unchanged
+    jmp arMove
+    lac scA
+    add [pointY:3]
+    dac arT
+    lac i arT
+    sas arY             // skip if its y is unchanged
+    jmp arMove
+    cla
+    jmp rtn
+arMove,
+    jsp scKeep
+    lac arX
+    dac i [penX:4]
+    lac arY
+    dac i [penY:4]
+    lio [MCJDA(arcCall:4)]
+    law AEDRAG
+    jda scMain
+    sza                 // skip unless an arc holds the point
+    jmp arNo
+    lac scA
+    add [pointX:3]
+    dac arT
+    lac arX
+    dac i arT
+    lac scA
+    add [pointY:3]
+    dac arT
+    lac arY
+    dac i arT
+    jsp scRedraw
+    lac scA
+    lio [CEDRAG]
+    jda scCon
+    cla
+    jmp rtn
+arNo,
+    law 1
+rtn, jmp .
+arX, 0
+arY, 0
+arT, 0
+    endloc
+
+// A text, digits or an instance picked up, stepped, the size nearest the pen's offset scDTry,
+// round(scDTry / SCDOUBLE) doublings from its size at the pick, kept within x1 to x8. A new size
+// is set as Size sets it (the instance module's instSize, a text's by txSize), the places kept
+// for Undo first (scKeep); an instance's tie points move, the arcs on them following (the arc
+// module's arcCarry), the size taken back (IESZBACK) if one cannot; a size the screen cannot
+// hold is refused, the size and the knob staying. The knob snaps to the size's doubling, and the
+// digits show its factor, x1.00 to x8.00.
+// AC and IO are clobbered. Called via jsp.
+scStepSize,
+    local rtn, ssIn, ssNoTx, ssSet, ssMoved, ssHeld, ssS, ssT
+    dap rtn
+    lac scDTry
+    add [(SCSIDE + 3) * SCDOUBLE + SCDOUBLE / 2] // plus, as the nearest doubling + SCSIDE + 3
+    dac ssS
+    lio ssS
+    cla
+    scl 1s
+    div [SCDOUBLE]
+    cla                 // runs only on overflow, which no offset on the slider can make
+    sub [SCSIDE + 3]
+    add scSize0
+    spa                 // skip unless below x1
+    cla
+    dac ssS
+    sub [3]
+    spa                 // skip if x8 or past it
+    jmp ssIn
+    law 3
+    dac ssS
+ssIn,
+    lac ssS
+    sad scSize          // skip if a new size
+    jmp rtn
+    jsp scKeep
+    lac scInst
+    dac i [penInst:4]
+    sas [TXINST]        // skip if a text or digits
+    jmp ssNoTx
+    lac scTx
+    dac i [txPen:012]
+ssNoTx,
+    lac ssS
+    dac i [sizeArg:4]
+    lio [IESIZE]
+    jda scIEnt
+    sas [3]             // skip if its tie points moved
+    jmp ssSet
+    lio [MCJDA(arcCall:4)]
+    law AECARRY
+    jda scMain
+    sza i               // skip if an arc could not follow
+    jmp ssMoved
+    lio [IESZBACK]
+    jda scIEnt
+    jmp ssHeld
+ssSet,
+    sza                 // skip if the size is set
+    jmp ssHeld
+ssMoved,
+    lac ssS
+    dac scSize
+    law 1
+    dac scMoved
+    idx scaleSteps
+
+    // The knob at the size's doubling, the digits its factor.
+    lac scSize
+    add [scSizeD:6]
+    dac ssT
+    lac i ssT
+    dac scD
+    lac scSize0
+    add [scSizeD:6]
+    dac ssT
+    lac scD
+    sub i ssT
+    dac scD
+    lac scSize
+    add [scPow:6 + SCSIDE]
+    dac ssT
+    lac i ssT
+    dac scFq
+    jsp scKnob
+    jmp rtn
+ssHeld,
+    idx scaleHolds
+rtn, jmp .
+ssS, 0
+ssT, 0
+    endloc
+
+// Before the first change of a pick, every point's and origin's place kept for Undo (the
+// constraint module's cSnap).
+// AC and IO are clobbered. Called via jsp.
+scKeep,
+    local rtn
+    dap rtn
+    lac scSnap
+    sza                 // skip unless kept already
+    jmp rtn
+    law 1
+    dac scSnap
+    lio [CESNAP]
+    jda scCon
+rtn, jmp .
+    endloc
+
+// A step applied. The part has moved (the main bank's dragMoved, scMoved), and its lines are
+// redrawn (the main bank's redrawDrag).
+// AC and IO are clobbered. Called via jsp.
+scRedraw,
+    local rtn
+    dap rtn
+    law 1
+    dac i [dragMoved:4]
+    dac scMoved
+    lio [MCJSP(redrawDrag:4)]
+    jda scMain
+rtn, jmp .
+    endloc
+
+// Put down the part picked up, if any; its scale is finished. A line's Lengths (the constraint
+// table's L entries on its two ends) take its length at the factor applied, as Dismem's Length
+// takes a new size, their values before kept for Undo, and the solver wakes. The change is
+// Undo's record (USCALE), kept with what scUndo needs; a pick whose only change was refused after
+// the places were kept (cSnap) has spoiled the record those places belonged to, which is cleared.
+// The drag's words are let go (dragIdx, bandIdx, dragLine), a line's ends staying held by the
+// solver while the figure settles, as Move's line drop leaves them; the status word's block goes
+// back under the bar, hidden, the slider is put away and the dot dimmed for the hunt. Every way
+// out of Scale mode comes here (setMode's hook), and a lift, Locate and Undo; with nothing
+// picked up it returns at once, and it clears scOn first, so that a call back finds none.
+// AC and IO are clobbered. Called via jsp, or via jsp i [scDone:6] from the main bank.
+scDone,
+    local rtn, sdKept, sdClr, sdLoop, sdNext, sdUnd, sdOff, sdDot, sdN, sdP, sdQ, sdT, sdI
+    dac rtn
+    lac scOn
+    sza i               // skip if a part is picked up
+    jmp i rtn
+    dzm scOn
+    lac scMoved
+    sza                 // skip unless it changed
+    jmp sdKept
+    lac scSnap
+    sza i               // skip if the places were kept
+    jmp sdOff
+    lio [MCJSP(undoClear:4)]
+    jda scMain
+    jmp sdOff
+sdKept,
+    lac scKind
+    dac scUKind
+    lac scInst
+    dac scUInst
+    lac scTx
+    dac scUTx
+    lac scSize0
+    dac scUSize
+    lac [scUOld:6]
+    dac sdQ
+    law i NCON
+    dac sdN
+sdClr,
+    dzm i sdQ
+    idx sdQ
+    isp sdN             // skip once every entry's is cleared
+    jmp sdClr
+    lac scKind
+    sas [SCKLINE]       // skip if a line
+    jmp sdUnd
+    lac scFq
+    dac scFqN
+    lac i [cCount:011]
+    sza i               // skip if the table has entries
+    jmp sdUnd
+    cma
+    dac sdN
+    lac [cEntries:011]
+    dac sdP
+    lac [scUOld:6]
+    dac sdQ
+sdLoop,
+    lac i sdP
+    sas [CTLEN]         // skip if a Length
+    jmp sdNext
+    lac sdP
+    add [1]
+    dac sdT
+    lac i sdT
+    jda scOnEnd
+    dac sdI
+    idx sdT
+    lac i sdT
+    jda scOnEnd
+    add sdI
+    sas [3]             // skip if on A and B
+    jmp sdNext
+    lac sdP
+    add [5]
+    dac sdT
+    lac i sdT
+    dac i sdQ
+    and [0377777]       // the length, its sign bit cleared
+    jda scMul
+    ior [CUNUSED]       // and set again
+    dac i sdT
+    law 1
+    dac i [conWake:4]
+sdNext,
+    lac sdP
+    add [CW]
+    dac sdP
+    idx sdQ
+    isp sdN             // skip once every entry is looked at
+    jmp sdLoop
+sdUnd,
+    lio [MCJDA(undoKeep:4)]
+    law USCALE
+    jda scMain
+    idx scaleDrops
+sdOff,
+    lac [NOPOINT]
+    dac i [dragIdx:4]
+    dac i [bandIdx:4]
+    dac i [dragLine:4]
+    dzm i [dragMoved:4]
+    lac [y(STATY) next(point)]
+    dac i [msgWord:0 + 1]
+    lac [x(STATX) next(character)]
+    dac i [msgWord:0 + 2]
+    lac [jump statEnd:0 next(parameter)]
+    dac i [statGate:0]
+    lac i [bandGate:0]
+    sas [jump bandStart:0 next(parameter)] // skip if the slider is shown
+    jmp sdDot
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+sdDot,
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+    jmp i rtn
+rtn, 0
+sdN, 0
+sdP, 0
+sdQ, 0
+sdT, 0
+sdI, 0
+    endloc
+
+// Undo of a scale (actUndo's USCALE). A text's, digits' or an instance's size put back as Size
+// sets it (instSize), the arcs on an instance's tie points following (arcCarry); every point's
+// and origin's place put back (the constraint module's cUndo, which marks what moved and wakes
+// the solver), and the Lengths' values before; then the moved lines are redrawn (the main bank's
+// conShow).
+// AC and IO are clobbered. Called via jsp i [scUndo:6], from the main bank's actUndo.
+scUndo,
+    local rtn, suNoTx, suLens, suLoop, suNext, suCon, suN, suP, suQ
+    dac rtn
+    lac scUKind
+    sas [SCKSTEP]       // skip if stepped
+    jmp suLens
+    lac scUInst
+    dac i [penInst:4]
+    sas [TXINST]        // skip if a text or digits
+    jmp suNoTx
+    lac scUTx
+    dac i [txPen:012]
+suNoTx,
+    lac scUSize
+    dac i [sizeArg:4]
+    lio [IESIZE]
+    jda scIEnt
+    sas [3]             // skip if its tie points moved
+    jmp suLens
+    lio [MCJDA(arcCall:4)]
+    law AECARRY
+    jda scMain
+suLens,
+    lac i [cCount:011]
+    sza i               // skip if the table has entries
+    jmp suCon
+    cma
+    dac suN
+    lac [cEntries:011 + 5]
+    dac suP
+    lac [scUOld:6]
+    dac suQ
+suLoop,
+    lac i suQ
+    sza i               // skip if the scale changed this entry's value
+    jmp suNext
+    dac i suP
+suNext,
+    lac suP
+    add [CW]
+    dac suP
+    idx suQ
+    isp suN             // skip once every entry is looked at
+    jmp suLoop
+suCon,
+    lio [CEUNDO]
+    jda scCon
+    lio [MCJSP(conShow:4)]
+    jda scMain
+    jmp i rtn
+rtn, 0
+suN, 0
+suP, 0
+suQ, 0
+    endloc
+
+// Whether point p is fixed.
+// Entry: AC = p. Exit: AC = FFIX if fixed, 0 if not. IO is preserved. Called via jda.
+scFixed, 0
+    local rtn, fxT
+    dap rtn
+    lac scFixed
+    add [cFlag:011]
+    dac fxT
+    lac i fxT
+    and [FFIX]
+rtn, jmp .
+fxT, 0
+    endloc
+
+// Whether point p is the line's end A or B.
+// Entry: AC = p. Exit: AC = 1 for A, 2 for B, 0 for neither. IO is preserved. Called via jda.
+scOnEnd, 0
+    local rtn, oeA, oeB
+    dap rtn
+    lac scOnEnd
+    sad scA             // skip unless A
+    jmp oeA
+    sad scB             // skip unless B
+    jmp oeB
+    cla
+    jmp rtn
+oeA,
+    law 1
+    jmp rtn
+oeB,
+    law 2
+rtn, jmp .
+    endloc
+
+// Whether a place is outside the target's reach on an axis, in x TRKXMIN to TRKXMAX (scOutX),
+// or in y TRKYMIN to TRKYMAX (scOutY).
+// Entry: AC = the place. Exit: AC = 0 inside, 1 outside. IO is preserved. Called via jda.
+scOutX, 0
+    local rtn, ouSign, ouNo
+    dap rtn
+    lac scOutX
+    sub [TRKXMIN]
+    spa                 // skip if at or past TRKXMIN
+    jmp ouNo
+    lac [TRKXMAX]
+    sub scOutX
+    jmp ouSign
+scOutY, 0
+    dap rtn
+    lac scOutY
+    sub [TRKYMIN]
+    spa                 // skip if at or past TRKYMIN
+    jmp ouNo
+    lac [TRKYMAX]
+    sub scOutY
+ouSign,
+    spa                 // skip if at or below the most
+    jmp ouNo
+    cla
+    jmp rtn
+ouNo,
+    law 1
+rtn, jmp .
+    endloc
+
+// A value's magnitude.
+// Entry: AC = v. Exit: AC = |v|. IO is preserved. Called via jda.
+scAbs, 0
+    local rtn
+    dap rtn
+    lac scAbs
+    spa                 // skip if plus
+    cma
+rtn, jmp .
+    endloc
+
+// Call a main-bank routine through its trampoline mainCall, given the routine's call, a jsp or
+// a jda, as an instruction word (MCJSP, MCJDA), and AC a; mainCall's mcI, the IO it is called with,
+// is left as the last caller set it, since nothing here calls a routine that reads IO.
+// Entry: AC = a, IO = the call. Exit: AC as the routine leaves it. IO is clobbered. Called via
+// jda.
+scMain, 0
+    local rtn
+    dap rtn
+    lac scMain
+    dac i [mcA:4]
+    jsp i [mainCall:4]
+rtn, jmp .
+    endloc
+
+// Call entry n of the constraint module with argument a, as the main bank's conCall does, the
+// argument in conCall's word, where conEntry reads it.
+// Entry: AC = a, IO = n. Exit: AC as the entry leaves it. IO is clobbered. Called via jda.
+scCon, 0
+    local rtn
+    dap rtn
+    lac scCon
+    dac i [conCall:4]
+    jsp i [conEntry:010]
+rtn, jmp .
+    endloc
+
+// Call entry n of the instance module with argument a, as the main bank's instCall does, the
+// argument in instCall's word, where instEntry reads it.
+// Entry: AC = a, IO = n. Exit: AC as the entry leaves it. IO is clobbered. Called via jda.
+scIEnt, 0
+    local rtn
+    dap rtn
+    lac scIEnt
+    dac i [instCall:4]
+    jsp i [instEntry:7]
+rtn, jmp .
+    endloc

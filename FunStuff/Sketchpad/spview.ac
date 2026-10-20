@@ -1,0 +1,1410 @@
+// spview.ac -- the magnifier's view. Its scale and center, the transform from the page to the
+// screen and its inverse, the pen's reach in page units at the view's scale; View's x1 to x8
+// rows, Pan mode's and Center mode's lifts; the lines and the band clipped to the screen under
+// the view's top, and the clipper and the sine table the arcs' code (spvarc.ac) uses; an arc's
+// cross placed through the view.
+//
+// Bank 12, after spkbd.ac. Every entry runs with the extend window open and is entered by
+// jsp i [X:014], vwEntry from the main bank's actView, panLost, centerLost, afMode and
+// panLocate, vwIn from its placeFind, vwInit from initVars and from the tape module's tpFresh
+// after a load, vwLine and vwEmit from its writeSlot, vwSeg from its writeSeg, vwClipX from the
+// arcs' code in bank 13 (spvarc.ac), vwBox from the instance module's instView in bank 7,
+// vwCross from the arc module's markAt in bank 2, and arBegin and arOne, the constraints' arms,
+// from the marks module's mkMarks in bank 13. clipLock (spaux.ac) calls vwDot to place the dot.
+// Each reaches the other banks' words through their 16-bit addresses, returns by jmp i, and
+// calls nothing outside bank 12 but vwEntry, which enters the instance module (IEVIEW), the
+// constraint module (CEFMARK) and the truss module (taRedo). The text module reads vwS, vwOutX,
+// vwOutY, vwTxr and vwTopP; the marks module (spmarks.ac) vwS, vwSal, vwSar, the offsets, vwHX,
+// vwHY, vwTop and vwTopF; the truss module vwSal, the offsets, vwTop and vwTopP. The arcs' code
+// reads the view's words below, the clipper's line and the fine sine table. The main bank, the
+// line search and clipLock read the view's words below.
+// Part of sketchpad.am1, included where it stands.
+
+// Set the view (View's x1 to x8 rows, VWSCALE, the row's scale with the center kept), drag it
+// (Pan mode's lift, VWPAN, the center moved against the target's move since the stroke's start,
+// so the drawing moves with the target) or center it (Center mode's lift, VWCENTER, on the
+// pseudo pen location), the scale kept; each time the center is clamped so the view stays on
+// the page; every instance is written again through it (the instance module's IEVIEW, which
+// asks for the texts' list again), the constraints' marks (the constraint module's CEFMARK) and
+// the truss's readouts (taRedo), and the main loop is asked for a whole rebuild (dirty). VWPAN
+// and VWSCALE then note the next stroke's start (vwMark); VWMARK only notes it. A scale row in
+// Pan or Center mode also drops the stroke under way (the main bank's strokeLive). A pen
+// carried to the bar takes the target with it, and the loss after the list closes would pan or
+// center by that trip.
+// Entry: IO = VWSCALE, VWPAN, VWCENTER or VWMARK; the main bank's lastItem and mode, the target's
+// place, or penX and penY. AC and IO are clobbered. Called via jsp i [vwEntry:014].
+vwEntry,
+    local rtn, vePan, veCtr, veMark, veDis, veNote, veSet, veT
+    dac rtn
+    lai
+    sza                 // skip if VWSCALE
+    jmp vePan
+    lac i [lastItem:4]
+    sub [IVIEW]
+    dac vwS
+    lac i [mode:4]
+    sad [MPAN]          // skip unless Pan mode
+    jmp veDis
+    sas [MCENTER]       // skip if Center mode
+    jmp veNote
+veDis,
+    dzm i [strokeLive:4]
+veNote,
+    jsp vwMark
+    jmp veSet
+vePan,
+    sad [VWCENTER]      // skip unless VWCENTER
+    jmp veCtr
+    sas [VWPAN]         // skip if VWPAN
+    jmp veMark
+    lac i [trackX:0]
+    and [01777]
+    sub vwPX
+    jda vwPanD
+    dac veT
+    lac vwCX
+    sub veT
+    dac vwCX
+    lac i [trackY:0]
+    and [01777]
+    sub vwPY
+    jda vwPanD
+    dac veT
+    lac vwCY
+    sub veT
+    dac vwCY
+    jsp vwMark
+    jmp veSet
+veMark,
+    jsp vwMark
+    jmp i rtn
+veCtr,
+    lac i [penX:4]
+    dac vwCX
+    lac i [penY:4]
+    dac vwCY
+veSet,
+    jsp vwSet
+    lio [IEVIEW]        // every instance through the new view, and the texts' list again
+    jsp i [instEntry:7]
+    lio [CEFMARK]       // the constraints' marks, Show on or off
+    jsp i [conEntry:010]
+    jsp i [taRedo:013]  // the truss's readouts, with no new analysis
+    law 1
+    dac i [dirty:4]
+    jmp i rtn
+rtn, 0
+veT, 0
+    endloc
+
+// A drag's move on one axis taken to the page, the target's move d in screen units with its
+// magnitude shifted down by the scale, rounded, the sign kept.
+// Entry: AC = d. Exit: AC = the move in page units. IO is preserved. Called via jda.
+vwPanD, 0
+    local rtn, pdNeg
+    dap rtn
+    lac vwPanD
+    spa                 // skip unless minus
+    jmp pdNeg
+    add vwHalf
+    xct vwSar
+    jmp rtn
+pdNeg,
+    cma
+    add vwHalf
+    xct vwSar
+    cma
+rtn, jmp .
+    endloc
+
+// Note the start of Pan's next stroke, the target's center on the screen where it rests.
+// AC is clobbered, IO preserved. Called via jsp.
+vwMark,
+    local rtn
+    dap rtn
+    lac i [trackX:0]
+    and [01777]
+    dac vwPX
+    lac i [trackY:0]
+    and [01777]
+    dac vwPY
+rtn, jmp .
+    endloc
+
+// The view at x1, centered on the page, set at start (initVars) and after a load (tpFresh).
+// AC is clobbered, IO preserved. Called via jsp i [vwInit:014].
+vwInit,
+    local rtn
+    dac rtn
+    dzm vwS
+    law 0d512
+    dac vwCX
+    dac vwCY
+    jsp vwSet
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The target's center taken back to the page, page = (screen + vwIn) >> vwS on each axis,
+// rounded to the nearest unit. The identity at x1. Its place on the screen is kept for the
+// marks' lock (vwHX, vwHY).
+// Entry: the main bank's hitX, hitY, on the screen. Exit: hitX, hitY on the page. AC is
+// clobbered, IO preserved. Called via jsp i [vwIn:014].
+vwIn,
+    local rtn
+    dac rtn
+    lac i [hitX:4]
+    dac vwHX
+    add vwInX
+    xct vwSar
+    dac i [hitX:4]
+    lac i [hitY:4]
+    dac vwHY
+    add vwInY
+    xct vwSar
+    dac i [hitY:4]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The dot's place on the screen, screen = (page << vwS) - vwOut on each axis, kept on the screen,
+// its y under the view's top (vwTop), since a point locked near an edge at a large scale can lie
+// past it. The identity at x1.
+// Entry: the main bank's penX, penY. Exit: vwDX, vwDY. AC is clobbered, IO preserved. Called via
+// jsp, from clipLock.
+vwDot,
+    local rtn
+    dap rtn
+    law 0d1023
+    dac veHi
+    lac i [penX:4]
+    xct vwSal
+    sub vwOutX
+    jda vwEdge
+    dac vwDX
+    lac vwTop
+    dac veHi
+    lac i [penY:4]
+    xct vwSal
+    sub vwOutY
+    jda vwEdge
+    dac vwDY
+rtn, jmp .
+    endloc
+
+// A screen coordinate kept from 0 to veHi.
+// Entry: AC = the coordinate. Exit: AC = it, kept. IO is preserved. Called via jda.
+vwEdge, 0
+    local rtn, veLow, veIn
+    dap rtn
+    lac vwEdge
+    spa                 // skip if not left of the screen
+    jmp veLow
+    lac veHi
+    sub vwEdge
+    sma                 // skip if past veHi
+    jmp veIn
+    lac veHi
+    jmp rtn
+veLow,
+    cla
+    jmp rtn
+veIn,
+    lac vwEdge
+rtn, jmp .
+    endloc
+
+// Plan a line's slot through the view (writeSlot). Its ends are taken to the screen and clipped
+// (vwClip), then split as splitPlan does. A line of no length gets a 1-unit x delta, since a
+// (0,0) vector stops the 340; it goes toward the middle at x 1023, where +1 would pass the edge.
+// Entry: the main bank's fx, fy, tx, ty on the page. Exit: fx, fy, tx, ty on the screen and
+// splitPlan's results; vwHid set if none of the line is on the screen, when nothing is planned.
+// AC is clobbered, IO preserved. Called via jsp i [vwLine:014].
+vwLine,
+    local rtn, vlPlan
+    dac rtn
+    jsp vwClip
+    lac vwHid
+    sza                 // skip unless the line is off the screen
+    jmp i rtn
+    lac i [tx:4]
+    sas i [fx:4]        // skip if the x are the same
+    jmp vlPlan
+    lac i [ty:4]
+    sas i [fy:4]        // skip if the y are the same too, no length
+    jmp vlPlan
+    lac i [tx:4]
+    add [1]
+    sad [0d1024]        // skip unless that passes the right edge
+    law 0d1022
+    dac i [tx:4]
+vlPlan,
+    jsp i [splitPlan:014]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Plan the band through the view (writeSeg). Its ends are taken to the screen and clipped
+// (vwClip). A band drawn at RADPARAM's scale, the radius's and Mid's (bandStart says so), then
+// has its offset cut by RADSHIFT, -0 made +0, so drawn that much longer it ends within
+// 2^RADSCALE-1 units of its clipped end and, the cut rounding toward the start, on the screen.
+// Then split as splitPlan does.
+// Entry: the main bank's fx, fy, tx, ty on the page; bank 0's bandStart. Exit: AC zero, fx, fy,
+// tx, ty on the screen and splitPlan's results; or AC nonzero for a band of no length on the
+// screen, or none of it there, when nothing is planned. IO is preserved. Called via
+// jsp i [vwSeg:014].
+vwSeg,
+    local rtn, vsDraw, vsPlan
+    dac rtn
+    jsp vwClip
+    lac vwHid
+    sza                 // skip unless the band is off the screen
+    jmp i rtn
+    lac i [bandStart:0]
+    sas [RADPARAM]      // skip if the band is drawn at the radius's scale
+    jmp vsDraw
+    lac i [tx:4]
+    sub i [fx:4]
+    sar RADSHIFT
+    sad [0777777]       // skip unless the offset is -0
+    cla
+    add i [fx:4]
+    dac i [tx:4]
+    lac i [ty:4]
+    sub i [fy:4]
+    sar RADSHIFT
+    sad [0777777]       // skip unless the offset is -0
+    cla
+    add i [fy:4]
+    dac i [ty:4]
+vsDraw,
+    lac i [tx:4]
+    sas i [fx:4]        // skip if the x are the same
+    jmp vsPlan
+    lac i [ty:4]
+    sas i [fy:4]        // skip if the y are the same too, no length
+    jmp vsPlan
+    law 1
+    jmp i rtn
+vsPlan,
+    jsp i [splitPlan:014]
+    cla
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The word writeSlot puts in a slot's gate, the vectors' entry once emitVecs has written them
+// into the area, or for a line off the screen (vwHid) a jump past the slot, nothing written.
+// Entry: emitArea = the slot's vector area; vwLine's results. Exit: AC = the gate word. IO is
+// preserved. Called via jsp i [vwEmit:014].
+vwEmit,
+    local rtn, veDraw
+    dac rtn
+    lac vwHid
+    sza i               // skip if the line is off the screen
+    jmp veDraw
+    lac emitArea
+    add [NBAND]
+    ior [jump next(parameter)]
+    jmp i rtn
+veDraw,
+    jsp i [emitVecs:014]
+    ior [jump next(vector)]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Take the main bank's fx, fy, tx, ty from the page to the screen, screen = (page << vwS) -
+// vwOut, and clip the line between them to it (vwClipS), leaving the visible part's ends there,
+// in their order; vwHid set when none of it is on the screen. At x1 they are left as they stand,
+// the page being the screen.
+// AC is clobbered, IO preserved. Called via jsp.
+vwClip,
+    local rtn
+    dap rtn
+    dzm vwHid
+    lac vwS
+    sza i               // skip if magnified
+    jmp rtn
+    lac i [fx:4]
+    xct vwSal
+    sub vwOutX
+    dac vcX0
+    lac i [fy:4]
+    xct vwSal
+    sub vwOutY
+    dac vcY0
+    lac i [tx:4]
+    xct vwSal
+    sub vwOutX
+    dac vcX1
+    lac i [ty:4]
+    xct vwSal
+    sub vwOutY
+    dac vcY1
+    jsp vwClipS
+    lac vwHid
+    sza                 // skip unless the line is off the screen
+    jmp rtn
+    lac vcX0
+    dac i [fx:4]
+    lac vcY0
+    dac i [fy:4]
+    lac vcX1
+    dac i [tx:4]
+    lac vcY1
+    dac i [ty:4]
+rtn, jmp .
+    endloc
+
+// Clip the line from (vcX0, vcY0) to (vcX1, vcY1), in screen units, to the screen, its top the
+// view's (vwTop) (Cohen-Sutherland), leaving the visible part's ends there, in their order;
+// vwHid set when none of it is on the screen. An end off the screen moves along the line to an
+// edge it is past, the other axis by delta * distance / extent, worked in magnitudes and rounded
+// toward the end that moves, so the new end lies between the two within a unit of the line, and
+// on the screen whenever the exact point is. Each move puts an axis on an edge and four suffice;
+// past eight the line is hidden rather than loop.
+// AC is clobbered, IO preserved. Called via jsp.
+vwClipS,
+    local rtn, vcLoop, vcMove, vcOnY, vcAcc, vcOut, vcDone, vcXch, vcXr, vcIO, vcC0, vcC1, vcSw,         vcK, vcE
+    dap rtn
+    dio vcIO
+    dzm vwHid
+    dzm vcSw
+    dzm vcK
+vcLoop,
+    lio vcY0
+    lac vcX0
+    jda vwCode
+    dac vcC0
+    lio vcY1
+    lac vcX1
+    jda vwCode
+    dac vcC1
+    ior vcC0
+    sza i               // skip if an end is off the screen
+    jmp vcAcc
+    lac vcC0
+    and vcC1
+    sza                 // skip unless both ends are past the same edge
+    jmp vcOut
+    idx vcK
+    sad [0d9]           // skip unless eight moves have been made
+    jmp vcOut
+    lac vcC0
+    sza                 // skip if the start is on the screen, to move the end as the start
+    jmp vcMove
+    jsp vcXch
+    lac vcC1
+    dac vcC0
+
+    // The start (vcX0, vcY0) is off the screen. Move it to the edge, x's first.
+vcMove,
+    and [3]
+    sza i               // skip if left or right of the screen
+    jmp vcOnY
+    lac vcC0
+    and [2]
+    sza                 // skip unless right of the screen, the edge then 0
+    law 0d1023
+    dac vcE
+    sub vcX0
+    dac vwNum
+    lac vcX1
+    sub vcX0
+    dac vwDen
+    lac vcY1
+    sub vcY0
+    jda vwLerp
+    add vcY0
+    dac vcY0
+    lac vcE
+    dac vcX0
+    jmp vcLoop
+vcOnY,
+    lac vcC0
+    and [010]
+    sza                 // skip unless above the view's top, the edge then 0
+    lac vwTop
+    dac vcE
+    sub vcY0
+    dac vwNum
+    lac vcY1
+    sub vcY0
+    dac vwDen
+    lac vcX1
+    sub vcX0
+    jda vwLerp
+    add vcX0
+    dac vcX0
+    lac vcE
+    dac vcY0
+    jmp vcLoop
+
+    // On the screen, the ends go back in their order.
+vcAcc,
+    lac vcSw
+    sza                 // skip unless the ends were exchanged
+    jsp vcXch
+    jmp vcDone
+vcOut,
+    law 1
+    dac vwHid
+vcDone,
+    lio vcIO
+rtn, jmp .
+
+    // Exchange the ends, and note it. AC and IO are clobbered. Called via jsp.
+vcXch,
+    dap vcXr
+    lac vcX0
+    lio vcX1
+    dac vcX1
+    dio vcX0
+    lac vcY0
+    lio vcY1
+    dac vcY1
+    dio vcY0
+    lac vcSw
+    xor [1]
+    dac vcSw
+vcXr, jmp .
+
+vcIO, 0
+vcC0, 0
+vcC1, 0
+vcSw, 0
+vcK, 0
+vcE, 0
+    endloc
+
+// A point's place against the screen, as a code of 1 left of it, 2 right, 4 below, 010 above the
+// view's top (vwTop), or'd; 0 on it.
+// Entry: AC = x, IO = y. Exit: AC = the code. IO is preserved. Called via jda.
+vwCode, 0
+    local rtn, vdLeft, vdSet, vdY, vdLow, vdOr, vdDone, vdC
+    dap rtn
+    dzm vdC
+    lac vwCode
+    spa                 // skip unless left of the screen
+    jmp vdLeft
+    sub [0d1024]
+    spa                 // skip if right of the screen
+    jmp vdY
+    law 2
+    jmp vdSet
+vdLeft,
+    law 1
+vdSet,
+    dac vdC
+vdY,
+    lai
+    spa                 // skip unless below the screen
+    jmp vdLow
+    sub vwTopP
+    spa                 // skip if above the view's top
+    jmp vdDone
+    law 010
+    jmp vdOr
+vdLow,
+    law 4
+vdOr,
+    ior vdC
+    dac vdC
+vdDone,
+    lac vdC
+rtn, jmp .
+vdC, 0
+    endloc
+
+// d * |vwNum| / |vwDen|, rounded toward 0, the move along one axis of an end clipped on the
+// other, vwNum the distance to the edge and vwDen the line's extent on that axis. They have the
+// same sign and |vwNum| <= |vwDen|, which is not 0, so the quotient is at most |d|.
+// Entry: AC = d. Exit: AC = the move. IO is clobbered. Called via jda.
+vwLerp, 0
+    local rtn, vlPos, vlN, vlD, vlQ
+    dap rtn
+    lac vwNum
+    spa                 // skip unless the distance is minus
+    cma
+    dac vlN
+    lac vwDen
+    spa                 // skip unless the extent is minus
+    cma
+    dac vlD
+    lac vwLerp
+    spa                 // skip unless d is minus
+    cma
+    mul vlN             // |d| * |vwNum|, left-shifted one place, as div wants it
+    div vlD
+    cla                 // runs only on overflow, which |vwNum| <= |vwDen| rules out
+    dac vlQ
+    lac vwLerp
+    sma                 // skip if d is minus
+    jmp vlPos
+    lac vlQ
+    cma
+    jmp rtn
+vlPos,
+    lac vlQ
+rtn, jmp .
+vlN, 0
+vlD, 0
+vlQ, 0
+    endloc
+
+// Work out the view's words from vwS and the center, the shift instructions, the view's top and
+// the bounds made from it, the center clamped from vwLo to vwHi so the view stays on the page
+// (512 at x1), the transform's offsets, and the reach. The top is the screen's, 1023, at x1, and
+// magnified the canvas's, under the bar, so that no canvas word is drawn over the bar's labels.
+// Every value stays positive, since the center is at least 512 >> vwS, so c << vwS is at least
+// 512. The reach in page units is the screen reach shifted down by the scale, each exactly the
+// constant at x1. They are vwSnap (SNAP_BOX >> s) + 1, vwBias LOCKBIAS >> s, vwSlow
+// (SLOWD >> s) + 1, vwSwr, made from those as SWREACH is, and vwTxr TXREACH >> s.
+// Entry: vwS, vwCX, vwCY. AC is clobbered, IO preserved. Called via jsp.
+vwSet,
+    local rtn, vsPtr, vsSlow, vsTop
+    dap rtn
+    lac vwS
+    add [vwSarT:014]
+    dac vsPtr
+    lac i vsPtr
+    dac vwSar
+    lac vwS
+    add [vwSalT:014]
+    dac vsPtr
+    lac i vsPtr
+    dac vwSal
+    law 0d1023
+    dac vwTop
+    lac vwS
+    sza i               // skip if magnified
+    jmp vsTop
+    lac [BARYMIN - 1]
+    dac vwTop
+vsTop,
+    lac vwTop
+    add [1]
+    dac vwTopP
+    add [ARCSAG - 1]
+    dac vwTopA
+    lac vwTop
+    sub [MKEDGE]
+    dac vwTopF
+    law 0d512
+    xct vwSar
+    dac vwLo
+    cma
+    add [0d1024]
+    dac vwHi
+    lac vwCX
+    jda vwClamp
+    dac vwCX
+    lac vwCY
+    jda vwClamp
+    dac vwCY
+    law 1
+    xct vwSal
+    sar 1s
+    dac vwHalf
+    lac vwCX
+    xct vwSal
+    sub [0d512]
+    dac vwOutX
+    add vwHalf
+    dac vwInX
+    lac vwCY
+    xct vwSal
+    sub [0d512]
+    dac vwOutY
+    add vwHalf
+    dac vwInY
+    law SNAP_BOX
+    xct vwSar
+    add [1]
+    dac vwSnap
+    law LOCKBIAS
+    xct vwSar
+    dac vwBias
+    law SLOWD
+    xct vwSar
+    dac vsSlow
+    add [1]
+    dac vwSlow
+    lac vsSlow
+    sal 1s
+    add vwSnap
+    dac vwSwr
+    law TXREACH
+    xct vwSar
+    dac vwTxr
+rtn, jmp .
+vsPtr, 0
+vsSlow, 0
+    endloc
+
+// A center on one axis kept from vwLo to vwHi.
+// Entry: AC = the center. Exit: AC = it, kept. IO is preserved. Called via jda.
+vwClamp, 0
+    local rtn, vcLo, vcHi
+    dap rtn
+    lac vwClamp
+    sub vwLo
+    spa                 // skip if at or right of vwLo
+    jmp vcLo
+    lac vwClamp
+    sub vwHi
+    sma                 // skip if left of vwHi
+    jmp vcHi
+    lac vwClamp
+    jmp rtn
+vcLo,
+    lac vwLo
+    jmp rtn
+vcHi,
+    lac vwHi
+rtn, jmp .
+    endloc
+
+// Whether a figure lies on the screen through the view, for the instance module's instView, its
+// box, from (vbX0, vbY0) to (vbX1, vbY1) on the page, wholly on the screen under the view's top
+// (vwTop), and its scale vbS plus the view's x8 or less; and its origin (vbOX, vbOY) taken to
+// the screen, masked to ten bits, which leaves it unchanged when the box holds it there, as a
+// master's box does.
+// Exit: AC = 0 on the screen, 1 not; vbOX, vbOY on the screen. IO is preserved. Called via
+// jsp i [vwBox:014].
+vwBox,
+    local rtn, vbOff
+    dac rtn
+    lac vbOX
+    xct vwSal
+    sub vwOutX
+    and [01777]
+    dac vbOX
+    lac vbOY
+    xct vwSal
+    sub vwOutY
+    and [01777]
+    dac vbOY
+    lac vbS
+    add vwS
+    sub [4]
+    sma                 // skip if x8 or less
+    jmp vbOff
+    lac vbX0
+    xct vwSal
+    sub vwOutX
+    spa                 // skip unless left of the screen
+    jmp vbOff
+    lac vbX1
+    xct vwSal
+    sub vwOutX
+    sub [0d1024]
+    sma                 // skip unless past the right edge
+    jmp vbOff
+    lac vbY0
+    xct vwSal
+    sub vwOutY
+    spa                 // skip unless below the screen
+    jmp vbOff
+    lac vbY1
+    xct vwSal
+    sub vwOutY
+    sub vwTopP
+    sma                 // skip unless past the view's top
+    jmp vbOff
+    cla
+    jmp i rtn
+vbOff,
+    law 1
+    jmp i rtn
+rtn, 0
+    endloc
+
+// An arc's cross through the view, for the arc module's markAt, its point taken to the screen.
+// It is shown when the cross, MARKARM each way, lies wholly on the screen under the view's top
+// (vwTop), as its y word, its x word MARKARM to the left, then its first and third vectors
+// visible, as markTpl has them. Otherwise it is hidden, those two vectors dark, then its place
+// kept MARKARM inside every edge, so that the beam's moves stay on the screen. The display may
+// be in the block, so each word is written whole, and in that order no frame draws a cross at a
+// kept place. At x1 a point on the canvas gives the words markAt would write without the view.
+// Entry: IO = y, vxX = x, on the page; vxP = the full address of the cross's y word. AC is
+// clobbered, IO preserved. Called via jsp i [vwCross:014].
+vwCross,
+    local rtn, vxShow, vxPos, vxPRtn, vxV1, vxV3, vxT
+    dac rtn
+    dio vxY
+    dzm vxOff
+    lac [0d1023 - MARKARM]
+    dac vkHi
+    lac vxX
+    xct vwSal
+    sub vwOutX
+    jda vxKeep
+    dac vxX
+    lac vwTop
+    sub [MARKARM]
+    dac vkHi
+    lac vxY
+    xct vwSal
+    sub vwOutY
+    jda vxKeep
+    dac vxY
+    lac vxP
+    add [2]
+    dac vxV1
+    add [2]
+    dac vxV3
+    lac vxOff
+    sza i               // skip if hidden
+    jmp vxShow
+    lac [deltax(2 * MARKARM) deltay(0) right]
+    dac i vxV1
+    lac [deltax(0) deltay(2 * MARKARM) up end]
+    dac i vxV3
+    jsp vxPos
+    jmp i rtn
+vxShow,
+    jsp vxPos
+    lac [deltax(2 * MARKARM) deltay(0) right visible]
+    dac i vxV1
+    lac [deltax(0) deltay(2 * MARKARM) up visible end]
+    dac i vxV3
+    jmp i rtn
+
+    // The cross's y and x words. AC is clobbered, IO preserved. Called via jsp.
+vxPos,
+    dap vxPRtn
+    lac vxY
+    ior [y(0) next(point)]
+    dac i vxP
+    lac vxP
+    add [1]
+    dac vxT
+    lac vxX
+    sub [MARKARM]
+    ior [x(0) next(vector)]
+    dac i vxT
+vxPRtn, jmp .
+rtn, 0
+vxV1, 0
+vxV3, 0
+vxT, 0
+    endloc
+
+// A cross's coordinate on the screen kept from MARKARM to vkHi (the far edge less MARKARM), vxOff
+// set if it was not there.
+// Entry: AC = the coordinate. Exit: AC = it, kept. IO is preserved. Called via jda.
+vxKeep, 0
+    local rtn, vkLow, vkHigh
+    dap rtn
+    lac vxKeep
+    sub [MARKARM]
+    spa                 // skip unless within MARKARM of the low edge
+    jmp vkLow
+    lac vkHi
+    sub vxKeep
+    spa                 // skip unless within MARKARM of the far edge
+    jmp vkHigh
+    lac vxKeep
+    jmp rtn
+vkLow,
+    law 1
+    dac vxOff
+    law MARKARM
+    jmp rtn
+vkHigh,
+    law 1
+    dac vxOff
+    lac vkHi
+rtn, jmp .
+    endloc
+
+// vwClipS for the arcs through the view in bank 13 (spvarc.ac), which reach the clipper's line
+// through 16-bit addresses.
+// AC is clobbered, IO preserved. Called via jsp i [vwClipX:014].
+vwClipX,
+    local rtn
+    dac rtn
+    jsp vwClipS
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The constraints' arms, written with the marks, arBegin before mkMarks' walk and arOne for each
+// mark it reaches, from the last entry to the first. Bank 5's arList holds a slot for each E, P
+// and R entry in the table with Show on, in the table's order, packed, the word after the last
+// used slot the list's halt; penISR starts the list while arGo is set.
+
+// Shut the arms' list after its last slot. The slots are counted, one for each E, P and R entry
+// with Show on, none with it off; arGo is cleared if none; the halt is written in the parameter
+// word's place after the last slot, first, as fixList's shut slot is, so that the display never
+// runs into the slots arOne writes next.
+// Exit: arK the slots' count. AC is clobbered, IO preserved. Called via jsp i [arBegin:014],
+// from the marks module's mkMarks.
+arBegin,
+    local rtn, abLoop, abCount, abNext, abShut, abHalt, abP
+    dac rtn
+    dzm arK
+    lac i [showOn:4]
+    sza i               // skip if Show is on
+    jmp abShut
+    lac [cEntries:011]
+    dac abP
+abLoop,
+    lac abP
+    sad i [cEnd:010]    // skip while entries remain
+    jmp abShut
+    lac i abP
+    sad [CTEQ]          // skip unless an Equal
+    jmp abCount
+    sad [CTPAR]         // skip unless a Paral
+    jmp abCount
+    sas [CTPERP]        // skip if a Perp
+    jmp abNext
+abCount,
+    idx arK
+abNext,
+    lac abP
+    add [CW]
+    dac abP
+    jmp abLoop
+abShut,
+    lac arK
+    sza                 // skip if no slot is used
+    jmp abHalt
+    dzm i [arGo:0]
+abHalt,
+    lac arK
+    jda arSlot
+    dac abP
+    lac [lpoff halt interrupt]
+    dac i abP
+    jmp i rtn
+rtn, 0
+abP, 0
+    endloc
+
+// An entry's arms. For an E, a P or an R it writes the next slot down, a run from its first
+// line's middle to its second's through the view, clipped to the screen under the view's top
+// (vwClipS), drawn from the first middle by two vectors at ARMSCALE, the first half the steps;
+// dark, two 1-unit moves at the screen's center (a (0,0) vector stops the 340), when the mark is
+// hidden (the marks module's cMkOff), the run is off the screen, or the first vector would be
+// (0,0), the middles a few units apart. The slot is shut first, the display let finish it if
+// part way through, then its words written last first, its parameter word last of all, so that
+// the display never draws a slot half old and half new (an old start with new vectors could
+// leave the screen, an edge violation that restarts the frame). Once slot 0 is written arGo is
+// set. Other types return at once.
+// Entry: IO = the entry's address; arK, cMkOff. AC and IO are clobbered. Called via
+// jsp i [arOne:014], from the marks module's mkMarks.
+arOne,
+    local rtn, aoArm, aoDark, aoPut, aoWait, aoGo, aoMid, aoMRtn, aoP, aoS, aoA, aoB, aoT, aoU, \
+        aoQX, aoQY, aoH1X, aoH1Y, aoV1, aoV2, aoN
+    dac rtn
+    dio aoP
+    lac i aoP
+    sad [CTEQ]          // skip unless an Equal
+    jmp aoArm
+    sad [CTPAR]         // skip unless a Paral
+    jmp aoArm
+    sas [CTPERP]        // skip if a Perp
+    jmp i rtn
+aoArm,
+    lac arK
+    sza i               // skip if a slot is left, as arBegin counted this mark's
+    jmp i rtn
+    sub [1]
+    dac arK
+    jda arSlot
+    dac aoS
+    lac i [cMkOff:015]
+    sza                 // skip unless the mark is hidden
+    jmp aoDark
+    idx aoP             // point A
+    jsp aoMid
+    dac vcX0
+    dio vcY0
+    jsp aoMid
+    dac vcX1
+    dio vcY1
+    jsp vwClipS
+    lac vwHid
+    sza                 // skip unless the run is off the screen
+    jmp aoDark
+
+    // The steps on each axis, and their directions as the vector words' bits.
+    law 0d1023
+    dac arHi
+    lio vcX1
+    lac vcX0
+    jda arQ
+    dac aoQX
+    lac arNeg
+    sza                 // skip unless leftward
+    law 0200
+    dac arNX
+    lac vwTop
+    dac arHi
+    lio vcY1
+    lac vcY0
+    jda arQ
+    dac aoQY
+    lac arNeg
+    sza                 // skip unless downward
+    lac [0100000]
+    dac arNY
+
+    // The first vector half the steps, rounded down, the second the rest.
+    lac aoQX
+    sar 1s
+    dac aoH1X
+    lac aoQY
+    sar 1s
+    dac aoH1Y
+    ior aoH1X
+    sza i               // skip unless the first vector would be (0,0)
+    jmp aoDark
+    lio aoH1Y
+    lac aoH1X
+    jda arW
+    dac aoV1
+    lac aoQY
+    sub aoH1Y
+    dac aoT
+    lio aoT
+    lac aoQX
+    sub aoH1X
+    jda arW
+    ior [end]
+    dac aoV2
+    lac vcX0
+    ior [x(0) next(vector)]
+    dac aoU
+    lac vcY0
+    ior [y(0) next(point)]
+    jmp aoPut
+aoDark,
+    lac [deltax(1) deltay(0) right]
+    dac aoV1
+    lac [deltax(1) deltay(0) left end]
+    dac aoV2
+    lac [x(0d512) next(vector)]
+    dac aoU
+    lac [y(0d512) next(point)]
+
+    // AC = the y word, aoU the x word. The slot is shut first, its parameter word a halt, so
+    // that the display stops there rather than enter it; while the display is part way through
+    // it (dra, its next fetch, past the slot's first word and not past its last) it is let
+    // finish, at most ARMWAIT polls. Then the slot's words are written from its last to its
+    // second, and its parameter word last of all, so the display never draws an old start with
+    // new vectors, which could leave the screen.
+aoPut,
+    dac aoT
+    lac [lpoff halt interrupt]
+    dac i aoS
+    law i ARMWAIT
+    dac aoN
+aoWait,
+    dra                 // IO = the display's next fetch, a full address
+    dio aoA
+    lac aoA
+    sub aoS
+    sub [1]
+    spa                 // skip if the display is past the slot's first word
+    jmp aoGo
+    sub [ARMWORDS - 1]
+    sma                 // skip unless it is past the slot's last word
+    jmp aoGo
+    isp aoN             // skip once the polls are used up
+    jmp aoWait
+aoGo,
+    lac aoS
+    add [4]
+    dac aoA
+    lac aoV2
+    dac i aoA
+    lac aoS
+    add [3]
+    dac aoA
+    lac aoV1
+    dac i aoA
+    lac aoS
+    add [2]
+    dac aoA
+    lac aoU
+    dac i aoA
+    lac aoS
+    add [1]
+    dac aoA
+    lac aoT
+    dac i aoA
+    lac [ARMPARAM]
+    dac i aoS
+    lac arK
+    sza                 // skip if slot 0, when every slot is written
+    jmp i rtn
+    law 1
+    dac i [arGo:0]
+    jmp i rtn
+
+    // A line's middle on the screen, ((A + B) << s) >> 1 less the view's offset, on each axis,
+    // from the point indices at aoP, which it steps past.
+    // Exit: AC = x, IO = y. Called via jsp.
+aoMid,
+    dap aoMRtn
+    lac i aoP
+    dac aoA
+    idx aoP
+    lac i aoP
+    dac aoB
+    idx aoP
+    lac aoA
+    add [pointY:3]
+    dac aoT
+    lac i aoT
+    dac aoU
+    lac aoB
+    add [pointY:3]
+    dac aoT
+    lac i aoT
+    add aoU
+    xct vwSal
+    sar 1s
+    sub vwOutY
+    dac aoU
+    lac aoA
+    add [pointX:3]
+    dac aoT
+    lac i aoT
+    dac aoA
+    lac aoB
+    add [pointX:3]
+    dac aoT
+    lac i aoT
+    add aoA
+    xct vwSal
+    sar 1s
+    sub vwOutX
+    lio aoU
+aoMRtn, jmp .
+rtn, 0
+aoP, 0
+aoS, 0
+aoA, 0
+aoB, 0
+aoT, 0
+aoU, 0
+aoQX, 0
+aoQY, 0
+aoH1X, 0
+aoH1Y, 0
+aoV1, 0
+aoV2, 0
+aoN, 0
+    endloc
+
+// Slot k's address in the arms' list, arList + ARMWORDS * k.
+// Entry: AC = k. Exit: AC = the address. IO is preserved. Called via jda.
+arSlot, 0
+    local rtn
+    dap rtn
+    lac arSlot
+    sal 2s              // ARMWORDS, 5
+    add arSlot
+    add [arList:5]
+rtn, jmp .
+    endloc
+
+// One axis of a run, its steps at ARMSCALE, |end - start| / 4 rounded, one fewer if that would
+// draw the run's end past the screen (0 to arHi), at most ARMSTEPS; and its direction.
+// Entry: AC = the start, IO = the end, both on the screen; arHi. Exit: AC = the steps; arNeg
+// set if the end is below the start. IO is clobbered. Called via jda.
+arQ, 0
+    local rtn, aqPos, aqNeg, aqLess, aqCap, aqMax, aqD, aqM
+    dap rtn
+    dzm arNeg
+    dio aqD
+    lac aqD
+    sub arQ
+    sma                 // skip if the end is below the start
+    jmp aqPos
+    cma
+    dac aqD
+    law 1
+    dac arNeg
+    lac aqD
+aqPos,
+    add [2]
+    sar 2s
+    dac aqM
+    sal 2s
+    dac aqD             // the drawn extent, 4 * steps
+    lac arNeg
+    sza                 // skip unless toward 0
+    jmp aqNeg
+    lac arHi
+    sub arQ
+    sub aqD
+    sma                 // skip if the drawn end passes arHi
+    jmp aqCap
+    jmp aqLess
+aqNeg,
+    lac arQ
+    sub aqD
+    sma                 // skip if the drawn end passes 0
+    jmp aqCap
+aqLess,
+    lac aqM
+    sub [1]
+    dac aqM
+aqCap,
+    lac aqM
+    sub [ARMSTEPS + 1]
+    sma                 // skip if at most ARMSTEPS
+    jmp aqMax
+    lac aqM
+    jmp rtn
+aqMax,
+    law ARMSTEPS
+rtn, jmp .
+aqD, 0
+aqM, 0
+    endloc
+
+// A visible vector word at ARMSCALE, |dx| and |dy| in steps, with the directions' bits arNX and
+// arNY.
+// Entry: AC = |dx|, IO = |dy|. Exit: AC = the word. IO is preserved. Called via jda.
+arW, 0
+    local rtn
+    dap rtn
+    lai
+    sal 8s
+    ior arW
+    ior arNX
+    ior arNY
+    ior [visible]
+rtn, jmp .
+    endloc
+
+// The shift instructions by scale, x1 to x8.
+vwSarT,
+    nop
+    sar 1s
+    sar 2s
+    sar 3s
+vwSalT,
+    nop
+    sal 1s
+    sal 2s
+    sal 3s
+// The view, screen = (page - center) << vwS + 512 on each axis, vwS 0 to 3 for x1 to x8, the
+// center (vwCX, vwCY) in page units, clamped from vwLo to vwHi. Not saved; x1 at start and after
+// a load. As assembled, every word below holds its x1 value.
+vwS, 0
+vwCX, 0d512
+vwCY, 0d512
+vwLo, 0d512
+vwHi, 0d512
+// The view's top, the highest y a canvas word takes (vwSet), the screen's at x1, the canvas's
+// under the bar magnified; and the bounds made from it, read by the arcs' code (vwTopA, an arc's
+// chord that far above it clear of the screen), the marks (vwTopF, a mark's highest center), the
+// texts and the readouts.
+vwTop, 0d1023
+vwTopP, 0d1024
+vwTopA, 0d1023+ARCSAG
+vwTopF, 0d1023-MKEDGE
+// Half a page unit in screen units, for rounding; 0 at x1.
+vwHalf, 0
+// The start of Pan's stroke, the target's center on the screen where it rested (vwMark).
+vwPX, 0d512
+vwPY, 0d512
+// vwEdge's and vxKeep's far bounds, set by their callers for each axis.
+veHi, 0d1023
+vkHi, 0d1023-MARKARM
+// The shift by vwS, executed, right for the inverse and left for the transform.
+vwSar, nop
+vwSal, nop
+// The offsets, page = (screen + vwInX) >> vwS, rounded, and screen = (page << vwS) - vwOutX.
+vwInX, 0
+vwInY, 0
+vwOutX, 0
+vwOutY, 0
+// The dot's place on the screen (vwDot).
+vwDX, 0
+vwDY, 0
+// The target's center on the screen, kept by vwIn for the marks' lock (spmarks.ac's mkNear).
+vwHX, 0
+vwHY, 0
+// An arc's cross for vwCross, its place on the page and then on the screen; the full address of
+// its y word; and a flag set when it is hidden.
+vxX, 0
+vxY, 0
+vxP, 0
+vxOff, 0
+// The last line or band clipped (vwClip), set when none of it is on the screen.
+vwHid, 0
+// vwLerp's distance and extent.
+vwNum, 0
+vwDen, 0
+// The reach in page units, findNearPoint's, placeLock's LOCKBIAS, the line search's SLOWD + 1
+// and SWREACH.
+vwSnap, SNAP_BOX+1
+vwBias, LOCKBIAS
+vwSlow, SLOWD+1
+vwSwr, SWREACH
+// The text lock's reach in page units (the text module's txLock).
+vwTxr, TXREACH
+// A figure's box and scale, and its origin, for vwBox, on the page, the origin on the screen
+// after.
+vbX0, 0
+vbX1, 0
+vbY0, 0
+vbY1, 0
+vbS, 0
+vbOX, 0
+vbOY, 0
+
+// The clipper's line, in screen units (vwClipS).
+vcX0, 0
+vcY0, 0
+vcX1, 0
+vcY1, 0
+// The arms (arBegin, arOne), the slots left to write, the last written first; arQ's far bound
+// for the axis, its direction, and the directions' bits in a vector word.
+arK, 0
+arHi, 0d1023
+arNeg, 0
+arNX, 0
+arNY, 0
+// sin(j/512 of a turn), j 0 to 128, as 17-bit fractions, rounded as sinTab's, which is every
+// eighth, for the arcs through the view (spvarc.ac, vaSinCos); kept here for bank 13's room.
+vaSin,
+    000000
+    003110
+    006221
+    011330
+    014437
+    017545
+    022652
+    025756
+    031057
+    034157
+    037255
+    042350
+    045440
+    050526
+    053610
+    056667
+    061743
+    065013
+    070056
+    073115
+    076150
+    101176
+    104217
+    107232
+    112240
+    115241
+    120233
+    123217
+    126175
+    131144
+    134104
+    137035
+    141757
+    144671
+    147574
+    152466
+    155351
+    160222
+    163063
+    165714
+    170533
+    173341
+    176135
+    200720
+    203470
+    206227
+    210753
+    213465
+    216164
+    220650
+    223320
+    225756
+    230377
+    233006
+    235400
+    237756
+    242317
+    244644
+    247155
+    251450
+    253727
+    256170
+    260413
+    262622
+    265012
+    267164
+    271321
+    273436
+    275536
+    277617
+    301661
+    303704
+    305710
+    307675
+    311642
+    313570
+    315476
+    317364
+    321232
+    323061
+    324666
+    326454
+    330221
+    331745
+    333450
+    335133
+    336574
+    340214
+    341613
+    343171
+    344525
+    346037
+    347330
+    350576
+    352023
+    353226
+    354407
+    355545
+    356661
+    357753
+    361022
+    362047
+    363051
+    364030
+    364764
+    365676
+    366564
+    367430
+    370250
+    371045
+    371617
+    372346
+    373051
+    373532
+    374166
+    374600
+    375165
+    375530
+    376046
+    376341
+    376611
+    377035
+    377235
+    377411
+    377542
+    377647
+    377731
+    377766
+    377777

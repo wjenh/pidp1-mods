@@ -1,0 +1,4532 @@
+// spinst.ac -- the instance module. Its entry, then the instances, with their slots, adding,
+// placing, moving and removing one, its box, lock, scale and light; their tie points and the
+// carry of a fastened group; Define's map and its parts kept in Copy's store, with its
+// constraints; Copy's room and parts; a dismember and its Undo; the number keyboard's callers,
+// Change's Dwell and Seq and the truss's Stiff; then the words they share.
+//
+// Bank 7, from its first word, sprows.ac after it. Entered only at instEntry, from the main
+// bank's instCall and the view module's vwEntry (IEVIEW); runs with the extend window open
+// throughout, so every indirect address is a 16-bit one, and the main bank's variables are
+// reached as OP i [X:4]. Each instance's origin, scale, tie list and iHid are in bank 3, its
+// master (iMaster) and the count in bank 10, the master directory in bank 2, its slot in bank 0.
+// Calls nothing outside bank 7 but the text module's entries for the instance module (bank 10)
+// and the view module's vwBox (bank 12), each by jsp i [X:01n]. The arc module reads Define's
+// crosses and the tie points an instance's removal leaves (attN to tgList) through their 16-bit
+// addresses.
+// Part of sketchpad.am1, included where it stands.
+
+// The module's entry, from the main bank's instCall (and the view module's vwEntry, for IEVIEW,
+// which takes no argument). Run entry n with the argument in AC, and return across the banks
+// with AC as the routine leaves it. Each table word is the routine's call, a jsp or a jda, so
+// each keeps its calling form and returns here inside bank 7.
+// Entry: IO = n; AC = the return address, which carries the main bank; instCall (bank 4) = the
+// argument. Exit: AC as the entry leaves it, the window open. IO is clobbered. Called via
+// jsp i [instEntry:7].
+// Every entry but the lock, the light and the cycles' step, which the main loop runs on every
+// pass, may change the instances, so the texts' list is written again (the text module's
+// txDirty); the step asks for it itself when it takes one (instCycle).
+instEntry,
+    dac ieRtn
+    dio iePtr
+    lac iePtr
+    sad [IELOCK]        // skip unless the lock
+    jmp ieGo
+    sad [IESHINE]       // skip unless the light
+    jmp ieGo
+    sad [IECYSTEP]      // skip unless the cycles' step
+    jmp ieGo
+    law 1
+    dac i [txDirty:012]
+ieGo,
+    lac iePtr
+    add [ieTable:7]
+    dac iePtr
+    lac i [instCall:4]
+    xct i iePtr
+    jmp i ieRtn
+ieRtn, 0
+iePtr, 0
+
+// Entry n -> its call.
+ieTable,
+    jsp instInit        // IEINIT
+    jsp instClear       // IECLEAR
+    jda instParam       // IEPARAM
+    jda instXY          // IEXY
+    jda instGate        // IEGATE
+    jda instRemove      // IEREMOVE
+    jda instShine       // IESHINE
+    jsp instMove        // IEMOVE
+    jsp instLock        // IELOCK
+    jsp instSize        // IESIZE
+    jsp instPlace       // IEPLACE
+    jsp instAdd         // IEADD
+    jsp instMap         // IEMAP
+    jsp instDef         // IEDEF
+    jsp copyRoom        // IECROOM
+    jsp copyParts       // IECPARTS
+    jda instPick        // IEPICK
+    jsp instBack        // IEBACK
+    jsp instSync        // IESYNC
+    jsp instSzBack      // IESZBACK
+    jsp instReslot      // IERESLOT
+    jsp instChange      // IECHANGE
+    jsp instCycle       // IECYSTEP
+    jda instKbOpen      // IEKBOPEN
+    jda instKbDone      // IEKBDONE
+    jsp instDism        // IEDISM
+    jsp instUndism      // IEUNDISM
+    jda instStOpen      // IESTOPEN
+    jda instStDone      // IESTDONE
+    jsp instNest        // IENEST
+    jda instNestAt      // IENESTI
+    jsp instViewAll     // IEVIEW
+
+// A scale's shift, 0 to 3 places left, for xct, giving a master's offset at an instance's scale.
+ieShTab,
+    nop
+    sal 1s
+    sal 2s
+    sal 3s
+
+// AC's magnitude, as the main bank's absVal, copied so the module calls nothing outside bank 7.
+// Entry: AC. Exit: AC = its magnitude. IO is preserved. Called via jda.
+ieAbs, 0
+    dap iaRtn
+    lac ieAbs
+    sma                 // skip if negative
+    jmp iaRtn
+    cma
+iaRtn, jmp .
+
+// Empty the instance list and every master slot. The list is emptied as Clear empties it
+// (instClear), every master's length made 0 and its constraints none; no copy's attachers are
+// listed (cpMrg) nor points designated for them (desPt, after it); every master's dwell is
+// CYCLEMS and there is no sequence.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instInit,
+    local rtn, inMast, inCon, inMrg, inDw, inI, inN
+    dap rtn
+    jsp instClear
+    lac [cyDw:7]
+    dac inI
+    law i NMASTER
+    dac inN
+inDw,
+    lac [CYCLEMS]
+    dac i inI
+    idx inI
+    isp inN             // skip once every dwell is set
+    jmp inDw
+    dzm cySqN
+    lac [mLen:2]
+    dac inI
+inMast,
+    dzm i inI
+    idx inI
+    sas [mLen:2+NMASTER] // skip once every length is 0
+    jmp inMast
+    lac [cpNCon:011]
+    dac inI
+    law i NMASTER
+    dac inN
+inCon,
+    dzm i inI
+    idx inI
+    isp inN             // skip once every master's count is 0
+    jmp inCon
+    lac [cpMrg:3]
+    dac inI
+    law i 2 * NATT
+    dac inN
+inMrg,
+    lac [NOPOINT]
+    dac i inI
+    idx inI
+    isp inN             // skip once every word is NOPOINT
+    jmp inMrg
+    cla
+rtn, jmp .
+inI, 0
+inN, 0
+    endloc
+
+// Empty the instance list. Each slot is written unused, its gate first, so none is lit and none
+// cycles; the masters stay. The caller spreads the target calls again (respread).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instClear,
+    local rtn, icLoop, icI
+    dap rtn
+    dzm i [instCount:012]
+    dzm i [cycN:4]
+    lac [NOPOINT]
+    dac litInst
+    dzm icI
+icLoop,
+    lac icI
+    jda instUnused
+    idx icI
+    sas [MAXINST]       // skip once every slot is written
+    jmp icLoop
+    cla
+rtn, jmp .
+icI, 0
+    endloc
+
+// The instance list emptied as instClear empties it, but every tie list kept. It runs after a
+// load, whose tie lists the tape module has written, so that the main bank's tapeRebuild can
+// write the slots again from the tables.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instReslot,
+    local rtn
+    dap rtn
+    law 1
+    dac iuKeep
+    jsp instClear
+    dzm iuKeep
+    cla
+rtn, jmp .
+iuKeep, 0               // set while instReslot keeps the tie lists
+    endloc
+
+// Write instance slot i unused. The gate goes first, jumping to instEnd, so the display calls no
+// master from it from here on; then the parameter and point words, and the call stepping over.
+// Its tie list is emptied, NOPOINT throughout, unless instReslot keeps it (iuKeep); its cycle
+// flag is cleared either way.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instUnused, 0
+    local rtn, iuTie, iuSlot, iuP, iuG
+    dap rtn
+    lac iuKeep
+    sza                 // skip unless the tie lists are kept
+    jmp iuSlot
+    lac instUnused
+    add [iTie:3]
+    dac iuP
+    law i NATT
+    dac iuG
+iuTie,
+    lac [NOPOINT]
+    dac i iuP
+    lac iuP
+    add [MAXINST]
+    dac iuP
+    isp iuG             // skip once every attacher's word is written
+    jmp iuTie
+iuSlot,
+    lac instUnused
+    add [iCyc:3]
+    dac iuP
+    dzm i iuP
+    lac instUnused
+    jda instSlot
+    dac iuP
+    add [INSTGATE]
+    dac iuG
+    lac [jump instEnd:0 next(parameter)]
+    dac i iuG
+    lac [scale(0) intensity(INSTINTENSITY) lpoff next(point)]
+    dac i iuP
+    idx iuP
+    lac [y(0) next(point)]
+    dac i iuP
+    idx iuP
+    lac [x(0) next(subroutine)]
+    dac i iuP
+    lac iuP
+    add [INSTCALL-3]
+    dac iuP
+    lac [next(subroutine)]
+    dac i iuP
+    idx iuP
+    add [1]
+    ior [jump next(parameter)]
+    dac i iuP
+rtn, jmp .
+iuP, 0
+iuG, 0
+    endloc
+
+// Full address of instance slot i, in bank 0.
+// Entry: AC = i. Exit: AC = the address. IO is preserved. Called via jda.
+instSlot, 0
+    dap isRtn
+    lac instSlot
+    sal 1s
+    add instSlot
+    sal 1s              // i * 6, INSTWORDS
+    add [instList:0]
+isRtn, jmp .
+
+// For Inst, add an instance of master masterArg at x1, the last in the instance list, its origin at
+// the pseudo pen location held where its figure would leave the screen, and write its slot,
+// which is unused, with the parameter and point words, then the gate, calling the master. The
+// call words stay as writeCalls left them, and the caller's respread makes the slot a site. A
+// tie point is added for each of the master's attachers, at its place (instTies), and listed in
+// the instance's tie list; refused, as a full list is, when the point table cannot take them. A
+// copy being placed (Copy's rows, the last item) has none. Refused too when its texts' copies
+// would pass the texts' budget (the text module's txFits).
+// Exit: AC = 0 added, 1 with the list full, no room for the tie points or past the budget. IO is
+// clobbered. Called via jsp.
+instAdd,
+    local rtn, adGo, adPts, adTie, adFull, adP, adN, adT
+    dap rtn
+    lac i [instCount:012]
+    sad [MAXINST]       // skip unless the list is full
+    jmp adFull
+    lac i [masterArg:4]
+    dac i [txArg:012]
+    lac [NOPOINT]
+    dac i [txArg2:012]
+    jsp i [txFits:012]
+    sza                 // skip if its texts fit the budget
+    jmp adFull
+    dzm adN
+    lac i [lastItem:4]
+    sub [ICOPY]
+    and [0777774]
+    sza i               // skip unless Copy's row, whose copy has no tie points
+    jmp adGo
+    lac i [masterArg:4]
+    add [cpNAtt:5]
+    dac adP
+    lac i adP
+    dac adN
+    add i [pointCount:4]
+    sub [MAXPTS+1]
+    sma                 // skip if the tie points fit
+    jmp adFull
+adGo,
+    lac i [instCount:012]
+    add [iMaster:012]
+    dac adP
+    lac i [masterArg:4]
+    dac i adP
+    lac i [instCount:012]
+    add [iScale:3]
+    dac adP
+    dzm i adP
+    lac i [instCount:012]
+    jda instAt
+
+    // The tie points, the list's words after them NOPOINT as the slot was left.
+    lac i [instCount:012]
+    add [iTie:3]
+    dac adT
+    lac adN
+    sza i               // skip if the master has attachers
+    jmp adTie
+    cma
+    dac adN
+    law 1
+    dac i [cTopo:010]   // the solver's ties change
+adPts,
+    lac i [pointCount:4]
+    dac i adT
+    idx i [pointCount:4]
+    lac adT
+    add [MAXINST]
+    dac adT
+    isp adN             // skip once every attacher has its point
+    jmp adPts
+    lac i [instCount:012]
+    jda instTies
+adTie,
+    lac i [instCount:012]
+    jda instParam
+    lac i [instCount:012]
+    jda instXY
+    lac i [instCount:012]
+    jda instGate
+    idx i [instCount:012]
+    cla
+    jmp rtn
+adFull,
+    law 1
+rtn, jmp .
+adP, 0
+adN, 0
+adT, 0
+    endloc
+
+// Instance i's tie points put at their places. Attacher a's is at the origin plus its master
+// point's offset at the instance's scale, iX + (cpX[k, cpAtt[k, a]] << iScale), likewise in y.
+// Entry: AC = i. Exit: AC = how many it placed. IO is clobbered. Called via jda.
+instTies, 0
+    local rtn, itLoop, itNext, itA, itT, itP, itQ, itS, itK, itN, itC, itV, itOX, itOY
+    dap rtn
+    dzm itC
+    lac instTies
+    add [iX:3]
+    dac itOX
+    lac instTies
+    add [iY:3]
+    dac itOY
+    lac instTies
+    add [iScale:3]
+    dac itT
+    lac i itT
+    add [ieShTab:7]
+    dac itS
+    lac instTies
+    add [iMaster:012]
+    dac itT
+    lac i itT
+    dac itK
+    sal 1s
+    add itK
+    sal 1s              // k * NATT, 6
+    add [cpAtt:5]
+    dac itA
+    lac itK
+    sal CPPSHIFT
+    dac itK             // k * CPPTS
+    lac instTies
+    add [iTie:3]
+    dac itT
+    law i NATT
+    dac itN
+itLoop,
+    lac i itT
+    sad [NOPOINT]       // skip if attacher a has a tie point
+    jmp itNext
+    dac itP
+    idx itC
+    lac i itA
+    add itK
+    add [cpX:5]
+    dac itQ
+    lac i itQ
+    xct i itS
+    add i itOX
+    dac itV
+    lac itP
+    add [pointX:3]
+    dac itQ
+    lac itV
+    dac i itQ
+    lac i itA
+    add itK
+    add [cpY:5]
+    dac itQ
+    lac i itQ
+    xct i itS
+    add i itOY
+    dac itV
+    lac itP
+    add [pointY:3]
+    dac itQ
+    lac itV
+    dac i itQ
+itNext,
+    idx itA
+    lac itT
+    add [MAXINST]
+    dac itT
+    isp itN             // skip once every attacher is looked at
+    jmp itLoop
+    lac itC
+rtn, jmp .
+itA, 0
+itT, 0
+itP, 0
+itQ, 0
+itS, 0
+itK, 0
+itN, 0
+itC, 0
+itV, 0
+itOX, 0
+itOY, 0
+    endloc
+
+// Place mode. Move the last instance's origin to the pseudo pen location, held where its
+// figure would leave the screen; only its point words are written, and its tie points follow
+// it (instTies), nothing being on them yet.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instPlace,
+    local rtn, ipI
+    dap rtn
+    lac i [instCount:012]
+    sza i               // skip if there is an instance
+    jmp rtn
+    sub [1]
+    dac ipI
+    jda instAt
+    lac ipI
+    jda instXY
+    lac ipI
+    jda instTies
+    cla
+rtn, jmp .
+ipI, 0
+    endloc
+
+// Move's pick-up of an instance, carried by its tie point p, or at its origin, dragInst, when p
+// is NOPOINT. The instances fastened to it through a tie point they share, and those fastened to
+// them, are its group (gMem), carried with it
+// rigidly; the points carried are the group's tie points and the start and end of each arc
+// centered on one, marked in ptMark; the lines on them go into the main bank's dragLines, up
+// to MAXDRAG, dragFull set beyond, as arcPick lists a dragged point's. A tie point's handle, the
+// origin less the point, is kept (hdX, hdY), so the point stays under the pen; at the origin
+// it is 0.
+// Entry: AC = p or NOPOINT; dragInst when p is NOPOINT. Exit: AC = dragInst, set from p's
+// instance; NOPOINT when p ties none, and nothing is picked up. IO is clobbered. Called via
+// jda.
+instPick, 0
+    local rtn, pkFind, pkOwn, pkOrg, pkClr, pkGClr, pkWalk, pkInst, pkNextI, pkWalkEnd, \
+        pkArcs, pkArcNx, pkLines, pkLnLp, pkMine, pkOver, pkLnNx, pkDone, pkT, pkU, pkI, \
+        pkChg, pkN, pkFull
+    dap rtn
+    lac instPick
+    sad [NOPOINT]       // skip if picked up by a tie point
+    jmp pkOrg
+    lac [iTie:3]
+    dac pkT
+pkFind,
+    lac i pkT
+    sad instPick        // skip unless it is p
+    jmp pkOwn
+    idx pkT
+    sas [iTie:3+NATT*MAXINST] // skip once every tie is looked at
+    jmp pkFind
+    lac [NOPOINT]
+    jmp rtn
+pkOwn,
+    lac pkT
+    sub [iTie:3]
+    and [MAXINST-1]
+    dac i [dragInst:4]
+    add [iX:3]
+    dac pkT
+    lac instPick
+    add [pointX:3]
+    dac pkU
+    lac i pkT
+    sub i pkU
+    dac hdX
+    lac i [dragInst:4]
+    add [iY:3]
+    dac pkT
+    lac instPick
+    add [pointY:3]
+    dac pkU
+    lac i pkT
+    sub i pkU
+    dac hdY
+    jmp pkClr
+pkOrg,
+    dzm hdX
+    dzm hdY
+
+    // The group is the dragged instance, then any instance with a tie point marked, over again
+    // until a pass adds none, each joining marking its tie points (grJoin).
+pkClr,
+    jsp markClear
+    lac [gMem:7]
+    dac pkT
+    law i MAXINST
+    dac pkN
+pkGClr,
+    dzm i pkT
+    idx pkT
+    isp pkN             // skip once every member's flag is clear
+    jmp pkGClr
+    lac i [dragInst:4]
+    jda grJoin
+pkWalk,
+    dzm pkChg
+    dzm pkI
+pkInst,
+    lac pkI
+    sad i [instCount:012] // skip while instances remain
+    jmp pkWalkEnd
+    add [gMem:7]
+    dac pkT
+    lac i pkT
+    sza                 // skip unless a member already
+    jmp pkNextI
+    lac pkI
+    jda grTied
+    sza i               // skip if one of its tie points is carried
+    jmp pkNextI
+    lac pkI
+    jda grJoin
+    law 1
+    dac pkChg
+pkNextI,
+    idx pkI
+    jmp pkInst
+pkWalkEnd,
+    lac pkChg
+    sza                 // skip once a pass adds none
+    jmp pkWalk
+
+    // An arc's start and end, when its center is carried.
+    dzm pkI
+pkArcs,
+    lac pkI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp pkLines
+    add [arcTC:2]
+    jda ptMarkOf
+    sza i               // skip if its center is carried
+    jmp pkArcNx
+    lac pkI
+    add [arcTS:2]
+    dac pkT
+    lac i pkT
+    jda markOn
+    lac pkI
+    add [arcTE:2]
+    dac pkT
+    lac i pkT
+    jda markOn
+pkArcNx,
+    idx pkI
+    jmp pkArcs
+
+    // The lines on them.
+pkLines,
+    dzm pkN
+    dzm pkFull
+    dzm pkI
+pkLnLp,
+    lac pkI
+    sad i [lineCount:4] // skip while lines remain
+    jmp pkDone
+    add [lineFrom:3]
+    jda ptMarkOf
+    sza                 // skip unless the line starts at a point carried
+    jmp pkMine
+    lac pkI
+    add [lineTo:3]
+    jda ptMarkOf
+    sza i               // skip if the line ends at a point carried
+    jmp pkLnNx
+pkMine,
+    lac pkN
+    sad [MAXDRAG]       // skip unless dragLines is full
+    jmp pkOver
+    add [dragLines:3]
+    dac pkT
+    lac pkI
+    dac i pkT
+    idx pkN
+    jmp pkLnNx
+pkOver,
+    law 1
+    dac pkFull
+pkLnNx,
+    idx pkI
+    jmp pkLnLp
+pkDone,
+    lac pkN
+    dac i [dragN:4]
+    lac pkFull
+    dac i [dragFull:4]
+    lac i [dragInst:4]
+rtn, jmp .
+pkT, 0
+pkU, 0
+pkI, 0
+pkChg, 0
+pkN, 0
+pkFull, 0
+    endloc
+
+// Every point's mark in ptMark cleared.
+// AC is clobbered, IO preserved. Called via jsp.
+markClear,
+    local rtn, mcLoop, mcP
+    dap rtn
+    lac [ptMark:3]
+    dac mcP
+mcLoop,
+    dzm i mcP
+    idx mcP
+    sas [ptMark:3+MAXPTS] // skip once every mark is clear
+    jmp mcLoop
+rtn, jmp .
+mcP, 0
+    endloc
+
+// Point p marked in ptMark.
+// Entry: AC = p. AC is clobbered, IO preserved. Called via jda.
+markOn, 0
+    dap moRtn
+    lac markOn
+    add [ptMark:3]
+    dac markOn
+    law 1
+    dac i markOn
+moRtn, jmp .
+
+// The mark of the point whose index is the word at full address a.
+// Entry: AC = a. Exit: AC = the mark, 0 for none. IO is preserved. Called via jda.
+ptMarkOf, 0
+    dap pfRtn
+    lac i ptMarkOf
+    add [ptMark:3]
+    dac ptMarkOf
+    lac i ptMarkOf
+pfRtn, jmp .
+
+// Instance i joins the group, its flag in gMem set and its tie points marked.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+grJoin, 0
+    local rtn, gjLoop, gjT, gjN
+    dap rtn
+    lac grJoin
+    add [gMem:7]
+    dac gjT
+    law 1
+    dac i gjT
+    lac grJoin
+    add [iTie:3]
+    dac gjT
+    law i NATT
+    dac gjN
+gjLoop,
+    lac i gjT
+    sas [NOPOINT]       // skip if attacher a has no tie point
+    jda markOn
+    lac gjT
+    add [MAXINST]
+    dac gjT
+    isp gjN             // skip once every attacher is looked at
+    jmp gjLoop
+rtn, jmp .
+gjT, 0
+gjN, 0
+    endloc
+
+// Whether a tie point of instance i is marked.
+// Entry: AC = i. Exit: AC = 1 if one is, 0 if none. IO is clobbered. Called via jda.
+grTied, 0
+    local rtn, gtLoop, gtNext, gtYes, gtT, gtN
+    dap rtn
+    lac grTied
+    add [iTie:3]
+    dac gtT
+    law i NATT
+    dac gtN
+gtLoop,
+    lac i gtT
+    sad [NOPOINT]       // skip if attacher a has a tie point
+    jmp gtNext
+    lac gtT
+    jda ptMarkOf
+    sza                 // skip unless it is marked
+    jmp gtYes
+gtNext,
+    lac gtT
+    add [MAXINST]
+    dac gtT
+    isp gtN             // skip once every attacher is looked at
+    jmp gtLoop
+    cla
+    jmp rtn
+gtYes,
+    law 1
+rtn, jmp .
+gtT, 0
+gtN, 0
+    endloc
+
+// Move's drag of the group instPick made. The step brings the dragged instance's tie point to
+// the pseudo pen location, or its origin there (the handle, hdX and hdY), held on each axis so
+// that every member's figure stays on the screen and every point carried on it; then each
+// member's origin and slot, and each point carried, is moved by it. The step is kept (cvDX,
+// cvDY) for instBack. The caller rewrites the lines and arcs carried.
+// Exit: AC = 0 moved, 1 if the step held is nothing. IO is clobbered. Called via jsp.
+instMove,
+    local rtn, mvMem, mvMemNx, mvPts, mvPt, mvPtNx, mvGo, mvStep, mvI, mvT
+    dap rtn
+    lac i [dragInst:4]
+    add [iX:3]
+    dac mvT
+    lac i [penX:4]
+    add hdX
+    sub i mvT
+    dac cvDX
+    lac i [dragInst:4]
+    add [iY:3]
+    dac mvT
+    lac i [penY:4]
+    add hdY
+    sub i mvT
+    dac cvDY
+
+    // Each member's figure's box on the screen, and each point carried, held inside it.
+    dzm mvI
+mvMem,
+    lac mvI
+    sad i [instCount:012] // skip while instances remain
+    jmp mvPts
+    add [gMem:7]
+    dac mvT
+    lac i mvT
+    sza i               // skip if a member
+    jmp mvMemNx
+    lac mvI
+    jda instBox
+    lac ibX0
+    dac mhLo
+    lac ibX1
+    dac mhHi
+    lac ibY0
+    dac myLo
+    lac ibY1
+    dac myHi
+    jsp mvHold
+mvMemNx,
+    idx mvI
+    jmp mvMem
+mvPts,
+    dzm mvI
+mvPt,
+    lac mvI
+    sad i [pointCount:4] // skip while points remain
+    jmp mvGo
+    add [ptMark:3]
+    dac mvT
+    lac i mvT
+    sza i               // skip if carried
+    jmp mvPtNx
+    lac mvI
+    add [pointX:3]
+    dac mvT
+    lac i mvT
+    dac mhLo
+    dac mhHi
+    lac mvI
+    add [pointY:3]
+    dac mvT
+    lac i mvT
+    dac myLo
+    dac myHi
+    jsp mvHold
+mvPtNx,
+    idx mvI
+    jmp mvPt
+mvGo,
+    lac cvDX
+    ior cvDY
+    sza                 // skip unless there is a step
+    jmp mvStep
+    law 1
+    jmp rtn
+mvStep,
+    jsp cvApply
+    cla
+rtn, jmp .
+mvI, 0
+mvT, 0
+    endloc
+
+// The step (cvDX, cvDY) held so that x from mhLo to mhHi, and y from myLo to myHi, both moved by
+// it, stay on the screen, 0 to 1023. Each was there before the step, so a step held to them all
+// is held to each.
+// Entry: mhLo, mhHi, myLo, myHi. AC and IO are clobbered. Called via jsp.
+mvHold,
+    local rtn
+    dap rtn
+    lac cvDX
+    jda mhAxis
+    dac cvDX
+    lac myLo
+    dac mhLo
+    lac myHi
+    dac mhHi
+    lac cvDY
+    jda mhAxis
+    dac cvDY
+rtn, jmp .
+    endloc
+
+// A step d held so that mhLo + d is at least 0 and mhHi + d at most 1023.
+// Entry: AC = d; mhLo, mhHi. Exit: AC = d held. IO is preserved. Called via jda.
+mhAxis, 0
+    local rtn, maHi, maOk
+    dap rtn
+    lac mhLo
+    add mhAxis
+    sma                 // skip if below 0
+    jmp maHi
+    cla
+    sub mhLo
+    jmp rtn
+maHi,
+    lac [0d1023]
+    sub mhHi
+    sub mhAxis
+    sma                 // skip if past 1023
+    jmp maOk
+    lac [0d1023]
+    sub mhHi
+    jmp rtn
+maOk,
+    lac mhAxis
+rtn, jmp .
+    endloc
+
+// Move the group by the step (cvDX, cvDY), each member's origin and its slot's point words, and
+// each point carried (ptMark).
+// AC and IO are clobbered. Called via jsp.
+cvApply,
+    local rtn, cvMem, cvMemNx, cvPts, cvPt, cvPtNx, cvI, cvT
+    dap rtn
+    dzm cvI
+cvMem,
+    lac cvI
+    sad i [instCount:012] // skip while instances remain
+    jmp cvPts
+    add [gMem:7]
+    dac cvT
+    lac i cvT
+    sza i               // skip if a member
+    jmp cvMemNx
+    lac cvI
+    add [iX:3]
+    dac cvT
+    lac i cvT
+    add cvDX
+    dac i cvT
+    lac cvI
+    add [iY:3]
+    dac cvT
+    lac i cvT
+    add cvDY
+    dac i cvT
+    lac cvI
+    jda instXY
+cvMemNx,
+    idx cvI
+    jmp cvMem
+cvPts,
+    dzm cvI
+cvPt,
+    lac cvI
+    sad i [pointCount:4] // skip while points remain
+    jmp rtn
+    add [ptMark:3]
+    dac cvT
+    lac i cvT
+    sza i               // skip if carried
+    jmp cvPtNx
+    lac cvI
+    add [pointX:3]
+    dac cvT
+    lac i cvT
+    add cvDX
+    dac i cvT
+    lac cvI
+    add [pointY:3]
+    dac cvT
+    lac i cvT
+    add cvDY
+    dac i cvT
+cvPtNx,
+    idx cvI
+    jmp cvPt
+rtn, jmp .
+cvI, 0
+cvT, 0
+    endloc
+
+// The last step taken back, when an arc carried could not follow it (the main bank's instDrag).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instBack,
+    local rtn
+    dap rtn
+    cla                 // negated so, not by cma, which makes -0 of a step of 0
+    sub cvDX
+    dac cvDX
+    cla
+    sub cvDY
+    dac cvDY
+    jsp cvApply
+    cla
+rtn, jmp .
+    endloc
+
+// After the solver's publish or its revert (the main bank's conShow), each instance whose origin
+// is the solver's (FIN) has its slot's point words written from its origin.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instSync,
+    local rtn, syLoop, syNext, syDone, syI, syT
+    dap rtn
+    dzm syI
+syLoop,
+    lac syI
+    sad i [instCount:012] // skip while instances remain
+    jmp syDone
+    add [MAXPTS]
+    add [cFlag:011]
+    dac syT
+    lac i syT
+    and [FIN]
+    sza i               // skip if the solver's
+    jmp syNext
+    lac syI
+    jda instXY
+syNext,
+    idx syI
+    jmp syLoop
+syDone,
+    cla
+rtn, jmp .
+syI, 0
+syT, 0
+    endloc
+
+// Instance i's origin at the pseudo pen location (penX, penY), held on each axis where its
+// figure, its master's box at its scale, would leave the screen (instClamp). The copy being
+// placed (copyInst) is held instead where its parts' box, its figure's and its points', arc
+// centers included, would leave the canvas, where the target can reach and every point lies,
+// so its parts are points like any other once it is taken apart; and a copy whose master has
+// attachers is carried by its last designated, at the pseudo pen location rather than its
+// origin (iaCarry).
+// Entry: AC = i. Exit: its iX and iY. AC and IO are clobbered. Called via jda.
+instAt, 0
+    local rtn, iaX, iaY, iaP, iaM, iaV
+    dap rtn
+    lac instAt
+    add [iMaster:012]
+    dac iaP
+    lac i iaP
+    dac iaM
+    lac instAt
+    add [iScale:3]
+    dac iaP
+    lac i iaP
+    dac icS
+    dzm icMin
+    lac [0d1023]
+    dac icMax
+    dzm iaOX
+    dzm iaOY
+    lac instAt
+    sas i [copyInst:4]        // skip if it is the copy being placed
+    jmp iaX
+    lac iaM
+    jda iaCarry
+    lac iaM
+    add [CBOXOFF]
+    dac iaM
+    lac [TRKXMIN]
+    dac icMin
+    lac [TRKXMAX]
+    dac icMax
+iaX,
+    lac iaM
+    add [mMinX:2]
+    dac iaP
+    lac i iaP
+    dac icLo
+    lac iaM
+    add [mMaxX:2]
+    dac iaP
+    lac i iaP
+    dac icHi
+    lac i [penX:4]
+    sub iaOX
+    jda instClamp
+    dac iaV
+    lac instAt
+    add [iX:3]
+    dac iaP
+    lac iaV
+    dac i iaP
+    lac instAt
+    sas i [copyInst:4]        // skip if it is the copy being placed
+    jmp iaY
+    lac [TRKYMIN]
+    dac icMin
+    lac [TRKYMAX]
+    dac icMax
+iaY,
+    lac iaM
+    add [mMinY:2]
+    dac iaP
+    lac i iaP
+    dac icLo
+    lac iaM
+    add [mMaxY:2]
+    dac iaP
+    lac i iaP
+    dac icHi
+    lac i [penY:4]
+    sub iaOY
+    jda instClamp
+    dac iaV
+    lac instAt
+    add [iY:3]
+    dac iaP
+    lac iaV
+    dac i iaP
+rtn, jmp .
+iaP, 0
+iaM, 0
+iaV, 0
+    endloc
+
+// A copy of master k carried by its last designated attacher, if it has any. That attacher's
+// master point goes in the main bank's copyAtt, and its offset from the origin in iaOX, iaOY (a
+// copy is at x1); otherwise copyAtt is NOPOINT and the offsets are left 0.
+// Entry: AC = k. AC and IO are clobbered. Called via jda.
+iaCarry, 0
+    local rtn, icrP, icrJ
+    dap rtn
+    lac [NOPOINT]
+    dac i [copyAtt:4]
+    lac iaCarry
+    add [cpNAtt:5]
+    dac icrP
+    lac i icrP
+    sza i               // skip if the master has attachers
+    jmp rtn
+    sub [1]
+    dac icrJ
+    lac iaCarry
+    sal 1s
+    add iaCarry
+    sal 1s              // k * NATT, 6
+    add icrJ
+    add [cpAtt:5]
+    dac icrP
+    lac i icrP
+    dac i [copyAtt:4]
+    dac icrJ
+    lac iaCarry
+    sal CPPSHIFT
+    add icrJ
+    dac icrJ            // its word in the master's part of the store
+    add [cpX:5]
+    dac icrP
+    lac i icrP
+    dac iaOX
+    lac icrJ
+    add [cpY:5]
+    dac icrP
+    lac i icrP
+    dac iaOY
+rtn, jmp .
+icrP, 0
+icrJ, 0
+    endloc
+
+// A coordinate of an instance's origin, held where its figure would leave the screen. It is at
+// least min - (lo << s) and at most max - (hi << s), lo and hi its master's box on the axis
+// relative to the origin, s its scale, min and max the screen's edges, or the canvas's for a copy.
+// Entry: AC = the coordinate; icLo, icHi, icS, icMin, icMax. Exit: AC = it held; icLo and icHi
+// shifted. IO is preserved. Called via jda.
+instClamp, 0
+    local rtn, icShift, icDone, icHigh, icOk, icN, icA
+    dap rtn
+    lac icS
+    dac icN
+icShift,
+    lac icN
+    sza i               // skip while the scale's shifts remain
+    jmp icDone
+    sub [1]
+    dac icN
+    lac icLo
+    sal 1s
+    dac icLo
+    lac icHi
+    sal 1s
+    dac icHi
+    jmp icShift
+icDone,
+    lac icMin
+    sub icLo
+    dac icA             // the lowest origin
+    lac instClamp
+    sub icA
+    sma                 // skip if below it
+    jmp icHigh
+    lac icA
+    jmp rtn
+icHigh,
+    lac icMax
+    sub icHi
+    dac icA             // the highest origin
+    sub instClamp
+    sma                 // skip if the coordinate is above it
+    jmp icOk
+    lac icA
+    jmp rtn
+icOk,
+    lac instClamp
+rtn, jmp .
+icN, 0
+icA, 0
+    endloc
+
+// Write instance i's origin into its slot's point words (ixWord) at x1; magnified, the whole
+// slot through the view (instView).
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instXY, 0
+    local rtn, ixX1
+    dap rtn
+    lac i [vwS:014]
+    sza i               // skip unless at x1
+    jmp ixX1
+    lac instXY
+    jda instView
+    jmp rtn
+ixX1,
+    lac instXY
+    jda ixWord
+rtn, jmp .
+    endloc
+
+// Write instance i's parameter word (ipWord) at x1; magnified, the whole slot through the view
+// (instView).
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instParam, 0
+    local rtn, ipX1
+    dap rtn
+    lac i [vwS:014]
+    sza i               // skip unless at x1
+    jmp ipX1
+    lac instParam
+    jda instView
+    jmp rtn
+ipX1,
+    lac instParam
+    jda ipWord
+rtn, jmp .
+    endloc
+
+// Write instance i's gate (igWord) at x1; magnified, the whole slot through the view
+// (instView).
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instGate, 0
+    local rtn, igX1
+    dap rtn
+    lac i [vwS:014]
+    sza i               // skip unless at x1
+    jmp igX1
+    lac instGate
+    jda instView
+    jmp rtn
+igX1,
+    lac instGate
+    jda igWord
+rtn, jmp .
+    endloc
+
+// Instance i's origin into its slot's point words, y then x. Each is a whole word, and the
+// origin is held on each axis separately, so a frame drawn between the two writes still keeps
+// the figure on the screen.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+ixWord, 0
+    local rtn, ixA, ixP
+    dap rtn
+    lac ixWord
+    jda instSlot
+    add [1]
+    dac ixA
+    lac ixWord
+    add [iY:3]
+    dac ixP
+    lac i ixP
+    ior [y(0) next(point)]
+    dac i ixA
+    idx ixA
+    lac ixWord
+    add [iX:3]
+    dac ixP
+    lac i ixP
+    ior [x(0) next(subroutine)]
+    dac i ixA
+rtn, jmp .
+ixA, 0
+ixP, 0
+    endloc
+
+// Instance i's parameter word, its scale plus ipAdd, at LITINTENSITY while it is the one lit,
+// at INSTINTENSITY otherwise.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+ipWord, 0
+    local rtn, ipDim, ipHave, ipA, ipW
+    dap rtn
+    lac ipWord
+    add [iScale:3]
+    dac ipA
+    lac i ipA
+    add ipAdd
+    sal 4s
+    dac ipW
+    lac ipWord
+    sas litInst         // skip if it is the one lit
+    jmp ipDim
+    lac [scale(0) intensity(LITINTENSITY) lpoff next(point)]
+    jmp ipHave
+ipDim,
+    lac [scale(0) intensity(INSTINTENSITY) lpoff next(point)]
+ipHave,
+    ior ipW
+    dac ipW
+    lac ipWord
+    jda instSlot
+    dac ipA
+    lac ipW
+    dac i ipA
+rtn, jmp .
+ipA, 0
+ipW, 0
+    endloc
+
+// Instance i's gate, calling its master with save.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+igWord, 0
+    local rtn, igA, igP
+    dap rtn
+    lac igWord
+    jda instSlot
+    add [INSTGATE]
+    dac igA
+    lac igWord
+    add [iMaster:012]
+    dac igP
+    lac i igP
+    sal 7s              // k * MWORDS, MWORDS being 128
+    add [masters:0]
+    ior [save next(vector)]
+    dac i igA
+rtn, jmp .
+igA, 0
+igP, 0
+    endloc
+
+// Instance i's slot through the magnified view. It is shown when its figure, its master's box at
+// its scale, lies wholly on the screen and its scale plus the view's is x8 or less (the view
+// module's vwBox); hidden otherwise, and marked so in iHid, which the lock and the texts' list
+// read. Shown, it gets the parameter word at its scale plus the view's, the origin's words
+// through the view, then the gate calling the master. Hidden, it gets the gate first, a jump to
+// the word after it in place of the master's save, so the master is not called, then the
+// parameter word at its scale and the origin's words masked to the screen, harmless in point
+// mode. A move or the solver changes the origin
+// at one scale, Size the scale at one origin, and the callers that change both close the gate
+// first (instRemove, a dismember's Undo, instViewAll), so no frame draws the figure off the
+// screen.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instView, 0
+    local rtn, ivShow, ivXY, ivP, ivA, ivH
+    dap rtn
+    lac instView
+    jda instBox         // its box on the page and its scale
+    lac ibX0
+    dac i [vbX0:014]
+    lac ibX1
+    dac i [vbX1:014]
+    lac ibY0
+    dac i [vbY0:014]
+    lac ibY1
+    dac i [vbY1:014]
+    lac ibS
+    dac i [vbS:014]
+    lac instView
+    add [iX:3]
+    dac ivP
+    lac i ivP
+    dac i [vbOX:014]
+    lac instView
+    add [iY:3]
+    dac ivP
+    lac i ivP
+    dac i [vbOY:014]
+    jsp i [vwBox:014]
+    dac ivH
+    lac instView
+    add [iHid:3]
+    dac ivP
+    lac ivH
+    dac i ivP
+    lac instView
+    jda instSlot
+    dac ivA
+    lac ivH
+    sza i               // skip if hidden
+    jmp ivShow
+    lac ivA
+    add [INSTGATE]
+    dac ivP
+    add [1]
+    ior [jump next(parameter)]
+    dac i ivP
+    lac instView
+    jda ipWord          // its scale, which the field holds
+    jmp ivXY
+ivShow,
+    lac i [vwS:014]
+    dac ipAdd
+    lac instView
+    jda ipWord
+    dzm ipAdd
+ivXY,
+    idx ivA
+    lac i [vbOY:014]
+    ior [y(0) next(point)]
+    dac i ivA
+    idx ivA
+    lac i [vbOX:014]
+    ior [x(0) next(subroutine)]
+    dac i ivA
+    lac ivH
+    sza                 // skip if shown
+    jmp rtn
+    lac instView
+    jda igWord
+rtn, jmp .
+ivP, 0
+ivA, 0
+ivH, 0
+    endloc
+
+// Every instance through a new view, for the view module's vwEntry (IEVIEW). Each slot's gate is
+// closed first, since a new scale in its parameter word with its old origin
+// could carry the figure off the screen, then its words written again, at x1 or through the
+// view. instEntry asks for the texts' list again (txDirty), their places moving with the view.
+// AC and IO are clobbered. Called via jsp.
+instViewAll,
+    local rtn, avLoop, avI, avG
+    dap rtn
+    dzm avI
+avLoop,
+    lac avI
+    sad i [instCount:012] // skip while instances remain
+    jmp rtn
+    jda instSlot
+    add [INSTGATE]
+    dac avG
+    add [1]
+    ior [jump next(parameter)]
+    dac i avG
+    lac avI
+    jda instParam
+    lac avI
+    jda instXY
+    lac avI
+    jda instGate
+    idx avI
+    jmp avLoop
+rtn, jmp .
+avI, 0
+avG, 0
+    endloc
+
+// Light instance i, dimming the one lit before; NOPOINT dims it and lights none. Only their
+// parameter words are written. TXINST, a text, is the text module's to light (txShine), and dims
+// the instance lit.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instShine, 0
+    local rtn, shOld
+    dap rtn
+    lac instShine
+    dac i [txArg:012]
+    jsp i [txShine:012]
+    dac instShine
+    sad litInst         // skip unless it is lit already
+    jmp rtn
+    lac litInst
+    dac shOld
+    lac instShine
+    dac litInst
+    lac shOld
+    sas [NOPOINT]       // skip if none was lit
+    jda instParam
+    lac litInst
+    sas [NOPOINT]       // skip if none is to be lit
+    jda instParam
+rtn, jmp .
+shOld, 0
+    endloc
+
+// The instance whose figure's box, at its scale, holds the target's center (hitX, hitY), the
+// nearest origin winning between them on the larger axis distance; Horv and the constraint mode
+// pass over instances, the constraint mode for a number's type taking digits alone. It wins
+// over the point, line or arc locked already only when its origin, by that distance, is nearer
+// than lockD, that one's distance as placeLock weighs them. So an instance's middle takes it,
+// and what is drawn beside its box's edge wins there. The winner is lit and any other dimmed
+// (instShine). An instance the view hides (iHid) is passed over.
+// A text is weighed against the instance by the text module's txLock, by its box's
+// center as an instance by its origin, and wins as TXINST; Text and Number modes pass over
+// instances, and a text Move carries always wins. The text module keeps which text (txPen).
+// Entry: lockD. Exit: AC = penInst = the instance, TXINST for a text, NOPOINT when none; with
+// one, penIdx and lockLine NOPOINT, and penX, penY, lockX and lockY the target's center. IO is
+// clobbered. Called via jsp.
+instLock,
+    local rtn, ilLoop, ilCmp, ilNext, ilDone, ilAgainst, ilCarry, ilWin, ilLose, ilSet, ilI, \
+        ilBest, ilBO, ilO, ilT, ilP, ilCons, ilIn
+    dap rtn
+    lac [NOPOINT]
+    dac ilBest
+    lac [0377777]
+    dac ilBO
+    lac i [mode:4]
+    sad [MHORV]         // skip unless Horv mode
+    jmp ilSet
+    sad [MCONS]         // skip unless the constraint mode
+    jmp ilCons
+    sad [MTEXT]         // skip unless Text mode, which locks onto texts only
+    jmp ilDone
+    sad [MNUMBER]       // skip unless Number mode, which locks onto digits only
+    jmp ilDone
+    dzm ilI
+ilLoop,
+    lac ilI
+    sad i [instCount:012] // skip while instances remain
+    jmp ilDone
+    lac i [vwS:014]
+    sza i               // skip unless at x1, where none is hidden
+    jmp ilIn
+    lac ilI
+    add [iHid:3]
+    dac ilP
+    lac i ilP
+    sza                 // skip unless hidden by the view, passed over
+    jmp ilNext
+
+    // Inside the box on both axes.
+ilIn,
+    lac ilI
+    jda instBox
+    lac i [hitX:4]
+    sub ibX0
+    spa                 // skip unless left of the box
+    jmp ilNext
+    lac ibX1
+    sub i [hitX:4]
+    spa                 // skip unless right of the box
+    jmp ilNext
+    lac i [hitY:4]
+    sub ibY0
+    spa                 // skip unless below the box
+    jmp ilNext
+    lac ibY1
+    sub i [hitY:4]
+    spa                 // skip unless above the box
+    jmp ilNext
+
+    // The origin's distance, the larger axis's, nearer than the best so far.
+    lac ilI
+    add [iX:3]
+    dac ilP
+    lac i [hitX:4]
+    sub i ilP
+    jda ieAbs
+    dac ilO
+    lac ilI
+    add [iY:3]
+    dac ilP
+    lac i [hitY:4]
+    sub i ilP
+    jda ieAbs
+    dac ilT
+    sub ilO
+    spa                 // skip unless the y distance is the smaller
+    jmp ilCmp
+    lac ilT
+    dac ilO
+ilCmp,
+    lac ilO
+    sub ilBO
+    sma                 // skip if nearer than the best so far
+    jmp ilNext
+    lac ilO
+    dac ilBO
+    lac ilI
+    dac ilBest
+ilNext,
+    idx ilI
+    jmp ilLoop
+
+    // Against the texts, then what is locked already.
+ilDone,
+    lac ilBO
+    dac i [txLockD:012]
+    jsp i [txLock:012]
+    sad [TXCARRY]       // skip unless Move carries a text
+    jmp ilCarry
+    sas [TXINST]        // skip if a text is nearer than the instance
+    jmp ilAgainst
+    dac ilBest
+    lac i [txLockD:012]
+    dac ilBO
+ilAgainst,
+    lac ilBest
+    sad [NOPOINT]       // skip if an instance or a text holds the target's center
+    jmp ilSet
+    lac ilBO
+    sub i [lockD:4]
+    sma                 // skip if its origin is nearer than what is locked
+    jmp ilLose
+ilWin,
+    lac [NOPOINT]
+    dac i [penIdx:4]
+    dac i [lockLine:4]
+    lac i [hitX:4]
+    dac i [penX:4]
+    dac i [lockX:4]
+    lac i [hitY:4]
+    dac i [penY:4]
+    dac i [lockY:4]
+    jmp ilSet
+ilCarry,
+    lac [TXINST]
+    dac ilBest
+    jmp ilWin
+
+    // The constraint mode locks onto lines as Horv does, but for a number's type onto digits
+    // alone, as Number mode does (consLock calls only then).
+ilCons,
+    lac i [consType:4]
+    and [CTNUM]
+    sza i               // skip if a number's type
+    jmp ilSet
+    jmp ilDone
+ilLose,
+    lac [NOPOINT]
+    dac ilBest
+ilSet,
+    lac ilBest
+    dac i [penInst:4]
+    jda instShine
+    lac ilBest
+rtn, jmp .
+ilI, 0
+ilBest, 0
+ilBO, 0
+ilO, 0
+ilT, 0
+ilP, 0
+    endloc
+
+// Instance i's figure's box on the screen, its master's box about the origin, at the
+// instance's scale, from its origin.
+// Entry: AC = i. Exit: ibX0, ibX1, ibY0, ibY1. AC and IO are clobbered. Called via jda.
+instBox, 0
+    local rtn, ibP, ibM, ibO
+    dap rtn
+    lac instBox
+    add [iScale:3]
+    dac ibP
+    lac i ibP
+    dac ibS
+    add [ieShTab:7]
+    dac ibSh
+    lac instBox
+    add [iMaster:012]
+    dac ibP
+    lac i ibP
+    dac ibM
+    lac instBox
+    add [iX:3]
+    dac ibP
+    lac i ibP
+    dac ibO
+    lac ibM
+    add [mMinX:2]
+    jda ibVal
+    add ibO
+    dac ibX0
+    lac ibM
+    add [mMaxX:2]
+    jda ibVal
+    add ibO
+    dac ibX1
+    lac instBox
+    add [iY:3]
+    dac ibP
+    lac i ibP
+    dac ibO
+    lac ibM
+    add [mMinY:2]
+    jda ibVal
+    add ibO
+    dac ibY0
+    lac ibM
+    add [mMaxY:2]
+    jda ibVal
+    add ibO
+    dac ibY1
+rtn, jmp .
+ibP, 0
+ibM, 0
+ibO, 0
+    endloc
+
+// A word of the master directory at the scale ibS, shifted left ibS places by ieShTab's entry
+// for it, whose full address is ibSh.
+// Entry: AC = its full address; ibSh. Exit: AC = the value. IO is preserved. Called via jda.
+ibVal, 0
+    dap ivRtn
+    lac i ibVal
+    xct i ibSh
+ivRtn, jmp .
+
+// For Size, set the instance the pseudo pen location locks onto, penInst, to the scale sizeArg,
+// refused where its figure would then leave the screen about its origin, since the edge
+// violation would end the frame there. Only its parameter word is written, and its tie points go
+// to their places at the new scale (instTies); with any, they are marked in ptMark for the main
+// bank's arcCarry of the arcs on them, which may yet take the change back (instSzBack), the
+// whole drawing list is rewritten, for the lines on them, and the solver takes up the change,
+// the instances fastened to it following.
+// A text, penInst TXINST, is the text module's to size (txSize), set or refused.
+// Exit: AC = 0 set, 1 refused, 2 with no instance locked, 3 set with its tie points moved. IO is
+// clobbered. Called via jsp.
+instSize,
+    local rtn, szOut, szNone, szText, szI, szP, szOld
+    dap rtn
+    lac i [penInst:4]
+    sad [NOPOINT]       // skip if an instance locks
+    jmp szNone
+    sad [TXINST]        // skip unless a text
+    jmp szText
+    dac szI
+    add [iScale:3]
+    dac szP
+    lac i szP
+    dac szOld
+    lac i [sizeArg:4]
+    dac i szP
+    lac szI
+    jda instBox
+    lac ibX0
+    spa                 // skip unless off the left edge
+    jmp szOut
+    lac ibY0
+    spa                 // skip unless off the bottom
+    jmp szOut
+    lac [0d1023]
+    sub ibX1
+    spa                 // skip unless off the right edge
+    jmp szOut
+    lac [0d1023]
+    sub ibY1
+    spa                 // skip unless off the top
+    jmp szOut
+    lac szI
+    jda instParam
+    lac szI
+    jda instTies
+    sza i               // skip if it has tie points
+    jmp rtn
+    lac szI
+    dac sbI
+    lac szOld
+    dac sbOld
+    dzm sbChg
+    jsp markClear
+    lac szI
+    jda grJoin          // its tie points marked; gMem is set afresh at every pick
+    law 1
+    dac i [dirty:4]
+    dac i [cTopo:010]
+    dac i [conWake:4]
+    law 3
+    jmp rtn
+szOut,
+    lac szOld
+    dac i szP
+    law 1
+    jmp rtn
+szNone,
+    law 2
+    jmp rtn
+szText,
+    jsp i [txSize:012]
+rtn, jmp .
+szI, 0
+szP, 0
+szOld, 0
+    endloc
+
+// Size or a change taken back, when an arc on a tie point it moved could not follow (the main
+// bank's sizeLost and changeLost). After a Size, the instance's scale before it is put back (sbI,
+// sbOld, which instSize keeps), and its tie points at their places at that scale; after a change
+// that moved tie points (sbChg), its master before (instTo, which keeps them), the origin and the
+// tie points going back with it. Nothing of the arcs was written.
+// Exit: AC = 1, refused. IO is clobbered. Called via jsp.
+instSzBack,
+    local rtn, sbTo, sbP
+    dap rtn
+    lac sbChg
+    sza                 // skip unless a change moved the tie points
+    jmp sbTo
+    lac sbI
+    add [iScale:3]
+    dac sbP
+    lac sbOld
+    dac i sbP
+    lac sbI
+    jda instParam
+    lac sbI
+    jda instTies
+    law 1
+    jmp rtn
+sbTo,
+    lac sbOld
+    dac toK
+    law 1
+    dac toMv
+    lac sbI
+    jda instTo
+    law 1
+rtn, jmp .
+sbP, 0
+    endloc
+
+// The instance Size or a change last set with tie points moved, and its scale or master before,
+// for instSzBack; sbChg is set for a change.
+sbI, 0
+sbOld, 0
+sbChg, 0
+
+// Change mode's lift (the main bank's changeLost). The instance the pseudo pen location locks
+// onto, penInst, is given master sizeArg (instTo), its tie points moved if the master's
+// attachers lie elsewhere; or, for the Cycle row (sizeArg CYCLEROW), started cycling, or a
+// cycling one stopped where it stands. The first to start sets the steps' clock and the cycle's
+// position from its master (cyFrom), so its first step comes its master's dwell later. A change
+// or a start that would pass the texts' budget is refused (the text module's txFits, a cycle
+// costed at its largest master).
+// Exit: AC = 0 done, 1 refused, 2 with no instance locked, 3 done with its tie points moved. IO
+// is clobbered. Called via jsp.
+instChange,
+    local rtn, chCyc, chOne, chStop, chNone, chI, chP
+    dap rtn
+    lac i [penInst:4]
+    sad [NOPOINT]       // skip if an instance locks
+    jmp chNone
+    dac chI
+    dac i [txArg2:012]
+    lac i [sizeArg:4]
+    sad [CYCLEROW]      // skip unless the Cycle row
+    jmp chCyc
+    dac i [txArg:012]
+    jsp i [txFits:012]
+    sza                 // skip if its texts fit the budget
+    jmp rtn
+    lac i [sizeArg:4]
+    dac toK
+    law 1
+    dac toMv
+    lac chI
+    jda instTo
+    jmp rtn
+chCyc,
+    lac chI
+    add [iCyc:3]
+    dac chP
+    lac i chP
+    sza                 // skip unless it cycles
+    jmp chStop
+    lac [NMASTER]
+    dac i [txArg:012]
+    jsp i [txFits:012]
+    sza                 // skip if its texts fit the budget
+    jmp rtn
+    law 1
+    dac i chP
+    lac i [cycN:4]
+    sza                 // skip if none cycles yet
+    jmp chOne
+    lac i [now:4]
+    dac cycAt
+    lac chI
+    jda cyFrom
+chOne,
+    idx i [cycN:4]
+    cla
+    jmp rtn
+chStop,
+    dzm i chP
+    lac i [cycN:4]
+    sub [1]
+    dac i [cycN:4]
+    cla
+    jmp rtn
+chNone,
+    law 2
+rtn, jmp .
+chI, 0
+chP, 0
+    endloc
+
+// The cycle's position as instance i starts it, none cycling before. It is the first entry of the
+// sequence that is i's master, or, with none, the last entry, so that the first step takes the
+// first; with no sequence, the master itself. The step lasts the master's dwell.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+cyFrom, 0
+    local rtn, cfLoop, cfK, cfP
+    dap rtn
+    lac cyFrom
+    add [iMaster:012]
+    dac cfP
+    lac i cfP
+    dac cfK
+    dac cyPos
+    add [cyDw:7]
+    dac cfP
+    lac i cfP
+    dac cyDur
+    lac cySqN
+    sza i               // skip if a sequence is typed
+    jmp rtn
+    dzm cyPos
+cfLoop,
+    lac cyPos
+    add [cySq:7]
+    dac cfP
+    lac i cfP
+    sad cfK             // skip unless the master's entry
+    jmp rtn
+    idx cyPos
+    sas cySqN           // skip once every entry is looked at
+    jmp cfLoop
+    law i 1
+    add cySqN
+    dac cyPos
+rtn, jmp .
+cfK, 0
+cfP, 0
+    endloc
+
+// The cycles' step, from the main loop while an instance cycles. Once the step's dwell (cyDur)
+// has passed on the clock, the position moves to the next entry of the sequence, M1 to M4 with
+// none, that some cycling instance can take, and each cycling instance takes that master
+// (instTo) or stays as it is; the step lasts that master's dwell. So every cycling instance
+// steps together. A step never moves a tie point; a master whose attachers lie elsewhere is
+// refused. It goes on while an instance is carried, a carried one's
+// handle following its origin (instTo). The texts' list is written again only at a step
+// (txDirty), not on every pass that waits for one.
+// Exit: AC is clobbered. IO is clobbered. Called via jsp.
+instCycle,
+    local rtn, cyDue, cyAdv, cyAt, cyImp, cyGot, cyLoop, cyNext, cyEnd, cyLen, cyI, cyP, cyK, \
+        cyD, cyN, cyTk
+    dap rtn
+    lac i [now:4]
+    sub cycAt
+    sma                 // skip if the clock wrapped since the last step
+    jmp cyDue
+    add [CLOCKWRAP]
+cyDue,
+    sub cyDur
+    spa                 // skip once the step's dwell has passed
+    jmp rtn
+    law 1
+    dac i [txDirty:012]
+    lac i [now:4]
+    dac cycAt
+    dzm toMv
+    lac cySqN
+    sza i               // skip if a sequence is typed
+    law NMASTER
+    dac cyN             // the entries
+    cma
+    dac cyD
+cyAdv,
+    idx cyPos
+    sub cyN
+    spa                 // skip once past the last entry
+    jmp cyAt
+    dzm cyPos
+cyAt,
+    lac cySqN
+    sza i               // skip if a sequence is typed
+    jmp cyImp
+    lac cyPos
+    add [cySq:7]
+    dac cyP
+    lac i cyP
+    jmp cyGot
+cyImp,
+    lac cyPos
+cyGot,
+    dac cyK
+    dzm cyTk
+    dzm cyI
+cyLoop,
+    lac cyI
+    sad i [instCount:012] // skip while instances remain
+    jmp cyEnd
+    add [iCyc:3]
+    dac cyP
+    lac i cyP
+    sza i               // skip if it cycles
+    jmp cyNext
+    lac cyK
+    dac toK
+    lac cyI
+    jda instTo
+    sza                 // skip if it takes the master
+    jmp cyNext
+    law 1
+    dac cyTk
+cyNext,
+    idx cyI
+    jmp cyLoop
+cyEnd,
+    lac cyTk
+    sza                 // skip if none took it
+    jmp cyLen
+    isp cyD             // skip once every entry is tried
+    jmp cyAdv
+cyLen,
+    lac cyK
+    add [cyDw:7]
+    dac cyP
+    lac i cyP
+    dac cyDur
+rtn, jmp .
+cyI, 0
+cyP, 0
+cyK, 0
+cyD, 0
+cyN, 0
+cyTk, 0
+    endloc
+
+// Instance i given master toK (Change, a cycle's step). Refused when master toK is empty, when
+// its attachers differ from the instance's master's in number, or in place unless toMv allows it
+// (attMatch), or when its figure would leave the screen at the instance's scale about the new
+// origin. With attachers the origin moves by the old master's first attacher less the new's, at
+// the instance's scale, so the new first attacher falls on the first tie point. Where every
+// attacher matches, no tie point moves; the solver takes the origin up (cRld), and Undo's
+// snapshot of it moves the same way, so that an Undo of a constraint after it puts the instance
+// back with its ties. Where they lie elsewhere (toMv, Change > Mk alone), the other tie points go
+// to the new attachers' places (instTies) and are marked in ptMark for the main bank's arcCarry,
+// which may yet take the change back (instSzBack, from sbI, sbOld and sbChg), the whole drawing
+// list is rewritten, and the solver settles the figure, as after a Size. With none the box's
+// center stays. The slot is written as instRemove writes one. Its gate steps over the call while
+// the origin's words change, then calls the new master; with no move, the gate alone. A carried
+// instance's handle moves with its origin, so its attachers stay under the pen. The instance's
+// current master changes nothing.
+// Entry: AC = i; toK, toMv. Exit: AC = 0 given, 1 refused, 3 given with its tie points moved. IO
+// is clobbered. Called via jda.
+instTo, 0
+    local rtn, toOut, toNo, toMove, toFit, toSlot, toTies, toDone, toP, toOld, toDX, toDY, \
+        toOX, toOY, toS, toG, toAt
+    dap rtn
+    lac instTo
+    add [iMaster:012]
+    dac toP
+    lac i toP
+    dac toOld
+    sad toK             // skip unless toK is its master
+    jmp toDone
+    lac toK
+    add [mLen:2]
+    dac toG
+    lac i toG
+    sza i               // skip unless master toK is empty
+    jmp toNo
+    lac toOld
+    jda attMatch
+    dac toAt
+    sza i               // skip unless the attachers match
+    jmp toMove
+    sad [1]             // skip unless they differ in number
+    jmp toNo
+    lac toMv
+    sza i               // skip if the tie points may move
+    jmp toNo
+
+    // The move, amX and amY at x1, at the instance's scale; then the new master tried at the new
+    // origin, the old put back if its figure would leave the screen.
+toMove,
+    lac instTo
+    add [iScale:3]
+    dac toG
+    lac i toG
+    add [ieShTab:7]
+    dac toS
+    lac amX
+    xct i toS
+    dac toDX
+    lac amY
+    xct i toS
+    dac toDY
+    lac instTo
+    add [iX:3]
+    dac toOX
+    lac instTo
+    add [iY:3]
+    dac toOY
+    lac toK
+    dac i toP
+    lac i toOX
+    add toDX
+    dac i toOX
+    lac i toOY
+    add toDY
+    dac i toOY
+    lac instTo
+    jda instBox
+    lac ibX0
+    spa                 // skip unless off the left edge
+    jmp toOut
+    lac ibY0
+    spa                 // skip unless off the bottom
+    jmp toOut
+    lac [0d1023]
+    sub ibX1
+    spa                 // skip unless off the right edge
+    jmp toOut
+    lac [0d1023]
+    sub ibY1
+    sma                 // skip if off the top
+    jmp toFit
+toOut,
+    lac toOld
+    dac i toP
+    lac i toOX
+    sub toDX
+    dac i toOX
+    lac i toOY
+    sub toDY
+    dac i toOY
+toNo,
+    law 1
+    jmp rtn
+toFit,
+    lac toDX
+    ior toDY
+    sza                 // skip unless the origin moves
+    jmp toSlot
+    lac instTo
+    jda instGate
+    jmp toTies
+toSlot,
+    lac instTo
+    jda instSlot
+    add [INSTGATE]
+    dac toG
+    add [1]
+    ior [jump next(parameter)]
+    dac i toG
+    lac instTo
+    jda instXY
+    lac instTo
+    jda instGate
+    lac instTo
+    add [MAXPTS]
+    add [uSX:011]
+    dac toG
+    lac i toG
+    add toDX
+    dac i toG
+    lac toG
+    add [NVAR]          // uSY, after uSX
+    dac toG
+    lac i toG
+    add toDY
+    dac i toG
+    law 1
+    dac i [cRld:010]
+    dac i [conWake:4]
+    lac instTo
+    sas i [dragInst:4]  // skip if it is carried
+    jmp toTies
+    lac hdX
+    add toDX
+    dac hdX
+    lac hdY
+    add toDY
+    dac hdY
+toTies,
+    lac toAt
+    sza i               // skip if the attachers lie elsewhere
+    jmp toDone
+    lac instTo
+    jda instTies
+    lac instTo
+    dac sbI
+    lac toOld
+    dac sbOld
+    law 1
+    dac sbChg
+    jsp markClear
+    lac instTo
+    jda grJoin          // its tie points marked
+    law 1
+    dac i [dirty:4]
+    dac i [cTopo:010]
+    dac i [conWake:4]
+    law 3
+    jmp rtn
+toDone,
+    cla
+rtn, jmp .
+toP, 0
+toOld, 0
+toDX, 0
+toDY, 0
+toOX, 0
+toOY, 0
+toS, 0
+toG, 0
+toAt, 0
+    endloc
+
+// Whether master toK's attachers match master k's. They match with as many, each at the same
+// place relative to the first, so that a change from k to toK leaves every tie point where it
+// is; or as many, at other places, so that it moves them. With any, amX and amY are k's first
+// less toK's, at x1, the instance's origin's move.
+// Entry: AC = k; toK. Exit: AC = 0 matching, 1 not as many (or some against none), 2 as many
+// elsewhere; amX, amY. IO is clobbered. Called via jda.
+attMatch, 0
+    local rtn, amLoop, amYes, amNo, amOff, amN, amA, amWX, amWY, amT
+    dap rtn
+    dzm amX
+    dzm amY
+    lac attMatch
+    add [cpNAtt:5]
+    dac amT
+    lac i amT
+    dac amN
+    lac toK
+    add [cpNAtt:5]
+    dac amT
+    lac i amT
+    sas amN             // skip if as many
+    jmp amNo
+    sza i               // skip if any
+    jmp rtn
+    cli
+    lac attMatch
+    jda attAt
+    lac atX
+    dac amWX
+    lac atY
+    dac amWY
+    cli
+    lac toK
+    jda attAt
+    lac amWX
+    sub atX
+    dac amX
+    lac amWY
+    sub atY
+    dac amY
+    law 1
+    dac amA
+amLoop,
+    lac amA
+    sad amN             // skip while attachers remain
+    jmp amYes
+    lio amA
+    lac attMatch
+    jda attAt
+    lac atX
+    sub amX
+    dac amWX            // where toK's must be
+    lac atY
+    sub amY
+    dac amWY
+    lio amA
+    lac toK
+    jda attAt
+    lac atX
+    sas amWX            // skip if x matches
+    jmp amOff
+    lac atY
+    sas amWY            // skip if y matches
+    jmp amOff
+    idx amA
+    jmp amLoop
+amYes,
+    cla
+    jmp rtn
+amOff,
+    law 2
+    jmp rtn
+amNo,
+    law 1
+rtn, jmp .
+amN, 0
+amA, 0
+amWX, 0
+amWY, 0
+amT, 0
+    endloc
+
+// Master k's attacher a, its master point's offset from the master's origin, at x1, in atX and
+// atY, from Copy's store.
+// Entry: AC = k, IO = a. Exit: atX, atY. AC is clobbered, IO preserved. Called via jda.
+attAt, 0
+    local rtn, atP, atJ
+    dap rtn
+    dio atP
+    lac attAt
+    sal 1s
+    add attAt
+    sal 1s              // k * NATT, 6
+    add atP
+    add [cpAtt:5]
+    dac atP
+    lac i atP
+    dac atJ
+    lac attAt
+    sal CPPSHIFT        // k * CPPTS
+    add atJ
+    dac atJ
+    add [cpX:5]
+    dac atP
+    lac i atP
+    dac atX
+    lac atJ
+    add [cpY:5]
+    dac atP
+    lac i atP
+    dac atY
+rtn, jmp .
+atP, 0
+atJ, 0
+    endloc
+
+// Change's Dwell and Seq rows (the main bank's actCyKb). Give the number keyboard's block for
+// the row; Seq's, its buffer the sequence typed; Dwell's, for the first master defined, its
+// buffer that master's dwell (cyNextM). None with no master defined.
+// Entry: AC = the row's item. Exit: AC = the block's 16-bit address, or 0. IO is clobbered.
+// Called via jda.
+instKbOpen, 0
+    local rtn, xoDw
+    dap rtn
+    dzm cyKbS
+    lac instKbOpen
+    sas [ISEQ]          // skip if Seq's row
+    jmp xoDw
+    idx cyKbS
+    jsp cySeqOut
+    lac [cySqBlk:7]
+    jmp rtn
+xoDw,
+    law i 1
+    dac cyKbM
+    jsp cyNextM
+rtn, jmp .
+    endloc
+
+// The number keyboard closed (the main bank's ckDone). Cancel takes nothing, OK the text typed.
+// Seq's takes the sequence, when every character is a digit 1 to 4 (cySeqIn). Dwell's takes master
+// cyKbM's dwell, when it is a number of DWELLMIN or more; then the keyboard again for the next
+// master defined, until there is none. A text refused leaves the value as it was.
+// Entry: AC = 1 for OK, 0 for Cancel. Exit: AC = the next block's 16-bit address, or 0. IO is
+// clobbered. Called via jda.
+instKbDone, 0
+    local rtn, xdNext, xdSeq, xdNo, xdV, xdP
+    dap rtn
+    lac instKbDone
+    sza i               // skip if OK
+    jmp xdNo
+    lac cyKbS
+    sza                 // skip unless Seq's
+    jmp xdSeq
+    jsp cyNum
+    sub [DWELLMIN]
+    spa                 // skip if DWELLMIN or more
+    jmp xdNext
+    add [DWELLMIN]
+    dac xdV
+    lac cyKbM
+    add [cyDw:7]
+    dac xdP
+    lac xdV
+    dac i xdP
+xdNext,
+    jsp cyNextM
+    jmp rtn
+xdSeq,
+    jsp cySeqIn
+xdNo,
+    cla
+rtn, jmp .
+xdV, 0
+xdP, 0
+    endloc
+
+// Stiff's lift on a member (the main bank's consLost). Give the number keyboard's block, its
+// buffer the member's stiffness, as 2.5, or 2 when its tenths are 0.
+// Entry: AC = the member's Beam parameter word, CUNUSED ORed with its tenths, or alone for 1.0.
+// Exit: AC = the block's 16-bit address. IO is clobbered. Called via jda.
+instStOpen, 0
+    local rtn
+    dap rtn
+    lac instStOpen
+    and [0377777]
+    sza i               // skip unless 1.0, kept as CUNUSED alone
+    law STIFFONE
+    mul [1]
+    div [0d10]
+    cla                 // no skip means overflow, which a division by 10 cannot make
+    dio cyFrac
+    jda cyPutNum
+    lac [stBlk:7]
+rtn, jmp .
+    endloc
+
+// Stiff's keyboard closed (the main bank's stDone). Cancel takes nothing; OK the stiffness typed,
+// up to two digits, a point and at most one digit after it, at least one digit in all, 0.1 to
+// STIFFMAX tenths. Anything else is refused, the stiffness kept.
+// Entry: AC = 1 for OK, 0 for Cancel. Exit: AC = the parameter word, CUNUSED ORed with the
+// tenths, or alone for 1.0; 0 for none. IO is clobbered. Called via jda.
+instStDone, 0
+    local rtn, sdLoop, sdDot, sdEnd, sdT, sdBad, sdV, sdN, sdP, sdF, sdC
+    dap rtn
+    lac instStDone
+    sza i               // skip if OK
+    jmp sdBad
+    jsp cbStart
+    dzm sdV
+    dzm sdN
+    dzm sdP
+    dzm sdF
+sdLoop,
+    jsp cbGet
+    sad [KCEND]         // skip unless the text's end
+    jmp sdEnd
+    sad [KCDOT]         // skip unless the point
+    jmp sdDot
+    sub [KCZERO]
+    spa                 // skip unless below 0
+    jmp sdBad
+    dac sdC
+    sub [0d10]
+    sma                 // skip if a digit
+    jmp sdBad
+    lac sdF
+    sza                 // skip unless a digit follows the point already
+    jmp sdBad
+    lac sdP
+    dac sdF             // a digit after the point is the last
+    lac sdV
+    sal 2s
+    add sdV
+    sal 1s              // ten times
+    add sdC
+    dac sdV
+    idx sdN
+    jmp sdLoop
+sdDot,
+    lac sdP
+    sza                 // skip unless a second point
+    jmp sdBad
+    idx sdP
+    jmp sdLoop
+sdEnd,
+    lac sdN
+    sza i               // skip if a digit was typed
+    jmp sdBad
+    lac sdF
+    sza                 // skip if no digit follows the point (whole units, made tenths)
+    jmp sdT
+    lac sdV
+    sal 2s
+    add sdV
+    sal 1s
+    dac sdV
+sdT,
+    lac sdV
+    sza i               // skip unless 0
+    jmp sdBad
+    sub [STIFFMAX+1]
+    sma                 // skip if STIFFMAX or less
+    jmp sdBad
+    lac sdV
+    sad [STIFFONE]      // skip unless 1.0, kept as CUNUSED alone
+    cla
+    ior [CUNUSED]
+    jmp rtn
+sdBad,
+    cla
+rtn, jmp .
+sdV, 0
+sdN, 0
+sdP, 0
+sdF, 0
+sdC, 0
+    endloc
+
+// The next master defined after cyKbM, which becomes cyKbM. Dwell's block is given its prompt,
+// and the keyboard's buffer its dwell.
+// Exit: AC = Dwell's block's 16-bit address, or 0 with no master after it. IO is clobbered.
+// Called via jsp.
+cyNextM,
+    local rtn, nmLoop, nmNone, nmP
+    dap rtn
+nmLoop,
+    idx cyKbM
+    sad [NMASTER]       // skip unless past the last master
+    jmp nmNone
+    add [mLen:2]
+    dac nmP
+    lac i nmP
+    sza i               // skip if the master is defined
+    jmp nmLoop
+    lac cyKbM
+    add [cyPrmT:7]
+    dac nmP
+    lac i nmP
+    dac cyDwBlk+2
+    lac cyKbM
+    add [cyDw:7]
+    dac nmP
+    lac i nmP
+    jda cyPutNum
+    lac [cyDwBlk:7]
+    jmp rtn
+nmNone,
+    cla
+rtn, jmp .
+nmP, 0
+    endloc
+
+// The number in the keyboard's buffer, cyBuf, its digits, at least one, and nothing else (the
+// block's limit keeps it to DWELLDIG).
+// Exit: AC = the number, or -1 for none or a character not a digit. IO is clobbered. Called via
+// jsp.
+cyNum,
+    local rtn, cnLoop, cnEnd, cnBad, cnV, cnC, cnD
+    dap rtn
+    jsp cbStart
+    dzm cnV
+    dzm cnD
+cnLoop,
+    jsp cbGet
+    sad [KCEND]         // skip unless the text's end
+    jmp cnEnd
+    sub [KCZERO]
+    spa                 // skip unless below 0
+    jmp cnBad
+    dac cnC
+    sub [0d10]
+    sma                 // skip if a digit
+    jmp cnBad
+    lac cnV
+    sal 2s
+    add cnV
+    sal 1s              // ten times
+    add cnC
+    dac cnV
+    idx cnD
+    jmp cnLoop
+cnEnd,
+    lac cnD
+    sza i               // skip if a digit was typed
+    jmp cnBad
+    lac cnV
+    jmp rtn
+cnBad,
+    law i 1
+rtn, jmp .
+cnV, 0
+cnC, 0
+cnD, 0
+    endloc
+
+// The sequence in the keyboard's buffer, cyBuf, taken when every character is a digit 1 to 4,
+// none meaning M1 to M4 in turn. Its masters go into cySq, their count into cySqN, and the
+// cycle's position is set before its first entry, so that the next step takes it. Refused,
+// nothing changed, otherwise.
+// AC and IO are clobbered. Called via jsp.
+cySeqIn,
+    local rtn, siLoop, siEnd, siCopy, siPos, siN, siK, siP, siQ
+    dap rtn
+    jsp cbStart
+    dzm siN
+siLoop,
+    jsp cbGet
+    sad [KCEND]         // skip unless the text's end
+    jmp siEnd
+    sub [KCZERO+1]
+    spa                 // skip unless below 1
+    jmp rtn
+    dac siK
+    sub [NMASTER]
+    sma                 // skip if 1 to 4
+    jmp rtn
+    lac siN
+    sad [NSEQ]          // skip unless the sequence is full
+    jmp rtn
+    add [cyTmp:7]
+    dac siP
+    lac siK
+    dac i siP
+    idx siN
+    jmp siLoop
+siEnd,
+    lac siN
+    dac cySqN
+    sza i               // skip if any
+    jmp siPos
+    cma
+    dac siK
+    lac [cyTmp:7]
+    dac siP
+    lac [cySq:7]
+    dac siQ
+siCopy,
+    lac i siP
+    dac i siQ
+    idx siP
+    idx siQ
+    isp siK             // skip once every entry is copied
+    jmp siCopy
+siPos,
+    lac cySqN
+    sza i               // skip if a sequence is typed
+    law NMASTER
+    sub [1]
+    dac cyPos
+rtn, jmp .
+siN, 0
+siK, 0
+siP, 0
+siQ, 0
+    endloc
+
+// The sequence typed, as the keyboard's starting value in cyBuf, a digit 1 to 4 an entry.
+// AC and IO are clobbered. Called via jsp.
+cySeqOut,
+    local rtn, soLoop, soEnd, soP, soN
+    dap rtn
+    jsp cbStart
+    lac cySqN
+    sza i               // skip if a sequence is typed
+    jmp soEnd
+    cma
+    dac soN
+    lac [cySq:7]
+    dac soP
+soLoop,
+    lac i soP
+    add [KCZERO+1]
+    jda cbEmit
+    idx soP
+    isp soN             // skip once every entry is written
+    jmp soLoop
+soEnd,
+    jsp cbEnd
+rtn, jmp .
+soP, 0
+soN, 0
+    endloc
+
+// A number from 0 to 9999 in decimal, no leading zeros, as the keyboard's starting value in
+// cyBuf; by subtracting each power of ten in turn, no divide. Then, when cyFrac is not 0, a
+// point and that digit (Stiff's tenths), and cyFrac cleared.
+// Entry: AC = the number. AC and IO are clobbered. Called via jda.
+cyPutNum, 0
+    local rtn, pnPow, pnSub, pnOut, pnNext, pnEnd, pnClose, pnV, pnD, pnT, pnL
+    dap rtn
+    lac cyPutNum
+    dac pnV
+    jsp cbStart
+    dzm pnL
+    lac [cyTens:7]
+    dac pnT
+pnPow,
+    dzm pnD
+pnSub,
+    lac pnV
+    sub i pnT
+    spa                 // skip if the power goes once more
+    jmp pnOut
+    dac pnV
+    idx pnD
+    jmp pnSub
+pnOut,
+    lac pnD
+    ior pnL
+    sza i               // skip unless a leading zero
+    jmp pnNext
+    lac pnD
+    add [KCZERO]
+    jda cbEmit
+    law 1
+    dac pnL
+pnNext,
+    idx pnT
+    sas [cyTens:7+4]    // skip once the units are done
+    jmp pnPow
+    lac pnL
+    sza                 // skip if no digit was written (the number is 0)
+    jmp pnEnd
+    law KCZERO
+    jda cbEmit
+pnEnd,
+    lac cyFrac
+    sza i               // skip if a tenths digit follows
+    jmp pnClose
+    law KCDOT
+    jda cbEmit
+    lac cyFrac
+    add [KCZERO]
+    jda cbEmit
+    dzm cyFrac
+pnClose,
+    jsp cbEnd
+rtn, jmp .
+pnV, 0
+pnD, 0
+pnT, 0
+pnL, 0
+    endloc
+cyTens,
+    0d1000
+    0d100
+    0d10
+    1
+
+// The keyboard's buffer, cyBuf, read or written a code at a time, three to a word as the
+// keyboard keeps its text (spkbd.ac). cbStart starts at its first word, then cbGet, which passes
+// over the shifts a digit never needs, or cbEmit and at the end cbEnd. The module keeps a copy
+// of these, since it calls nothing outside bank 7.
+// AC is clobbered, IO preserved. Called via jsp.
+cbStart,
+    dap cbsRtn
+    lac [cyBuf:7]
+    dac cbP
+    dzm cbW
+    dzm cbN
+cbsRtn, jmp .
+
+// The next code of the buffer, a shift passed over.
+// Exit: AC = the code. IO is preserved. Called via jsp.
+cbGet,
+    local rtn, cgWord, cgNext
+    dap rtn
+cgWord,
+    lac cbN
+    sza                 // skip if the word is used up
+    jmp cgNext
+    lac i cbP
+    dac cbW
+    idx cbP
+    law 3
+    dac cbN
+cgNext,
+    law i 1
+    add cbN
+    dac cbN
+    lac cbW
+    ral 6s
+    dac cbW
+    and [077]
+    sad [KCUP]          // skip unless an upper shift
+    jmp cgWord
+    sad [KCLOW]         // skip unless a lower shift
+    jmp cgWord
+rtn, jmp .
+    endloc
+
+// Pack a code into the buffer. A word is written once it holds three.
+// Entry: AC = the code. AC is clobbered, IO preserved. Called via jda.
+cbEmit, 0
+    dap cbeRtn
+    lac cbW
+    ral 6s
+    ior cbEmit
+    dac cbW
+    idx cbN
+    sas [3]             // skip once the word holds three codes
+    jmp cbeRtn
+    lac cbW
+    dac i cbP
+    idx cbP
+    dzm cbW
+    dzm cbN
+cbeRtn, jmp .
+
+// End the buffer's text with the end code, repeated to the end of its word.
+// AC and IO are clobbered. Called via jsp.
+cbEnd,
+    local rtn, ceLoop
+    dap rtn
+ceLoop,
+    law KCEND
+    jda cbEmit
+    lac cbN
+    sza                 // skip once the word is written
+    jmp ceLoop
+rtn, jmp .
+    endloc
+
+// The buffer's place, the next word, the word being packed or unpacked, and its codes.
+cbP, 0
+cbW, 0
+cbN, 0
+
+// The number keyboard's blocks (spkbd.ac, kbOpen) for Change's Dwell and Seq rows and the truss's
+// Stiff. Each holds the kind, the limit, the prompt (cyNextM sets Dwell's from cyPrmT), the
+// buffer, the main bank's resume, and 0 for a text ended at its end. Then the prompts; the
+// buffer, KBBUFW words, which they share; the sequence read, until it is taken whole; and the
+// tenths digit cyPutNum writes after a point, 0 for none.
+stBlk, KBDEC
+    STIFFDIG
+    stPrm:7
+    cyBuf:7
+    stDone:4
+    0
+cyDwBlk, KBNUM
+    DWELLDIG
+    cyPrm1:7
+    cyBuf:7
+    ckDone:4
+    0
+cySqBlk, KBNUM
+    NSEQ
+    cyPrmS:7
+    cyBuf:7
+    ckDone:4
+    0
+cyPrmT,
+    cyPrm1:7
+    cyPrm2:7
+    cyPrm3:7
+    cyPrm4:7
+cyPrm1, type340 "M1 dwell"
+cyPrm2, type340 "M2 dwell"
+cyPrm3, type340 "M3 dwell"
+cyPrm4, type340 "M4 dwell"
+cyPrmS, type340 "Sequence"
+stPrm, type340 "Stiffness"
+cyBuf,
+    table KBBUFW, 0
+cyTmp,
+    table NSEQ, 0
+cyFrac, 0
+
+// The change's and the cycles' words. The master asked for (toK), whether its attachers may lie
+// elsewhere, moving the tie points (toMv, Change > Mk's), the origin's move at x1 (amX, amY), an
+// attacher's offset (atX, atY), and the clock at the last step (cycAt). The keyboard's words say
+// Seq's keyboard is open (cyKbS), else Dwell's for master cyKbM.
+toK, 0
+toMv, 0
+amX, 0
+amY, 0
+atX, 0
+atY, 0
+cycAt, 0
+cyKbS, 0
+cyKbM, 0
+
+// The cycle's settings and state. Each master's dwell in clock ms (cyDw), then the sequence
+// typed, cySqN masters 0 to 3 in cySq (none means M1 to M4 in turn); the position in it of the
+// step shown (cyPos; with no sequence, the master), and that step's dwell (cyDur). The tape
+// module saves cyDw and cySqN as a run, and cySq packed, through their 16-bit addresses, so
+// cySqN must follow cyDw.
+cyDw,
+    table NMASTER, CYCLEMS
+cySqN, 0
+cySq,
+    table NSEQ, 0
+cyPos, 0
+cyDur, CYCLEMS
+
+
+// Remove instance i. The last takes its place in the tables and in slot i, and the last slot is
+// written unused, its gate first. Slot i's gate steps over its call while its other words
+// change, so no frame draws a master at another's origin, where it could leave the screen; a
+// frame between the steps draws the last instance twice. None is lit afterward. The caller
+// spreads the target calls again (respread). Its tie points are listed, once each, in tgList,
+// for Delete's arcOrphans; its ties leave the solver's, whose variables past MAXPTS move with
+// the instances (cTopo). TXINST, Delete's text, is the text module's to remove (txDelete), with
+// no tie points listed.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+instRemove, 0
+    local rtn, irGone, irSeen, irAdd, irNext, irCopy, irDrop, irText, irLast, irP, irQ, irN, irG
+    dap rtn
+    lac instRemove
+    sad [TXINST]        // skip unless a text
+    jmp irText
+    law 1
+    dac i [cTopo:010]
+    lac instRemove
+    add [iCyc:3]
+    dac irP
+    lac i [cycN:4]
+    sub i irP           // one fewer cycling if it cycles
+    dac i [cycN:4]
+    dzm tgN
+    lac instRemove
+    add [iTie:3]
+    dac irP
+    law i NATT
+    dac irN
+irGone,
+    lac i irP
+    sad [NOPOINT]       // skip if attacher a has a tie point
+    jmp irNext
+    dac irG
+    lac [tgList:7]
+    dac irQ
+irSeen,
+    lac irQ
+    sub [tgList:7]
+    sad tgN             // skip while listed points remain
+    jmp irAdd
+    lac i irQ
+    sad irG             // skip unless listed already
+    jmp irNext
+    idx irQ
+    jmp irSeen
+irAdd,
+    lac irG
+    dac i irQ
+    idx tgN
+irNext,
+    lac irP
+    add [MAXINST]
+    dac irP
+    isp irN             // skip once every attacher is looked at
+    jmp irGone
+    lac [NOPOINT]
+    jda instShine
+    lac i [instCount:012]
+    sub [1]
+    dac irLast
+    sad instRemove      // skip unless i is the last
+    jmp irDrop
+    lac instRemove
+    jda instSlot
+    add [INSTGATE]
+    dac irG
+    add [1]
+    ior [jump next(parameter)]
+    dac i irG
+
+    // The last's master into i's, in bank 2; then its origin, iX and iY; then its cycle flag,
+    // scale and tie list, iCyc, iScale and iTie, NATT + 2 tables MAXINST apart.
+    lac irLast
+    add [iMaster:012]
+    dac irP
+    lac instRemove
+    add [iMaster:012]
+    dac irQ
+    lac i irP
+    dac i irQ
+    lac irLast
+    add [iX:3]
+    dac irP
+    lac instRemove
+    add [iX:3]
+    dac irQ
+    lac i irP
+    dac i irQ
+    lac irLast
+    add [iY:3]
+    dac irP
+    lac instRemove
+    add [iY:3]
+    dac irQ
+    lac i irP
+    dac i irQ
+    lac irLast
+    add [iCyc:3]
+    dac irP
+    lac instRemove
+    add [iCyc:3]
+    dac irQ
+    law i NATT+2
+    dac irN
+irCopy,
+    lac i irP
+    dac i irQ
+    lac irP
+    add [MAXINST]
+    dac irP
+    lac irQ
+    add [MAXINST]
+    dac irQ
+    isp irN             // skip once the scale and the tie list are copied
+    jmp irCopy
+    lac instRemove
+    jda instParam
+    lac instRemove
+    jda instXY
+    lac instRemove
+    jda instGate
+irDrop,
+    lac irLast
+    jda instUnused
+    lac irLast
+    dac i [instCount:012]
+    jmp rtn
+irText,
+    dzm tgN
+    jsp i [txDelete:012]
+rtn, jmp .
+irLast, 0
+irP, 0
+irQ, 0
+irN, 0
+irG, 0
+    endloc
+
+// Define's map, before the arc module's defineMaster. Each point a line or an arc is on, or a
+// set of digits is anchored at, is one of the master's, its index among them plus 1 in ptMark,
+// mpN of them, and every other point, a bare tie point, 0. The attachers among the master's
+// points, taken in the order of their designation (the CTATT entries' parameters), go into attJ,
+// their master indices, attN of them, and each one's cross into avX, avY and avV, four of
+// defWalk's visits. They are a beam-off move to MARKARM left of it, a line to MARKARM right, a
+// beam-off move to MARKARM below, a line to MARKARM above. Then the constraints among the
+// master's points are counted (mcScan); Define is refused with more than NCPCON.
+// Refused first, nothing mapped, while an instance cycles, or with the masters' texts' table
+// short of room for the canvas's (the text module's txDefRoom).
+// Exit: AC = 0, or DEFCONS with too many constraints, or DEFCYCLE, or DEFTEXT. IO is clobbered.
+// Called via jsp.
+instMap,
+    local rtn, mpLn, mpArc0, mpArc, mpAn0, mpAn, mpNum, mpNm, mpNmNx, mpAtt, mpPick, mpScan, \
+        mpScNx, mpGot, \
+        mpDone, mpFew, mpCyc, mpI, mpT, mpU, mpE, mpEnd, mpLast, mpBest, mpBP, mpX, mpY
+    dap rtn
+    lac i [cycN:4]
+    sza                 // skip unless an instance cycles
+    jmp mpCyc
+    jsp i [txDefRoom:012]
+    sza                 // skip if the texts fit
+    jmp rtn
+    jsp markClear
+    dzm mpI
+mpLn,
+    lac mpI
+    sad i [lineCount:4] // skip while lines remain
+    jmp mpArc0
+    add [lineFrom:3]
+    dac mpT
+    lac i mpT
+    jda markOn
+    lac mpI
+    add [lineTo:3]
+    dac mpT
+    lac i mpT
+    jda markOn
+    idx mpI
+    jmp mpLn
+mpArc0,
+    dzm mpI
+mpArc,
+    lac mpI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp mpAn0
+    add [arcTC:2]
+    dac mpT
+    lac i mpT
+    jda markOn
+    lac mpI
+    add [arcTS:2]
+    dac mpT
+    lac i mpT
+    jda markOn
+    lac mpI
+    add [arcTE:2]
+    dac mpT
+    lac i mpT
+    jda markOn
+    idx mpI
+    jmp mpArc
+
+    // Each set of digits' anchor, on no line or arc, is a master point too, so that Define keeps
+    // it with the digits, and their D's, Y's and O's with it.
+mpAn0,
+    dzm mpI
+mpAn,
+    lac mpI
+    sad i [txN:012]     // skip while the canvas's texts remain
+    jmp mpNum
+    add [txAn:3]
+    dac mpT
+    lac i mpT
+    sas [NOPOINT]       // skip unless digits
+    jda markOn
+    idx mpI
+    jmp mpAn
+
+    // Each mark made the point's master index plus 1.
+mpNum,
+    dzm mpN
+    lac [ptMark:3]
+    dac mpT
+    add i [pointCount:4]
+    dac mpEnd
+mpNm,
+    lac mpT
+    sad mpEnd           // skip while points remain
+    jmp mpAtt
+    lac i mpT
+    sza i               // skip if a master point
+    jmp mpNmNx
+    idx mpN
+    dac i mpT
+mpNmNx,
+    idx mpT
+    jmp mpNm
+
+    // The attachers, each the master point designated next after the last taken.
+mpAtt,
+    dzm attN
+    dzm avN
+    lac [CUNUSED]       // before every designation's order
+    dac mpLast
+mpPick,
+    lac attN
+    sad [NATT]          // skip while there is room for one more
+    jmp mpDone
+    lac [0777777]       // -0, after every designation's order
+    dac mpBest
+    lac [NOPOINT]
+    dac mpBP
+    lac [cEntries:011]
+    dac mpE
+mpScan,
+    lac mpE
+    sad i [cEnd:010]    // skip while entries remain
+    jmp mpGot
+    lac i mpE
+    sas [CTATT]         // skip if an attacher
+    jmp mpScNx
+    lac mpE
+    add [5]
+    dac mpT
+    lac i mpT
+    sub mpLast
+    sub [1]
+    spa                 // skip if designated after the last taken
+    jmp mpScNx
+    lac mpBest
+    sub i mpT
+    sub [1]
+    spa                 // skip if designated before the best so far
+    jmp mpScNx
+    lac mpE
+    add [1]
+    dac mpU
+    lac i mpU
+    add [ptMark:3]
+    dac mpU
+    lac i mpU
+    sza i               // skip if a master point
+    jmp mpScNx
+    lac i mpT
+    dac mpBest
+    lac mpE
+    add [1]
+    dac mpU
+    lac i mpU
+    dac mpBP
+mpScNx,
+    lac mpE
+    add [CW]
+    dac mpE
+    jmp mpScan
+mpGot,
+    lac mpBP
+    sad [NOPOINT]       // skip if one was found
+    jmp mpDone
+    lac mpBest
+    dac mpLast
+    lac mpBP
+    add [ptMark:3]
+    dac mpT
+    lac i mpT
+    sub [1]
+    dac mpU
+    lac attN
+    add [attJ:7]
+    dac mpT
+    lac mpU
+    dac i mpT
+    idx attN
+    lac mpBP
+    add [pointX:3]
+    dac mpT
+    lac i mpT
+    dac mpX
+    lac mpBP
+    add [pointY:3]
+    dac mpT
+    lac i mpT
+    dac mpY
+    dzm mpV
+    lac mpX
+    sub [MARKARM]
+    lio mpY
+    jda mpVisit
+    lac [visible]
+    dac mpV
+    lac mpX
+    add [MARKARM]
+    lio mpY
+    jda mpVisit
+    dzm mpV
+    lac mpY
+    sub [MARKARM]
+    lia
+    lac mpX
+    jda mpVisit
+    lac [visible]
+    dac mpV
+    lac mpY
+    add [MARKARM]
+    lia
+    lac mpX
+    jda mpVisit
+    jmp mpPick
+mpDone,
+    dzm mcKeep
+    jsp mcScan
+    sub [NCPCON+1]
+    spa                 // skip if more than NCPCON
+    jmp mpFew
+    law DEFCONS
+    jmp rtn
+mpCyc,
+    law DEFCYCLE
+    jmp rtn
+mpFew,
+    cla
+rtn, jmp .
+mpI, 0
+mpT, 0
+mpU, 0
+mpE, 0
+mpEnd, 0
+mpLast, 0
+mpBest, 0
+mpBP, 0
+mpX, 0
+mpY, 0
+    endloc
+
+// One of defWalk's visits for a cross, x, y and mpV, its beam, appended to avX, avY and avV.
+// Entry: AC = x, IO = y; mpV. AC is clobbered, IO preserved. Called via jda.
+mpVisit, 0
+    local rtn, mvT
+    dap rtn
+    lac avN
+    add [avX:7]
+    dac mvT
+    lac mpVisit
+    dac i mvT
+    lac avN
+    add [avY:7]
+    dac mvT
+    dio i mvT
+    lac avN
+    add [avV:7]
+    dac mvT
+    lac mpV
+    dac i mvT
+    idx avN
+rtn, jmp .
+mvT, 0
+    endloc
+
+// Define, once defineMaster has made master dfK (defParts before it, in bank 2). The master's
+// points, ptMark's map (instMap), are kept in Copy's store relative to the origin (dfCX, dfCY),
+// in the map's order, and its lines and arcs with their point indices mapped; then the counts;
+// the copy box, the figure's box (dfMinX to dfMaxY) widened to take in every master point, an
+// arc's center among them, relative to the origin, by which a copy's origin is held on the
+// canvas (instAt); the attachers, attJ; and the constraints among its points (mcScan). Then on
+// the canvas every point but the instances' tie points goes, the tie points closing up in order,
+// the tie lists following; the caller empties the lines and arcs. The canvas's texts go into the
+// master first, the canvas left with none (the text module's txDefine).
+// Exit: AC = the points left, the tie points. IO is clobbered. Called via jsp.
+instDef,
+    local rtn, dqPt, dqXlo, dqXok, dqYlo, dqYok, dqPtNx, dqLines, dqLn, dqArcs, dqTab, dqArc, \
+        dqArcW0, dqArcW, dqTabNx, dqAtt, dqAttW, dqMark, dqMk, dqKeep, dqKpNx, dqRen0, dqRen, \
+        dqRnNx, dqI, dqJ, dqT, dqU, dqA, dqB, dqK, dqX0, dqX1, dqY0, dqY1
+    dap rtn
+    jsp i [txDefine:012]
+    lac i [dfK:2]
+    dac dqK
+    lac i [dfMinX:2]
+    dac dqX0
+    lac i [dfMaxX:2]
+    dac dqX1
+    lac i [dfMinY:2]
+    dac dqY0
+    lac i [dfMaxY:2]
+    dac dqY1
+
+    // The points, and the copy box.
+    dzm dqI
+dqPt,
+    lac dqI
+    sad i [pointCount:4] // skip while points remain
+    jmp dqLines
+    add [ptMark:3]
+    dac dqT
+    lac i dqT
+    sza i               // skip if a master point
+    jmp dqPtNx
+    sub [1]
+    dac dqJ
+    lac dqK
+    sal CPPSHIFT
+    add dqJ
+    dac dqJ             // its word in the master's part of the store
+    lac dqI
+    add [pointX:3]
+    dac dqT
+    lac i dqT
+    dac dqV
+    sub dqX0
+    spa                 // skip unless left of the box
+    jmp dqXlo
+    lac dqX1
+    sub dqV
+    sma                 // skip if right of the box
+    jmp dqXok
+    lac dqV
+    dac dqX1
+    jmp dqXok
+dqXlo,
+    lac dqV
+    dac dqX0
+dqXok,
+    lac dqJ
+    add [cpX:5]
+    dac dqT
+    lac dqV
+    sub i [dfCX:2]
+    dac i dqT
+    lac dqI
+    add [pointY:3]
+    dac dqT
+    lac i dqT
+    dac dqV
+    sub dqY0
+    spa                 // skip unless below the box
+    jmp dqYlo
+    lac dqY1
+    sub dqV
+    sma                 // skip if above the box
+    jmp dqYok
+    lac dqV
+    dac dqY1
+    jmp dqYok
+dqYlo,
+    lac dqV
+    dac dqY0
+dqYok,
+    lac dqJ
+    add [cpY:5]
+    dac dqT
+    lac dqV
+    sub i [dfCY:2]
+    dac i dqT
+dqPtNx,
+    idx dqI
+    jmp dqPt
+
+    // The lines, their ends mapped.
+dqLines,
+    lac dqK
+    sal CPLSHIFT
+    dac dqJ
+    dzm dqI
+dqLn,
+    lac dqI
+    sad i [lineCount:4] // skip while lines remain
+    jmp dqArcs
+    add [lineFrom:3]
+    jda dqMap
+    lac dqJ
+    add dqI
+    add [cpFrom:5]
+    dac dqT
+    lac dqV
+    dac i dqT
+    lac dqI
+    add [lineTo:3]
+    jda dqMap
+    lac dqJ
+    add dqI
+    add [cpTo:5]
+    dac dqT
+    lac dqV
+    dac i dqT
+    idx dqI
+    jmp dqLn
+
+    // Each arc's words in arcTC to arcTK, which lie MAXARCS apart, to cpC to cpK, which lie
+    // NMASTER * CPARCS apart, the first three, the center, start and end, mapped.
+dqArcs,
+    lac [arcTC:2]
+    dac dqA
+    lac dqK
+    sal CPASHIFT
+    add [cpC:5]
+    dac dqB
+    law i CPATAB
+    dac dqU
+dqTab,
+    dzm dqI
+dqArc,
+    lac dqI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp dqTabNx
+    add dqA
+    dac dqT
+    lac dqU
+    add [CPATAB-3]
+    sma                 // skip if the table holds point indices
+    jmp dqArcW0
+    lac dqT
+    jda dqMap
+    jmp dqArcW
+dqArcW0,
+    lac i dqT
+    dac dqV
+dqArcW,
+    lac dqI
+    add dqB
+    dac dqT
+    lac dqV
+    dac i dqT
+    idx dqI
+    jmp dqArc
+dqTabNx,
+    lac dqA
+    add [MAXARCS]
+    dac dqA
+    lac dqB
+    add [NMASTER * CPARCS]
+    dac dqB
+    isp dqU             // skip once every table is kept
+    jmp dqTab
+
+    // The counts, the copy box, the attachers.
+    lac dqK
+    add [cpNP:2]
+    dac dqT
+    lac mpN
+    dac i dqT
+    lac dqK
+    add [cpNL:2]
+    dac dqT
+    lac i [lineCount:4]
+    dac i dqT
+    lac dqK
+    add [cpNA:2]
+    dac dqT
+    lac i [arcCount:2]
+    dac i dqT
+    lac dqK
+    add [cMinX:2]
+    dac dqT
+    lac dqX0
+    sub i [dfCX:2]
+    dac i dqT
+    lac dqK
+    add [cMaxX:2]
+    dac dqT
+    lac dqX1
+    sub i [dfCX:2]
+    dac i dqT
+    lac dqK
+    add [cMinY:2]
+    dac dqT
+    lac dqY0
+    sub i [dfCY:2]
+    dac i dqT
+    lac dqK
+    add [cMaxY:2]
+    dac dqT
+    lac dqY1
+    sub i [dfCY:2]
+    dac i dqT
+    lac dqK
+    add [cpNAtt:5]
+    dac dqT
+    lac attN
+    dac i dqT
+    lac dqK
+    sal 1s
+    add dqK
+    sal 1s              // k * NATT, 6
+    add [cpAtt:5]
+    dac dqT
+    lac [attJ:7]
+    dac dqU
+    lac attN
+    add [1]
+    cma
+    dac dqI             // -(attN + 1), so the first isp leaves -attN
+dqAtt,
+    isp dqI             // skip once every attacher is kept
+    jmp dqAttW
+    jmp dqMark
+dqAttW,
+    lac i dqU
+    dac i dqT
+    idx dqU
+    idx dqT
+    jmp dqAtt
+
+    // The constraints, while ptMark still holds the map. Then the canvas. The tie points are
+    // marked, closed up in order, each one's new index plus 1 in its mark; then the tie lists
+    // renamed.
+dqMark,
+    law 1
+    dac mcKeep
+    jsp mcScan
+    jsp markClear
+    lac [iTie:3]
+    dac dqT
+dqMk,
+    lac i dqT
+    sas [NOPOINT]       // skip unless a tie point
+    jda markOn
+    idx dqT
+    sas [iTie:3+NATT*MAXINST] // skip once every tie is looked at
+    jmp dqMk
+    dzm dqJ
+    dzm dqI
+dqKeep,
+    lac dqI
+    sad i [pointCount:4] // skip while points remain
+    jmp dqRen0
+    add [ptMark:3]
+    dac dqU
+    lac i dqU
+    sza i               // skip if a tie point
+    jmp dqKpNx
+    lac dqI
+    add [pointX:3]
+    dac dqT
+    lac dqJ
+    add [pointX:3]
+    dac dqV
+    lac i dqT
+    dac i dqV
+    lac dqI
+    add [pointY:3]
+    dac dqT
+    lac dqJ
+    add [pointY:3]
+    dac dqV
+    lac i dqT
+    dac i dqV
+    idx dqJ
+    dac i dqU
+dqKpNx,
+    idx dqI
+    jmp dqKeep
+dqRen0,
+    lac [iTie:3]
+    dac dqT
+dqRen,
+    lac i dqT
+    sad [NOPOINT]       // skip if a tie point
+    jmp dqRnNx
+    add [ptMark:3]
+    dac dqU
+    lac i dqU
+    sub [1]
+    dac i dqT
+dqRnNx,
+    idx dqT
+    sas [iTie:3+NATT*MAXINST] // skip once every tie is renamed
+    jmp dqRen
+    law 1
+    dac i [cTopo:010]
+    lac dqJ
+rtn, jmp .
+dqI, 0
+dqJ, 0
+dqT, 0
+dqU, 0
+dqA, 0
+dqB, 0
+dqK, 0
+dqX0, 0
+dqX1, 0
+dqY0, 0
+dqY1, 0
+    endloc
+
+// A point index mapped to the master's, the word at full address a, a point, through ptMark.
+// Entry: AC = a. Exit: dqV = its master index. AC is clobbered, IO preserved. Called via jda.
+dqMap, 0
+    dap dmRtn
+    lac i dqMap
+    add [ptMark:3]
+    dac dqMap
+    lac i dqMap
+    sub [1]
+    dac dqV
+dmRtn, jmp .
+
+// The constraints among the master's points. Every entry but a fix, an attacher or a
+// designation whose points are all master points (ptMark's map, instMap) is counted; with
+// mcKeep set each is kept too, in master masterArg's part of cpCon (bank 9), its
+// points mapped to master indices, and the count in cpNCon. A point NOPOINT, left by a removal
+// for the next purge to drop, is no master point. instDef keeps them only once instMap has
+// counted at most NCPCON. A fix holds a point where it is on the screen, so a copy elsewhere
+// takes none; a designation marks the canvas for the next copy, so a master keeps none.
+// Entry: mcKeep. Exit: AC = the count. IO is clobbered. Called via jsp.
+mcScan,
+    local rtn, msLoop, msPt, msKeep, msMap, msCnt, msNext, msDone, msOut, msE, msP, msT, msK, \
+        msN, msD
+    dap rtn
+    dzm msN
+    lac i [masterArg:4]
+    sal 5s
+    dac msD
+    sal 1s
+    add msD             // k * 96, NCPCON * CW
+    add [cpCon:011]
+    dac msD
+    lac [cEntries:011]
+    dac msE
+msLoop,
+    lac msE
+    sad i [cEnd:010]    // skip while entries remain
+    jmp msDone
+    lac i msE
+    sad [CTATT]         // skip unless an attacher
+    jmp msNext
+    sad [CTF]           // skip unless a fix
+    jmp msNext
+    sad [CTDES]         // skip unless a designation
+    jmp msNext
+    and [CTMASK]
+    add [cNPts:011]
+    dac msT
+    lac i msT
+    cma
+    dac msK
+    lac msE
+    dac msP
+msPt,
+    idx msP
+    lac i msP
+    sad [NOPOINT]       // skip unless the point is gone
+    jmp msNext
+    add [ptMark:3]
+    dac msT
+    lac i msT
+    sza i               // skip if a master point
+    jmp msNext
+    isp msK             // skip once every point is a master point
+    jmp msPt
+    lac mcKeep
+    sza i               // skip if it is to be kept
+    jmp msCnt
+
+    // Its words, then its points mapped.
+    lac msE
+    dac msP
+    lac msD
+    dac msT
+    law i CW
+    dac msK
+msKeep,
+    lac i msP
+    dac i msT
+    idx msP
+    idx msT
+    isp msK             // skip once every word is kept
+    jmp msKeep
+    lac i msE
+    and [CTMASK]
+    add [cNPts:011]
+    dac msP
+    lac i msP
+    cma
+    dac msK
+    lac msD
+    dac msP
+msMap,
+    idx msP
+    lac i msP
+    add [ptMark:3]
+    dac msT
+    lac i msT
+    sub [1]
+    dac i msP
+    isp msK             // skip once every point is mapped
+    jmp msMap
+    lac msD
+    add [CW]
+    dac msD
+msCnt,
+    idx msN
+msNext,
+    lac msE
+    add [CW]
+    dac msE
+    jmp msLoop
+msDone,
+    lac mcKeep
+    sza i               // skip if they were kept
+    jmp msOut
+    lac i [masterArg:4]
+    add [cpNCon:011]
+    dac msT
+    lac msN
+    dac i msT
+msOut,
+    lac msN
+rtn, jmp .
+msE, 0
+msP, 0
+msT, 0
+msK, 0
+msN, 0
+msD, 0
+    endloc
+
+// Copy's room and parts, in this bank to spare the main bank's room. They read the main bank's
+// copyArg, copyX, copyY and counts, and write copyBase and the counts, through 16-bit addresses.
+// Whether the tables can take every part of master copyArg, its points, lines and arcs, and the
+// constraint table its constraints; Copy is refused whole otherwise. The drop that follows is
+// Copy's, at x1 (dismOn and dismShift), unless instDism sets them after.
+// The canvas must take the master's texts too, and the budget its characters (the text module's
+// txCopyRoom and txFits), less those of the instance a dismember takes apart (crInst), whose
+// copies they replace.
+// Exit: AC = 0 if they fit, COPYROOM if not. IO is clobbered. Called via jsp.
+copyRoom,
+    local rtn, crNo, crP, crR
+    dap rtn
+    lac crInst
+    dac crR
+    lac [NOPOINT]
+    dac crInst
+    dzm dismOn
+    dzm dismNest
+    lac ieShTab         // x1's shift, none
+    dac dismShift
+    lac i [copyArg:4]
+    add [cpNP:2]
+    dac crP
+    lac i crP
+    add i [pointCount:4]
+    sub [MAXPTS+1]
+    sma                 // skip if the points fit
+    jmp crNo
+    lac i [copyArg:4]
+    add [cpNL:2]
+    dac crP
+    lac i crP
+    add i [lineCount:4]
+    sub [MAXLINES+1]
+    sma                 // skip if the lines fit
+    jmp crNo
+    lac i [copyArg:4]
+    add [cpNA:2]
+    dac crP
+    lac i crP
+    add i [arcCount:2]
+    sub [MAXARCS+1]
+    sma                 // skip if the arcs fit
+    jmp crNo
+    lac i [copyArg:4]
+    add [cpNCon:011]
+    dac crP
+    lac i crP
+    add i [cCount:011]
+    sub [NCON+1]
+    sma                 // skip if the constraints fit
+    jmp crNo
+    jsp i [txCopyRoom:012]
+    sza                 // skip if the texts fit
+    jmp crNo
+    lac i [copyArg:4]
+    dac i [txArg:012]
+    lac crR
+    dac i [txArg2:012]
+    jsp i [txFits:012]
+    sza                 // skip if their characters fit
+    jmp crNo
+    jmp rtn
+crNo,
+    law COPYROOM
+rtn, jmp .
+crP, 0
+crR, 0
+    endloc
+
+// Copy's drop, its points and lines. Master copyArg's points are added at (copyX, copyY), each
+// offset at a dismember's scale (dismShift), and its lines on them, their point indices moved
+// past the points the table held (copyBase, which the arc module's copyArcs reads too). The main
+// loop writes the new lines' slots, past the list's old end, as for a commit. The master's
+// attachers' new points are listed in cpMrg, in designation order, for the arc module's
+// copyMerge. The master's texts are dropped too (the text module's txParts).
+// The caller has checked for room.
+// AC and IO are clobbered. Called via jsp.
+copyParts,
+    local rtn, cpaMrg, cpaNo, cpaNx, cpaN, cpaL, cpaP, cpaA, cpaM
+    dap rtn
+    jsp i [txParts:012]
+    lac i [copyArg:4]
+    add [cpNAtt:5]
+    dac cpaP
+    lac i cpaP
+    dac cpaN
+    lac i [copyArg:4]
+    sal 1s
+    add i [copyArg:4]
+    sal 1s              // k * NATT, 6
+    add [cpAtt:5]
+    dac cpaA
+    lac [cpMrg:3]
+    dac cpaM
+    law i NATT
+    dac cpaL
+cpaMrg,
+    lac cpaN
+    sza i               // skip while the master's attachers remain
+    jmp cpaNo
+    sub [1]
+    dac cpaN
+    lac i cpaA
+    add i [pointCount:4] // copyBase, set below
+    jmp cpaNx
+cpaNo,
+    lac [NOPOINT]
+cpaNx,
+    dac i cpaM
+    idx cpaA
+    idx cpaM
+    isp cpaL            // skip once every word is written
+    jmp cpaMrg
+    lac i [copyArg:4]
+    add [cpNP:2]
+    dac cpaP
+    lac i cpaP
+    dac cpaN
+    lac i [copyArg:4]
+    add [cpNL:2]
+    dac cpaP
+    lac i cpaP
+    dac cpaL
+    lac i [pointCount:4]
+    dac i [copyBase:4]
+    lac dismShift
+    dac wmX
+    lac i [copyArg:4]
+    sal CPPSHIFT
+    add [cpX:5]
+    dac wmA
+    lac i [pointCount:4]
+    add [pointX:3]
+    dac wmB
+    lac cpaN
+    dac wmN
+    lac i [copyX:4]
+    dac wmD
+    jsp moveW
+    lac i [copyArg:4]
+    sal CPPSHIFT
+    add [cpY:5]
+    dac wmA
+    lac i [pointCount:4]
+    add [pointY:3]
+    dac wmB
+    lac cpaN
+    dac wmN
+    lac i [copyY:4]
+    dac wmD
+    jsp moveW
+    lac i [pointCount:4]
+    add cpaN
+    dac i [pointCount:4]
+    lac ieShTab         // the lines' point indices, unshifted
+    dac wmX
+    lac i [copyArg:4]
+    sal CPLSHIFT
+    add [cpFrom:5]
+    dac wmA
+    lac i [lineCount:4]
+    add [lineFrom:3]
+    dac wmB
+    lac cpaL
+    dac wmN
+    lac i [copyBase:4]
+    dac wmD
+    jsp moveW
+    lac i [copyArg:4]
+    sal CPLSHIFT
+    add [cpTo:5]
+    dac wmA
+    lac i [lineCount:4]
+    add [lineTo:3]
+    dac wmB
+    lac cpaL
+    dac wmN
+    lac i [copyBase:4]
+    dac wmD
+    jsp moveW
+    lac i [lineCount:4]
+    add cpaL
+    dac i [lineCount:4]
+rtn, jmp .
+cpaN, 0
+cpaL, 0
+cpaP, 0
+cpaA, 0
+cpaM, 0
+    endloc
+
+// Dismember. The instance the pseudo pen location locks onto, penInst, is taken apart as Copy's
+// drop takes a copy apart, but at its origin and scale. Its master and origin go into Copy's
+// words (copyArg, copyX, copyY), and its scale's shift into dismShift, for copyParts and cCopy;
+// dismOn is set, for copyMerge. Refused, nothing changed, with no instance locked, with
+// the tables short of room (copyRoom), with a part off the canvas (the copy box, cMinX to cMaxY,
+// at the scale about the origin, beyond TRKXMIN to TRKXMAX or TRKYMIN to TRKYMAX, where the
+// target cannot reach), or with an arc whose radius at the scale passes ARCRMAX (its center's and
+// start's offsets in the store, compared squared, dismSquare). Its slot, master, origin, scale,
+// cycle flag and tie list are kept for Undo (instUndism) and for copyMerge (dismTie). The main
+// bank's dismLost then runs Copy's drop, which removes the instance.
+// Exit: AC = 0, COPYROOM, 2 with no instance locked, DMOFF with a part off the canvas, DMARC with
+// an arc too large. IO is clobbered. Called via jsp.
+instDism,
+    local rtn, idNone
+    dap rtn
+    lac i [penInst:4]
+    sad [NOPOINT]       // skip if an instance locks
+    jmp idNone
+    jda dismAt
+    jmp rtn
+idNone,
+    law 2
+rtn, jmp .
+    endloc
+
+// The dismember of instance i, as instDism describes it. Copy's words are set and the instance
+// kept for Undo, or it is refused, its words set but nothing else changed. Define's instNest and
+// instNestAt call it for every instance.
+// Entry: AC = i. Exit: AC = 0, COPYROOM, DMOFF or DMARC. IO is clobbered. Called via jda.
+dismAt, 0
+    local rtn, dmArc, dmTies, dmTieLp, dmOff, dmBig, dmP, dmQ, dmT, dmU, dmN, dmA, dmB
+    dap rtn
+    lac dismAt
+    dac dismInst
+    add [iMaster:012]
+    dac dmP
+    lac i dmP
+    dac dismMaster
+    dac i [copyArg:4]
+    lac dismInst
+    add [iX:3]
+    dac dmP
+    lac i dmP
+    dac dismX
+    dac i [copyX:4]
+    lac dismInst
+    add [iY:3]
+    dac dmP
+    lac i dmP
+    dac dismY
+    dac i [copyY:4]
+    lac dismInst
+    add [iCyc:3]
+    dac dmP
+    lac i dmP
+    dac dismCyc
+    lac i [instCount:012]
+    sub [1]
+    dac dismLast
+    lac dismInst        // its texts' copies are replaced, not added
+    dac crInst
+    jsp copyRoom
+    sza                 // skip if the parts fit
+    jmp rtn
+    lac dismInst
+    add [iScale:3]
+    dac dmP
+    lac i dmP
+    dac dismScale
+    dac ibS
+    add [ieShTab:7]
+    dac dmP
+    dac ibSh
+    lac i dmP
+    dac dismShift
+
+    // The copy box at the scale about the origin, on the canvas.
+    lac dismMaster
+    add [cMinX:2]
+    jda ibVal
+    add dismX
+    sub [TRKXMIN]
+    spa                 // skip unless left of the canvas
+    jmp dmOff
+    lac dismMaster
+    add [cMaxX:2]
+    jda ibVal
+    add dismX
+    sub [TRKXMAX+1]
+    sma                 // skip unless right of it
+    jmp dmOff
+    lac dismMaster
+    add [cMinY:2]
+    jda ibVal
+    add dismY
+    sub [TRKYMIN]
+    spa                 // skip unless below it
+    jmp dmOff
+    lac dismMaster
+    add [cMaxY:2]
+    jda ibVal
+    add dismY
+    sub [TRKYMAX+1]
+    sma                 // skip unless above it
+    jmp dmOff
+
+    // Each arc's radius at the scale, from its center's and start's offsets in the store.
+    lac dismMaster
+    add [cpNA:2]
+    dac dmP
+    lac i dmP
+    sza i               // skip if the master has arcs
+    jmp dmTies
+    cma
+    dac dmN
+    lac dismMaster
+    sal CPASHIFT
+    add [cpC:5]
+    dac dmA             // the arc's center's word; its start's is NMASTER * CPARCS on
+    lac dismMaster
+    sal CPPSHIFT
+    dac dmB             // the master's part of cpX and cpY
+dmArc,
+    lac dmA
+    add [NMASTER * CPARCS]
+    dac dmP
+    lac i dmP
+    add dmB
+    dac dmQ             // the start's word
+    lac i dmA
+    add dmB
+    dac dmP             // the center's
+    add [cpX:5]
+    dac dmT
+    lac i dmT
+    dac dmU
+    lac dmQ
+    add [cpX:5]
+    dac dmT
+    lac i dmT
+    sub dmU
+    jda dismSquare
+    dac dmU
+    lac dmP
+    add [cpY:5]
+    dac dmT
+    lac i dmT
+    dac dmT
+    lac dmQ
+    add [cpY:5]
+    dac dmQ
+    lac i dmQ
+    sub dmT
+    jda dismSquare
+    add dmU
+    sub [ARCRSQ+1]
+    sma                 // skip if the radius is within ARCRMAX
+    jmp dmBig
+    idx dmA
+    isp dmN             // skip once every arc is looked at
+    jmp dmArc
+
+    // Its tie list, kept.
+dmTies,
+    lac dismInst
+    add [iTie:3]
+    dac dmP
+    lac [dismTie:7]
+    dac dmQ
+    law i NATT
+    dac dmN
+dmTieLp,
+    lac i dmP
+    dac i dmQ
+    lac dmP
+    add [MAXINST]
+    dac dmP
+    idx dmQ
+    isp dmN             // skip once every attacher's word is kept
+    jmp dmTieLp
+    law 1
+    dac dismOn
+    cla
+    jmp rtn
+dmOff,
+    law DMOFF
+    jmp rtn
+dmBig,
+    law DMARC
+rtn, jmp .
+dmP, 0
+dmQ, 0
+dmT, 0
+dmU, 0
+dmN, 0
+dmA, 0
+dmB, 0
+    endloc
+
+// An arc's offset on one axis at the dismember's scale (dismShift), squared and divided by 32;
+// over ARCRMAX on its own, ARCRSQ + 1, which no radius in range reaches.
+// Entry: AC = the offset in the store. Exit: AC = the value. IO is clobbered. Called via jda.
+dismSquare, 0
+    local rtn, sqBig, sqV
+    dap rtn
+    lac dismSquare
+    jda ieAbs
+    xct dismShift
+    dac sqV
+    sub [ARCRMAX+1]
+    sma                 // skip if within ARCRMAX
+    jmp sqBig
+    lac sqV
+    mul sqV
+    scr 6s              // the product's alignment and 5 places more; IO = the square / 32
+    dio sqV
+    lac sqV
+    jmp rtn
+sqBig,
+    lac [ARCRSQ+1]
+rtn, jmp .
+sqV, 0
+    endloc
+
+// Define's checks before it takes the instances apart, nothing but Copy's words and the kept
+// instance changed if one refuses, which Define's cleared Undo no longer reads. It refuses for an
+// instance cycling (DEFCYCLE; instMap's check, made first here); the tables short of room for
+// every instance's points, lines, arcs and constraints at once (DEFNROOM: copyRoom's sums, an
+// attacher's point counted though its merge takes it back), and the canvas for their texts (the
+// text module's txNestRoom); an instance with a part off the canvas or an arc too large at its
+// scale (dismAt's checks: DEFNOFF, DEFNARC). With no instances, nothing is checked.
+// Exit: AC = 0, or why not. IO is clobbered. Called via jsp.
+instNest,
+    local rtn, nsSum0, nsSum, nsFit, nsChk, nsBad, nsNo, nsOk, nsI, nsT, nsM, nsP, nsL, nsA, nsC
+    dap rtn
+    lac i [cycN:4]
+    sza i               // skip if an instance cycles
+    jmp nsSum0
+    law DEFCYCLE
+    jmp rtn
+nsSum0,
+    lac i [pointCount:4]
+    dac nsP
+    lac i [lineCount:4]
+    dac nsL
+    lac i [arcCount:2]
+    dac nsA
+    lac i [cCount:011]
+    dac nsC
+    dzm nsI
+nsSum,
+    lac nsI
+    sad i [instCount:012] // skip while instances remain
+    jmp nsFit
+    add [iMaster:012]
+    dac nsT
+    lac i nsT
+    dac nsM
+    add [cpNP:2]
+    dac nsT
+    lac i nsT
+    add nsP
+    dac nsP
+    lac nsM
+    add [cpNL:2]
+    dac nsT
+    lac i nsT
+    add nsL
+    dac nsL
+    lac nsM
+    add [cpNA:2]
+    dac nsT
+    lac i nsT
+    add nsA
+    dac nsA
+    lac nsM
+    add [cpNCon:011]
+    dac nsT
+    lac i nsT
+    add nsC
+    dac nsC
+    idx nsI
+    jmp nsSum
+nsFit,
+    lac nsP
+    sub [MAXPTS+1]
+    sma                 // skip if the points fit
+    jmp nsNo
+    lac nsL
+    sub [MAXLINES+1]
+    sma                 // skip if the lines fit
+    jmp nsNo
+    lac nsA
+    sub [MAXARCS+1]
+    sma                 // skip if the arcs fit
+    jmp nsNo
+    lac nsC
+    sub [NCON+1]
+    sma                 // skip if the constraints fit
+    jmp nsNo
+    // The texts' room before dismAt, whose COPYROOM for an instance's texts nsBad would misname.
+    jsp i [txNestRoom:012]  // the canvas's room for every instance's texts at once
+    sza                 // skip if the texts fit
+    jmp rtn
+    dzm nsI
+nsChk,
+    lac nsI
+    sad i [instCount:012] // skip while instances remain
+    jmp nsOk
+    jda dismAt
+    sza                 // skip if the instance can be taken apart
+    jmp nsBad
+    idx nsI
+    jmp nsChk
+nsBad,
+    add [DEFNOFF-DMOFF]
+    jmp rtn
+nsNo,
+    law DEFNROOM
+    jmp rtn
+nsOk,
+    cla
+rtn, jmp .
+nsI, 0
+nsT, 0
+nsM, 0
+nsP, 0
+nsL, 0
+nsA, 0
+nsC, 0
+    endloc
+
+// Define's instance i taken apart. Copy's words are set as a dismember sets them (dismAt), which
+// instNest has checked; for every instance after the first, dismNest is set, so that cCopy keeps
+// the places once, before them all, for a refusal's Undo to put back.
+// Entry: AC = i. Exit: AC = 0. IO is clobbered. Called via jda.
+instNestAt, 0
+    local rtn
+    dap rtn
+    lac instNestAt
+    jda dismAt
+    lac instNestAt
+    sza i               // skip unless the first
+    jmp rtn
+    law 1
+    dac dismNest
+    cla
+rtn, jmp .
+    endloc
+
+// Undo of a dismember (the main bank's undoParts, before its removals). The instance instDism
+// kept is put back as it was, in its slot (dismInst), and the instance instRemove moved there
+// back in the last slot (dismLast), each slot written as instRemove and instAdd write one, so
+// that each instance has the slot whose origin Undo's snapshot (cSnap, taken before the removal)
+// keeps for it; whatever a cycle's step has added since to the moved one's kept origin (instTo)
+// goes back with it. Its tie points return to it, none made, and it cycles again if it cycled,
+// which sets cycN and, with no other cycling, the steps' clock and the cycle's position, as the
+// Cycle row starts one (instChange). Its ties join the solver's (cTopo). The caller spreads the
+// target calls again (the arc module's arcUndo).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+instUndism,
+    local rtn, udCopy, udSlot, udTie, udOne, udDone, udP, udQ, udN
+    dap rtn
+    law 1
+    dac i [cTopo:010]
+    lac dismLast
+    sad dismInst             // skip unless it was the last
+    jmp udSlot
+
+    // The moved instance back in the last slot, its master, origin, cycle flag, scale and tie
+    // list, as instRemove moved them; then its slot, unused until now, written.
+    lac dismInst
+    add [iMaster:012]
+    dac udP
+    lac dismLast
+    add [iMaster:012]
+    dac udQ
+    lac i udP
+    dac i udQ
+    lac dismInst
+    add [iX:3]
+    dac udP
+    lac dismLast
+    add [iX:3]
+    dac udQ
+    lac i udP
+    dac i udQ
+    lac dismInst
+    add [iY:3]
+    dac udP
+    lac dismLast
+    add [iY:3]
+    dac udQ
+    lac i udP
+    dac i udQ
+    lac dismInst
+    add [iCyc:3]
+    dac udP
+    lac dismLast
+    add [iCyc:3]
+    dac udQ
+    law i NATT+2
+    dac udN
+udCopy,
+    lac i udP
+    dac i udQ
+    lac udP
+    add [MAXINST]
+    dac udP
+    lac udQ
+    add [MAXINST]
+    dac udQ
+    isp udN             // skip once the scale and the tie list are copied
+    jmp udCopy
+    lac dismLast
+    jda instParam
+    lac dismLast
+    jda instXY
+    lac dismLast
+    jda instGate
+
+    // Its kept origin's steps since (bank 9's uSX and uSY), moved with it.
+    lac dismInst
+    add [MAXPTS]
+    add [uSX:011]
+    dac udP
+    lac dismLast
+    add [MAXPTS]
+    add [uSX:011]
+    dac udQ
+    lac i udP
+    sub dismX
+    add i udQ
+    dac i udQ
+    lac dismX
+    dac i udP
+    lac udP
+    add [NVAR]          // uSY, after uSX
+    dac udP
+    lac udQ
+    add [NVAR]
+    dac udQ
+    lac i udP
+    sub dismY
+    add i udQ
+    dac i udQ
+    lac dismY
+    dac i udP
+
+    // Its slot's gate steps over the call while the slot's words change.
+    lac dismInst
+    jda instSlot
+    add [INSTGATE]
+    dac udP
+    add [1]
+    ior [jump next(parameter)]
+    dac i udP
+
+    // The instance taken apart, in its slot.
+udSlot,
+    lac dismInst
+    add [iMaster:012]
+    dac udP
+    lac dismMaster
+    dac i udP
+    lac dismInst
+    add [iX:3]
+    dac udP
+    lac dismX
+    dac i udP
+    lac dismInst
+    add [iY:3]
+    dac udP
+    lac dismY
+    dac i udP
+    lac dismInst
+    add [iScale:3]
+    dac udP
+    lac dismScale
+    dac i udP
+    lac dismInst
+    add [iCyc:3]
+    dac udP
+    lac dismCyc
+    dac i udP
+    lac dismInst
+    add [iTie:3]
+    dac udP
+    lac [dismTie:7]
+    dac udQ
+    law i NATT
+    dac udN
+udTie,
+    lac i udQ
+    dac i udP
+    lac udP
+    add [MAXINST]
+    dac udP
+    idx udQ
+    isp udN             // skip once every attacher's word is written
+    jmp udTie
+    lac dismInst
+    jda instParam
+    lac dismInst
+    jda instXY
+    lac dismInst
+    jda instGate
+    lac dismLast
+    add [1]
+    dac i [instCount:012]
+
+    // Cycling again, as the Cycle row starts it.
+    lac dismCyc
+    sza i               // skip if it cycled
+    jmp udDone
+    lac i [cycN:4]
+    sza                 // skip if none cycles
+    jmp udOne
+    lac i [now:4]
+    dac cycAt
+    lac dismInst
+    jda cyFrom
+udOne,
+    idx i [cycN:4]
+udDone,
+    cla
+rtn, jmp .
+udP, 0
+udQ, 0
+udN, 0
+    endloc
+
+// Move wmN words from the 16-bit address wmA on to wmB on, each shifted by wmX (an ieShTab
+// word, for xct) and wmD added. wmN may be 0.
+// Entry: wmA, wmB, wmN, wmX, wmD. Exit: wmA and wmB past the words. AC and IO are clobbered.
+// Called via jsp.
+moveW,
+    local rtn, wmLoop
+    dap rtn
+    lac wmN
+    sza i               // skip if there are words
+    jmp rtn
+    cma
+    dac wmN
+wmLoop,
+    lac i wmA
+    xct wmX
+    add wmD
+    dac i wmB
+    idx wmA
+    idx wmB
+    isp wmN             // skip once every word is moved
+    jmp wmLoop
+rtn, jmp .
+    endloc
+
+// Define's map (instMap, instDef). The master points, mpN; the attachers' master indices, attJ,
+// attN of them; their crosses' visits, avX, avY and avV, avN of them, which defWalk reads
+// through 16-bit addresses; mpVisit's beam; dqMap's exit.
+mpN, 0
+mpV, 0
+attN, 0
+attJ,
+    table NATT, 0
+avN, 0
+avX,
+    table 4 * NATT, 0
+avY,
+    table 4 * NATT, 0
+avV,
+    table 4 * NATT, 0
+dqV, 0
+
+// The tie points of a removed instance, tgN of them, which the arc module's arcOrphans reads
+// through 16-bit addresses (instRemove).
+tgN, 0
+tgList,
+    table NATT, 0
+
+// A carry (instPick, instMove). The group's instances, gMem; the handle's offset from the
+// dragged origin; the step; mvHold's bounds on the step, x then y.
+gMem,
+    table MAXINST, 0
+hdX, 0
+hdY, 0
+cvDX, 0
+cvDY, 0
+mhLo, 0
+mhHi, 0
+myLo, 0
+myHi, 0
+
+// moveW's source, destination, count, shift and offset (copyParts).
+wmA, 0
+wmB, 0
+wmN, 0
+wmX, 0
+wmD, 0
+
+// A dismember (instDism). dismOn is nonzero while the drop under way is one, which the arc
+// module's copyMerge reads through its 16-bit address, and dismShift is its scale's shift for
+// xct, which copyParts and the constraint module's cCopy read; both are Copy's (0, and x1's)
+// after copyRoom. The instance taken apart, for Undo (instUndism), is its slot, master, origin,
+// scale and cycle flag; the last slot, which instRemove moved into its slot; and its tie list,
+// which copyMerge reads too. dismNest: nonzero while Define takes apart an instance after its
+// first, which cCopy reads through its 16-bit address; copyRoom clears it.
+dismOn, 0
+dismNest, 0
+dismShift, 0
+
+// The instance whose texts' copies a copyRoom's texts replace, a dismember's (dismAt), NOPOINT
+// for Copy's; copyRoom puts it back to NOPOINT.
+crInst, NOPOINT
+dismInst, 0
+dismMaster, 0
+dismX, 0
+dismY, 0
+dismScale, 0
+dismCyc, 0
+dismLast, 0
+dismTie,
+    table NATT, 0
+
+// instClamp's inputs: a master's box on one axis, an instance's scale, and the lowest and
+// highest coordinate the box may reach.
+icLo, 0
+icHi, 0
+icS, 0
+icMin, 0
+icMax, 0
+
+// The carried attacher's offset from a copy's origin (iaCarry), 0 for any other instance.
+iaOX, 0
+iaOY, 0
+
+// mcScan's choice: nonzero to keep the master's constraints, zero to count them.
+mcKeep, 0
+
+// The lit instance (NOPOINT when none), which init sets through its 16-bit address; instBox's
+// scale, the full address of ieShTab's shift for it, and its box on the screen. instLock's
+// lockD is the main bank's (instCall).
+litInst, 0
+ibS, 0
+ibSh, 0
+ibX0, 0
+ibX1, 0
+ibY0, 0
+ibY1, 0
+// The scale ipWord adds to an instance's, the view's while instView writes a shown one, 0
+// otherwise.
+ipAdd, 0

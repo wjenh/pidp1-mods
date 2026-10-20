@@ -1,0 +1,804 @@
+// spdefine.ac -- Define, which makes the drawing a master; and, at Copy's drop, the copy's arcs
+// put back from the store and its attachers' merges.
+//
+// Bank 2, after spdrag.ac.
+// Part of sketchpad.am1, included where it stands.
+
+// Define (AEDEFINE): make the drawn parts master masterArg, a display subroutine of vectors
+// relative to its origin, the center of their box. For each line the words hold a beam-off move
+// from where the beam is to its start, then the line; for each arc a beam-off move to its end,
+// then its steps back to its start as its slot draws them; then each attacher's cross, at the
+// visits the instance module's instMap listed. The last word carries end, so a save returns. A
+// line of no length draws nothing and is passed over. Refused, nothing changed, when nothing is
+// drawn (DEFEMPTY), past MWORDS words or CPLINES lines (DEFWORDS), or past MTIME of drawing
+// (DEFTIME). Once defined, the words go into the slot's part of bank 0's store, and the length
+// and box into the master directory. The main bank's actDefine, which took every instance apart
+// first, then removes the instances, has the instance module keep the parts in Copy's store
+// (instDef), and clears the drawing.
+// Exit: AC = 0 defined, or why not. IO is clobbered. Called via jsp.
+defineMaster,
+    local rtn, dfBox, dfCopy, dfEmpty, dfWords, dfTime, dfP, dfQ, dfR
+    dap rtn
+    eem
+    lac i [masterArg:4]
+    dac dfK
+    lac i [lineCount:4]
+    lem
+    dac dfNL
+    ior arcCount
+    sza i               // skip if something is drawn
+    jmp dfEmpty
+
+    // The box of every point the beam goes to, and the origin at its center; then the words,
+    // the beam starting at the origin. First, Copy's store must hold the lines. More than
+    // CPLINES take more than MWORDS words, unless some have no length.
+dfBox,
+    lac dfNL
+    sub [CPLINES+1]
+    sma                 // skip if Copy's store holds the lines
+    jmp dfWords
+    lac [01777]
+    dac dfMinX
+    dac dfMinY
+    dzm dfMaxX
+    dzm dfMaxY
+    dzm dfPass
+    jsp defWalk
+    lac dfMinX
+    add dfMaxX
+    sar 1s
+    dac dfCX
+    dac dfBX
+    lac dfMinY
+    add dfMaxY
+    sar 1s
+    dac dfCY
+    dac dfBY
+    dzm dfN
+    dzm dfT
+    dzm dfOver
+    law 1
+    dac dfPass
+    jsp defWalk
+    lac dfOver
+    sza                 // skip if the words fit
+    jmp dfWords
+    lac dfN
+    sza i               // skip if there is a word
+    jmp dfEmpty
+    lac dfT
+    sub [MTIME+1]
+    sma                 // skip if the drawing takes MTIME or less
+    jmp dfTime
+    lac dfN
+    add [defBuf:3-1]
+    dac dfP
+    eem
+    lac i dfP
+    ior [end]
+    dac i dfP
+    lem
+
+    // Into the store, k * MWORDS words into it. MWORDS is 128, so a shift.
+    lac dfK
+    sal 7s
+    add [masters:0]
+    dac dfQ
+    lac [defBuf:3]
+    dac dfP
+    lac dfN
+    cma
+    dac dfR
+    eem
+dfCopy,
+    lac i dfP
+    dac i dfQ
+    idx dfP
+    idx dfQ
+    isp dfR             // skip once every word is copied
+    jmp dfCopy
+    lem
+
+    // The directory, the length and the box relative to the origin.
+    lac dfK
+    add [mLen]
+    dac dfP
+    lac dfN
+    dac i dfP
+    lac dfK
+    add [mMinX]
+    dac dfP
+    lac dfMinX
+    sub dfCX
+    dac i dfP
+    lac dfK
+    add [mMaxX]
+    dac dfP
+    lac dfMaxX
+    sub dfCX
+    dac i dfP
+    lac dfK
+    add [mMinY]
+    dac dfP
+    lac dfMinY
+    sub dfCY
+    dac i dfP
+    lac dfK
+    add [mMaxY]
+    dac dfP
+    lac dfMaxY
+    sub dfCY
+    dac i dfP
+    cla
+    jmp rtn
+dfEmpty,
+    law DEFEMPTY
+    jmp rtn
+dfWords,
+    law DEFWORDS
+    jmp rtn
+dfTime,
+    law DEFTIME
+rtn, jmp .
+dfP, 0
+dfQ, 0
+dfR, 0
+    endloc
+
+// One pass over the drawn parts in the order a master draws them, each point the beam goes to
+// given to defVisit. They are a line's start beam off and its end beam on, then an arc's end beam
+// off and its vertices from arcK down to 0, the start, beam on; then the attachers' crosses,
+// instMap's visits in bank 7 (avX, avY, avV, avN of them).
+// Entry: dfNL, dfPass. AC and IO are clobbered. Called via jsp.
+defWalk,
+    local rtn, dwLine, dwDraw, dwNext, dwArcs, dwArc, dwVert, dwArcNext, dwCross, dwCr, dwI, \
+        dwK, dwT
+    dap rtn
+    dzm dwI
+dwLine,
+    lac dwI
+    sad dfNL            // skip while lines remain
+    jmp dwArcs
+    lio dwI
+    eem
+    jsp i [loadLine:014]
+    lem
+    lac lnX1
+    sas lnX0            // skip if the x are the same
+    jmp dwDraw
+    lac lnY1
+    sad lnY0            // skip unless the y are the same too (no length)
+    jmp dwNext
+dwDraw,
+    dzm dvVis
+    lio lnY0
+    lac lnX0
+    jda defVisit
+    lac [visible]
+    dac dvVis
+    lio lnY1
+    lac lnX1
+    jda defVisit
+dwNext,
+    idx dwI
+    jmp dwLine
+dwArcs,
+    dzm dwI
+dwArc,
+    lac dwI
+    sad arcCount        // skip while arcs remain
+    jmp dwCross
+    jda arcLoad
+    dzm dvVis
+    lio arcEY
+    lac arcEX
+    jda defVisit
+    lac [visible]
+    dac dvVis
+    lac arcK
+    dac dwK
+dwVert,
+    lac dwK
+    jda arcVertex
+    lio arcY
+    lac arcX
+    jda defVisit
+    lac dwK
+    sza i               // skip until vertex 0, the start
+    jmp dwArcNext
+    sub [1]
+    dac dwK
+    jmp dwVert
+dwArcNext,
+    idx dwI
+    jmp dwArc
+dwCross,
+    eem
+    lac i [avN:7]
+    lem
+    sza i               // skip if there are crosses
+    jmp rtn
+    cma
+    dac dwK
+    dzm dwI
+dwCr,
+    eem
+    lac dwI
+    add [avV:7]
+    dac dwT
+    lac i dwT
+    dac dvVis
+    lac dwI
+    add [avY:7]
+    dac dwT
+    lio i dwT
+    lac dwI
+    add [avX:7]
+    dac dwT
+    lac i dwT
+    lem
+    jda defVisit
+    idx dwI
+    isp dwK             // skip once every visit is made
+    jmp dwCr
+rtn, jmp .
+dwI, 0
+dwK, 0
+dwT, 0
+    endloc
+
+// A point the beam goes to in Define's pass. The first pass (dfPass 0) takes it into the box,
+// the second appends the move to it from where the beam is (defMove), beam on when dvVis is
+// visible.
+// Entry: AC = x, IO = y; dvVis. AC and IO are clobbered. Called via jda.
+defVisit, 0
+    local rtn, dvMaxX, dvMinY, dvMaxY, dvEmit, dvY
+    dap rtn
+    dio dvY
+    lac dfPass
+    sza                 // skip on the box's pass
+    jmp dvEmit
+    lac defVisit
+    sub dfMinX
+    sma                 // skip if left of the box
+    jmp dvMaxX
+    lac defVisit
+    dac dfMinX
+dvMaxX,
+    lac dfMaxX
+    sub defVisit
+    sma                 // skip if right of the box
+    jmp dvMinY
+    lac defVisit
+    dac dfMaxX
+dvMinY,
+    lac dvY
+    sub dfMinY
+    sma                 // skip if below the box
+    jmp dvMaxY
+    lac dvY
+    dac dfMinY
+dvMaxY,
+    lac dfMaxY
+    sub dvY
+    sma                 // skip if above the box
+    jmp rtn
+    lac dvY
+    dac dfMaxY
+    jmp rtn
+dvEmit,
+    lac defVisit
+    sub dfBX
+    dac dmDX
+    lac dvY
+    sub dfBY
+    dac dmDY
+    jsp defMove
+    lac defVisit
+    dac dfBX
+    lac dvY
+    dac dfBY
+rtn, jmp .
+dvY, 0
+    endloc
+
+// Append the move by (dmDX, dmDY) to Define's words, split into the fewest vectors of at most
+// MSTEP units on either axis, each within a unit of the true line, as emitVecs splits a line;
+// and add each vector's drawing time to dfT, 10 + 3 * its steps in half microseconds. A move of
+// nothing appends nothing. Past MWORDS words dfOver is set and nothing more is appended.
+// Entry: dmDX, dmDY; dvVis. AC and IO are clobbered. Called via jsp.
+defMove,
+    local rtn, dmXPos, dmYPos, dmMX, dmMHave, dmKLoop, dmKDone, dmLoop, dmY, dmTime, dmVBig, \
+        dmSt, dmTakeM, dmAddM, dmOver, dmAX, dmAY, dmSX, dmSY, dmM, dmK, dmKM, dmBX, dmBY, \
+        dmRX, dmRY, dmCX, dmCY, dmI, dmU, dmV, dmMx, dmMn, dmD, dmW, dmP
+    dap rtn
+    dzm dmSX
+    lac dmDX
+    sma                 // skip if dx is minus
+    jmp dmXPos
+    lio [0200]          // left
+    dio dmSX
+    cma
+dmXPos,
+    dac dmAX
+    dzm dmSY
+    lac dmDY
+    sma                 // skip if dy is minus
+    jmp dmYPos
+    lio [0100000]       // down
+    dio dmSY
+    cma
+dmYPos,
+    dac dmAY
+
+    // M, the larger magnitude; none is no move.
+    sub dmAX
+    spa                 // skip if |dy| is the larger or equal
+    jmp dmMX
+    lac dmAY
+    jmp dmMHave
+dmMX,
+    lac dmAX
+dmMHave,
+    sza i               // skip unless there is no move
+    jmp rtn
+    dac dmM
+
+    // K, the fewest with K * MSTEP at least M; each step |d| / K, and a unit more whenever the
+    // remainders summed so far reach another K. The divide's dividend is shifted left one place,
+    // and a successful div skips; K is 1 or more, so it cannot overflow.
+    law 1
+    dac dmK
+    law MSTEP
+    dac dmKM
+dmKLoop,
+    lac dmKM
+    sub dmM
+    sma                 // skip while K * MSTEP is short of M
+    jmp dmKDone
+    idx dmK
+    lac dmKM
+    add [MSTEP]
+    dac dmKM
+    jmp dmKLoop
+dmKDone,
+    lio dmAX
+    cla
+    scl 1s
+    div dmK
+    cla                 // no skip means overflow
+    dac dmBX
+    dio dmRX
+    lio dmAY
+    cla
+    scl 1s
+    div dmK
+    cla                 // no skip means overflow
+    dac dmBY
+    dio dmRY
+    dzm dmCX
+    dzm dmCY
+    lac dmK
+    cma
+    dac dmI
+dmLoop,
+    lac dmBX
+    dac dmU
+    lac dmCX
+    add dmRX
+    dac dmCX
+    sub dmK
+    spa                 // skip once the remainders reach another unit
+    jmp dmY
+    dac dmCX
+    idx dmU
+dmY,
+    lac dmBY
+    dac dmV
+    lac dmCY
+    add dmRY
+    dac dmCY
+    sub dmK
+    spa                 // skip once the remainders reach another unit
+    jmp dmTime
+    dac dmCY
+    idx dmV
+
+    // The step's time. Its major axis M and minor m take M + min(m, M - m) steps.
+dmTime,
+    lac dmU
+    sub dmV
+    spa                 // skip if the x step is the larger or equal
+    jmp dmVBig
+    lac dmU
+    dac dmMx
+    lac dmV
+    dac dmMn
+    jmp dmSt
+dmVBig,
+    lac dmV
+    dac dmMx
+    lac dmU
+    dac dmMn
+dmSt,
+    lac dmMx
+    sub dmMn
+    sub dmMn
+    sma                 // skip if M - m is under m, the minimum then
+    jmp dmTakeM
+    lac dmMx
+    sub dmMn
+    jmp dmAddM
+dmTakeM,
+    lac dmMn
+dmAddM,
+    add dmMx
+    dac dmD
+    sal 1s
+    add dmD
+    add [0d10]
+    add dfT
+    dac dfT
+
+    // The word, unless the words are full.
+    lac dmV
+    sal 8s
+    ior dmU
+    ior dmSX
+    ior dmSY
+    ior dvVis
+    dac dmW
+    lac dfN
+    sad [MWORDS]        // skip unless the words are full
+    jmp dmOver
+    add [defBuf:3]
+    dac dmP
+    lac dmW
+    eem
+    dac i dmP
+    lem
+    idx dfN
+    isp dmI             // skip once every step is appended
+    jmp dmLoop
+    jmp rtn
+dmOver,
+    law 1
+    dac dfOver
+rtn, jmp .
+dmAX, 0
+dmAY, 0
+dmSX, 0
+dmSY, 0
+dmM, 0
+dmK, 0
+dmKM, 0
+dmBX, 0
+dmBY, 0
+dmRX, 0
+dmRY, 0
+dmCX, 0
+dmCY, 0
+dmI, 0
+dmU, 0
+dmV, 0
+dmMx, 0
+dmMn, 0
+dmD, 0
+dmW, 0
+dmP, 0
+    endloc
+
+// Move mwN words from the 16-bit address mwA on to mwB on, adding mwD to each, for Copy's store
+// and the tables of banks 2, 3 and 5. mwN may be 0.
+// Entry: mwA, mwB, mwN, mwD. Exit: mwA and mwB past the words. AC and IO are clobbered.
+// Called via jsp.
+moveWords,
+    local rtn, mvLoop
+    dap rtn
+    lac mwN
+    sza i               // skip if there are words
+    jmp rtn
+    cma
+    dac mwN
+    eem
+mvLoop,
+    lac i mwA
+    add mwD
+    dac i mwB
+    idx mwA
+    idx mwB
+    isp mwN             // skip once every word is moved
+    jmp mvLoop
+    lem
+rtn, jmp .
+    endloc
+
+// Copy's drop, its arcs (AECOPY). Master copyArg's arcs are added at the arc table's end, their
+// point indices moved past the points the table held before the copy (copyBase), and each
+// arc's slot and marks written (arcRewrite). The main bank has checked for room and added the
+// points and lines (copyParts).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+copyArcs,
+    local rtn, cxTab, cxGo, cxArc, cxDone
+    dap rtn
+    eem
+    lac i [copyArg:4]
+    dac cyK
+    lac i [copyBase:4]
+    dac cyPC
+    lem
+    lac cyK
+    add [cpNA]
+    dac cyP
+    lac i cyP
+    dac cyNA
+
+    // Each table from cpC to cpK into arcTC to arcTK at the arc table's end.
+    lac cyK
+    sal CPASHIFT
+    add [cpC:5]
+    dac cyQ
+    lac arcCount
+    add [arcTC:2]
+    dac cyP
+    law i CPATAB
+    dac cyJ
+cxTab,
+    lac cyQ
+    dac mwA
+    lac cyP
+    dac mwB
+    lac cyNA
+    dac mwN
+    dzm mwD
+    lac cyJ
+    add [CPATAB-3]
+    sma                 // skip if the table holds point indices (center, start or end)
+    jmp cxGo
+    lac cyPC
+    dac mwD
+cxGo,
+    jsp moveWords
+    lac cyQ
+    add [NMASTER * CPARCS]
+    dac cyQ
+    lac cyP
+    add [MAXARCS]
+    dac cyP
+    isp cyJ             // skip once every table is copied
+    jmp cxTab
+cxArc,
+    lac cyNA
+    sza i               // skip while arcs remain to be written
+    jmp cxDone
+    sub [1]
+    dac cyNA
+    lac arcCount
+    jda arcRewrite
+    idx arcCount
+    jmp cxArc
+cxDone,
+    cla
+rtn, jmp .
+    endloc
+
+// Copy's drop, its attachers' merges (AECMERGE), once its parts, its arcs and its constraints
+// are added. Each attacher but the last designated, in designation order, merges into the
+// nearest point the table held before the copy (below copyBase) within SNAP_BOX of it on both
+// axes, or, where Designate named one, into its designated point whatever the distance (desPt,
+// bank 3, where attacher i's is designation i). It is dragged onto the point first as Move drags
+// a point, the arcs on it following (arcPick, arcDrag); one with an arc that cannot follow stays
+// where it is. The last designated, by which the copy is carried, merges as Move's drop does
+// into the point the pseudo pen location locks onto (dropMerge), when it lies at the pseudo pen
+// location; a copy held on the canvas may not. The attachers' points are cpMrg's (bank 3), which
+// conRen keeps as merges rename points, and desPt with it; both are emptied after. A dismember's
+// drop (the instance module's dismOn) merges every attacher alike, none carried, each into the
+// instance's tie point for it (dismTie), dragged onto it as above.
+// Exit: AC = the carried attacher's point if it lies at the pseudo pen location and no point is
+// locked, for the main bank to give it its N's and C's (cDrop); otherwise NOPOINT. IO is
+// clobbered. Called via jsp.
+copyMerge,
+    local rtn, cmLoop, cmOne, cmTie, cmDes, cmNear, cmQNx, cmGot, cmNext, cmLast, cmMerge, \
+        cmEmpty, cmClr, cmRes, cmA, cmN, cmE, cmP, cmQ, cmX, cmY, cmU, cmT, cmD, cmBest, cmPX, \
+        cmPY, cmDm
+    dap rtn
+    lac [NOPOINT]
+    dac cmRes
+    lac mPenX
+    dac cmPX
+    lac mPenY
+    dac cmPY
+    eem
+    lac i [copyArg:4]
+    add [cpNAtt:5]
+    dac cmT
+    lac i cmT
+    dac cmN
+    lac i [copyBase:4]
+    dac cmE
+    lem
+    lac [dismOn:7]
+    jda getW
+    dac cmDm
+    lac cmN
+    sza i               // skip if the master has attachers
+    jmp cmEmpty
+    dzm cmA
+cmLoop,
+    lac cmA
+    add [1]
+    sad cmN             // skip unless the last designated
+    jmp cmLast
+cmOne,
+    lac cmA
+    add [cpMrg:3]
+    jda getW
+    dac cmP
+    sad [NOPOINT]       // skip unless the point has gone
+    jmp cmNext
+    lac cmDm
+    sza                 // skip unless a dismember
+    jmp cmTie
+    lac cmA
+    add [desPt:3]
+    jda getW
+    sas [NOPOINT]       // skip if no point is designated for it
+    jmp cmDes
+    lac cmP
+    jda ptXY
+    dac cmX
+    dio cmY
+
+    // The nearest point below copyBase, by the larger of its distances on the two axes.
+    lac [NOPOINT]
+    dac cmBest
+    law SNAP_BOX+1
+    dac cmD
+    dzm cmQ
+cmNear,
+    lac cmQ
+    sad cmE             // skip while points below copyBase remain
+    jmp cmGot
+    jda ptXY
+    dio cmU
+    sub cmX
+    spa                 // skip if plus
+    cma
+    dac cmT
+    lac cmU
+    sub cmY
+    spa                 // skip if plus
+    cma
+    sub cmT
+    spa                 // skip unless |dy| is below |dx|
+    cla
+    add cmT             // the larger
+    sub cmD
+    sma                 // skip if nearer than the best so far
+    jmp cmQNx
+    add cmD
+    dac cmD
+    lac cmQ
+    dac cmBest
+cmQNx,
+    idx cmQ
+    jmp cmNear
+
+    // Dragged onto it as Move drags a point, then merged into it.
+cmGot,
+    lac cmBest
+    sad [NOPOINT]       // skip if a point is in reach
+    jmp cmNext
+    jda ptXY
+    dac mPenX
+    dio mPenY
+    lac cmP
+    eem
+    dac i [dragIdx:4]
+    lem
+    jsp arcPick
+    jsp arcDrag
+    sza                 // skip unless an arc on it cannot follow
+    jmp cmNext
+    lac cmP
+    add [pointX:3]
+    dac cmT
+    lac mPenX
+    eem
+    dac i cmT
+    lem
+    lac cmP
+    add [pointY:3]
+    dac cmT
+    lac mPenY
+    eem
+    dac i cmT
+    lem
+    lac cmP
+    dac mgP
+    lac cmBest
+    dac mgQ
+    jsp mergePoint
+cmNext,
+    idx cmA
+    sad cmN             // skip while attachers remain; a dismember's last comes here
+    jmp cmEmpty
+    jmp cmLoop
+
+    // A dismember's attacher goes into the instance's tie point, if it has one; a designated
+    // one into the point designated.
+cmTie,
+    lac cmA
+    add [dismTie:7]
+    jda getW
+cmDes,
+    dac cmBest
+    jmp cmGot
+
+    // The carried attacher; a dismember has none.
+cmLast,
+    lac cmDm
+    sza                 // skip unless a dismember
+    jmp cmOne
+    lac cmPX
+    dac mPenX
+    lac cmPY
+    dac mPenY
+    lac cmA
+    add [cpMrg:3]
+    jda getW
+    dac cmP
+    sad [NOPOINT]       // skip unless the point has gone
+    jmp cmEmpty
+    jda ptXY
+    sas cmPX            // skip if at the pseudo pen location's x
+    jmp cmEmpty
+    dio cmU
+    lac cmU
+    sas cmPY            // skip if at its y too
+    jmp cmEmpty
+    lac cmP
+    eem
+    dac i [dragIdx:4]
+    lac i [penIdx:4]
+    lem
+    sas [NOPOINT]       // skip unless it locks onto a point
+    jmp cmMerge
+    lac cmP
+    dac cmRes
+    jmp cmEmpty
+cmMerge,
+    jsp dropMerge
+cmEmpty,
+    eem
+    lac [NOPOINT]
+    dac i [dragIdx:4]
+    lac [cpMrg:3]
+    dac cmT
+    law i 2 * NATT      // cpMrg's words and desPt's after them
+    dac cmA
+cmClr,
+    lac [NOPOINT]
+    dac i cmT
+    idx cmT
+    isp cmA             // skip once every word is NOPOINT
+    jmp cmClr
+    lem
+    lac cmRes
+rtn, jmp .
+cmRes, 0
+cmA, 0
+cmN, 0
+cmE, 0
+cmP, 0
+cmQ, 0
+cmX, 0
+cmY, 0
+cmU, 0
+cmT, 0
+cmD, 0
+cmBest, 0
+cmPX, 0
+cmPY, 0
+cmDm, 0
+    endloc

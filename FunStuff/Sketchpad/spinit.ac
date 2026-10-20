@@ -1,0 +1,56 @@
+// spinit.ac -- start-up's display gates and the empty drawing list (initGates).
+//
+// Bank 6, after sptape.ac. Runs once, with the extend window open, between bank 12's initVars,
+// which jumps here, and the main bank's init, which it jumps to; nothing returns. It writes bank
+// 0's display words, bank 1's line slots and the main bank's shownCount through 16-bit addresses,
+// and calls nothing.
+// Part of sketchpad.am1, included where it stands.
+
+// The target at its start, every gate shut (no band, no marks, no lock mark) but INK's, and an
+// empty drawing list, written directly, since the display is parked (initVars). Its end jumps to
+// the arc list, which init writes before the display starts.
+// AC is clobbered, IO is preserved. Entered by jmp i [initGates:6]; leaves by jmp i [init:4].
+initGates,
+    local igPrm, igP
+    lac [y(INITIALY) next(point)]
+    dac i [trackY:0]
+    lac [x(INITIALX) next(parameter)]
+    dac i [trackX:0]
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [bandGate:0]
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandJmp:0]
+    lac [jump markEnd:0 next(parameter)]
+    dac i [markGate:0]
+    lac [jump markGate:0 next(subroutine)]
+    dac i [showGate:0]
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [lockGate:0]
+    lac [jump inkBlock:0 next(parameter)]
+    dac i [inkGate:0]   // INK shown until the target first is (writeCalls)
+    dzm i [shownCount:4]
+    dzm i [flipAt:0]
+    dzm scOn            // nothing Scale holds, its status block back under the bar
+    lac [y(STATY) next(point)]
+    dac i [msgWord:0 + 1]
+    lac [x(STATX) next(character)]
+    dac i [msgWord:0 + 2]
+    lac [next(subroutine)]
+    dac i [drawList:1]
+    lac [jump arcList:0 next(parameter)]
+    dac i [drawList:1+1]
+
+    // Each line group's word before its target call, entering subroutine mode, written once
+    // here; writeCalls and writeCall never change it.
+    lac [drawList:1+CALLOFFSET]
+igPrm,
+    dac igP
+    lac [next(subroutine)]
+    dac i igP
+    lac igP
+    add [GROUPWORDS]
+    sas [drawList:1+CALLOFFSET+NGROUPS*GROUPWORDS] // skip once every group's is written
+    jmp igPrm
+    jmp i [init:4]
+igP, 0
+    endloc

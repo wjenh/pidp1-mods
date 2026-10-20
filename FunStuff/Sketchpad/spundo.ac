@@ -1,0 +1,301 @@
+// spundo.ac -- Undo's action, and the record each commit keeps and other changes clear.
+//
+// Bank 4, after spmenus.ac. Calls bank 2's arc module for an arc's removal (arcCall), bank 7's
+// instance module for an instance's (instCall), and bank 8's constraint module for a
+// constraint's (conCall).
+// Part of sketchpad.am1, included where it stands.
+
+// Undo: take back the last commit the record holds and clear it, a single level; with no record
+// the label is dim and a hit does nothing. In move, delete, Horv, Fix, Size and place modes the
+// mode's Locate handler runs first (modeLocate). What Move has picked up is dropped, which
+// clears the record if it moved, a lift not yet declared is dropped, and place mode's drop is
+// the commit the record already holds, leaving place mode. Every other mode stays, its dot
+// placed again after (modeDot); in draw and circle modes a stroke still live ends first as a
+// lift ends it, so a pen taken from the target straight to Undo, whose hit comes before the
+// loss is declared, does what a lift and then Undo do. Parts are removed past the record's
+// counts (undoParts); a step of the chain puts its start back at the vertex before; a center's
+// or a start's lift goes back to waiting for it; a constraint goes, and every point the solver
+// moved for it goes back, its lines and arcs drawn again (conShow); so do the N's and C's a
+// commit of parts made (uLk), with its parts.
+// Entry: lastAction = the column. AC and IO are clobbered. Called via jsp.
+actUndo,
+    local rtn, auGo, auLive, auRun, auCall, auChain, auFix, auDot, auDraw, auBand, auCenter, \
+        auStart, auCons, auDone, auPtr, auRelock
+    dap rtn
+    lac undoKind
+    sza i               // skip if there is something to undo
+    jmp rtn
+    lac lastAction
+    jda flashLabel
+    lac mode
+    sad [MLOCATE]       // skip unless Locate's mode
+    jmp auGo
+    sad [MIDLE]         // skip unless idle
+    jmp auGo
+    sad [MDRAW]         // skip unless draw mode
+    jmp auLive
+    sad [MCIRCLE]       // skip unless circle mode
+    jmp auLive
+    lac [modeLocate:3]
+    jmp auRun
+auLive,
+    lac strokeLive
+    sza i               // skip if a stroke is live
+    jmp auGo
+    lac [modeLost:3]
+auRun,
+    add mode
+    dac auPtr
+    lac i auPtr
+    dap auCall
+auCall, jsp .
+    lac undoKind
+    sza i               // skip unless the Stop or the lift cleared the record
+    jmp rtn
+auGo,
+    idx undoCount
+    lac undoKind
+    sad [UCENTER]       // skip unless the center's lift
+    jmp auCenter
+    sad [USTART]        // skip unless the start's lift
+    jmp auStart
+    sad [USTEP]         // skip unless a step that added no line
+    jmp auChain
+    sad [UCONS]         // skip unless a constraint
+    jmp auCons
+    sad [USCALE]        // skip unless a scale
+    jmp auScale
+    jsp undoTake
+    lac undoChain
+    sza i               // skip if the chain steps back too
+    jmp auFix
+auChain,
+    lac uX
+    dac startX
+    lac uY
+    dac startY
+    lac uIdx
+    dac startPointIdx
+
+    // The dot may lock onto a removed point, so place it again. In draw mode a chain started on a
+    // point the undo removed starts at its place with no point, as a chain's first vertex does.
+auFix,
+    lac mode
+    sad [MDRAW]         // skip unless draw mode
+    jmp auDraw
+    sad [MCIRCLE]       // skip unless circle mode, waiting for a center
+    jmp auDot
+    add [modeDot:3]
+    dac auPtr
+    lac i auPtr
+    dap auRelock
+auRelock, jsp .
+    jmp auDone
+auDot,
+    jsp placePen
+    jmp auDone
+auDraw,
+    lac circPhase
+    sza i               // skip if the chain has its start
+    jmp auDot
+    lac startPointIdx
+    sad [NOPOINT]       // skip if the start is a point
+    jmp auBand
+    sub pointCount
+    spa                 // skip if that point was removed
+    jmp auBand
+    lac [NOPOINT]
+    dac startPointIdx
+auBand,
+    lac startPointIdx
+    dac bandIdx
+    jsp updatePen
+    jmp auDone
+
+    // Circle mode goes back to waiting for the center (UCENTER, auCenter), or for the start with
+    // the radius drawn from the center (USTART, auStart), as the lift before left it. Draw mode's
+    // start lift is kept as UCENTER too, so it goes back by auCenter, to waiting for the start.
+auCenter,
+    jsp waitStart
+    jmp auDone
+auCons,
+    lio [CEUNDO]
+    jda conCall
+    jsp conShow
+    jmp auFix
+auScale,
+    jsp i [scUndo:6]    // the scale module puts back the places, the size and the Length
+    jmp auFix
+auStart,
+    lac cenX
+    dac startX
+    lac cenY
+    dac startY
+    lac cenIdx
+    dac bandIdx
+    law 1
+    dac circPhase
+    jsp circleBand      // the radius written before the gate reaches it
+    lac [jump bandStart:0 next(parameter)]
+    dac i [bandGate:0]
+auDone,
+    jsp undoClear
+rtn, jmp .
+auPtr, 0
+    endloc
+
+// Undo's taking back of a commit of parts: its removals (undoParts), then, if it made N's or C's
+// (uLk), the constraints' Undo, with every point the solver moved put back and drawn again
+// (conShow). Define's refusal takes back the instances it took apart this way.
+// AC and IO are clobbered. Called via jsp.
+undoTake,
+    local rtn
+    dap rtn
+    jsp undoParts
+    lac uLk
+    sza i               // skip if the commit made N's or C's: undone with the places kept
+    jmp rtn
+    lio [CEUNDO]
+    jda conCall
+    jsp conShow
+rtn, jmp .
+    endloc
+
+// Undo's removals, everything past the record's counts. The instances, the last first
+// (instRemove); the lines and the points, which nothing is left on, by their counts alone,
+// as removeLine and removePoint leave a last one (the main loop's rebuild then shrinks the
+// list, as after a deletion), which the constraint module is told of (cTopo); the texts (the
+// text module's txUndo); then the arcs
+// (the arc module's arcUndo), whose respread covers the instances too. A dismember's instance
+// is put back first (the instance module's instUndism).
+// AC and IO are clobbered. Called via jsp.
+undoParts,
+    local rtn, upInst, upRest
+    dap rtn
+    lac undoKind
+    sas [UDISM]         // skip if a dismember
+    jmp upInst
+    lio [IEUNDISM]
+    jda instCall
+upInst,
+    lac uInst
+    sub i [instCount:012]
+    sma                 // skip if instances lie past the count
+    jmp upRest
+    lac i [instCount:012]
+    sub [1]
+    lio [IEREMOVE]
+    jda instCall
+    jmp upInst
+upRest,
+    lac uLines
+    dac lineCount
+    lac uPts
+    dac pointCount
+    law 1
+    dac i [cTopo:010]
+    lac uTx             // the texts past the count
+    lio [TXUNDO]
+    jda txCall
+    law AEUNDO
+    jda arcCall
+rtn, jmp .
+    endloc
+
+// The counts before a commit that can still be refused; undoKeep records them once it is made.
+// AC is clobbered, IO preserved. Called via jsp.
+undoSnap,
+    local rtn
+    dap rtn
+    lac pointCount
+    dac sPts
+    lac lineCount
+    dac sLines
+    lac i [arcCount:2]
+    dac sArcs
+    lac i [instCount:012]
+    dac sInst
+    lac i [txN:012]
+    dac sTx
+rtn, jmp .
+    endloc
+
+// Record a commit with the counts undoSnap took, as no step of an open chain; Undo's label
+// brightens. Entry: AC = the kind. AC and IO are clobbered. Called via jda.
+undoKeep, 0
+    local rtn
+    dap rtn
+    lac sPts
+    dac uPts
+    lac sLines
+    dac uLines
+    lac sArcs
+    dac uArcs
+    lac sInst
+    dac uInst
+    lac sTx
+    dac uTx
+    lac undoKeep
+    dac undoKind
+    dzm undoChain
+    dzm uLk
+    lac [CUNDO]
+    jda paintLabel
+rtn, jmp .
+    endloc
+
+// Record a step of draw mode's chain, before it changes anything: UPARTS for a line about to be
+// added, USTEP for a stroke that adds none. The counts now, and the chain's vertex now.
+// Entry: AC = the kind. AC and IO are clobbered. Called via jda.
+undoLine, 0
+    local rtn
+    dap rtn
+    jsp undoSnap
+    lac undoLine
+    jda undoKeep
+    lac startX
+    dac uX
+    lac startY
+    dac uY
+    lac startPointIdx
+    dac uIdx
+    law 1
+    dac undoChain
+rtn, jmp .
+    endloc
+
+// Clear the record, so Undo does nothing until the next commit; its label dims. Every change
+// that is not a commit calls this, a drag that moves, a deletion, an unfix, a Size, Clear and
+// Define. AC and IO are clobbered. Called via jsp.
+undoClear,
+    local rtn
+    dap rtn
+    lac undoKind
+    sza i               // skip if there is a record
+    jmp rtn
+    dzm undoKind
+    dzm undoChain
+    lac [CUNDO]
+    jda paintLabel
+rtn, jmp .
+    endloc
+
+// A chain ends, or Line or Circle starts another. A step that added nothing (a repeated stroke,
+// a center's or a start's lift) has nothing left to undo and is cleared; parts added stay
+// undoable, their chain no longer open, and so do a constraint added, a dismember and a scale.
+// AC and IO are clobbered. Called via jsp.
+undoEndChain,
+    local rtn
+    dap rtn
+    dzm undoChain
+    lac undoKind
+    sad [UPARTS]        // skip unless parts were added
+    jmp rtn
+    sad [UDISM]         // skip unless an instance was taken apart
+    jmp rtn
+    sad [USCALE]        // skip unless a part was scaled
+    jmp rtn
+    sas [UCONS]         // skip if a constraint was added
+    jsp undoClear
+rtn, jmp .
+    endloc

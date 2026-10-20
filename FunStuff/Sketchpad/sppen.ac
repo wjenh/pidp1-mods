@@ -1,0 +1,816 @@
+// sppen.ac -- the pseudo pen location: the stale marks, placing it and its locks (a point,
+// a line, an arc, an instance), the dot and lock mark, the rubber band and a stroke's commit,
+// the points' table; then setMode, the labels, and tracking on and off.
+//
+// Bank 4, after spmodes.ac.
+// Part of sketchpad.am1, included where it stands.
+
+// Mark line i's slot stale, so the next rebuild writes it. Its index goes into staleList once.
+// With the list full, the whole list is asked for instead (dirty).
+// Entry: AC = i. AC is clobbered, IO preserved. Called via jda.
+markSlot, 0
+    local rtn, mkLoop, mkNew, mkFull, mkPtr, mkEnd
+    dap rtn
+    lac [staleList:3]
+    dac mkPtr
+    add staleN
+    dac mkEnd
+mkLoop,
+    lac mkPtr
+    sad mkEnd           // skip while marks remain to compare
+    jmp mkNew
+    lac i mkPtr
+    sad markSlot       // skip unless i is already marked
+    jmp rtn
+    idx mkPtr
+    jmp mkLoop
+mkNew,
+    lac staleN
+    sad [NSTALE]        // skip unless the list is full
+    jmp mkFull
+    idx staleN
+    lac markSlot
+    dac i mkEnd
+    jmp rtn
+mkFull,
+    law 1
+    dac dirty
+rtn, jmp .
+mkPtr, 0
+mkEnd, 0
+    endloc
+
+// Place the pseudo pen location and redraw the band from the chain's last vertex to it.
+// Exit: penX, penY, penIdx. AC is clobbered, IO preserved. Called via jsp.
+updatePen,
+    local rtn
+    dap rtn
+    jsp placePen
+    jsp writeBand
+rtn, jmp .
+    endloc
+
+// Place the pseudo pen location. In Line, Circle, Move's drag and the placing of a copy carried
+// by an attacher it locks onto the nearest point, line, arc or two lines' crossing, as placeLock
+// weighs them, the dot bright; in every other mode onto the nearest point alone (placePt).
+// Exit: penX, penY, penIdx, penLine, pen2Line, penArc; hitX, hitY the target's center; fnpDist
+// the point's distance. AC is clobbered, IO preserved. Called via jsp.
+placePen,
+    local rtn, ppAim, ppPt, ppOut, ppIO, ppHeld, ppCopy
+    dap rtn
+    dio ppIO
+    lac mode
+    sad [MDRAW]         // skip unless draw mode
+    jmp ppAim
+    sad [MCIRCLE]       // skip unless circle mode
+    jmp ppAim
+    sad [MPLACE]        // skip unless place mode
+    jmp ppCopy
+    sas [MMOVE]         // skip if move mode
+    jmp ppPt
+    lac dragIdx
+ppHeld,
+    sad [NOPOINT]       // skip if a point is dragged, or a copy carried by an attacher
+    jmp ppPt
+ppAim,
+    law 1
+    dac aimMode
+    jsp placeLock
+    jmp ppOut
+ppPt,
+    jsp placePt
+ppOut,
+    lio ppIO
+rtn, jmp .
+ppCopy,
+    lac copyAtt
+    jmp ppHeld
+ppIO, 0
+    endloc
+
+// Place the pseudo pen location at the target's center, locked onto the nearest point within
+// SNAP_BOX other than a point being dragged or the band's start vertex, and show its dot there;
+// no line or arc is locked.
+// Exit: placeFind's. AC is clobbered, IO preserved. Called via jsp.
+placePt,
+    local rtn
+    dap rtn
+    jsp placeFind
+    jsp showDot
+rtn, jmp .
+    endloc
+
+// placePt without the dot. placeLock shows it only once its lock is settled, so that while a
+// long search runs the dot and the lock mark stay where the last pass left them.
+// Exit: penX, penY, penIdx; penLine, pen2Line, penArc NOPOINT; hitX, hitY the target's center,
+// taken back to the page through the view (the view module's vwIn); fnpDist the
+// point's distance. AC is clobbered, IO preserved. Called via jsp.
+placeFind,
+    local rtn, upFree
+    dap rtn
+    lac [NOPOINT]
+    dac penLine
+    dac pen2Line
+    dac penArc
+    lsm                 // penISR writes the target's position words
+    lac i [trackX:0]
+    dac hitX
+    lac i [trackY:0]
+    dac hitY
+    esm
+    lac hitX
+    and [01777]
+    dac hitX
+    lac hitY
+    and [01777]
+    dac hitY
+    jsp i [vwIn:014]
+    jsp findNearPoint
+    dac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp upFree
+    add [pointX:3]
+    dac tptr
+    lac i tptr
+    dac penX
+    lac penIdx
+    add [pointY:3]
+    dac tptr
+    lac i tptr
+    dac penY
+    jmp rtn
+upFree,
+    lac hitX
+    dac penX
+    lac hitY
+    dac penY
+rtn, jmp .
+    endloc
+
+// Show the pseudo pen location's dot at (penX, penY), and what a lift there will take, the lock
+// mark about the dot or the line or arc lit (bank 11's lkDot). Every routine that places the dot
+// ends here after the lock is settled.
+// AC is clobbered, IO preserved. Called via jsp.
+showDot,
+    jmp i [lkDot:0d11]
+
+// Place the pseudo pen location for delete mode, Horv and the constraint mode, Move's hunt
+// (lockInst), and Line, Circle and Move's drag (placePen, aimMode set). It locks onto the nearest
+// point within SNAP_BOX (placeFind), or onto the nearest line within SNAP_BOX, the dot then on
+// the line (bank 13's lineSearch), or outside Horv, the constraint mode and Move's hunt onto the
+// nearest arc (the arc module's arcLock). With more than one in reach the nearest wins, the
+// point by up to LOCKBIAS (in Horv and the constraint mode's line picks no point locks,
+// lineOnly). A line or an arc wins only when nearer than the point's distance less LOCKBIAS, so
+// with the point that close there is no search, and an arc wins only when nearer than the line.
+// In Line, Circle and Move the lines and arcs on the point dragged and on the band's start
+// vertex are passed over, two lines' crossing in reach wins as a line does (pen2Line the second
+// line), between lifts no line or arc is searched until the target has stayed within SLOWD for
+// SLOWMS, the lines then swept a slice a pass, and the dot stays bright. In delete mode an
+// instance whose figure's box holds the target's center wins over all of them when its origin is
+// nearer (instLock), the dot then at the target's center. In delete mode with Show on, a
+// constraint's mark within FIXR of the target's center wins over everything (the constraint
+// module's cNear), the dot then on the mark, nothing else locked (penCons). Otherwise the dot is
+// bright while something is locked, dim while nothing is. The dot and the lock mark are shown
+// once, at the end, so that during a long search they stay where the last pass left them rather
+// than flash back to the target. Move's hunt weighs an instance against the line locked, or else
+// against the point less LOCKBIAS; its line search is gated as its drag's is, and its dot stays
+// dim, so that bright still means carried. aimMode and atLift are cleared.
+// Exit: penX, penY, penIdx, penLine, pen2Line, penArc, penInst, penCons. AC and IO are
+// clobbered. Called via jsp.
+placeLock,
+    local rtn, pkLine, pkDim, pkShow
+    dap rtn
+    jsp placeFind
+    lac [NOPOINT]
+    dac penCons
+    lac showOn
+    sza i               // skip if Show is on
+    jmp plkGo
+    lac mode
+    sas [MDELETE]       // skip if delete mode
+    jmp plkGo
+    lio [CENEAR]
+    jda conCall
+    dac penCons
+    sad [NOPOINT]       // skip if a mark wins
+    jmp plkGo
+    lac [NOPOINT]
+    dac penIdx
+    dac penArc
+    dac penInst
+    lio [IESHINE]       // no instance lit
+    jda instCall
+    lac i [cNearX:010]
+    dac penX
+    lac i [cNearY:010]
+    dac penY
+    jsp showDot
+    jmp plkLit
+plkGo,
+
+    // lineReach is fnpDist less LOCKBIAS with a point, not below 0; with none, findNearPoint left
+    // fnpDist at SNAP_BOX + 1, the whole reach. Both are in page units at the view's scale
+    // (vwBias, vwSnap).
+    lac i [vwBias:014]
+    dac lineReach
+    lac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    dzm lineReach
+    lac fnpDist
+    sub lineReach
+    spa                 // skip unless the point is nearer than LOCKBIAS
+    cla
+    dac lineReach
+    dac lockD           // Move's hunt weighs an instance against it unless a line locks
+
+    // The line search finds the nearest line to the target's center, which placePt left in
+    // hitX, hitY, or two lines' crossing. The line is held back in lockLine until the arc lock has
+    // run, so that penLine never names a line an arc then beats, and penX, penY follow it within
+    // a few instructions. Then the arc module's lock, an arc that beats it; Move's hunt passes
+    // over arcs, with lockD then as arcLock would leave it with none.
+    jsp i [lineSearch:015]
+    lac mode
+    sas [MMOVE]         // skip if move mode
+    jmp plkSearchArcs
+    lac aimMode
+    sza                 // skip if Move's hunt
+    jmp plkSearchArcs
+    lac lockLine
+    sad [NOPOINT]       // skip if a line locks
+    jmp plkHuntNoArc
+    lac lineReach
+    dac lockD
+plkHuntNoArc,
+    lac [NOPOINT]
+    jmp plkArcFound
+plkSearchArcs,
+    law AELOCK
+    jda arcCall         // an arc that wins leaves lockX, lockY on it, and lockD
+plkArcFound,
+    dac penArc
+    lac aimMode
+    sza                 // skip unless Line, Circle or Move's drag, which pass over instances
+    jmp plkArc
+
+    // Then an instance whose origin is nearer than lockD, the distance of the arc, line or
+    // point locked; with none locked, any instance whose box holds the target's center. One
+    // that wins leaves lockX, lockY at the target's center, and penIdx and lockLine NOPOINT.
+    lac penArc
+    sas [NOPOINT]       // skip if no arc locks
+    jmp plkInst
+    lac lockLine
+    sas [NOPOINT]       // skip if no line locks
+    jmp plkInst
+    lac penIdx
+    sas [NOPOINT]       // skip if no point locks
+    jmp plkInst
+    lac [0377777]       // nothing locked, so any instance wins
+    dac lockD
+plkInst,
+    lio [IELOCK]
+    jda instCall
+    sad [NOPOINT]       // skip if an instance wins
+    jmp plkArc
+    lac [NOPOINT]
+    dac penArc
+    jmp pkLine
+plkArc,
+    lac penArc
+    sas [NOPOINT]       // skip if no arc locks
+    jmp pkLine
+    lac lockLine
+    dac penLine
+    sas [NOPOINT]       // skip if no line locks
+    jmp plkTwo
+    jsp showDot         // at the point, or at the target's center with nothing locked
+    lac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp pkDim
+    jmp plkLit
+plkTwo,
+    lac lock2Line
+    dac pen2Line
+pkLine,
+    lac [NOPOINT]       // the line or arc wins over any point
+    dac penIdx
+    lac lockX
+    dac penX
+    lac lockY
+    dac penY
+    jsp showDot
+plkLit,
+    lac aimMode
+    sza                 // skip unless Line, Circle or Move's drag, whose dot stays bright
+    jmp plkBright
+    lac mode
+    sad [MMOVE]         // skip unless Move's hunt, whose dot stays dim until a pick-up
+    jmp plkHuntDim
+plkBright,
+    lac [DOTPARAM]
+    jmp pkShow
+pkDim,
+    lac aimMode
+    sza                 // skip unless Line, Circle or Move's drag, whose dot stays bright
+    jmp plkBright
+plkHuntDim,
+    lac [HUNTPARAM]
+pkShow,
+    dac i [dotBlock:0]
+    dzm aimMode
+    dzm atLift
+rtn, jmp .
+    endloc
+
+// Write the band from (startX, startY) to (penX, penY), the start point and then the last K of
+// the NBAND vector words (emitVecs). The vectors are written before the jump that enters them, so
+// the display never reaches a word not yet written; a frame that runs through a rewrite draws
+// one band of mixed words, which stays near the pen, since the band is redrawn as it moves.
+// Both ends go through the view, clipped to the screen (vwSeg). A band of no length on the
+// screen, or none of it there, jumps straight to the dot, since a (0,0) vector stops the 340.
+// The band is drawn solid. writeSeg writes it from (fx, fy) to (tx, ty) as they stand, on the
+// page, with word 0 as its caller left it; at RADPARAM's scale vwSeg cuts it to match.
+// AC is clobbered, IO preserved. Called via jsp.
+writeBand,
+    local rtn, wbGo, wbZero
+    dap rtn
+    lac [DRAWPARAM]
+    dac i [bandStart:0]
+    lac startX
+    dac fx
+    lac startY
+    dac fy
+    lac penX
+    dac tx
+    lac penY
+    dac ty
+    jmp wbGo
+writeSeg,
+    dap rtn
+wbGo,
+    jsp i [vwSeg:014]
+    sza                 // skip if the band is planned
+    jmp wbZero
+    lac fy
+    and [01777]
+    ior [y(0) next(point)]
+    dac i [bandY:0]
+    lac fx
+    and [01777]
+    ior [x(0) next(subroutine)]
+    dac i [bandX:0]
+    lac [bandVec:0]
+    dac i [emitArea:014]
+    jsp i [emitVecs:014]
+    ior [jump next(vector)]
+    dac i [bandJmp:0]
+    jmp rtn
+wbZero,
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandJmp:0]
+rtn, jmp .
+    endloc
+
+// Commit the stroke from the chain's last vertex to the pseudo pen location as one line, of any
+// length. The start and the end are added as points unless they are already in the table, and
+// the end is made the next line's start. A stroke shorter than MINLINE on both axes adds nothing. A
+// stroke between two points a line already joins, either way round, adds no line, and the end
+// is still the next line's start. A table without room for the line refuses it and ends the
+// chain. Undo's record takes the step, a line or not, before anything changes. An end added
+// where the pseudo pen location locked onto a line or an arc, at the start's lift or now, gets
+// its N or C (the constraint module's cMake).
+// AC and IO are clobbered. Called via jsp.
+commitStroke,
+    local rtn, csGo, csDup, csPair, csNext, csRoom, csNewStart, csEnd, csNewEnd, csAdd, \
+        csRepeat, csMove, csFull, csNeed, csI, csT, csX
+    dap rtn
+    lac penX
+    sub startX
+    jda absVal
+    sub [MINLINE]
+    sma                 // skip if the x differ by less than MINLINE
+    jmp csGo
+    lac penY
+    sub startY
+    jda absVal
+    sub [MINLINE]
+    spa                 // skip if the y differ by MINLINE or more
+    jmp rtn
+csGo,
+
+    // With both ends in the table, look for a line joining them, one whose from end is either
+    // of them and whose ends xor to theirs. The two are never the same point, since the lock
+    // passes over the start vertex.
+    lac startPointIdx
+    sad [NOPOINT]       // skip if the start is in the table
+    jmp csRoom
+    lac penIdx
+    sad [NOPOINT]       // skip if the end locks onto a point
+    jmp csRoom
+    xor startPointIdx
+    dac csX
+    dzm csI
+csDup,
+    lac csI
+    sad lineCount       // skip while lines remain
+    jmp csRoom
+    add [lineTo:3]
+    dac tptr
+    lac i tptr
+    dac csT
+    lac csI
+    add [lineFrom:3]
+    dac tptr
+    lac i tptr
+    sad startPointIdx   // skip unless the line starts at the start
+    jmp csPair
+    sas penIdx          // skip if the line starts at the end
+    jmp csNext
+csPair,
+    xor csT
+    sad csX             // skip unless the line joins the two
+    jmp csRepeat
+csNext,
+    idx csI
+    jmp csDup
+
+    // Room for each end not yet in the table, and one line.
+csRoom,
+    dzm csNeed
+    lac startPointIdx
+    sad [NOPOINT]       // skip if the start is in the table
+    idx csNeed
+    lac penIdx
+    sad [NOPOINT]       // skip if the end locks onto a point
+    idx csNeed
+    lac pointCount
+    add csNeed
+    sub [MAXPTS+1]
+    sma                 // skip if the points fit
+    jmp csFull
+    lac lineCount
+    sub [MAXLINES]
+    sma                 // skip if the line fits
+    jmp csFull
+
+    law UPARTS
+    jda undoLine
+    lac startPointIdx
+    sad [NOPOINT]       // skip if the start is in the table
+    jmp csNewStart
+    jmp csEnd
+csNewStart,
+    lac startX
+    dac hitX
+    lac startY
+    dac hitY
+    jsp addPoint
+    dac startPointIdx
+csEnd,
+    lac penIdx
+    sad [NOPOINT]       // skip if the end locks onto a point
+    jmp csNewEnd
+    dac endPointIdx
+    jmp csAdd
+csNewEnd,
+    lac penX
+    dac hitX
+    lac penY
+    dac hitY
+    jsp addPoint
+    dac endPointIdx
+csAdd,
+    lac lineCount
+    add [lineFrom:3]
+    dac tptr
+    lac startPointIdx
+    dac i tptr
+    lac lineCount
+    add [lineTo:3]
+    dac tptr
+    lac endPointIdx
+    dac i tptr
+    lac lineCount
+    jda markSlot
+    idx lineCount
+    idx vertexCount
+    cla                 // the line's new ends' N's and C's
+    lio [CEMAKE]
+    jda conCall
+csMove,
+    lac endPointIdx
+    dac startPointIdx
+    dac bandIdx
+    lac penX
+    dac startX
+    lac penY
+    dac startY
+    jsp writeBand
+    jmp rtn
+csRepeat,
+    law USTEP
+    jda undoLine
+    idx repeatCount
+    lac penIdx
+    dac endPointIdx
+    jmp csMove
+csFull,
+    idx fullCount
+    jsp leaveDraw
+rtn, jmp .
+csNeed, 0
+csI, 0
+csT, 0
+csX, 0
+    endloc
+
+// Add a point at (hitX, hitY); the caller has checked for room.
+// Exit: AC = its index. IO is preserved. Called via jsp.
+addPoint,
+    local rtn, apIdx
+    dap rtn
+    lac pointCount
+    dac apIdx
+    add [pointX:3]
+    dac tptr
+    lac hitX
+    dac i tptr
+    lac apIdx
+    add [pointY:3]
+    dac tptr
+    lac hitY
+    dac i tptr
+    idx pointCount
+    lac apIdx
+rtn, jmp .
+apIdx, 0
+    endloc
+
+// The nearest point to (hitX, hitY) within SNAP_BOX on both axes, nearest by the larger of the
+// x and y distances; the first found wins a tie. The point being dragged and the band's start
+// vertex are passed over, and so is a set of digits' anchor, asked of the text module only for a
+// point nearer than the best so far and only while a scalar exists. With lineOnly set (horvLock)
+// there is none.
+// Exit: AC = its index, NOPOINT when none is that close; fnpDist its distance, SNAP_BOX + 1
+// when none. IO is preserved. Called via jsp.
+findNearPoint,
+    local rtn, fnLoop, fnHave, fnTake, fnNext, fnDone, fnPX, fnPY
+    dap rtn
+    lac [NOPOINT]
+    dac fnpBest
+    lac i [vwSnap:014]
+    dac fnpDist
+    dzm scanidx
+    lac [pointX:3]
+    dac fnPX
+    lac [pointY:3]
+    dac fnPY
+    lac lineOnly
+    sza                 // skip unless only a line may lock
+    jmp fnDone
+
+    // The loop's only indirect references are the table reads, through fnPX and fnPY, full
+    // addresses walked with scanidx, which the main bank's open window reaches with no window of
+    // their own (a window per access would cost about 6% of the dot's rate near a point). The
+    // distance is the larger of the two axis distances, so a point whose x distance is not
+    // nearer than the best so far is passed over before its y is read, as most points are.
+fnLoop,
+    lac scanidx
+    sad pointCount      // skip while points remain
+    jmp fnDone
+    sad dragIdx         // skip unless it is the point being dragged
+    jmp fnNext
+    sad bandIdx         // skip unless it is the band's start vertex
+    jmp fnNext
+    lac i fnPX
+    sub hitX
+    spa                 // skip unless negative
+    cma
+    dac fnpx
+    sub fnpDist
+    sma                 // skip if nearer than the best so far
+    jmp fnNext
+    lac i fnPY
+    sub hitY
+    spa                 // skip unless negative
+    cma
+    dac fnpy
+    sub fnpDist
+    sma                 // skip if nearer than the best so far
+    jmp fnNext
+    lac fnpy
+    sub fnpx
+    spa                 // skip if the y distance is the larger
+    jmp fnHave
+    lac fnpy
+    dac fnpx
+fnHave,
+    lac i [scN:3]
+    sza i               // skip if a scalar exists, so an anchor may
+    jmp fnTake
+    jsp i [txIsAn:012]
+    sza                 // skip unless an anchor
+    jmp fnNext
+fnTake,
+    lac fnpx
+    dac fnpDist
+    lac scanidx
+    dac fnpBest
+fnNext,
+    idx scanidx
+    idx fnPX
+    idx fnPY
+    jmp fnLoop
+fnDone,
+    lac fnpBest
+rtn, jmp .
+fnPX, 0
+fnPY, 0
+    endloc
+
+// Magnitude of a signed word; -0 gives +0.
+// Entry: AC = the word. Exit: AC = its magnitude. IO is preserved. Called via jda.
+absVal, 0
+    dap avRtn
+    lac absVal
+    sma                 // skip if negative
+    jmp avRtn
+    cma
+avRtn, jmp .
+
+// A mode handler with nothing to do. AC is clobbered, IO preserved. Called via jsp.
+nothing,
+    dap nothingRtn
+nothingRtn, jmp .
+
+// Enter a mode and light its bar column, unlighting the previous mode's. A point still picked
+// up is dropped (dropPoint), merging if it moved, as Stop drops it, and no point is passed over
+// by the lock. The arcs' marks are shown or hidden as the mode's entry in markTab says, the
+// constraints' as setShow says, and the lock mark is hidden until the dot is next placed, with
+// no line or arc lit and no pick marked (bank 11's lkOff). A copy being placed is taken apart
+// where it stands (copyDrop), since every way out of place mode comes through here; and a part
+// Scale has picked up is put down, its scale finished (the scale module's scDone), as every way
+// out of Scale mode comes here.
+// Entry: AC = mode; newCol = its bar column, NBAR for none. AC and IO are clobbered.
+// Called via jda.
+setMode, 0
+    local rtn, smOld
+    dap rtn
+    jsp i [scDone:6]
+    jsp copyDrop
+    lac dragIdx
+    sas [NOPOINT]       // skip unless a point is picked up
+    jsp dropPoint
+    lac [NOPOINT]
+    dac dragIdx
+    dac bandIdx
+    lac [DOTPARAM]
+    dac i [dotBlock:0]
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [lockGate:0]
+    jsp i [lkOff:0d11]  // nothing lit, no pick marked
+    lac setMode
+    add [markTab:3]
+    dac smOld
+    lac i smOld
+    dac i [markGate:0]
+    lac setMode
+    dac mode
+    jsp setShow
+    lac modeCol
+    dac smOld
+    lac newCol
+    dac modeCol
+    lac smOld
+    jda paintLabel
+    lac modeCol
+    jda paintLabel
+rtn, jmp .
+smOld, 0
+    endloc
+
+// Open showGate onto the constraints' marks in Fix, Tie, Roller, Designate and Axis modes and
+// while Show is on, the marks being written already; shut it otherwise.
+// Entry: mode, showOn. AC is clobbered, IO preserved. Called via jsp.
+setShow,
+    local rtn, ssOpen, ssShut
+    dap rtn
+    lac showOn
+    sza                 // skip unless Show is on
+    jmp ssOpen
+    lac mode
+    sad [MFIX]          // skip unless Fix mode
+    jmp ssOpen
+    sad [MTIE]          // skip unless Tie mode
+    jmp ssOpen
+    sad [MROLL]         // skip unless Roller mode
+    jmp ssOpen
+    sad [MDES]          // skip unless Designate mode
+    jmp ssOpen
+    sas [MCONS]         // skip if the constraint mode
+    jmp ssShut
+    lac consType
+    sad [CTROLL]        // skip unless Axis
+    jmp ssOpen
+ssShut,
+    lac [jump markGate:0 next(subroutine)]
+    dac i [showGate:0]
+    jmp rtn
+ssOpen,
+    lac [jump fixList:0 next(point)]
+    dac i [showGate:0]
+rtn, jmp .
+    endloc
+
+// Light a bar column for FLASHMS, ending any other flash.
+// Entry: AC = column; now = the clock. AC and IO are clobbered. Called via jda.
+flashLabel, 0
+    local rtn, flOld
+    dap rtn
+    lac flashCol
+    dac flOld
+    lac flashLabel
+    dac flashCol
+    lac now
+    dac flashStart
+    law 1
+    dac flashOn
+    lac flOld
+    jda paintLabel
+    lac flashCol
+    jda paintLabel
+rtn, jmp .
+flOld, 0
+    endloc
+
+// Write a bar label's parameter word from the state: lit if it is the mode's column, owns the
+// open list or is flashing, normal otherwise, but Undo's dim while there is nothing to undo. A
+// column of NBAR or more is ignored.
+// Entry: AC = column. AC and IO are clobbered. Called via jda.
+paintLabel, 0
+    local rtn, plFlash, plLit, plNormal, plNorm, plStore, plWord, plPtr
+    dap rtn
+    lac paintLabel
+    sub [NBAR]
+    sma                 // skip if the column holds a label
+    jmp rtn
+    lac paintLabel
+    sad modeCol         // skip if not the mode's column
+    jmp plLit
+    sad openCol         // skip if it does not own the open list
+    jmp plLit
+    sad flashCol        // skip if not the flashing column
+    jmp plFlash
+    jmp plNormal
+plFlash,
+    lac flashOn
+    sza i               // skip if the flash is running
+    jmp plNormal
+plLit,
+    lac [LBLLIT]
+    jmp plStore
+plNormal,
+    lac paintLabel
+    sas [CUNDO]         // skip if Undo's label
+    jmp plNorm
+    lac undoKind
+    sza                 // skip if there is nothing to undo
+    jmp plNorm
+    lac [LBLDIM]
+    jmp plStore
+plNorm,
+    lac [LBLNORM]
+plStore,
+    dac plWord
+    lac paintLabel
+    add [barParamTab:3]
+    dac plPtr
+    lac i plPtr
+    dac plPtr
+    lac plWord
+    dac i plPtr
+rtn, jmp .
+plWord, 0
+plPtr, 0
+    endloc
+
+// Show the target and let penISR move it. AC and IO are clobbered. Called via jsp.
+trackOn,
+    local rtn
+    dap rtn
+    lio [1]
+    jsp i [writeCalls:014]
+    law 1
+    dac i [tracking:0]
+rtn, jmp .
+    endloc
+
+// Hide the target; penISR ignores canvas hits from here on. AC and IO are clobbered.
+// Called via jsp.
+trackOff,
+    local rtn
+    dap rtn
+    dzm i [tracking:0]
+    lio [0]
+    jsp i [writeCalls:014]
+rtn, jmp .
+    endloc

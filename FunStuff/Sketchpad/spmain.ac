@@ -1,0 +1,802 @@
+// spmain.ac -- the main bank's variables, then init and the main loop. The loop does the clock's
+// work, the frame rate and the calls it chooses, tracking lost, a load's rebuild (tapeRebuild),
+// the constraint module's gate (conCall) and the solver's pass, and a target hit's dispatch.
+//
+// Bank 4, from its first word; the main bank runs with the extend window open, so its
+// tables in other banks are reached through 16-bit addresses. Needs sketchpad.ah's
+// defines and bank 0's variables.
+// Part of sketchpad.am1, included where it stands.
+
+// The main bank's variables.
+
+// The open list: its bar column (NBAR when none), descriptor, row count, first item number
+// and highlighted row (NOROW when none); whether tracking was on when it opened; the clock's
+// reading at the latest menu hit; and, set at each menu hit, not negative when KBGAPMS had
+// passed since the one before, the pen lifted, so the hit begins a press.
+var openCol, openDesc, openRows, openBase, hiRow, trkSaved, lastMenuMs, listFresh
+
+// The open sublist: its descriptor (0 when none), row count, first item number and highlighted
+// row (NOROW when none), and the open list's row that owns it, whose band its first row takes.
+var subDesc, subRows, subBase, subHi, subFirst
+
+// paintAny's inputs: a list's descriptor, row count and highlighted row. rowOf's: the band its
+// list's first row takes, and the list's row count. placeBox's: a list's descriptor and the
+// band its first row takes.
+var pdDesc, pdRows, pdHi, roFirst, roRows
+var pbDesc, pbFirst
+
+// Counters kept for inspection; nothing in the program reads them. watchdogCount counts
+// restarts by the watchdog, selectCount rows acted on from the Select box, closeCount lists
+// closed with nothing acted on, and lastItem the item number last acted on.
+var watchdogCount, frameTotal, fireCount, lastAction
+var selectCount, closeCount, lastItem
+
+// The clock, read once per main pass, and its reading when the latest frame ended.
+var now, lastTick
+
+// mode and its lit bar column (NBAR when none); the flashing column, whether its flash is
+// running, and when it started.
+var mode, modeCol, flashCol, flashOn, flashStart
+
+// The bar column that last fired.
+var lastMenuCol
+
+// Whether tracking loss has been declared.
+var trackLost
+
+// The target calls: how many group calls call (liveN), spread over how many sites (spreadG),
+// the full line groups (spreadL), then the arc groups (spreadA), then the instances (spreadI),
+// each group's and each instance's call a site; and the frame-rate window's start on the clock
+// and the frames ended since.
+var liveN, spreadG, spreadL, spreadA, spreadI, rateAt, rateFrames
+
+// The master Define or Inst acts on, 0 to NMASTER-1; for inspection, the arc module's answer to
+// the last Define (0 defined, or why not: DEFEMPTY, DEFINUSE, DEFWORDS, DEFTIME, or the
+// instance module's DEFCONS) and how many masters it has defined.
+var masterArg, defineResult, defineCount
+
+// The instance the pseudo pen location locks onto in delete, move and Size modes, and the one
+// Move drags (NOPOINT when none); Size's scale, 0 to 3; for inspection, the answer to the last
+// Size lift (0 set, 1 refused at the edge, 2 nothing locked) and the scales set.
+var penInst, dragInst, sizeArg, sizeResult, sizeCount
+
+// Change mode shares Size's sizeArg (the master, 0 to 3, or CYCLEROW), sizeResult and sizeCount.
+// How many instances cycle; the instance module keeps it, and the main loop steps them while
+// any does (onClock).
+var cycN
+
+// Copy: the instance carried while a copy is placed (NOPOINT when none); the master taken
+// apart, the origin its parts go to, and the point table's length before them; for inspection,
+// the answer to the last Copy (0 copied, or why not: COPYROOM, COPYINST) and the copies made.
+// The instance module's copyRoom and copyParts, in bank 7, read them.
+// copyAtt: the master point of the attacher the copy is carried by, NOPOINT when none (the
+// instance module's iaCarry sets it).
+var copyInst, copyArg, copyX, copyY, copyBase, copyResult, copyCount, copyAtt
+
+// callSpan's calls: the first call word of the kind, and the words from one call to the next.
+var spanBase, spanGap
+
+// Nonzero asks the main loop to rebuild the whole drawing list. staleN is how many line
+// indices staleList holds, slots whose words no longer match the tables, which the next
+// rebuild writes singly.
+var dirty, staleN
+
+// The number of line slots the display list ends after.
+var shownCount
+
+var pointCount, lineCount
+var newCol, callWord, initCol, initPtr
+
+// writeSlot's inputs and outputs: whether the slot holds the displayed end pair (its first two
+// words are then left for penISR), the slot's address, and its y word.
+var slotHold, slotBase, ywordv
+
+// Counts writeSlot's writes, so that the line search (bank 10) can tell whether any line has
+// changed since its last sweep. Only ever compared for equality, so it needs no start value.
+var lineGen
+
+// Slot and band scratch.
+var fromv, tov, tptr, fx, fy, tx, ty
+
+// Draw mode: the chain's last vertex (its position, and its point index, NOPOINT until a line
+// from it commits), the pseudo pen location (its position and the point it locks onto, or
+// NOPOINT), and whether the target was hit since the last vertex (in move mode, since the
+// last pick-up or drop). bandIdx is the vertex the band starts from while it is in the table,
+// which the pseudo pen location never locks onto; NOPOINT outside draw mode.
+var startX, startY, startPointIdx, penX, penY, penIdx, strokeLive, bandIdx
+
+// Circle mode: which lift comes next (0 the center's, 1 the start's, 2 the end's), and the
+// center, its position and its point index, NOPOINT until the arc commits. The start is kept in
+// startX, startY and startPointIdx, as draw mode's chain start is. circPhase serves draw mode
+// too, 0 while it waits for the chain's start, 1 once the start is placed.
+var circPhase, cenX, cenY, cenIdx
+
+// Move mode: the point dragged (NOPOINT when none), whether it has moved since it was picked
+// up, how many of its lines dragLines holds, and whether it has more than that. dragLine: the
+// line dragged whole (NOPOINT when none), its from end then dragIdx and its to end bandIdx, so
+// that the lock passes over both and every line and arc on them.
+var dragIdx, dragMoved, dragN, dragFull, dragLine
+
+// Counters kept for inspection, of points picked up, dropped and merged.
+var pickCount, dropCount, mergeCount
+
+// placeLock's lock, in delete mode, Horv, the constraint mode, and Line, Circle and Move's drag.
+// penLine is the line the pseudo pen location locks onto (NOPOINT when none), and lockX, lockY
+// the line search's point on it (bank 13's lineSearch); lineReach, the distance a line must be
+// nearer than to lock (0 when none can), which the line search leaves at the distance of what it
+// locks onto; penArc, the arc locked onto (NOPOINT when none); lockLine, the line the line search
+// found (NOPOINT when none), held there until the arc lock has run. pen2Line and lock2Line are
+// likewise the second line, while the dot is on two lines' crossing (NOPOINT otherwise).
+var penLine, lockX, lockY, lineReach, penArc, lockLine, pen2Line, lock2Line
+
+// aimMode: nonzero while placeLock runs for Line, Circle or Move's drag (placePen), which lock
+// onto lines, arcs and crossings, gate the search by the pen's speed, and keep the dot bright.
+// atLift: nonzero from a lift's handler until the next placeLock, which then searches whatever
+// the pen's speed.
+var aimMode, atLift
+
+// What a lift will take. lineOnly is nonzero while horvLock runs, which locks no point; ptCross,
+// nonzero from a caller placing the dot where a lift takes the point locked (the constraint
+// mode's point picks) until the dot is shown, the lock mark then on it; slotPrm, the parameter
+// word writeSlot gave the last slot, LITPARAM for the line lit (bank 11's lkPrm).
+var lineOnly, ptCross, slotPrm
+
+// Counters kept for inspection, of deletions made, H constraints added by Horv, Clears, Del cons
+// and Unfix. rebuildMs is how long the last rebuildDisplay took on the clock, which stops the main
+// loop while it runs; rebuildAt is its start.
+var deleteCount, horvCount, clearCount, delConsCount, unfixCount, rebuildMs, rebuildAt
+
+// Nonzero asks the main loop for the constraint solver's pass (solveStep); the constraint module
+// clears it once the solver sleeps, and bank 2 sets it when a point's removal or a merge renames
+// a point. fixCount counts the points fixed by Fix.
+var conWake, fixCount
+
+// The constraint mode (MCONS): its type (rowCons: CTEQ to CTMID, the truss's, or a number's,
+// CTDIST to CTGAP); its picks made (a number's: 0 to 2); the first line picked and the line of
+// the last lift (consL2, the one line of Length, Mid, Beam and Load), and Mid's point; for a
+// number, its points (consPt, consL1) and the digits' anchor (consL2); for inspection, the
+// constraints it added.
+// Show: nonzero while every constraint shows its mark; marksAt, when the main loop last wrote
+// them (showStep). penCons: the constraint whose mark Delete locks onto with Show on (NOPOINT
+// when none).
+var consType, consPick, consL1, consL2, consPt, consCount
+var showOn, marksAt, penCons
+
+// Forces: nonzero while the members' forces show.
+var forcesOn
+
+// Counters kept for inspection, of vertices committed, strokes refused for a full table, losses
+// of tracking declared, and strokes that added no line because it was there already.
+var vertexCount, fullCount, lostCount, repeatCount
+
+// The undo record: what the last commit was (UNONE to USTART); the counts of points, lines,
+// arcs, instances and texts before it, past which lies everything it added; whether it is a step
+// of draw mode's chain that is still open, and the chain's vertex before it (its position and its
+// point index), to step back to. sPts to sTx are the counts before a commit that can still be
+// refused (undoSnap). undoCount counts Undos acted on, for inspection. uLk: nonzero when the
+// commit also held a point it placed on a line or an arc (the constraint module's cMake, which
+// sets it), so that Undo takes those constraints back with it.
+var undoKind, uPts, uLines, uArcs, uInst, uTx, undoChain, uX, uY, uIdx, uLk
+var sPts, sLines, sArcs, sInst, sTx, undoCount
+
+// Tape: the picture a transfer acts on (0 to 3) and the drive in use (0 to 7, drive 1 to 8);
+// the tape module's answer to the last transfer (TSSAVED to TSWIPED) and, for inspection, the
+// transfers run; whether the status word is shown, and since when.
+var tapePic, tapeDrive, tapeResult, tapeCount, msgOn, msgStart
+
+// splitPlan's results (bank 12) and findNearPoint's scratch.
+var hitX, hitY, endPointIdx, scanidx, fnpx, fnpy, fnpBest, fnpDist
+var splitDX, splitDY
+var splitK, splitRemX, splitRemY
+var stepAbsX, stepAbsY
+
+// Start-up, its last part, entered from bank 6's initGates, after bank 12's initVars, which sets
+// every main-bank word the program depends on first (core persists across restarts), and
+// initGates, which writes the display's gates and the empty drawing list. Here the labels are
+// painted, the lists' gates written, and the modules started.
+init,
+    dzm initCol
+initPaint,
+    lac initCol
+    jda paintLabel
+    idx initCol
+    sub [NBAR]
+    sza                 // skip when every label is painted
+    jmp initPaint
+
+    lac [jump menuEnd:0 next(parameter)]
+    dac i [menuJmp:0]
+    lac [jump drawList:1 next(parameter)]
+    dac i [drawJmp:0]
+    lac [jump statEnd:0 next(parameter)]
+    dac i [statGate:0]
+    jsp drvLabel
+
+    // Every list's tail word leads to the lists' Select box, with no sublist open.
+    dzm initCol
+initTails,
+    lac initCol
+    add [barList:3]
+    dac initPtr
+    lac i initPtr
+    sza i               // skip if the column has a list
+    jmp initTNext
+    add [DESCTAIL]
+    dac initPtr
+    lac i initPtr
+    dac initPtr
+    lac [jump listBox:0 next(parameter)]
+    dac i initPtr
+initTNext,
+    idx initCol
+    sad [NBAR]          // skip while columns remain
+    jmp initTDone
+    jmp initTails
+initTDone,
+
+    // The target's start, the gates and the empty drawing list are bank 6's initGates, run
+    // between initVars and here; the arc list is written below, before the display starts.
+    jsp trackOff
+    jsp rebuildDisplay
+
+    lio [APERTURE]
+    dpy-i LIGHTPEN
+    cbs                 // arming the pen can latch a break request; drop it before enabling
+    esm
+    law AEINIT          // the arc list
+    jda arcCall
+    lio [IEINIT]        // and the instance list, every master empty
+    jda instCall
+    lio [CEINIT]        // and the constraint table
+    jda conCall
+    jsp i [taInit:013]  // and the truss's analysis
+    jsp respread
+    lio [frame:0]
+    dla
+
+// The main loop. Copy the mailboxes (snapshot), then act on each event, then let the constraint
+// solver take up what they changed, the truss's analysis follow while the solver sleeps, the
+// texts' list follow the texts, and the marks while Show is on. While the pen keyboard is open
+// its tick ends a key's flash.
+main,
+    jsp i [snapshot:014]
+    rck
+    dio now
+
+    // Each handler is called only when its event happened; the skip steps over the call. Target
+    // hits go before menu hits. A pen taken from the target straight to the menu leaves both in
+    // one pass, and a target hit acted on after Stop would re-arm a loss that picks the dropped
+    // point up again.
+    lac i [sTicks:0]
+    sza
+    jsp onFrames
+    lac i [sTgtHits:0]
+    sza
+    jsp onTargetHit
+    lac i [sMenuHits:0]
+    sza
+    jsp onMenuHit
+    jsp checkLost
+    jsp onClock
+    lac i [kbOn:0]
+    sza                 // skip unless the pen keyboard is open
+    jsp i [kbTick:014]
+    jsp onRate
+    lac conWake
+    sza
+    jsp solveStep
+    jsp i [taTick:013]  // the truss's analysis and readouts, which rest while the solver wakes
+    lio [TXSYNC]        // the texts' list, written again once the texts change
+    jda txCall
+    lac showOn
+    sza                 // skip unless Show is on
+    jsp showStep
+
+    // Rebuild when the list no longer matches the tables (the whole list asked for, a slot
+    // marked stale, or a new length), and only once penISR has written the last rebuild's end
+    // pair.
+    lac lineCount
+    xor shownCount
+    ior dirty
+    ior staleN
+    sza i               // skip if a rebuild is asked for
+    jmp main
+    lac i [flipAt:0]
+    sza                 // skip unless the last end pair is still waiting
+    jmp main
+    rck
+    dio rebuildAt
+    jsp rebuildDisplay
+    rck
+    dio now
+    lac rebuildAt
+    jda elapsed
+    dac rebuildMs
+    jmp main
+
+// Frames ended since the last pass. Count them, for inspection and the frame-rate window, and
+// note the time for the watchdog.
+// Entry: sTicks = frames ended. AC and IO are clobbered. Called via jsp.
+onFrames,
+    dap ofRtn
+    lac frameTotal
+    add i [sTicks:0]
+    dac frameTotal
+    lac rateFrames
+    add i [sTicks:0]
+    dac rateFrames
+    lac now
+    dac lastTick
+ofRtn, jmp .
+
+// Declare tracking lost once LOSTMS have passed since the last target hit and penISR has
+// counted LOSTMIN presentations since, and run the mode's handler for it, once per loss. The
+// hit's time and the count are read with the break masked, and the clock after them. A hit
+// stamped after the pass read the clock would otherwise look a wrap of the clock old. That
+// reading is kept here, not in now. A long pass (delete mode's search of 192 lines) sees its
+// frame ends only at the next pass, and the watchdog, timing from the last one seen to a now
+// read this late, would restart the display mid-frame, over and over.
+// A loss also takes from the mailbox the target hits penISR had counted by that reading, since
+// none is later than the hit it timed from. Left there, the next pass would take the last as a
+// new hit, re-arm the stroke, and declare a second loss at once, deleting a second line.
+// AC and IO are clobbered. Called via jsp.
+checkLost,
+    local rtn, lostCall, lostPtr, clHit, clMiss, clNow, clTgt, clMsOk
+    dap rtn
+    lac i [tracking:0]
+    sza i               // skip if the target is displayed
+    jmp rtn
+    lac trackLost
+    sza                 // skip if loss is not declared yet
+    jmp rtn
+
+    // Short of LOSTMIN, as on nearly every pass under a held pen, nothing is read masked. A
+    // single word's read is whole against the break, and a hit after it only makes the count
+    // smaller still.
+    lac i [trackMiss:0]
+    sub [LOSTMIN]
+    spa                 // skip once LOSTMIN is reached
+    jmp rtn
+    lsm
+    lac i [lastHitAt:0]
+    dac clHit
+    lac i [trackMiss:0]
+    dac clMiss
+    lac i [tgtHits:0]
+    dac clTgt
+    rck
+    dio clNow
+    esm
+    lac clMiss
+    sub [LOSTMIN]
+    spa                 // skip once LOSTMIN is reached
+    jmp rtn
+    lac clNow
+    sub clHit
+    sma                 // skip if the clock wrapped since the hit
+    jmp clMsOk
+    add [CLOCKWRAP]
+clMsOk,
+    sub [LOSTMS]
+    spa                 // skip once LOSTMS have passed since the last hit
+    jmp rtn
+    law 1
+    dac trackLost
+    lsm
+    lac i [tgtHits:0]
+    sub clTgt
+    dac i [tgtHits:0]
+    esm
+    idx lostCount
+    lac mode
+    add [modeLost:3]
+    dac lostPtr
+    lac i lostPtr
+    dap lostCall
+lostCall, jsp .
+rtn, jmp .
+lostPtr, 0
+clHit, 0
+clMiss, 0
+clNow, 0
+clTgt, 0
+    endloc
+
+// Work timed on the clock, every pass. While an instance cycles, run the instance module's step
+// (instCycle, which keeps the cycles' time); end a flash that has run FLASHMS, hide the status
+// word once it has been shown MSGMS, close a list that has had no menu hit for LISTIDLEMS, and
+// restart the display if no frame has ended for WATCHDOGMS (a lost break would otherwise stop
+// it for good).
+// Entry: now = the clock. AC and IO are clobbered. Called via jsp.
+onClock,
+    local rtn, ocFlash, ocMsg, ocIdle, ocWatch
+    dap rtn
+    lac cycN
+    sza i               // skip if an instance cycles
+    jmp ocFlash
+    lio [IECYSTEP]
+    jda instCall
+ocFlash,
+    lac flashOn
+    sza i               // skip if a flash is running
+    jmp ocMsg
+    lac flashStart
+    jda elapsed
+    sub [FLASHMS]
+    spa                 // skip once the flash has run its time
+    jmp ocMsg
+    dzm flashOn
+    lac flashCol
+    jda paintLabel
+ocMsg,
+    lac msgOn
+    sza i               // skip if the status word is shown
+    jmp ocIdle
+    lac msgStart
+    jda elapsed
+    sub [MSGMS]
+    spa                 // skip once it has been shown its time
+    jmp ocIdle
+    dzm msgOn
+    lac [jump statEnd:0 next(parameter)]
+    dac i [statGate:0]
+ocIdle,
+    lac i [listOpen:0]
+    sza i               // skip if a list is open
+    jmp ocWatch
+    lac lastMenuMs
+    jda elapsed
+    sub [LISTIDLEMS]
+    spa                 // skip once the list has had no menu hit for LISTIDLEMS
+    jmp ocWatch
+    jsp closeNone
+ocWatch,
+    lac lastTick
+    jda elapsed
+    sub [WATCHDOGMS]
+    spa                 // skip if no frame has ended for WATCHDOGMS
+    jmp rtn
+    idx watchdogCount
+    lac now
+    dac lastTick
+    lsm
+    jsp i [commitFlip:014]
+    lio i [frameGo:0]     // no dcf; the dla clears the flags, as at penISR's commit
+    dla
+    esm
+rtn, jmp .
+    endloc
+
+// Milliseconds from a clock reading to now, allowing for one wrap of the clock.
+// Entry: AC = the earlier reading. Exit: AC = 0 to CLOCKWRAP-1. IO is preserved.
+// Called via jda.
+elapsed, 0
+    local rtn, elZero
+    dap rtn
+    lac now
+    sad elapsed         // skip unless the readings are equal
+    jmp elZero
+    sub elapsed
+    sma                 // skip if the clock wrapped since the reading
+    jmp rtn
+    add [CLOCKWRAP]
+    jmp rtn
+elZero,
+    cla
+rtn, jmp .
+    endloc
+
+// The frame-rate window runs from one frame end to another, each stamped on the clock by
+// penISR, so a main loop that falls behind does not skew it. At a pass that saw a frame end,
+// once the window has run RATEMS and held 2 frames, judge the presentations a second, frames
+// times callsPerFrame. Inside PRESRATE's band, or already at the calls the frame rate asks for,
+// nothing changes. Otherwise the calls a frame become the frame period over PRESMS, rounded, at
+// least 1 (call0), and the group calls one fewer, at most spreadG. Every judgment starts a new
+// window, as does one setCalls discarded (rateFrames negative) or one longer than RATEMAXMS,
+// past which the sums below could overflow. While a list or the pen keyboard is open no window
+// runs. Tracking is off, and with the drawing hidden a frame is the menu's or the keyboard's
+// alone, whose rate says nothing of the drawing's; the first frame end after it closes starts
+// the next window, and the calls stay as they were until it is judged.
+// Entry: sTicks, sFrameAt = frames ended and the latest one's time. AC and IO are clobbered.
+// Called via jsp.
+onRate,
+    local rtn, orRun, orMsOk, orCalc, orPos, orHave, orNew, orMs, orP, orLow, orDen, orC
+    dap rtn
+    lac i [listOpen:0]
+    ior i [kbOn:0]
+    sza i               // skip if a list or the keyboard is open
+    jmp orRun
+    lac [0-RATEDISCARD]
+    dac rateFrames
+    jmp rtn
+orRun,
+    lac i [sTicks:0]
+    sza i               // skip if a frame has ended since the last pass
+    jmp rtn
+    lac rateFrames
+    spa                 // skip unless setCalls discarded the window
+    jmp orNew
+    lac i [sFrameAt:0]
+    sub rateAt
+    sma                 // skip if the clock wrapped in the window
+    jmp orMsOk
+    add [CLOCKWRAP]
+orMsOk,
+    dac orMs
+    sub [RATEMS]
+    spa                 // skip once the window has run RATEMS
+    jmp rtn
+    lac orMs
+    sub [RATEMAXMS]
+    sma                 // skip unless the window ran past RATEMAXMS
+    jmp orNew
+    lac rateFrames
+    sub [2]
+    spa                 // skip once 2 frames have ended in the window
+    jmp rtn
+
+    // In the band when PRESQMIN * P <= 4 * ms <= PRESQMAX * P, P the presentations. A P of
+    // 4000 or more is far over the band (4 * ms is at most 8000), and below it neither product
+    // can overflow. Every product in onRate is under 2^17, so after mul its word is the low
+    // part, realigned by scr 1s.
+    lac rateFrames
+    mul i [callsPerFrame:0]
+    scr 1s
+    lai
+    dac orP
+    sub [0d4000]
+    sma                 // skip if P is under 4000
+    jmp orCalc
+    lac orMs
+    sal 2s
+    dac orLow
+    lac orP
+    mul [PRESQMIN]
+    scr 1s
+    lai
+    sub orLow
+    sma                 // skip if under 250 a second (not too many)
+    jmp orCalc
+    lac orP
+    mul [PRESQMAX]
+    scr 1s
+    lai
+    sub orLow
+    sma                 // skip if under 160 a second (too few)
+    jmp orNew
+
+    // The calls a frame, (ms + PRESMS/2 * frames) / (PRESMS * frames), rounded, in the
+    // divide's form, the dividend shifted left one place; a successful div skips. The
+    // quotient is at most about ms / 10, so the divide cannot overflow; if it did, the skipped cla
+    // would give 0, which is taken as 1.
+orCalc,
+    lac rateFrames
+    mul [PRESMS]
+    scr 1s
+    lai
+    dac orDen
+    sar 1s
+    add orMs
+    dac orC
+    lio orC
+    cla
+    scl 1s
+    div orDen
+    cla                 // no skip means overflow
+
+    // The group calls, one fewer, at least 0 and at most spreadG.
+    sub [1]
+    sma                 // skip if negative (no group call)
+    jmp orPos
+    cla
+orPos,
+    dac orC
+    sub spreadG
+    spa                 // skip if at or past spreadG
+    jmp orHave
+    lac spreadG
+    dac orC
+orHave,
+    lac orC
+    sad liveN           // skip if the group calls change
+    jmp orNew
+    dac liveN
+    jsp setCalls
+    jmp rtn
+orNew,
+    lac i [sFrameAt:0]
+    dac rateAt
+    dzm rateFrames
+rtn, jmp .
+orMs, 0
+orP, 0
+orLow, 0
+orDen, 0
+orC, 0
+    endloc
+
+// Set callsPerFrame from liveN, write the calls if the target is displayed, and discard the
+// frame-rate window, the next starting at a frame end. AC and IO are clobbered. Called via jsp.
+setCalls,
+    local rtn, scRate
+    dap rtn
+    lac liveN
+    add [1]
+    dac i [callsPerFrame:0]
+    lac i [tracking:0]
+    sza i               // skip if the target is displayed
+    jmp scRate
+    lio [1]
+    jsp i [writeCalls:014]
+scRate,
+    lac [0-RATEDISCARD]
+    dac rateFrames
+rtn, jmp .
+    endloc
+
+// After a load, with the display still on the tape's WAIT, off the frame, write the drawing's
+// display again from the tables the tape replaced, which nothing else knows have changed. The
+// tape module has already started the line list over (an empty list whose end the main loop's
+// rebuild moves, writing every slot) and marked every point in ptMark. For the arcs, every slot
+// is left unused (AEINIT, which empties the arc table too, so its count is put back), then every
+// arc on a marked point, which is every arc, is written again by a drag of no point (AEDRAG with
+// dragIdx NOPOINT, as setMode left it), which moves nothing. For the instances, every slot is
+// left unused, the tie lists the load wrote kept (instReslot), and its count put back; then each
+// is written as instAdd writes a new one, from its table words, and the calls spread again. Show
+// goes off, and the constraint module takes up the table the load wrote (CELOAD), which wakes the
+// solver and writes the marks; the text module takes up its tables (TXFRESH), writing the texts'
+// list again. Undo's record goes, as at Clear.
+// AC and IO are clobbered. Called via jsp.
+tapeRebuild,
+    local rtn, trLoop, trDone, trN, trI
+    dap rtn
+    lac i [arcCount:2]
+    dac trN
+    law AEINIT
+    jda arcCall
+    lac trN
+    dac i [arcCount:2]
+    law AEDRAG
+    jda arcCall
+    lac i [instCount:012]
+    dac trN
+    lio [IERESLOT]
+    jda instCall
+    lac trN
+    dac i [instCount:012]
+    dzm trI
+trLoop,
+    lac trI
+    sad trN             // skip while instances remain
+    jmp trDone
+    lio [IEPARAM]
+    jda instCall
+    lac trI
+    lio [IEXY]
+    jda instCall
+    lac trI
+    lio [IEGATE]
+    jda instCall
+    idx trI
+    jmp trLoop
+trDone,
+    jsp respread
+    dzm showOn
+    dzm forcesOn
+    jsp setShow
+    lio [CELOAD]
+    jda conCall
+    lio [TXFRESH]
+    jda txCall
+    jsp undoClear
+rtn, jmp .
+trN, 0
+trI, 0
+    endloc
+
+// Call entry n of the constraint module in bank 8 with the argument in AC; conEntry reads the
+// argument from this word, where the jda left it. As with instCall, the window is open, so the
+// jsp reaches bank 8 and conEntry's return reaches back, and breaks are not masked across the
+// crossing.
+// Entry: AC = the argument, IO = n. Exit: AC as the entry leaves it. IO is clobbered. Called
+// via jda.
+conCall, 0
+    dap ccRtn
+    jsp i [conEntry:010]
+ccRtn, jmp .
+
+// A call into this bank from the scale module in bank 6. A routine here returns by a jmp its dap
+// aimed, which stays in this bank, so bank 6 calls it through this word, mcX, and comes back by
+// mainCall's return address. Not reentrant; nothing called through it calls the scale module
+// back through it.
+// Entry: IO = the call, a jsp or a jda of the routine, as an instruction word; mcA = the AC and
+// mcI = the IO it is called with. Exit: AC as the routine leaves it. IO is clobbered. Called via
+// jsp i [mainCall:4].
+mainCall,
+    dac mcRtn
+    dio mcX
+    lac mcA
+    lio mcI
+mcX, 0
+    jmp i mcRtn
+mcRtn, 0
+mcA, 0
+mcI, 0
+
+// The constraint solver's pass, while conWake asks for it. The module sweeps for at most SOLVEMS
+// on the clock (CETICK), none while a point is held, and what it wrote back is shown (conShow).
+// AC and IO are clobbered. Called via jsp.
+solveStep,
+    local rtn
+    dap rtn
+    lio [CETICK]
+    jda conCall
+    sza                 // skip unless points moved
+    jsp conShow
+rtn, jmp .
+    endloc
+
+// While Show is on, write the constraints' marks again (CEFMARK) when the table or a point of an
+// entry has changed since they were written (the module's cTopo and cMkDirty), at most every
+// MARKMS.
+// AC and IO are clobbered. Called via jsp.
+showStep,
+    local rtn
+    dap rtn
+    lac i [cTopo:010]
+    ior i [cMkDirty:010]
+    sza i               // skip if the marks are stale
+    jmp rtn
+    lac marksAt
+    jda elapsed
+    sub [MARKMS]
+    spa                 // skip once MARKMS have passed since the last
+    jmp rtn
+    lac now
+    dac marksAt
+    lio [CEFMARK]
+    jda conCall
+rtn, jmp .
+    endloc
+
+// Show the points the constraint module moved or put back (its FMOV marks). The arcs on them go
+// first, worked out again by the arc module (conArcs), which refuses if one would leave its radii
+// or the canvas, and the module then puts the points back (CEREVERT); otherwise the lines on them
+// are drawn (conRedraw). Then the instances whose origins are the solver's are drawn where their
+// origins are (the instance module's instSync).
+// AC and IO are clobbered. Called via jsp.
+conShow,
+    local rtn, csNo, csSync
+    dap rtn
+    law AECONS
+    jda arcCall
+    sza                 // skip if the arcs fit
+    jmp csNo
+    jsp conRedraw
+    jmp csSync
+csNo,
+    lio [CEREVERT]
+    jda conCall
+csSync,
+    lio [IESYNC]
+    jda instCall
+    jsp i [pmAgain:0d11] // a number's picked points' marks, where the solve moved them
+rtn, jmp .
+    endloc
+
+// A hit on the target, so tracking is live. penISR has already moved the target and restarted
+// its miss count.
+// Entry: sTgtX, sTgtY = raw hit position. AC and IO are clobbered. Called via jsp.
+onTargetHit,
+    local rtn, tgCall, tgPtr
+    dap rtn
+    dzm trackLost
+    lac mode
+    add [modeTarget:3]
+    dac tgPtr
+    lac i tgPtr
+    dap tgCall
+tgCall, jsp .
+rtn, jmp .
+tgPtr, 0
+    endloc

@@ -1,0 +1,40 @@
+// Sketchpad's intensities, the brightness of each kind of thing drawn, in one place to change
+// them together. The Type 340 has eight levels, 0 the dimmest to 7 the brightest. Each is used
+// through intensity() in a parameter word; sketchpad.am1 includes this file before the tracking
+// target's TYPE340/trackingTarget.ah, so that TARGETINTENSITY here is the one used.
+
+// The menus. A label is lit while it is the current mode's or while it flashes after a press,
+// and dim while its row has nothing to act on. NORMALINTENSITY is also the OK box's label, the
+// status word's, WAIT's, the pen keyboard's keys and texts, and the texts on the canvas;
+// SELECTINTENSITY a key lit.
+#define NORMALINTENSITY 5
+#define SELECTINTENSITY 7
+#define DIMINTENSITY 3
+
+// The drawing's lines and arcs.
+#define DRAWINTENSITY 5
+
+// The pseudo pen location's dot, full brightness while drawing or dragging, dimmed while Move
+// waits for a point. PENINTENSITY is also the lock mark's, the cross about the dot while it locks
+// onto a point, and the first line a two-line constraint mode picks.
+#define PENINTENSITY 7
+#define HUNTINTENSITY 4
+
+// The tracking target.
+#define TARGETINTENSITY 6
+
+// The marks, the crosses on arcs' points and the constraints' marks, one step dimmer than the
+// drawing. The constraints' arms and a roller's ticks are at DIMINTENSITY.
+#define MARKINTENSITY 4
+// Scale's slider, as the marks, below the drawing it runs across.
+#define SLIDEINTENSITY 4
+
+// Instances, and what the dot locks onto. An instance is drawn at INSTINTENSITY, and at
+// LITINTENSITY instead while delete mode, Move or Size locks onto it; a text locked onto is at
+// LITINTENSITY too. The line or arc a lift will take, in delete mode, Move's hunt, Horv and the
+// constraint mode's line picks, is at LINELITINTENSITY, the brightest, as a picked line is,
+// since at LITINTENSITY, one step above the drawing, a line is too subtle; an instance and a
+// text stay at LITINTENSITY, 7 being too bright for them.
+#define INSTINTENSITY 5
+#define LITINTENSITY 6
+#define LINELITINTENSITY 7

@@ -1,0 +1,416 @@
+// spdispatch.ac -- the main bank's dispatch tables: the bar's parameters, each mode's target
+// hit, lift and Locate handler, its dot after an Undo, the marks' modes, and Fix's, Tie's,
+// Roller's and Designate's marks and columns; then the bar's and the lists' descriptors. The
+// rows' bands and each bar item's and row's action stand before them, in sketchpad.am1. The
+// main bank reads each through a 16-bit address, its window open, and calls the handler a word
+// names by its low 12 bits, in the main bank.
+//
+// Bank 3, after itemAct (sketchpad.am1).
+// Part of sketchpad.am1, included where it stands.
+
+// A descriptor's edge word (DESCEDGE, sketchpad.ah, beside the nested lists). In a sublist's,
+// the box's left side bx less BOXDX - BOXSLOP; in a list's, BOXSLOP right of its column c.
+#define SUBEDGE(bx) ((bx) - (BOXDX - BOXSLOP))
+#define LISTEDGE(c) ((c) * COLPITCH + BOXSLOP)
+
+// Bar column -> address of its label's parameter word.
+barParamTab,
+    bar0:0
+    bar1:0
+    bar2:0
+    bar3:0
+    bar4:0
+    bar5:0
+    bar6:0
+    bar7:0
+
+// Mode -> handler for a target hit, for tracking lost, and for Stop; called via jsp.
+modeTarget,
+    nothing:4           // MIDLE
+    nothing:4           // MLOCATE
+    drawTarget:4        // MDRAW
+    moveTarget:4        // MMOVE
+    deleteTarget:4      // MDELETE
+    horvTarget:4        // MHORV
+    circleTarget:4      // MCIRCLE
+    instTarget:4        // MPLACE
+    sizeTarget:4        // MSIZE
+    fixTarget:4         // MFIX
+    consTarget:4        // MCONS
+    fixTarget:4         // MTIE
+    sizeTarget:4        // MCHANGE
+    fixTarget:4         // MROLL
+    sizeTarget:4        // MDISM
+    fixTarget:4         // MDES
+    sizeTarget:4        // MTEXT
+    sizeTarget:4        // MNUMBER
+    fixTarget:4         // MPAN
+    fixTarget:4         // MCENTER
+    scaleTarget:4       // MSCALE
+modeLost,
+    nothing:4
+    nothing:4
+    drawLost:4
+    moveLost:4
+    deleteLost:4
+    horvLost:4
+    circleLost:4
+    instLost:4
+    sizeLost:4
+    fixLost:4
+    consLost:4
+    tieLost:4
+    changeLost:4
+    rollLost:4
+    dismLost:4
+    desLost:4
+    textLost:4
+    textLost:4          // Number mode, as Text mode
+    panLost:4
+    centerLost:4
+    scaleLost:4
+// Mode -> handler for Locate inside the mode, which ends the gesture under way and keeps the
+// mode; Stop, Undo and the other modes' rows run it first.
+modeLocate,
+    nothing:4
+    nothing:4
+    chainEnd:4
+    moveEnd:4
+    disarm:4            // delete mode: no gesture spans lifts
+    disarm:4            // and Horv mode
+    chainEnd:4          // circle mode, as draw mode
+    leaveDraw:4         // place mode: the instance dropped where it is, one placement
+    disarm:4            // and Size mode
+    disarm:4            // and Fix mode
+    consEnd:4           // constraint mode: the first pick dropped
+    disarm:4            // and Tie mode
+    disarm:4            // and Change mode
+    disarm:4            // and Roller mode
+    disarm:4            // and Dismember mode
+    disarm:4            // and Designate mode
+    disarm:4            // and Text mode
+    disarm:4            // and Number mode
+    panLocate:4         // Pan mode, the stroke's start noted again
+    disarm:4            // and Center mode
+    scaleEnd:4          // Scale mode: the part picked up put down, the hunt again
+
+// Mode -> handler placing the pseudo pen location again after an Undo that stayed in the mode;
+// draw and circle modes place it in actUndo, and place mode has left.
+modeDot,
+    nothing:4
+    nothing:4
+    nothing:4
+    lockInst:4
+    placeLock:4
+    horvLock:4
+    nothing:4
+    nothing:4
+    lockInst:4
+    fixDot:4
+    consLock:4
+    fixDot:4
+    lockInst:4
+    fixDot:4
+    lockInst:4
+    fixDot:4
+    lockInst:4
+    lockInst:4
+    placePen:4
+    placePen:4
+    scaleEnd:4          // Scale mode: its hunt, nothing picked up after an Undo
+
+// Mode -> markGate's word. The modes in which Move, Delete, Line, Circle, Fix, Tie, Roller or
+// Designate can take a point show the arcs' marks. The constraints' marks
+// come before them, through showGate, in Fix, Tie, Roller and Designate modes and while Show is
+// on (setShow).
+markTab,
+    jump markEnd:0 next(parameter)      // MIDLE
+    jump markEnd:0 next(parameter)      // MLOCATE
+    jump markList:0 next(parameter)     // MDRAW
+    jump markList:0 next(parameter)     // MMOVE
+    jump markList:0 next(parameter)     // MDELETE
+    jump markEnd:0 next(parameter)      // MHORV
+    jump markList:0 next(parameter)     // MCIRCLE
+    jump markEnd:0 next(parameter)      // MPLACE
+    jump markEnd:0 next(parameter)      // MSIZE
+    jump markList:0 next(parameter)     // MFIX
+    jump markEnd:0 next(parameter)      // MCONS
+    jump markList:0 next(parameter)     // MTIE
+    jump markEnd:0 next(parameter)      // MCHANGE
+    jump markList:0 next(parameter)     // MROLL
+    jump markEnd:0 next(parameter)      // MDISM
+    jump markList:0 next(parameter)     // MDES
+    jump markEnd:0 next(parameter)      // MTEXT
+    jump markEnd:0 next(parameter)      // MNUMBER
+    jump markEnd:0 next(parameter)      // MPAN
+    jump markEnd:0 next(parameter)      // MCENTER
+    jump markEnd:0 next(parameter)      // MSCALE
+
+// Fix, Tie, Roller, Designate, Pan and Center modes (afMode), by mode from MFIX: the type whose
+// marks show with Show off (the constraint module's cMkTy), 0 for none, then, from AFCOLS words
+// on, the bar column lit.
+afTab,
+    CTF                 // MFIX
+    0
+    CTATT               // MTIE
+    0
+    CTROLL              // MROLL
+    0
+    CTDES               // MDES
+    0
+    0
+    0                   // MPAN
+    0                   // MCENTER
+    CEDIT
+    0
+    CPICTURE
+    0
+    CDRAW
+    0
+    CPICTURE
+    0
+    0
+    CVIEW
+    CVIEW
+
+// The bar's and the lists' tables, which the main bank reads through 16-bit addresses, its
+// window open.
+// A word naming a list's display words names bank 0's, which the 340 reaches; one naming a
+// descriptor or a row's sublists names this bank's, by its 16-bit address.
+// Bar column -> its list's descriptor, 0 for an item that acts at once.
+barList,
+    descDraw:3
+    descEdit:3
+    descPicture:3
+    descMisc:3
+    0
+    0
+    0
+    descView:3
+
+// List descriptors, DESCROWS words and then the rows' parameter words. A list's box is the
+// lists' one, listBox, and its edge word the x from which a hit is on the box.
+descDraw,
+    listDraw:0
+    5
+    0
+    drTail:0
+    subsDraw:3
+    listBox:0 + 1
+    LISTEDGE(CDRAW)
+    dr0:0
+    dr1:0
+    dr2:0
+    dr3:0
+    dr4:0
+descEdit,
+    listEdit:0
+    7
+    5                   // after Draw's Dim row, item 4
+    edTail:0
+    subsEdit:3
+    listBox:0 + 1
+    LISTEDGE(CEDIT)
+    ed0:0
+    ed1:0
+    ed2:0
+    ed3:0
+    ed4:0
+    ed5:0
+    ed6:0
+descPicture,
+    listPicture:0
+    6
+    IDISM + 1           // after Edit's Dismem row
+    pcTail:0
+    subsPicture:3
+    listBox:0 + 1
+    LISTEDGE(CPICTURE)
+    pc0:0
+    pc1:0
+    pc2:0
+    pc3:0
+    pc4:0
+    pc5:0
+descMisc,
+    listMisc:0
+    6
+    IMISC
+    msTail:0
+    subsMisc:3
+    listBox:0 + 1
+    LISTEDGE(CMISC)
+    ms0:0
+    ms1:0
+    ms2:0
+    ms3:0
+    ms4:0
+    ms5:0
+descView,
+    listView:0
+    6
+    IVIEW
+    viTail:0
+    0
+    listBox:0 + 1
+    SUBEDGE(VIEWBOXX)
+    vi0:0
+    vi1:0
+    vi2:0
+    vi3:0
+    vi4:0
+    vi5:0
+
+// Sublist descriptors, each a list's, with no tail word and no sublists, and the edge from which
+// a hit right of the rows is on the box.
+descSize,
+    listSize:0
+    4
+    ISIZE
+    0
+    0
+    chBox:0 + 1
+    SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
+    sz0:0
+    sz1:0
+    sz2:0
+    sz3:0
+descInst,
+    listInst:0
+    4
+    IINST
+    0
+    0
+    miBox:0 + 1
+    SUBEDGE(CPICTURE * COLPITCH + SUBDX + BOXDX)
+    mi0:0
+    mi1:0
+    mi2:0
+    mi3:0
+descCopy,
+    listCopy:0
+    4
+    ICOPY
+    0
+    0
+    miBox:0 + 1
+    SUBEDGE(CPICTURE * COLPITCH + SUBDX + BOXDX)
+    mc0:0
+    mc1:0
+    mc2:0
+    mc3:0
+descDefine,
+    listDefine:0
+    4
+    IDEFINE
+    0
+    0
+    miBox:0 + 1
+    SUBEDGE(CPICTURE * COLPITCH + SUBDX + BOXDX)
+    md0:0
+    md1:0
+    md2:0
+    md3:0
+descConstr,
+    listConstr:0
+    SUBROWS
+    ICONSTR
+    0
+    0
+    chBox:0 + 1
+    SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
+    cn0:0
+    cn1:0
+    cn2:0
+    cn3:0
+    cn4:0
+    cn5:0
+    cn6:0
+    cn7:0
+descChange,
+    listChange:0
+    7
+    ICHANGE
+    0
+    0
+    chBox:0 + 1
+    SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
+    ch0:0
+    ch1:0
+    ch2:0
+    ch3:0
+    ch4:0
+    ch5:0
+    ch6:0
+descTruss,
+    listTruss:0
+    6
+    ITRUSS
+    0
+    0
+    trBox:0 + 1
+    SUBEDGE(CDRAW * COLPITCH + SUBDX + BOXDX)
+    tr0:0
+    tr1:0
+    tr2:0
+    tr3:0
+    tr4:0
+    tr5:0
+descDim,
+    listDim:0
+    4
+    IDIM
+    0
+    0
+    trBox:0 + 1         // Truss's box, shared
+    SUBEDGE(CDRAW * COLPITCH + SUBDX + BOXDX)
+    dm0:0
+    dm1:0
+    dm2:0
+    dm3:0
+descDrive,
+    listDrive:0
+    SUBROWS
+    IDRIVE
+    0
+    0
+    dvBox:0 + 1
+    SUBEDGE(CMISC * COLPITCH + SUBDX + BOXDX)
+    dv0:0
+    dv1:0
+    dv2:0
+    dv3:0
+    dv4:0
+    dv5:0
+    dv6:0
+    dv7:0
+
+// A list's row -> its sublist's descriptor, 0 for a row that owns none.
+subsDraw,
+    0
+    0
+    descTruss:3
+    0
+    descDim:3
+subsEdit,
+    0
+    0
+    descConstr:3
+    descSize:3
+    0
+    descChange:3
+    0
+subsPicture,
+    descDefine:3
+    descInst:3
+    descCopy:3
+    0
+    0
+    0
+subsMisc,
+    0
+    0
+    descDrive:3
+    0
+    0
+    0

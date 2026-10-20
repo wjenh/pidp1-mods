@@ -1,0 +1,1000 @@
+// spsearch.ac -- the line search: the nearest line to the target's center, and in Line,
+// Circle and Move the second nearest and the two lines' crossing, swept a slice a pass.
+//
+// Bank 13, after spmarks.ac. Entered only at lineSearch, from the main bank's placeLock; runs
+// with the extend window open throughout, so every indirect address is a 16-bit one. The point
+// and line tables are reached as OP i [X:3], the main bank's variables as OP i [X:4]. Calls
+// nothing outside bank 13.
+// Part of sketchpad.am1, included where it stands.
+
+// The nearest line to the target's center (hitX, hitY) within the reach the main bank gives, for
+// placeLock. The distance is taken along the minor axis (lsTry), which needs no square root. The
+// first found wins a tie. The lines on the point dragged and on the band's start vertex are passed
+// over, since each moves with that point, or starts where the stroke does, so it would always be
+// the nearest.
+// In Line, Circle and Move, Move's hunt gated as its drag (aimMode, or move mode), between lifts
+// no line is searched until the target has stayed within SLOWD units on either axis of where it
+// settled (the anchor) for SLOWMS on the clock; a move past SLOWD settles it afresh there.
+// Settled, the lines are swept a slice a pass (lsSlice), so that a band or a drag never waits on
+// more than a slice however large the drawing; once a sweep is done its two nearest lines are
+// measured again each pass from where the target is (lsMeet), which is all the search then
+// costs, and a new sweep begins only when the target, the line count or a line's slot (lineGen)
+// has changed since the last. Until a sweep is done the reach is 0, so the arc lock that follows
+// finds nothing either. At a lift the sweep done is used if it still matches the drawing and
+// began within SLOWD of the target, else the lines are swept whole there and then. In the other
+// modes they are swept whole every pass. With two lines in reach the dot goes to their crossing
+// when it lies on both and nearer the target's center than the reach, lineReach then its
+// distance, so that an arc must be nearer still. SLOWD and SWREACH are screen units; the view
+// module gives them in page units at the view's scale, as the main bank gives the reach.
+// Entry: AC = the return address, which carries the main bank; the main bank's lineReach, the
+// distance a line must be nearer than, at most SNAP_BOX + 1, 0 finding none without a search;
+// hitX, hitY, dragIdx, bandIdx, lineCount, lineGen, aimMode, atLift. Exit: the main bank's
+// lockLine = the line, NOPOINT when none is that close; lock2Line = the second line when the dot
+// is on the crossing, else NOPOINT; lineReach = the distance of what is locked, unchanged when
+// nothing is; with a line, lockX, lockY = the point on it at the pen's major coordinate, or the
+// crossing. The window is open. AC and IO are clobbered. Called via jsp i [lineSearch:015].
+lineSearch,
+    local lsPass, lsGate, lsGated, lsMoved, lsLift, lsLFull, lsFull, lsNone, lsEval, lsDone, \
+        lsSteepLock, lsHave, lsOut, lsRtn
+    dac lsRtn
+    lac i [vwSlow:014]
+    dac lsSlow1
+    lac i [vwSwr:014]
+    dac lsSwr
+    lac i [lineReach:4]
+    dac lsReach0
+    lac i [hitX:4]
+    dac lsHX
+    lac i [hitY:4]
+    dac lsHY
+    lac i [dragIdx:4]
+    dac lsDrag
+    lac i [bandIdx:4]
+    dac lsBand
+    lac i [lineCount:4]
+    dac lsN
+    lac i [lineGen:4]
+    dac lsGen
+
+    // A sweep passes over the lines on the point dragged and the band's start vertex, so with
+    // either changed, neither the sweep under way nor the one done holds.
+    lac lsDrag
+    sas lsLDrag         // skip if the point dragged is last pass's
+    jmp lsPass
+    lac lsBand
+    sas lsLBand         // skip if the band's start vertex is last pass's
+    jmp lsPass
+    jmp lsGate
+lsPass,
+    dzm swOn
+    dzm rsOK
+    lac lsDrag
+    dac lsLDrag
+    lac lsBand
+    dac lsLBand
+
+    // The gate, in Line, Circle and Move only, and never at a lift. It is timed on the clock,
+    // since a hand's pause is a time, however many passes it spans.
+lsGate,
+    lac i [mode:4]
+    sad [MMOVE]         // skip unless move mode, its hunt gated as its drag is
+    jmp lsGated
+    lac i [aimMode:4]
+    sza i               // skip if Line, Circle or Move's drag
+    jmp lsFull
+lsGated,
+    lac i [atLift:4]
+    sza                 // skip unless at a lift
+    jmp lsLift
+    lac lsHX
+    sub lsAnX
+    jda lsAbs
+    sub lsSlow1
+    sma                 // skip if x stayed within SLOWD of the anchor
+    jmp lsMoved
+    lac lsHY
+    sub lsAnY
+    jda lsAbs
+    sub lsSlow1
+    sma                 // skip if y stayed within SLOWD of the anchor
+    jmp lsMoved
+    rck
+    lai
+    sub lsAnT
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [SLOWMS]
+    spa                 // skip once it has stayed there SLOWMS
+    jmp lsNone
+    lac lsReach0
+    sza i               // skip if a line can be near enough
+    jmp lsNone
+    cla
+    jda lsSlice         // a slice of the sweep, unless the sweep done still matches
+    lac rsOK
+    sza                 // skip if no sweep is done
+    jmp lsEval
+    jmp lsNone
+lsMoved,
+    jsp lsAnchor
+lsNone,
+    lac [NOPOINT]
+    dac lsBest
+    dzm lsBestD         // no reach, so no line and no arc after
+    jmp lsDone
+
+    // At a lift the sweep done is used if no slot has been written since, the line count is the
+    // same, and it began within SLOWD of the target.
+lsLift,
+    lac lsReach0
+    sza i               // skip if a line can be near enough
+    jmp lsMoved
+    lac rsOK
+    sza i               // skip if a sweep is done
+    jmp lsLFull
+    lac rsGen
+    sas lsGen           // skip if no slot has been written since
+    jmp lsLFull
+    lac rsN
+    sas lsN             // skip if the line count is the same
+    jmp lsLFull
+    lac lsHX
+    sub rsHX
+    jda lsAbs
+    sub lsSlow1
+    sma                 // skip if x is within SLOWD of the sweep's
+    jmp lsLFull
+    lac lsHY
+    sub rsHY
+    jda lsAbs
+    sub lsSlow1
+    sma                 // skip if y is within SLOWD of the sweep's
+    jmp lsLFull
+    jsp lsAnchor        // a lift starts the wait afresh; rsB1 and rsB2 still stand
+    jmp lsEval
+lsLFull,
+    jsp lsAnchor
+    law 1
+    jda lsSlice         // the whole sweep, from here
+    jmp lsEval
+
+    // In the other modes the whole sweep runs every pass and is not kept.
+lsFull,
+    lac lsReach0
+    sza i               // skip if a line can be near enough
+    jmp lsMoved
+    jsp lsAnchor
+    law 1
+    jda lsSlice
+    dzm rsOK
+
+    // The sweep's two lines measured from the target's center as it is now.
+lsEval,
+    lac [NOPOINT]
+    dac lsBest
+    dac ls2
+    lac lsReach0
+    dac lsBestD
+    dac ls2D
+    lac lsHX
+    dac lsTX
+    lac lsHY
+    dac lsTY
+    lac rsB1
+    jda lsMeet
+    lac rsB2
+    jda lsMeet
+
+lsDone,
+    lac lsBestD
+    dac i [lineReach:4]
+    lac [NOPOINT]
+    dac i [lock2Line:4]
+    lac lsBest
+    dac i [lockLine:4]
+    sad [NOPOINT]       // skip if a line is locked
+    jmp lsOut
+    lac lsBestS
+    sza                 // skip if shallow, the lock at (hitX, the line's y)
+    jmp lsSteepLock
+    lac lsHX
+    dac lsAX
+    lac lsBestV
+    dac lsAY
+    jmp lsHave
+lsSteepLock,
+    lac lsBestV
+    dac lsAX
+    lac lsHY
+    dac lsAY
+lsHave,
+    lac lsAX
+    dac i [lockX:4]
+    lac lsAY
+    dac i [lockY:4]
+    lac i [aimMode:4]
+    sza i               // skip if Line, Circle or Move's drag, which lock onto crossings
+    jmp lsOut
+    lac ls2
+    sas [NOPOINT]       // skip if no second line is in reach
+    jsp lsCross
+lsOut,
+    jmp i lsRtn
+lsRtn, 0
+    endloc
+
+// The sweep measures the lines from swI on from where the target was when it began (swHX,
+// swHY), and keeps the two nearest within SWREACH (swB1, swB2). SWREACH is SNAP_BOX + 1 and twice
+// SLOWD more, since the target may since have moved SLOWD on each axis. Once every line is
+// measured they become the sweep done (rsB1, rsB2), with its place, the line count and lineGen
+// at its start, and rsOK set. With AC = 0, a slice of it, until LSSLICEMS of the clock have
+// passed (read every LSCHECK lines), a sweep begun first when none is under way and the one done
+// does not match the target, the line count and lineGen as they are now; with AC = 1, a sweep
+// begun here and run whole.
+// Entry: AC as above; lsHX, lsHY, lsN, lsGen, lsDrag, lsBand. AC and IO are clobbered. Called
+// via jda.
+lsSlice, 0
+    local rtn, slNew, slGo, slLoop, slSec, slNext, slDone, slT0, slK, slD
+    dap rtn
+    lac lsSlice
+    sza                 // skip if a slice
+    jmp slNew
+    lac swOn
+    sza                 // skip unless a sweep is under way
+    jmp slGo
+    lac rsOK
+    sza i               // skip if a sweep is done
+    jmp slNew
+    lac rsGen
+    sas lsGen           // skip if no slot has been written since
+    jmp slNew
+    lac rsN
+    sas lsN             // skip if the line count is the same
+    jmp slNew
+    lac rsHX
+    sas lsHX            // skip if the target's x is the same
+    jmp slNew
+    lac rsHY
+    sas lsHY            // skip if its y is the same
+    jmp slNew
+    jmp rtn             // the sweep done matches, nothing to measure
+slNew,
+    law 1
+    dac swOn
+    dzm swI
+    lac lsHX
+    dac swHX
+    lac lsHY
+    dac swHY
+    lac lsN
+    dac swN
+    lac lsGen
+    dac swGen
+    lac [NOPOINT]
+    dac swB1
+    dac swB2
+    lac lsSwr
+    dac swB1D
+    dac swB2D
+slGo,
+    lac swHX
+    dac lsTX
+    lac swHY
+    dac lsTY
+    rck
+    dio slT0
+    law i LSCHECK
+    dac slK
+slLoop,
+    lac swI
+    sub lsN
+    sma                 // skip while lines remain
+    jmp slDone
+    lac swI
+    jda lsTry
+    spa                 // skip if measured
+    jmp slNext
+    dac slD
+    sub swB1D
+    sma                 // skip if nearer than the nearest so far
+    jmp slSec
+    lac swB1
+    dac swB2
+    lac swB1D
+    dac swB2D
+    lac slD
+    dac swB1D
+    lac swI
+    dac swB1
+    jmp slNext
+slSec,
+    lac slD
+    sub swB2D
+    sma                 // skip if nearer than the second so far
+    jmp slNext
+    lac slD
+    dac swB2D
+    lac swI
+    dac swB2
+slNext,
+    idx swI
+    lac lsSlice
+    sza                 // skip if a slice, which is timed
+    jmp slLoop
+    isp slK             // skip every LSCHECK lines, to read the clock
+    jmp slLoop
+    law i LSCHECK
+    dac slK
+    rck
+    lai
+    sub slT0
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [LSSLICEMS]
+    spa                 // skip once the slice's time is used
+    jmp slLoop
+    jmp rtn
+slDone,
+    lac swB1
+    dac rsB1
+    lac swB2
+    dac rsB2
+    lac swHX
+    dac rsHX
+    lac swHY
+    dac rsHY
+    lac swN
+    dac rsN
+    lac swGen
+    dac rsGen
+    law 1
+    dac rsOK
+    dzm swOn
+rtn, jmp .
+slT0, 0
+slK, 0
+slD, 0
+    endloc
+
+// Line i weighed for the lock against the two nearest so far (lsBest, ls2), measured from
+// (lsTX, lsTY). Nearer than lsBestD it becomes the nearest, the nearest the second; else nearer
+// than ls2D, the second. NOPOINT, or an index past the line count (lines removed since the sweep),
+// is passed over.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+lsMeet, 0
+    local rtn, mtSecond, mtD
+    dap rtn
+    lac lsMeet
+    sad [NOPOINT]       // skip unless none
+    jmp rtn
+    sub lsN
+    sma                 // skip if under the line count
+    jmp rtn
+    lac lsMeet
+    jda lsTry
+    spa                 // skip if measured
+    jmp rtn
+    dac mtD
+    sub lsBestD
+    sma                 // skip if nearer than the nearest so far
+    jmp mtSecond
+    lac lsBest
+    dac ls2
+    lac lsBestD
+    dac ls2D
+    lac lsBestV
+    dac ls2V
+    lac lsBestS
+    dac ls2S
+    lac mtD
+    dac lsBestD
+    lac lsMeet
+    dac lsBest
+    lac lsVL
+    dac lsBestV
+    lac lsSteep
+    dac lsBestS
+    jmp rtn
+mtSecond,
+    lac mtD
+    sub ls2D
+    sma                 // skip if nearer than the second so far
+    jmp rtn
+    lac mtD
+    dac ls2D
+    lac lsMeet
+    dac ls2
+    lac lsVL
+    dac ls2V
+    lac lsSteep
+    dac ls2S
+rtn, jmp .
+mtD, 0
+    endloc
+
+// Line i's distance from (lsTX, lsTY), taken along its minor axis. For a line with |dx| >= |dy|,
+// the point's x must lie within the line's x span, and the distance is |lsTY - the line's y at
+// lsTX|; a steeper line is the same with the axes swapped. That is within a factor of 1.42 of the
+// perpendicular distance and needs no square root, and it matches findNearPoint's use of the
+// larger axis distance. The line's minor coordinate is v0 + |dv| * t / |du| with its sign, t the
+// point's distance along the major axis from the start, by one mul and one div. None for a line on
+// the point dragged or the band's start vertex, with both ends SWREACH or more to one side of
+// the point, of no length, or with the point outside its span.
+// Entry: AC = i; lsTX, lsTY, lsDrag, lsBand. Exit: AC = the distance, or -1 for none; with one,
+// lsVL the line's minor coordinate there, lsSteep 1 if it is measured in x. IO is clobbered.
+// Called via jda.
+lsTry, 0
+    local rtn, tyNo, tyXL, tyY, tyYL, tyIn, tyShallow, tyAxes, tyDown, tySpanT, tyVDown, \
+        tyVHave, tyD0, tyAdx, tyAdy, tyU0, tyU1, tyV0, tyV1, tyPU, tyPV, tyAdu, tyAdv, tyT, tyQ
+    dap rtn
+    lac lsTry
+    jda lsLoadX         // the y coordinates only once the x span is in reach (tyY)
+    lac lsFrom
+    sad lsDrag          // skip unless on the point dragged
+    jmp tyNo
+    sad lsBand          // skip unless on the band's start vertex
+    jmp tyNo
+    lac lsTo
+    sad lsDrag          // skip unless on the point dragged
+    jmp tyNo
+    sad lsBand          // skip unless on the band's start vertex
+    jmp tyNo
+
+    // A line whose ends both lie SWREACH or more to one side of the point, on either axis, is
+    // out of reach whatever its slope, and most of a sweep's lines are, so it is passed over
+    // before the measure. An end exactly SWREACH to the left is measured, which costs only time.
+    lac lsX0
+    sub lsTX
+    dac tyD0
+    sub lsSwr
+    spa                 // skip if the from end is SWREACH or more right of the point
+    jmp tyXL
+    lac lsX1
+    sub lsTX
+    sub lsSwr
+    sma                 // skip unless the to end is too
+    jmp tyNo
+    jmp tyY
+tyXL,
+    lac tyD0
+    add lsSwr
+    sma                 // skip if the from end is more than SWREACH left of the point
+    jmp tyY
+    lac lsX1
+    sub lsTX
+    add lsSwr
+    spa                 // skip unless the to end is too
+    jmp tyNo
+tyY,
+    jsp lsLoadY
+    lac lsY0
+    sub lsTY
+    dac tyD0
+    sub lsSwr
+    spa                 // skip if the from end is SWREACH or more above the point
+    jmp tyYL
+    lac lsY1
+    sub lsTY
+    sub lsSwr
+    sma                 // skip unless the to end is too
+    jmp tyNo
+    jmp tyIn
+tyYL,
+    lac tyD0
+    add lsSwr
+    sma                 // skip if the from end is more than SWREACH below the point
+    jmp tyIn
+    lac lsY1
+    sub lsTY
+    add lsSwr
+    spa                 // skip unless the to end is too
+    jmp tyNo
+tyIn,
+    lac lsX1
+    sub lsX0
+    jda lsAbs
+    dac tyAdx
+    lac lsY1
+    sub lsY0
+    jda lsAbs
+    dac tyAdy
+
+    // The major axis u and the minor axis v are x and y, or y and x for a steep line.
+    lac tyAdx
+    sub tyAdy
+    sma                 // skip if |dx| < |dy|, steep and measured in x
+    jmp tyShallow
+    law 1
+    dac lsSteep
+    lac lsY0
+    dac tyU0
+    lac lsY1
+    dac tyU1
+    lac lsX0
+    dac tyV0
+    lac lsX1
+    dac tyV1
+    lac lsTY
+    dac tyPU
+    lac lsTX
+    dac tyPV
+    lac tyAdy
+    dac tyAdu
+    lac tyAdx
+    dac tyAdv
+    jmp tyAxes
+tyShallow,
+    dzm lsSteep
+    lac lsX0
+    dac tyU0
+    lac lsX1
+    dac tyU1
+    lac lsY0
+    dac tyV0
+    lac lsY1
+    dac tyV1
+    lac lsTX
+    dac tyPU
+    lac lsTY
+    dac tyPV
+    lac tyAdx
+    dac tyAdu
+    lac tyAdy
+    dac tyAdv
+tyAxes,
+    lac tyAdu
+    sza i               // skip if the line has length
+    jmp tyNo
+
+    // t, the point's distance from the start along the line's direction on u; subtracting in
+    // that direction keeps a point at the start +0, never -0. It must lie within the span.
+    lac tyU1
+    sub tyU0
+    spa                 // skip if u rises along the line
+    jmp tyDown
+    lac tyPU
+    sub tyU0
+    jmp tySpanT
+tyDown,
+    lac tyU0
+    sub tyPU
+tySpanT,
+    dac tyT
+    spa                 // skip if the point is not before the start
+    jmp tyNo
+    lac tyAdu
+    sub tyT
+    spa                 // skip if the point is not past the end
+    jmp tyNo
+
+    // |dv| * t / |du|. mul leaves the product shifted left one place, which is the dividend as
+    // div wants it. The quotient is at most |dv|, so the divide cannot overflow; if it did, the
+    // cla that div skips would make it 0.
+    lac tyT
+    mul tyAdv
+    div tyAdu
+    cla                 // runs only on overflow
+    dac tyQ
+    lac tyV1
+    sub tyV0
+    spa                 // skip if v rises along the line
+    jmp tyVDown
+    lac tyV0
+    add tyQ
+    jmp tyVHave
+tyVDown,
+    lac tyV0
+    sub tyQ
+tyVHave,
+    dac lsVL
+    sub tyPV
+    jda lsAbs
+    jmp rtn
+tyNo,
+    law i 1
+rtn, jmp .
+tyD0, 0
+tyAdx, 0
+tyAdy, 0
+tyU0, 0
+tyU1, 0
+tyV0, 0
+tyV1, 0
+tyPU, 0
+tyPV, 0
+tyAdu, 0
+tyAdv, 0
+tyT, 0
+tyQ, 0
+    endloc
+
+// The crossing of the nearest line and the second, when it lies on both (within a unit of each
+// one's span on its major axis) and nearer the target's center than lsReach0, measured as a
+// point's is, by the larger axis distance; the dot goes there. It is worked from each line's lock
+// point, which lies within the reach of the target's center, so the numbers stay small. With the
+// directions d1 and d2 cut to 8 bits (lsScale), and w from the
+// first lock point to the second, the crossing is the first plus d1 (w x d2) / (d1 x d2). Lines
+// that are parallel, or so near it that the divide overflows, have none.
+// Entry: lsBest, lsBestD, lsAX, lsAY its lock point; ls2, ls2V, ls2S; lsHX, lsHY; lsReach0. Exit:
+// with a crossing, the main bank's lockX, lockY = it, lock2Line = ls2, lineReach = its distance.
+// AC and IO are clobbered. Called via jsp.
+lsCross,
+    local rtn, lcSteep, lcHave, lcDist, lcNo, lcBX, lcBY, lcD1X, lcD1Y, lcDen, lcNum, lcT
+    dap rtn
+
+    // The second line's lock point.
+    lac ls2S
+    sza                 // skip if shallow, at (hitX, its y)
+    jmp lcSteep
+    lac lsHX
+    dac lcBX
+    lac ls2V
+    dac lcBY
+    jmp lcHave
+lcSteep,
+    lac ls2V
+    dac lcBX
+    lac lsHY
+    dac lcBY
+lcHave,
+    lac lsBest
+    jda lsScale
+    lac lsDX
+    dac lcD1X
+    lac lsDY
+    dac lcD1Y
+    lac ls2
+    jda lsScale
+
+    // d1 x d2, at most 2 * 255 * 255, so one word holds it.
+    lac lcD1X
+    lio lsDY
+    jda lsMul
+    dac lcDen
+    lac lcD1Y
+    lio lsDX
+    jda lsMul
+    cma
+    add lcDen
+    sza i               // skip unless parallel
+    jmp lcNo
+    dac lcDen
+
+    // w x d2, w within twice the reach.
+    lac lcBX
+    sub lsAX
+    lio lsDY
+    jda lsMul
+    dac lcNum
+    lac lcBY
+    sub lsAY
+    lio lsDX
+    jda lsMul
+    cma
+    add lcNum
+    dac lcNum
+
+    // The crossing.
+    lac lcD1X
+    mul lcNum
+    div lcDen
+    jmp lcNo            // runs only on overflow, the lines too near parallel
+    add lsAX
+    dac lsCX
+    lac lcD1Y
+    mul lcNum
+    div lcDen
+    jmp lcNo            // runs only on overflow
+    add lsAY
+    dac lsCY
+
+    // On both lines, and near enough.
+    lac lsBest
+    jda lsSpan
+    sza i               // skip if on the first line
+    jmp lcNo
+    lac ls2
+    jda lsSpan
+    sza i               // skip if on the second line
+    jmp lcNo
+    lac lsCX
+    sub lsHX
+    jda lsAbs
+    dac lcT
+    lac lsCY
+    sub lsHY
+    jda lsAbs
+    sub lcT
+    spa                 // skip if the y distance is the larger
+    jmp lcDist
+    add lcT
+    dac lcT
+lcDist,
+    lac lcT
+    sub lsReach0
+    sma                 // skip if nearer than the reach
+    jmp lcNo
+    lac lcT
+    dac i [lineReach:4]
+    lac lsCX
+    dac i [lockX:4]
+    lac lsCY
+    dac i [lockY:4]
+    lac ls2
+    dac i [lock2Line:4]
+lcNo,
+rtn, jmp .
+lcBX, 0
+lcBY, 0
+lcD1X, 0
+lcD1Y, 0
+lcDen, 0
+lcNum, 0
+lcT, 0
+    endloc
+
+// Line i's direction, its ends' difference, halved with its sign until both parts are under 256,
+// so that a product of two parts fits a word.
+// Entry: AC = i. Exit: lsDX, lsDY. AC and IO are clobbered. Called via jda.
+lsScale, 0
+    local rtn, scLoop, scT
+    dap rtn
+    lac lsScale
+    jda lsLoad
+    lac lsX1
+    sub lsX0
+    dac lsDX
+    lac lsY1
+    sub lsY0
+    dac lsDY
+scLoop,
+    lac lsDX
+    jda lsAbs
+    dac scT
+    lac lsDY
+    jda lsAbs
+    ior scT
+    and [0777400]
+    sza i               // skip unless both parts are under 256
+    jmp rtn
+    lac lsDX
+    sar 1s
+    dac lsDX
+    lac lsDY
+    sar 1s
+    dac lsDY
+    jmp scLoop
+rtn, jmp .
+scT, 0
+    endloc
+
+// Whether the crossing (lsCX, lsCY) lies on line i, its coordinate on the line's major axis
+// within a unit of the span between the line's ends.
+// Entry: AC = i; lsCX, lsCY. Exit: AC = 1 if on it, else 0. IO is clobbered. Called via
+// jda.
+lsSpan, 0
+    local rtn, spX, spCmp, spLow, spIn, spOut, spC, spA, spB, spT
+    dap rtn
+    lac lsSpan
+    jda lsLoad
+    lac lsX1
+    sub lsX0
+    jda lsAbs
+    dac spT
+    lac lsY1
+    sub lsY0
+    jda lsAbs
+    sub spT
+    spa                 // skip if |dy| >= |dx|, measured on y
+    jmp spX
+    lac lsCY
+    dac spC
+    lac lsY0
+    dac spA
+    lac lsY1
+    dac spB
+    jmp spCmp
+spX,
+    lac lsCX
+    dac spC
+    lac lsX0
+    dac spA
+    lac lsX1
+    dac spB
+
+    // spA = c - u0, spB = c - u1. c is off the span when both are 2 or more, or both -2 or less.
+spCmp,
+    lac spC
+    sub spA
+    dac spA
+    lac spC
+    sub spB
+    dac spB
+    lac spA
+    sub [2]
+    spa                 // skip if c lies 2 or more above u0
+    jmp spLow
+    lac spB
+    sub [2]
+    spa                 // skip if 2 or more above u1 as well, past both ends
+    jmp spIn
+    jmp spOut
+spLow,
+    lac spA
+    add [1]
+    sma                 // skip if c lies 2 or more below u0
+    jmp spIn
+    lac spB
+    add [1]
+    sma                 // skip if 2 or more below u1 as well, short of both ends
+    jmp spIn
+spOut,
+    cla
+    jmp rtn
+spIn,
+    law 1
+rtn, jmp .
+spC, 0
+spA, 0
+spB, 0
+spT, 0
+    endloc
+
+// a * b, the product known to fit a word.
+// Entry: AC = a, IO = b. Exit: AC = a * b. IO is clobbered. Called via jda.
+lsMul, 0
+    local rtn, muB
+    dap rtn
+    dio muB
+    lac lsMul
+    mul muB
+    div [1]
+    cla                 // runs only on overflow, which the callers rule out
+rtn, jmp .
+muB, 0
+    endloc
+
+// Line i's ends' point indices and coordinates, from bank 3's tables.
+// Entry: AC = i. Exit: lsFrom, lsTo; lsX0, lsY0 the from end's; lsX1, lsY1 the to end's. AC is
+// clobbered, IO preserved. Called via jda.
+lsLoad, 0
+    dap llRtn
+    lac lsLoad
+    jda lsLoadX
+    jsp lsLoadY
+llRtn, jmp .
+
+// lsLoad's first half, line i's ends' indices and x coordinates, which lsTry runs alone until a
+// line's x span is in reach.
+// Entry: AC = i. Exit: lsFrom, lsTo; lsX0 the from end's, lsX1 the to end's. AC is clobbered,
+// IO preserved. Called via jda.
+lsLoadX, 0
+    local rtn, lxP
+    dap rtn
+    lac lsLoadX
+    add [lineFrom:3]
+    dac lxP
+    lac i lxP
+    dac lsFrom
+    lac lsLoadX
+    add [lineTo:3]
+    dac lxP
+    lac i lxP
+    dac lsTo
+    add [pointX:3]
+    dac lxP
+    lac i lxP
+    dac lsX1
+    lac lsFrom
+    add [pointX:3]
+    dac lxP
+    lac i lxP
+    dac lsX0
+rtn, jmp .
+lxP, 0
+    endloc
+
+// lsLoad's second half, the y coordinates of the ends lsLoadX left.
+// Entry: lsFrom, lsTo. Exit: lsY0 the from end's, lsY1 the to end's. AC is clobbered, IO
+// preserved. Called via jsp.
+lsLoadY,
+    local rtn, lyP
+    dap rtn
+    lac lsTo
+    add [pointY:3]
+    dac lyP
+    lac i lyP
+    dac lsY1
+    lac lsFrom
+    add [pointY:3]
+    dac lyP
+    lac i lyP
+    dac lsY0
+rtn, jmp .
+lyP, 0
+    endloc
+
+// Settle the gate's anchor at the target's center, now. A move settles it afresh, so neither the
+// sweep under way nor the one done holds after.
+// Entry: lsHX, lsHY. Exit: lsAnX, lsAnY, lsAnT; swOn and rsOK 0. AC and IO are clobbered. Called
+// via jsp.
+lsAnchor,
+    local rtn
+    dap rtn
+    lac lsHX
+    dac lsAnX
+    lac lsHY
+    dac lsAnY
+    rck
+    dio lsAnT
+    dzm swOn
+    dzm rsOK
+rtn, jmp .
+    endloc
+
+// Magnitude of a signed word; -0 gives +0.
+// Entry: AC = the word. Exit: AC = its magnitude. IO is preserved. Called via jda.
+lsAbs, 0
+    dap laRtn
+    lac lsAbs
+    sma                 // skip if negative
+    jmp laRtn
+    cma
+laRtn, jmp .
+
+// The module's words.
+lsBest, 0               // the nearest line, its distance, its lock point's minor coordinate
+lsBestD, 0              // and whether it is steep
+lsBestV, 0
+lsBestS, 0
+ls2, 0                  // the second nearest, likewise
+ls2D, 0
+ls2V, 0
+ls2S, 0
+lsReach0, 0             // the reach lineSearch was given
+lsSlow1, 0              // SLOWD + 1 and SWREACH in page units at the view's scale, from the view
+lsSwr, 0                // module (vwSlow, vwSwr)
+lsHX, 0                 // the target's center
+lsHY, 0
+lsAnX, 0                // the gate's anchor, where the target settled, and the clock then
+lsAnY, 0
+lsAnT, 0
+lsAX, 0                 // the nearest line's lock point
+lsAY, 0
+lsCX, 0                 // lsCross's crossing
+lsCY, 0
+lsDX, 0                 // lsScale's direction
+lsDY, 0
+lsFrom, 0               // lsLoad's line, its ends' indices and coordinates
+lsTo, 0
+lsX0, 0
+lsY0, 0
+lsX1, 0
+lsY1, 0
+lsN, 0                  // the main bank's lineCount, dragIdx, bandIdx and lineGen this pass
+lsDrag, 0
+lsBand, 0
+lsGen, 0
+lsLDrag, 0              // dragIdx and bandIdx last pass
+lsLBand, 0
+lsTX, 0                 // where lsTry measures from
+lsTY, 0
+lsVL, 0                 // lsTry's line, its minor coordinate there, and whether it is steep
+lsSteep, 0
+swOn, 0                 // nonzero while a sweep is under way; the next line, where it began,
+swI, 0                  // the line count and lineGen then, and its two nearest so far
+swHX, 0
+swHY, 0
+swN, 0
+swGen, 0
+swB1, 0
+swB1D, 0
+swB2, 0
+swB2D, 0
+rsOK, 0                 // nonzero once a sweep is done; its two nearest lines, where it began,
+rsB1, 0                 // and the line count and lineGen then
+rsB2, 0
+rsHX, 0
+rsHY, 0
+rsN, 0
+rsGen, 0

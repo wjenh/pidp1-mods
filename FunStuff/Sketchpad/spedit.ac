@@ -1,0 +1,1318 @@
+// spedit.ac -- the drawing's editing in bank 2: arcs and points rewritten, swapped and
+// renumbered, the constraints' points renamed with them, lines and points removed or deleted,
+// a dropped point's merge, and the lock onto an arc (the line search is bank 13's).
+//
+// Bank 2, after sparcs.ac.
+// Part of sketchpad.am1, included where it stands.
+
+// Load arc i as the arc being written, its center, begun at its start, its direction, whole
+// steps and end.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+arcLoad, 0
+    local rtn, alP
+    dap rtn
+    lac arcLoad
+    add [arcTC]
+    dac alP
+    lac i alP
+    jda ptXY
+    dac arcCX
+    dio arcCY
+    lac arcLoad
+    add [arcTS]
+    dac alP
+    lac i alP
+    jda ptXY
+    jda arcBegin
+    lac arcLoad
+    add [arcTD]
+    dac alP
+    lac i alP
+    dac arcDir
+    lac arcLoad
+    add [arcTK]
+    dac alP
+    lac i alP
+    dac arcK
+    lac arcLoad
+    add [arcTE]
+    dac alP
+    lac i alP
+    jda ptXY
+    dac arcEX
+    dio arcEY
+rtn, jmp .
+alP, 0
+    endloc
+
+// Write arc i's slot again from its points, which have moved.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+arcRewrite, 0
+    local rtn
+    dap rtn
+    lac arcRewrite
+    jda arcLoad
+    lac arcRewrite
+    jda arcWriteI
+rtn, jmp .
+    endloc
+
+// Remove arc i. The last arc takes its place in the table and its slot is written there, then
+// the last slot is left unused. The constraint module's arcs change (cTopo).
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+arcRemove, 0
+    local rtn, rmLoop, rmLast, rmP, rmQ, rmN
+    dap rtn
+    law 1
+    eem
+    dac i [cTopo:010]
+    lem
+    lac arcCount
+    sub [1]
+    dac arcCount
+    sad arcRemove       // skip unless i was the last arc
+    jmp rmLast
+    add [arcTC]
+    dac rmQ
+    lac arcRemove
+    add [arcTC]
+    dac rmP
+    law i NATAB
+    dac rmN
+rmLoop,
+    lac i rmQ
+    dac i rmP
+    lac rmQ
+    add [MAXARCS]
+    dac rmQ
+    lac rmP
+    add [MAXARCS]
+    dac rmP
+    isp rmN
+    jmp rmLoop
+    lac arcRemove
+    jda arcRewrite
+rmLast,
+    lac arcCount
+    jda arcUnused
+rtn, jmp .
+rmP, 0
+rmQ, 0
+rmN, 0
+    endloc
+
+// Whether arc i has point p as its center, start or end.
+// Entry: AC = i, IO = p. Exit: AC = 1 if so, 0 if not. IO is preserved. Called via jda.
+arcOn, 0
+    local rtn, aoYes, aoP, aoQ
+    dap rtn
+    dio aoQ
+    lac arcOn
+    add [arcTC]
+    dac aoP
+    lac i aoP
+    sad aoQ             // skip unless the center is p
+    jmp aoYes
+    lac arcOn
+    add [arcTS]
+    dac aoP
+    lac i aoP
+    sad aoQ             // skip unless the start is p
+    jmp aoYes
+    lac arcOn
+    add [arcTE]
+    dac aoP
+    lac i aoP
+    sad aoQ             // skip unless the end is p
+    jmp aoYes
+    cla
+    jmp rtn
+aoYes,
+    law 1
+rtn, jmp .
+aoP, 0
+aoQ, 0
+    endloc
+
+// If the word at address a in this bank is rnFrom, make it rnTo.
+// Entry: AC = a. AC is clobbered, IO preserved. Called via jda.
+arcSwap, 0
+    local rtn
+    dap rtn
+    lac i arcSwap
+    sas rnFrom          // skip if it is rnFrom
+    jmp rtn
+    lac rnTo
+    dac i arcSwap
+rtn, jmp .
+    endloc
+
+// Every arc's center, start or end at point rnFrom moves to point rnTo. Its slot is not written,
+// since the two points are at the same place.
+// AC and IO are clobbered. Called via jsp.
+arcRenum,
+    local rtn, arLoop, arI
+    dap rtn
+    dzm arI
+arLoop,
+    lac arI
+    sad arcCount        // skip while arcs remain
+    jmp rtn
+    add [arcTC]
+    jda arcSwap
+    lac arI
+    add [arcTS]
+    jda arcSwap
+    lac arI
+    add [arcTE]
+    jda arcSwap
+    idx arI
+    jmp arLoop
+rtn, jmp .
+arI, 0
+    endloc
+
+// Every constraint's point rnFrom becomes rnTo, NOPOINT when the point is removed, in the
+// constraint module's table in bank 9, the words of its entries in use, of which only the point
+// indices can equal a point's (its type and parameter words and unused indices are negative).
+// With any entry, the module builds its sets again at its next pass, which this asks for, and
+// drops there an entry this left naming NOPOINT or one point twice; conRenM, mergePoint's,
+// marks that a merge may have made one entry repeat another, which it drops too. Every tie point
+// rnFrom in the instance module's tie lists (iTie, bank 3) becomes rnTo likewise, which asks for
+// the build too, and so does one in the lists after them, cpMrg (a copy's attachers while
+// copyMerge merges them), desPt (the points designated for them) and txAn (the digits' anchors).
+// Entry: rnFrom, rnTo. AC is clobbered, IO preserved. Called via jsp at conRen or conRenM.
+conRenM,
+    dap crRtn
+    law 1
+    eem
+    dac i [cDup:010]
+    lem
+    jmp crGo
+conRen,
+    dap crRtn
+crGo,
+    eem
+    lac i [cEnd:010]
+    dac crEnd
+    lac [cEntries:011]
+    dac crP
+    sad crEnd           // skip if there are entries
+    jmp crTies
+crLoop,
+    lac i crP
+    sas rnFrom          // skip if it is rnFrom
+    jmp crNext
+    lac rnTo
+    dac i crP
+crNext,
+    idx crP
+    sas crEnd           // skip once every word is looked at
+    jmp crLoop
+    law 1
+    dac i [cTopo:010]
+    dac i [conWake:4]
+crTies,
+    lac [iTie:3]
+    dac crP
+crTie,
+    lac i crP
+    sas rnFrom          // skip if it is rnFrom
+    jmp crTNext
+    lac rnTo
+    dac i crP
+    law 1
+    dac i [cTopo:010]
+    dac i [conWake:4]
+crTNext,
+    idx crP
+    sas [txAn:3+NTEXT]  // skip once every tie, and every word of cpMrg, desPt and txAn, is seen
+    jmp crTie
+    lem
+crRtn, jmp .
+crP, 0
+crEnd, 0
+
+// If the word at full address a, in any bank, is rnFrom, make it rnTo.
+// Entry: AC = a. AC is clobbered, IO preserved. Called via jda.
+lnSwap, 0
+    local rtn, lsOut
+    dap rtn
+    eem
+    lac i lnSwap
+    sas rnFrom          // skip if it is rnFrom
+    jmp lsOut
+    lac rnTo
+    dac i lnSwap
+lsOut,
+    lem
+rtn, jmp .
+    endloc
+
+// The word at full address a, in any bank.
+// Entry: AC = a. Exit: AC = the word. IO is preserved. Called via jda.
+getW, 0
+    dap gwRtn
+    eem
+    lac i getW
+    lem
+gwRtn, jmp .
+
+// Add one to the word at full address a, a counter in the main bank.
+// Entry: AC = a. AC is clobbered, IO preserved. Called via jda.
+bump0, 0
+    dap b0Rtn
+    eem
+    idx i bump0
+    lem
+b0Rtn, jmp .
+
+// Point p's coordinates, from bank 3's table.
+// Entry: AC = p. Exit: AC = x, IO = y. Called via jda.
+ptXY, 0
+    local rtn, pxP
+    dap rtn
+    lac ptXY
+    add [pointY:3]
+    dac pxP
+    eem
+    lio i pxP
+    lac ptXY
+    add [pointX:3]
+    dac pxP
+    lac i pxP
+    lem
+rtn, jmp .
+pxP, 0
+    endloc
+
+// Point p to (ppX, ppY) in bank 3's table, unless it is the dragged point dgP, which the caller
+// of arcDrag moves.
+// Entry: AC = p. AC and IO are clobbered. Called via jda.
+ptPut, 0
+    local rtn, ppA
+    dap rtn
+    lac ptPut
+    sad dgP             // skip unless it is the dragged point
+    jmp rtn
+    add [pointX:3]
+    dac ppA
+    lac ppX
+    eem
+    dac i ppA
+    lem
+    lac ptPut
+    add [pointY:3]
+    dac ppA
+    lac ppY
+    eem
+    dac i ppA
+    lem
+rtn, jmp .
+ppA, 0
+    endloc
+
+// Mark point p as moving with the drag.
+// Entry: AC = p. AC is clobbered, IO preserved. Called via jda.
+ptMarkOn, 0
+    dap pmRtn
+    lac ptMarkOn
+    add [ptMark:3]
+    dac ptMarkOn
+    law 1
+    eem
+    dac i ptMarkOn
+    lem
+pmRtn, jmp .
+
+// Whether point p moves with the drag; while conArcs runs, whether the constraint solver moved
+// it (pmBase).
+// Entry: AC = p. Exit: AC = 1 if it does, 0 if not. IO is preserved. Called via jda.
+ptMarked, 0
+    dap pdRtn
+    lac ptMarked
+    add pmBase
+    dac ptMarked
+    eem
+    lac i ptMarked
+    lem
+    and [1]             // the mark alone, since the constraint module's word holds its flags too
+pdRtn, jmp .
+
+// The marks ptMarked reads, by full address, ptMark or, while conArcs runs, the constraint
+// module's flags, whose FMOV bit is its mark.
+pmBase, ptMark:3
+
+// Whether a line or an arc is on point c, or an instance is tied to it (iTie).
+// Entry: AC = c. Exit: AC = 1 if one is, 0 if none. IO is clobbered. Called via jda.
+ptUsed, 0
+    local rtn, puLoop, puArcs, puArc, puYes, puNo, puTie, puPf, puPt, puEnd, puI
+    dap rtn
+    eem
+    lac [lineFrom:3]
+    dac puPf
+    lac [lineTo:3]
+    dac puPt
+    add i [lineCount:4]
+    dac puEnd
+puLoop,
+    lac puPt
+    sad puEnd           // skip while lines remain
+    jmp puArcs
+    lac i puPf
+    sad ptUsed          // skip unless the line starts at c
+    jmp puYes
+    lac i puPt
+    sad ptUsed          // skip unless the line ends at c
+    jmp puYes
+    idx puPf
+    idx puPt
+    jmp puLoop
+puArcs,
+    lem
+    dzm puI
+puArc,
+    lac puI
+    sad arcCount        // skip while arcs remain
+    jmp puNo
+    lio ptUsed
+    jda arcOn
+    sza                 // skip unless the arc is on c
+    jmp puYes
+    idx puI
+    jmp puArc
+puYes,
+    lem
+    law 1
+    jmp rtn
+puNo,
+    lac [iTie:3]
+    dac puPf
+    eem
+puTie,
+    lac i puPf
+    sad ptUsed          // skip unless an instance is tied to c
+    jmp puYes
+    idx puPf
+    sas [iTie:3+NATT*MAXINST] // skip once every tie is looked at
+    jmp puTie
+    lem
+    cla
+rtn, jmp .
+puPf, 0
+puPt, 0
+puEnd, 0
+puI, 0
+    endloc
+
+// After a point's removal, an index held of the last point, which took the removed point's
+// place, becomes the removed point's.
+// Entry: AC = the index held, IO = the removed point. Exit: AC = the index now. IO is
+// preserved. Called via jda.
+ptFollow, 0
+    local rtn, pfKeep
+    dap rtn
+    eem
+    lac i [pointCount:4]
+    lem
+    sas ptFollow        // skip if it was the last point
+    jmp pfKeep
+    dio ptFollow
+pfKeep,
+    lac ptFollow
+rtn, jmp .
+    endloc
+
+// Mark line i's slot stale, as the main bank's markSlot does, in its staleList.
+// Entry: AC = i. AC is clobbered, IO preserved. Called via jda.
+markStale, 0
+    local rtn, mkLoop, mkNew, mkFull, mkOut, mkPtr, mkEnd
+    dap rtn
+    eem
+    lac [staleList:3]
+    dac mkPtr
+    add i [staleN:4]
+    dac mkEnd
+mkLoop,
+    lac mkPtr
+    sad mkEnd           // skip while marks remain to compare
+    jmp mkNew
+    lac i mkPtr
+    sad markStale       // skip unless i is already marked
+    jmp mkOut
+    idx mkPtr
+    jmp mkLoop
+mkNew,
+    lac i [staleN:4]
+    sad [NSTALE]        // skip unless the list is full
+    jmp mkFull
+    add [1]
+    dac i [staleN:4]
+    lac markStale
+    dac i mkEnd
+    jmp mkOut
+mkFull,
+    law 1
+    dac i [dirty:4]
+mkOut,
+    lem
+rtn, jmp .
+mkPtr, 0
+mkEnd, 0
+    endloc
+
+// Remove line i; the last line takes its place, and slot i is marked stale. When i was the last
+// line, the mark lies past the new length, where the rebuild ignores it. The constraint module's
+// lines change (cTopo).
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+removeLine, 0
+    local rtn, rlPtr, rlV
+    dap rtn
+    eem
+    law 1
+    dac i [cTopo:010]
+    lac i [lineCount:4]
+    sub [1]
+    dac i [lineCount:4]
+    add [lineFrom:3]
+    dac rlPtr
+    lac i rlPtr
+    dac rlV
+    lac removeLine
+    add [lineFrom:3]
+    dac rlPtr
+    lac rlV
+    dac i rlPtr
+    lac i [lineCount:4]
+    add [lineTo:3]
+    dac rlPtr
+    lac i rlPtr
+    dac rlV
+    lac removeLine
+    add [lineTo:3]
+    dac rlPtr
+    lac rlV
+    dac i rlPtr
+    lem
+    lac removeLine
+    jda markStale
+rtn, jmp .
+rlPtr, 0
+rlV, 0
+    endloc
+
+// Remove point k; the last point takes its place, and the lines and arcs on the last point follow
+// it. The caller has left nothing on point k but constraints, which go (conRen); those on the
+// last point follow it.
+// Entry: AC = k. AC and IO are clobbered. Called via jda.
+removePoint, 0
+    local rtn, rpLoop, rpFrom, rpTo, rpToSet, rpNext, rpArcs, rpOut, rpPtr, rpV, rpI, rpN
+    dap rtn
+    lac removePoint
+    dac rnFrom
+    lac [NOPOINT]
+    dac rnTo
+    jsp conRen
+    eem
+    lac i [pointCount:4]
+    sub [1]
+    dac i [pointCount:4]
+    dac rpN
+    sad removePoint     // skip unless k was the last point
+    jmp rpOut
+    add [pointX:3]
+    dac rpPtr
+    lac i rpPtr
+    dac rpV
+    lac removePoint
+    add [pointX:3]
+    dac rpPtr
+    lac rpV
+    dac i rpPtr
+    lac rpN
+    add [pointY:3]
+    dac rpPtr
+    lac i rpPtr
+    dac rpV
+    lac removePoint
+    add [pointY:3]
+    dac rpPtr
+    lac rpV
+    dac i rpPtr
+    dzm rpI
+rpLoop,
+    lac rpI
+    sad i [lineCount:4] // skip while lines remain
+    jmp rpArcs
+    add [lineFrom:3]
+    dac rpPtr
+    lac i rpPtr
+    sad rpN             // skip unless the line starts at the last point
+    jmp rpFrom
+    jmp rpTo
+rpFrom,
+    lac removePoint
+    dac i rpPtr
+rpTo,
+    lac rpI
+    add [lineTo:3]
+    dac rpPtr
+    lac i rpPtr
+    sad rpN             // skip unless the line ends at the last point
+    jmp rpToSet
+    jmp rpNext
+rpToSet,
+    lac removePoint
+    dac i rpPtr
+rpNext,
+    idx rpI
+    jmp rpLoop
+rpArcs,
+    lem
+    lac rpN
+    dac rnFrom
+    lac removePoint
+    dac rnTo
+    jsp arcRenum
+    jsp conRen
+    jmp rtn
+rpOut,
+    lem
+rtn, jmp .
+rpPtr, 0
+rpV, 0
+rpI, 0
+rpN, 0
+    endloc
+
+// Remove point c if no line or arc is on it; removePoint moves the last point into its place.
+// Entry: AC = c. Exit: AC = 1 if it was removed, 0 if it was kept. IO is clobbered. Called via
+// jda.
+dropOrphan, 0
+    local rtn, doKeep
+    dap rtn
+    lac dropOrphan
+    jda ptUsed
+    sza                 // skip unless something is on it
+    jmp doKeep
+    lac dropOrphan
+    jda removePoint
+    law 1
+    jmp rtn
+doKeep,
+    cla
+rtn, jmp .
+    endloc
+
+// Delete's removal of an instance's tie points (AEORPHAN). Each of the instance module's tgList,
+// tgN of them, is removed if nothing else is on it (dropOrphan), the later ones following each
+// removal (ptFollow).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+arcOrphans,
+    local rtn, aoLoop, aoFix, aoNext, aoDone, aoI, aoJ, aoN, aoP, aoQ
+    dap rtn
+    lac [tgN:7]
+    jda getW
+    dac aoN
+    dzm aoI
+aoLoop,
+    lac aoI
+    sad aoN             // skip while tie points remain
+    jmp aoDone
+    add [tgList:7]
+    jda getW
+    dac aoQ
+    jda dropOrphan
+    sza i               // skip if it was removed
+    jmp aoNext
+    lac aoI
+    dac aoJ
+aoFix,
+    idx aoJ
+    sad aoN             // skip while later ones remain
+    jmp aoNext
+    add [tgList:7]
+    dac aoP
+    jda getW
+    lio aoQ
+    jda ptFollow
+    eem
+    dac i aoP
+    lem
+    jmp aoFix
+aoNext,
+    idx aoI
+    jmp aoLoop
+aoDone,
+    cla
+rtn, jmp .
+aoI, 0
+aoJ, 0
+aoN, 0
+aoP, 0
+aoQ, 0
+    endloc
+
+// Delete line i, then either end if that leaves nothing on it. A line of no length has one end
+// to check, not two.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+deleteLine, 0
+    local rtn, dnLast, dnP, dnQ
+    dap rtn
+    lac deleteLine
+    add [lineFrom:3]
+    jda getW
+    dac dnP
+    lac deleteLine
+    add [lineTo:3]
+    jda getW
+    sad dnP             // skip unless the line has no length
+    lac [NOPOINT]
+    dac dnQ
+    lac deleteLine
+    jda removeLine
+    lac dnP
+    jda dropOrphan
+    sza i               // skip if the from end was removed
+    jmp dnLast
+    lio dnP
+    lac dnQ
+    jda ptFollow
+    dac dnQ
+dnLast,
+    lac dnQ
+    sas [NOPOINT]       // skip if there is no second end to check
+    jda dropOrphan
+rtn, jmp .
+dnP, 0
+dnQ, 0
+    endloc
+
+// Delete point k. Each line on it goes, and that line's other end if that leaves nothing on it;
+// then each arc on it, with its other points likewise (arcDelete); then point k. A removed line or
+// arc takes the last one's place, so the same index is looked at again; a removed point takes
+// the last point's, so k follows it if k was the last.
+// Entry: AC = k. AC and IO are clobbered. Called via jda.
+deletePoint, 0
+    local rtn, dpLoop, dpMine, dpArcs, dpArc, dpDrop, dpEnd, dpK, dpI, dpF, dpT, dpO
+    dap rtn
+    lac deletePoint
+    dac dpK
+    dzm dpI
+dpLoop,
+    lac [lineCount:4]
+    jda getW
+    sad dpI             // skip while lines remain
+    jmp dpArcs
+    lac dpI
+    add [lineFrom:3]
+    jda getW
+    dac dpF
+    lac dpI
+    add [lineTo:3]
+    jda getW
+    dac dpT
+    sad dpK             // skip unless the line ends at k
+    jmp dpMine
+    lac dpF
+    sad dpK             // skip unless the line starts at k
+    jmp dpMine
+    idx dpI
+    jmp dpLoop
+
+    // One end is k, so the other is from xor to xor k.
+dpMine,
+    lac dpF
+    xor dpT
+    xor dpK
+    dac dpO
+    lac dpI
+    jda removeLine
+    lac dpO
+    sad dpK             // skip unless the line had no length
+    jmp dpLoop
+    jda dropOrphan
+    sza i               // skip if the other end was removed
+    jmp dpLoop
+    lio dpO
+    lac dpK
+    jda ptFollow
+    dac dpK
+    jmp dpLoop
+
+dpArcs,
+    dzm dpI
+dpArc,
+    lac dpI
+    sad arcCount        // skip while arcs remain
+    jmp dpEnd
+    lio dpK
+    jda arcOn
+    sza                 // skip unless the arc is on k
+    jmp dpDrop
+    idx dpI
+    jmp dpArc
+dpDrop,
+    lac dpK
+    dac heldK
+    lac [NOPOINT]
+    dac heldJ
+    lac dpI
+    jda arcDelete
+    lac heldK
+    dac dpK
+    jmp dpArc
+dpEnd,
+    lac dpK
+    jda removePoint
+rtn, jmp .
+dpK, 0
+dpI, 0
+dpF, 0
+dpT, 0
+dpO, 0
+    endloc
+
+// Delete arc i, then each of its points that leaves nothing on, other than heldK and heldJ,
+// which follow a point moved into a removed one's place, as the points still to check do.
+// Entry: AC = i; heldK, heldJ (NOPOINT when none). Exit: heldK, heldJ. AC and IO are clobbered.
+// Called via jda.
+arcDelete, 0
+    local rtn, adP, adC
+    dap rtn
+    lac arcDelete
+    add [arcTC]
+    dac adP
+    lac i adP
+    dac adC
+    lac arcDelete
+    add [arcTS]
+    dac adP
+    lac i adP
+    dac delS
+    lac arcDelete
+    add [arcTE]
+    dac adP
+    lac i adP
+    sad delS            // skip unless a full circle, with one rim point
+    lac [NOPOINT]
+    dac delE
+    lac arcDelete
+    jda arcRemove
+    lac adC
+    jda adDrop
+    lac delS
+    jda adDrop
+    lac delE
+    jda adDrop
+rtn, jmp .
+adP, 0
+adC, 0
+    endloc
+
+// arcDelete's point x, removed if nothing is on it, unless it is NOPOINT, heldK or heldJ; then
+// heldK, heldJ, delS and delE follow.
+// Entry: AC = x. AC and IO are clobbered. Called via jda.
+adDrop, 0
+    local rtn
+    dap rtn
+    lac adDrop
+    sad [NOPOINT]       // skip unless no point
+    jmp rtn
+    sad heldK           // skip unless a held point
+    jmp rtn
+    sad heldJ           // skip unless a held point
+    jmp rtn
+    jda dropOrphan
+    sza i               // skip if it was removed
+    jmp rtn
+    lio adDrop
+    lac heldK
+    jda ptFollow
+    dac heldK
+    lac heldJ
+    jda ptFollow
+    dac heldJ
+    lac delS
+    jda ptFollow
+    dac delS
+    lac delE
+    jda ptFollow
+    dac delE
+rtn, jmp .
+    endloc
+
+// Delete mode's lift: delete the point the pseudo pen location locks onto, with everything on
+// it, or the line, or the arc, and any point that leaves with nothing on it. placeLock leaves
+// at most one of penIdx, penLine and penArc locked.
+// Exit: AC = 1 if something was deleted, 0 if nothing was locked. IO is clobbered. Called via
+// jsp.
+deleteLocked,
+    local rtn, dlLine, dlArc, dlDone, dlNone, dlT
+    dap rtn
+    lac [penIdx:4]
+    jda getW
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp dlLine
+    jda deletePoint
+    jmp dlDone
+dlLine,
+    lac [penLine:4]
+    jda getW
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp dlArc
+    jda deleteLine
+    jmp dlDone
+dlArc,
+    lac [penArc:4]
+    jda getW
+    sad [NOPOINT]       // skip if it locks onto an arc
+    jmp dlNone
+    dac dlT
+    lac [NOPOINT]
+    dac heldK
+    dac heldJ
+    lac dlT
+    jda arcDelete
+dlDone,
+    law 1
+    jmp rtn
+dlNone,
+    cla
+rtn, jmp .
+dlT, 0
+    endloc
+
+// Move mode's drop: if the dragged point sits on point penIdx, the one the pseudo pen location
+// locks onto, merge it into that point.
+// AC and IO are clobbered. Called via jsp.
+dropMerge,
+    local rtn, drX, drY
+    dap rtn
+    lac [dragIdx:4]
+    jda getW
+    dac mgP
+    lac [penIdx:4]
+    jda getW
+    dac mgQ
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp rtn
+    jda ptXY
+    dac drX
+    dio drY
+    lac mgP
+    jda ptXY
+    sas drX             // skip if the x are the same
+    jmp rtn
+    dio drX
+    lac drX
+    sas drY             // skip if the y are the same
+    jmp rtn
+    jsp mergePoint
+rtn, jmp .
+drX, 0
+drY, 0
+    endloc
+
+// Merge the dragged point mgP into point mgQ. Every line, arc and constraint on the dragged
+// point moves to the other. Then a line that joined the two, now of no length, and a line that
+// repeats an earlier one between the same two points are removed; an arc with its center on a
+// rim point is removed, and so is one whose start and end became one short of half the circle,
+// which otherwise closes to a full circle; a removed arc's points go if nothing is left on them.
+// Then the dragged point goes, and the other point too if nothing is left on it. Moving a line
+// or an arc to the other point redraws nothing, since the two points are at the same place;
+// removeLine marks the slots that change.
+// Entry: mgP, mgQ. AC and IO are clobbered. Called via jsp.
+mergePoint,
+    local rtn, mpRepoint, mpPrune0, mpPrune, mpDup0, mpDup, mpSame, mpRev, mpDupNext, \
+        mpDrop, mpNext, mpArcs0, mpArcs, mpArcDrop, mpArcNext, mpPoints, \
+        mgI, mgJ, mgFrom, mgTo, mgLast, mgA, mgC, mgS, mgE
+    dap rtn
+    lac mgP
+    dac rnFrom
+    lac mgQ
+    dac rnTo
+    dzm mgI
+mpRepoint,
+    lac [lineCount:4]
+    jda getW
+    sad mgI             // skip while lines remain
+    jmp mpPrune0
+    lac mgI
+    add [lineFrom:3]
+    jda lnSwap
+    lac mgI
+    add [lineTo:3]
+    jda lnSwap
+    idx mgI
+    jmp mpRepoint
+
+    // A removed line takes the last line's place, so the same index is looked at again.
+mpPrune0,
+    jsp arcRenum
+    jsp conRenM
+    dzm mgI
+mpPrune,
+    lac [lineCount:4]
+    jda getW
+    sad mgI             // skip while lines remain
+    jmp mpArcs0
+    lac mgI
+    add [lineFrom:3]
+    jda getW
+    dac mgFrom
+    lac mgI
+    add [lineTo:3]
+    jda getW
+    dac mgTo
+    sad mgFrom          // skip unless the line has no length
+    jmp mpDrop
+    sad mgQ             // skip unless it ends at the merged point
+    jmp mpDup0
+    lac mgFrom
+    sad mgQ             // skip unless it starts at the merged point
+    jmp mpDup0
+    jmp mpNext
+
+    // A line on the merged point goes if an earlier line joins the same two points.
+mpDup0,
+    dzm mgJ
+mpDup,
+    lac mgJ
+    sad mgI             // skip while earlier lines remain
+    jmp mpNext
+    add [lineFrom:3]
+    jda getW
+    dac mgLast
+    lac mgJ
+    add [lineTo:3]
+    jda getW
+    sad mgTo            // skip unless it ends where this line ends
+    jmp mpSame
+    sad mgFrom          // skip unless it ends where this line starts
+    jmp mpRev
+    jmp mpDupNext
+mpSame,
+    lac mgLast
+    sad mgFrom          // skip unless it starts where this line starts
+    jmp mpDrop
+    jmp mpDupNext
+mpRev,
+    lac mgLast
+    sad mgTo            // skip unless it starts where this line ends
+    jmp mpDrop
+mpDupNext,
+    idx mgJ
+    jmp mpDup
+mpDrop,
+    lac mgI
+    jda removeLine
+    jmp mpPrune
+mpNext,
+    idx mgI
+    jmp mpPrune
+
+    // The arcs, as the lines. A removed arc takes the last arc's place.
+mpArcs0,
+    dzm mgI
+mpArcs,
+    lac mgI
+    sad arcCount        // skip while arcs remain
+    jmp mpPoints
+    add [arcTC]
+    dac mgA
+    lac i mgA
+    dac mgC
+    lac mgI
+    add [arcTS]
+    dac mgA
+    lac i mgA
+    dac mgS
+    lac mgI
+    add [arcTE]
+    dac mgA
+    lac i mgA
+    dac mgE
+    lac mgC
+    sad mgS             // skip unless the center is on the start
+    jmp mpArcDrop
+    sad mgE             // skip unless the center is on the end
+    jmp mpArcDrop
+    lac mgS
+    sas mgE             // skip if the start and end are one point
+    jmp mpArcNext
+    lac mgI
+    add [arcTK]
+    dac mgA
+    lac i mgA
+    sad [NARC]          // skip unless it is a full circle already
+    jmp mpArcNext
+    sub [NARC/2]
+    spa                 // skip if it swept half the circle or more, when it closes
+    jmp mpArcDrop
+    law NARC
+    dac i mgA
+    lac mgI
+    jda arcRewrite
+    jmp mpArcNext
+mpArcDrop,
+    lac mgP
+    dac heldK
+    lac mgQ
+    dac heldJ
+    lac mgI
+    jda arcDelete
+    lac heldK
+    dac mgP
+    lac heldJ
+    dac mgQ
+    jmp mpArcs
+mpArcNext,
+    idx mgI
+    jmp mpArcs
+
+    // The dragged point goes. If the merged point was the last, it takes the dragged point's
+    // index.
+mpPoints,
+    lac mgP
+    jda removePoint
+    lio mgP
+    lac mgQ
+    jda ptFollow
+    jda dropOrphan
+    lac [mergeCount:4]
+    jda bump0
+rtn, jmp .
+mgI, 0
+mgJ, 0
+mgFrom, 0
+mgTo, 0
+mgLast, 0
+mgA, 0
+mgC, 0
+mgS, 0
+mgE, 0
+    endloc
+
+// The lock onto an arc, for the main bank's placeLock, which has run the line search (bank 13's
+// lineSearch). It finds the nearest arc whose circle passes within reach of the target's center,
+// measured along the ray from the arc's center, with the target's center inside the arc's angle
+// (arcInside). The reach is lineReach, which the line search leaves at its line's distance or at
+// the reach it was given, so an arc must be nearer than any line, and than a point by LOCKBIAS.
+// Horv and the constraint mode pass over arcs. The arcs on the point dragged and on the band's
+// start vertex are passed over, as the line search passes over their lines.
+// It runs while Circle's band is in progress, and loads each arc it examines into the words the
+// band keeps between passes, so it saves them first and puts them back (arcKeep), but only when
+// it examines an arc; with none, or a reach of 0, which nothing can beat, it touches none.
+// Exit: AC = the arc's index, NOPOINT when none; with one, lockX, lockY the point on it along
+// the ray, and penLine NOPOINT; the main bank's lockD = its distance, or lineReach when none,
+// for placeLock's weighing of an instance. The arc module's words as on entry. IO is
+// clobbered. Called via jsp.
+arcLock,
+    local rtn, lkLoop, lkNext, lkDone, lkOut, lkRet, lkI, lkBest, lkD, lkR, lkT, lkA, lkDrag, \
+        lkBand, lkKept
+    dap rtn
+    dzm lkKept
+    lac [NOPOINT]
+    dac lkBest
+    lac [lineReach:4]
+    jda getW
+    dac lkD
+    sza i               // skip unless the reach is 0
+    jmp lkDone
+    lac arcCount
+    sza i               // skip if there are arcs
+    jmp lkDone
+    lac [dragIdx:4]
+    jda getW
+    dac lkDrag
+    lac [bandIdx:4]
+    jda getW
+    dac lkBand
+    lac [mode:4]
+    jda getW
+    sad [MHORV]         // skip unless Horv mode
+    jmp lkDone
+    sad [MCONS]         // skip unless the constraint mode
+    jmp lkDone
+    cla
+    jda arcKeep         // save the band's words
+    law 1
+    dac lkKept
+    lac mHitX
+    dac arcQX
+    lac mHitY
+    dac arcQY
+    dzm lkI
+lkLoop,
+    lac lkI
+    sad arcCount        // skip while arcs remain
+    jmp lkDone
+
+    // Near its circle's box first, on both axes, which passes over most arcs without a root.
+    add [arcTC]
+    dac lkT
+    lac i lkT
+    sad lkDrag          // skip unless its center is the point dragged
+    jmp lkNext
+    sad lkBand          // skip unless its center is the band's start vertex
+    jmp lkNext
+    jda ptXY
+    dac arcCX
+    dio arcCY
+    lac lkI
+    add [arcTR]
+    dac lkT
+    lac i lkT
+    dac lkR
+    sar 5s
+    add lkD
+    dac lkT
+    lac arcQX
+    sub arcCX
+    jda arcAbs
+    sub lkT
+    sma                 // skip if within the box on x
+    jmp lkNext
+    lac arcQY
+    sub arcCY
+    jda arcAbs
+    sub lkT
+    sma                 // skip if within the box on y
+    jmp lkNext
+    lac lkI
+    add [arcTS]
+    dac lkT
+    lac i lkT
+    sad lkDrag          // skip unless its start is the point dragged
+    jmp lkNext
+    sad lkBand          // skip unless its start is the band's start vertex
+    jmp lkNext
+    lac lkI
+    add [arcTE]
+    dac lkT
+    lac i lkT
+    sad lkDrag          // skip unless its end is the point dragged
+    jmp lkNext
+    sad lkBand          // skip unless its end is the band's start vertex
+    jmp lkNext
+
+    // The distance from the circle, in units, nearer than the best so far.
+    jsp arcNorm
+    sza i               // skip unless on the center
+    jmp lkNext
+    sub lkR
+    jda arcAbs
+    sar 5s
+    sub lkD
+    sma                 // skip if nearer than the best so far
+    jmp lkNext
+    add lkD
+    dac lkA
+    lac lkI
+    jda arcLoad
+    jsp arcInside
+    sza i               // skip if inside the arc's angle
+    jmp lkNext
+    lac lkA
+    dac lkD
+    lac lkI
+    dac lkBest
+lkNext,
+    idx lkI
+    jmp lkLoop
+
+    // The point on it along the ray from its center.
+lkDone,
+    lac lkD
+    eem
+    dac i [lockD:4]
+    lem
+    lac lkBest
+    sad [NOPOINT]       // skip if an arc locks
+    jmp lkOut
+    add [arcTC]
+    dac lkT
+    lac i lkT
+    jda ptXY
+    dac arcCX
+    dio arcCY
+    lac lkBest
+    add [arcTR]
+    dac lkT
+    lac i lkT
+    dac arcR32
+    jsp arcNorm
+    jsp arcRay
+    lac arcX
+    eem
+    dac i [lockX:4]
+    lac arcY
+    dac i [lockY:4]
+    lac [NOPOINT]
+    dac i [penLine:4]
+    lem
+lkOut,
+    lac lkKept
+    sza i               // skip if the band's words were saved
+    jmp lkRet
+    law 1
+    jda arcKeep         // and put back
+lkRet,
+    lac lkBest
+rtn, jmp .
+lkI, 0
+lkBest, 0
+lkD, 0
+lkR, 0
+lkT, 0
+lkA, 0
+lkDrag, 0
+lkBand, 0
+lkKept, 0
+    endloc
+
+// Save the arc module's words from arcCX to arcQY, which sparcdata.ac keeps together, AKEEPN of
+// them, into akSave, or put them back from it. akSave is in bank 5, for this bank's room, so the
+// copy runs inside an extend window, which it shuts again.
+// Entry: AC = 0 to save, else to put back; the window shut. AC and IO are clobbered. Called via
+// jda.
+arcKeep, 0
+    local rtn, akGo, akLoop, akP, akQ, akN
+    dap rtn
+    lac [arcCX:2]
+    dac akP
+    lac [akSave:5]
+    dac akQ
+    lac arcKeep
+    sza i               // skip if putting back, from akSave instead
+    jmp akGo
+    lac akP
+    lio akQ
+    dac akQ
+    dio akP
+akGo,
+    law i AKEEPN
+    dac akN
+    eem
+akLoop,
+    lac i akP
+    dac i akQ
+    idx akP
+    idx akQ
+    isp akN             // skip once every word is copied
+    jmp akLoop
+    lem
+rtn, jmp .
+akP, 0
+akQ, 0
+akN, 0
+    endloc
+
+// loadLine's results (bank 12, spaux.ac), a line's point indices and their coordinates.
+lnFrom, 0
+lnTo, 0
+lnX0, 0
+lnY0, 0
+lnX1, 0
+lnY1, 0

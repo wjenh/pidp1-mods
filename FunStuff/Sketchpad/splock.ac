@@ -1,0 +1,303 @@
+// splock.ac -- shows what a lift will take. It draws the dot and the lock mark (lkDot, the main
+// bank's showDot), the line or arc a lift will take at LITINTENSITY (lkShine, lkPrm), and a cross
+// on each point Dist, Change or Gap has picked (pmShow, pmAgain).
+//
+// Bank 11, after spfloat.ac, to spare the main bank's room. Every entry runs with the extend
+// window open, is entered by jsp i [X:0d11] (lkDot by showDot's jmp i, AC holding showDot's
+// return), and returns by jmp i. It reaches the main bank's words, bank 0's display words, bank
+// 1's line slots and bank 3's point table through 16-bit addresses, and calls nothing outside
+// banks 11 and 12 (clipLock and vwCross).
+// Part of sketchpad.am1, included where it stands.
+
+// The line lit, NOPOINT when none. Its slot's parameter word is LITPARAM while the display shows
+// it. The arc lit, by its slot's full address, NOPOINT when none; the arc module's arcWriteSlot
+// reads it.
+litLine, NOPOINT
+litArcP, NOPOINT
+
+// Nothing lit, no pick marked, no lock taken only as a line or marked as a pick, at start-up
+// (initVars).
+// AC is clobbered, IO preserved. Called via jsp i [lkInit:0d11].
+lkInit,
+    local rtn
+    dac rtn
+    lac [NOPOINT]
+    dac litLine
+    dac litArcP
+    dzm i [ptCross:4]
+    dzm i [lineOnly:4]
+    lac [jump bandGate:0 next(subroutine)]
+    dac i [pickGate:0]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Show the pseudo pen location's dot at (penX, penY), and what a lift there will take. The lock
+// mark shows about the dot while it locks onto a point a lift takes, in a mode that shows the
+// arcs' marks or where the caller set ptCross (the constraint mode's point picks), or onto a line
+// or an arc in Line, Circle and Move's drag, where a lift makes a point on it (aimMode). Outside
+// aimMode the line or the arc locked onto is lit (lkShine), since a lift takes it whole. Every
+// routine that places the dot ends here, through showDot, after the lock is settled, so the lock
+// mark follows it. clipLock writes the dot's words, through the view. ptCross is cleared.
+// Entry: AC = showDot's return. AC is clobbered, IO preserved. Entered via jmp i [lkDot:0d11].
+lkDot,
+    local rtn, ldIO, ldFits, ldNone, ldWant, ldPt, ldOn, ldOff, ldSet
+    dac rtn
+    dio ldIO
+    jsp i [clipLock:014]
+    dac ldFits
+    lac i [aimMode:4]
+    sza                 // skip unless the lift makes a point on what is locked
+    jmp ldNone
+    lac i [penLine:4]
+    lio i [penArc:4]
+    jmp ldWant
+ldNone,
+    lac [NOPOINT]
+    lio [NOPOINT]
+ldWant,
+    jda lkShine
+    lac i [penIdx:4]
+    sas [NOPOINT]       // skip unless it locks onto a point
+    jmp ldPt
+    lac i [aimMode:4]
+    sza i               // skip if Line, Circle or Move's drag
+    jmp ldOff
+    lac i [penLine:4]
+    and i [penArc:4]    // NOPOINT's bits, unless one is locked
+    sad [NOPOINT]       // skip if a line or an arc is locked
+    jmp ldOff
+    jmp ldOn
+ldPt,
+    lac i [ptCross:4]
+    sza                 // skip unless the caller marks the point as one a lift takes
+    jmp ldOn
+    lac i [markGate:0]
+    sad [jump markEnd:0 next(parameter)] // skip if the mode shows the marks
+    jmp ldOff
+ldOn,
+    lac ldFits
+    sza i               // skip if the lock mark has room here
+    jmp ldOff
+    lac [jump lockVec:0 next(vector)]
+    jmp ldSet
+ldOff,
+    lac [jump frameHalt:0 next(parameter)]
+ldSet,
+    dac i [lockGate:0]
+    dzm i [ptCross:4]
+    lio ldIO
+    jmp i rtn
+rtn, 0
+ldIO, 0
+ldFits, 0
+    endloc
+
+// Light line i and arc j, each slot's parameter word written LITPARAM, putting back DRAWPARAM in
+// the one lit before; each slot's writer keeps the word so while its line or arc stays lit
+// (lkPrm, the arc module's arcWriteSlot). A line's word is written only while the display shows
+// its slot (below shownCount) and no end pair waits for penISR (flipAt), whose slot may be the
+// line's. A line not lit for either reason is lit at a later call, and one lit past the end is
+// forgotten, its slot being written whole before it shows again.
+// Entry: AC = i, IO = j, each NOPOINT for none. AC and IO are clobbered. Called via jda.
+lkShine, 0
+    local rtn, lsArc, lsT, lsForget, lsLight, lsArcs, lsAddr, lsANew
+    dap rtn
+    dio lsArc
+    lac lkShine
+    sad litLine         // skip unless it is lit already
+    jmp lsArcs
+    lac i [flipAt:0]
+    sza                 // skip unless an end pair waits for penISR
+    jmp lsArcs
+    lac litLine
+    sad [NOPOINT]       // skip if a line is lit
+    jmp lsLight
+    sub i [shownCount:4]
+    sma                 // skip if the display shows its slot
+    jmp lsForget
+    lac litLine
+    jda lkSlot
+    dac lsT
+    lac [DRAWPARAM]
+    dac i lsT
+lsForget,
+    lac [NOPOINT]
+    dac litLine
+lsLight,
+    lac lkShine
+    sad [NOPOINT]       // skip if a line is to be lit
+    jmp lsArcs
+    sub i [shownCount:4]
+    sma                 // skip if the display shows its slot
+    jmp lsArcs
+    lac lkShine
+    dac litLine
+    jda lkSlot
+    dac lsT
+    lac [LITPARAM]
+    dac i lsT
+
+    // The arc, by its slot's address.
+lsArcs,
+    lac lsArc
+    sad [NOPOINT]       // skip if an arc is to be lit
+    jmp lsAddr
+    jda lkArcSlot
+lsAddr,
+    sad litArcP         // skip unless it is lit already
+    jmp rtn
+    dac lsT
+    lac litArcP
+    sad [NOPOINT]       // skip if an arc is lit
+    jmp lsANew
+    lac [DRAWPARAM]
+    dac i litArcP
+lsANew,
+    lac lsT
+    dac litArcP
+    sad [NOPOINT]       // skip if an arc is to be lit
+    jmp rtn
+    lac [LITPARAM]
+    dac i litArcP
+rtn, jmp .
+lsArc, 0
+lsT, 0
+    endloc
+
+// Full address of line slot i in bank 1, as the main bank's slotAddr computes it. It is group i/4
+// of GROUPWORDS (62), and slot i mod 4 of SLOTWORDS (15) in it.
+// Entry: AC = i. Exit: AC = the address. IO is preserved. Called via jda.
+lkSlot, 0
+    local rtn, ksG, ksT
+    dap rtn
+    lac lkSlot
+    sar 2s
+    dac ksG
+    sal 6s              // group * 64
+    sub ksG
+    sub ksG             // group * 62, GROUPWORDS
+    dac ksT
+    lac lkSlot
+    and [3]
+    dac ksG
+    sal 4s
+    sub ksG             // slot in group * 15, SLOTWORDS
+    add ksT
+    add [drawList:1]
+rtn, jmp .
+ksG, 0
+ksT, 0
+    endloc
+
+// Full address of arc slot j in bank 0, arcList + ARCGROUP * j, as in the arc module's arcSlot.
+// Entry: AC = j. Exit: AC = the address. IO is clobbered. Called via jda.
+lkArcSlot, 0
+    local rtn
+    dap rtn
+    lac lkArcSlot
+    mul [ARCGROUP]
+    scr 1s              // j * ARCGROUP is inside a bank, so mul's low part, realigned
+    lai
+    add [arcList:0]
+rtn, jmp .
+    endloc
+
+// The parameter word the main bank's writeSlot gives line slot i, LITPARAM for the line lit,
+// DRAWPARAM for any other.
+// Entry: writeSlot's word = i. Exit: AC = the parameter word. IO is preserved. Called via
+// jsp i [lkPrm:0d11].
+lkPrm,
+    local rtn, kpLit
+    dac rtn
+    lac i [writeSlot:4]
+    sad litLine         // skip unless the line lit
+    jmp kpLit
+    lac [DRAWPARAM]
+    jmp i rtn
+kpLit,
+    lac [LITPARAM]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Leaving a mode (setMode) leaves nothing lit and no pick marked (lkOff). Dropping the
+// constraint mode's picks (consEnd) leaves no pick marked (pmOff).
+// lkOff: AC and IO are clobbered. pmOff: AC is clobbered, IO preserved. Called via
+// jsp i [lkOff:0d11] or jsp i [pmOff:0d11].
+lkOff,
+    local rtn, koHide
+    dac rtn
+    lac [NOPOINT]
+    lio [NOPOINT]
+    jda lkShine
+    jmp koHide
+pmOff,
+    dac rtn
+koHide,
+    lac [jump bandGate:0 next(subroutine)]
+    dac i [pickGate:0]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The pick marks, pickGate's two crosses in bank 0, on the points Dist, Change or Gap has picked.
+// Both take the first point while one is picked (consL1), and after Dist's or Change's second
+// pick one is on each (consPt, consL1). Each is written through the view by the view module's
+// vwCross, hidden while not wholly on the screen, and then the gate opened (pmShow, at a pick);
+// or written again only while they show (pmAgain, after a change of view or a solve, which may
+// move the points).
+// AC and IO are clobbered. Called via jsp i [pmShow:0d11] or jsp i [pmAgain:0d11].
+pmAgain,
+    local rtn, pmGo, pmWr, pmA, pmB
+    dac rtn
+    lac i [pickGate:0]
+    sad [jump bandGate:0 next(subroutine)] // skip if the marks show
+    jmp i rtn
+    jmp pmGo
+pmShow,
+    dac rtn
+pmGo,
+    lac i [consL1:4]
+    dac pmA
+    dac pmB
+    lac i [consPick:4]
+    sas [2]             // skip if two points are picked
+    jmp pmWr
+    lac i [consPt:4]
+    dac pmA
+pmWr,
+    lac pmA
+    lio [pickAY:0]
+    jda pmCross
+    lac pmB
+    lio [pickBY:0]
+    jda pmCross
+    lac [jump pickAY:0 next(point)]
+    dac i [pickGate:0]
+    jmp i rtn
+rtn, 0
+pmA, 0
+pmB, 0
+    endloc
+
+// Write a pick mark's cross on point p, through the view. vwCross writes its y word at w, its x
+// word, and its two drawn vectors.
+// Entry: AC = p, IO = w, a full address. AC and IO are clobbered. Called via jda.
+pmCross, 0
+    local rtn, pcT
+    dap rtn
+    dio i [vxP:014]
+    lac pmCross
+    add [pointX:3]
+    dac pcT
+    lac i pcT
+    dac i [vxX:014]
+    lac pmCross
+    add [pointY:3]
+    dac pcT
+    lio i pcT
+    jsp i [vwCross:014]
+rtn, jmp .
+pcT, 0
+    endloc

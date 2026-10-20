@@ -1,0 +1,1149 @@
+// sketchpad.ah -- Sketchpad's constants: every #define of the program but the intensities'
+// (intensities.ah) and the macros only one file uses, which stand in that file. BOXAT is here
+// because two files use it. Included by sketchpad.am1 after intensities.ah and before
+// TYPE340/trackingTarget.ah, which defaults TARGETARM and TARGETSCALE only if they are not
+// defined. A value is octal unless written 0dN.
+
+// The target's arms, TARGETARM steps at scale 2, 20 units, dots 4 apart. Scale costs no drawing
+// time; scale 1's 8-unit arms lose the pen when a drawing slows the frames, and scale 3's 32
+// track well but are large. Near an edge or the menu region its arms are clipped (clipTarget),
+// so its center reaches as far as an 8-unit target's would. TARGETSHIFT is the shift that
+// divides by a step, 1 << TARGETSCALE units, so the two change together.
+#define TARGETARM 5
+#define TARGETSCALE 2
+#define TARGETSHIFT 2s
+
+// The instance module's entries, called through instCall.
+#define IEINIT 0
+#define IECLEAR 1
+#define IEPARAM 2
+#define IEXY 3
+#define IEGATE 4
+#define IEREMOVE 5
+#define IESHINE 6
+#define IEMOVE 7
+#define IELOCK 10
+#define IESIZE 11
+#define IEPLACE 12
+#define IEADD 13
+#define IEMAP 14
+#define IEDEF 15
+#define IECROOM 16
+#define IECPARTS 17
+#define IEPICK 20
+#define IEBACK 21
+#define IESYNC 22
+#define IESZBACK 23
+#define IERESLOT 24
+#define IECHANGE 25
+#define IECYSTEP 26
+#define IEKBOPEN 27
+#define IEKBDONE 30
+#define IEDISM 31
+#define IEUNDISM 32
+#define IESTOPEN 33
+#define IESTDONE 34
+#define IENEST 35
+#define IENESTI 36
+#define IEVIEW 37
+
+// Constraints. The constraint module in bank 8 holds a dense table of at most NCON entries of
+// CW words each, a type word, four point indices and a parameter word. CTHL holds two points at
+// one y, CTHP at one x (Horv's H, level or plumb), CTF one point still (Fix); CTEQ gives line A-B
+// the length of line C-D (Equal), CTLEN keeps line A-B at the parameter's length, in 32nds
+// (Length), CTPAR and CTPERP keep line A-B parallel or perpendicular to line C-D, and CTMID keeps
+// point A at the middle of line B-C (Mid). CTON keeps point A on the line through B and C, and
+// CTONC point A on the circle about B through C, an arc's center and start, each made by a point
+// placed or dropped on a line or an arc in Line, Circle or Move, and dropped with its line or its
+// arc. CTATT designates point A an attacher (Tie), its parameter the designation's order with
+// CUNUSED's sign bit set, and the solver passes it over. The truss's types, which the solver
+// passes over too and only the truss's analysis reads: CTBEAM makes line A-B a member (Beam);
+// CTLOAD makes line A-B a load, acting at A, a member's point, toward B (Load); CTROLL lets
+// point A slide along an axis, held across it (Roller), the direction of line B-C, which Axis
+// names (the module's cAxis), level while B and C are A itself, as a new roller's are and as one
+// is left when its line goes. Beam and Load are dropped with their line. A Beam's parameter is
+// its stiffness, CUNUSED ORed with its tenths, 1 to 999, CUNUSED alone for 1.0. CTSTIFF is Stiff
+// mode's consType, never an entry's type, outside CTMASK. CTDES designates point A for Copy; the
+// k-th CTDES entry in the table is designation k, so it needs no order word, and the solver
+// passes it over. The numbers' types, the only ones with bit CTNUM set: CTDIST makes line A-B's
+// length the scalar of the digits whose anchor is C (D), driving the line from a scalar typed or
+// set by a Y, read into a free one; CTCHG sets that scalar to line A-B's length less the
+// parameter, the length in 32nds when the entry was made with CUNUSED's sign bit set, and moves
+// nothing (Y); CTGAP keeps point A from the anchor B of a set of digits by a gap their scale
+// sets, its parameter as a Length's (O). A type's
+// low bits (CTMASK) index the module's per-type tables (cNPts, cGlyph). Every arc whose points
+// share one with an entry keeps its start and end at one distance from its center too (the
+// thesis's implicit C). The solver works on its points in 32nds of a unit, in the main loop while
+// something can be unsatisfied and no point is held, for at most SOLVEMS on the clock a pass; what
+// it moved is written back and redrawn at most every PUBMS, and when it stops. A sweep settles
+// once no point moves more than CSETTLE, and the solver gives up SOLVEGIVE after it woke (the
+// drop, or the change that woke it). The type words and CUNUSED, an unused index or parameter, are
+// negative, so that no word of an entry but a point index can equal one.
+#define NCON 0d64
+#define CW 6
+#define CONWORDS (1 + NCON * CW)
+#define SOLVEMS 0d40
+#define PUBMS 0d50
+#define SOLVEGIVE 0d8000
+#define CSETTLE 4
+#define CTHL 0400001
+#define CTHP 0400002
+#define CTF 0400003
+#define CTEQ 0400004
+#define CTLEN 0400005
+#define CTPAR 0400006
+#define CTPERP 0400007
+#define CTMID 0400010
+#define CTON 0400011
+#define CTONC 0400012
+#define CTATT 0400013
+#define CTBEAM 0400014
+#define CTLOAD 0400015
+#define CTROLL 0400016
+#define CTDES 0400017
+#define CTDIST 0400020
+#define CTCHG 0400021
+#define CTGAP 0400022
+#define CTLAST CTGAP
+#define CTMASK 037
+#define CTNUM 020
+#define CTSTIFF 0400040
+#define CUNUSED 0400000
+// A Beam's stiffness: its parameter's tenths (CUNUSED alone, 1.0, reads as STIFFONE), at most
+// STIFFMAX; at most STIFFDIG characters typed ("99.9").
+#define STIFFONE 0d10
+#define STIFFMAX 0d999
+#define STIFFDIG 4
+// CSOR nonzero turns on over-relaxation, each move of the Equal, Paral, Perp, Length and Mid
+// projections half as far again; it is off by default. CUNIT is a direction's length when the
+// P types compare two.
+#ifndef CSOR
+#define CSOR 0
+#endif
+#define CUNIT 040000
+// A point's flags in the module: moved by the last publish or put back by Undo (bank 2's
+// ptMarked reads this bit alone, as it reads ptMark's 1), one of the solver's points, fixed,
+// touched by this pass's sweeps.
+#define FMOV 1
+#define FMOVOFF 0777776
+#define FIN 2
+#define FFIX 4
+#define FFIXOFF 0777773
+#define FTCH 010
+#define FTCHOFF 0777767
+
+// The constraint module's entries, called through conCall.
+#define CEINIT 0
+#define CECLEAR 1
+#define CETICK 2
+#define CEREVERT 3
+#define CEHORV 4
+#define CEFIX 5
+#define CEDRAG 6
+#define CEUNDO 7
+#define CELOAD 010
+#define CEFMARK 011
+#define CEADD 012
+#define CEDEL 013
+#define CENEAR 014
+#define CEKEEP 015
+#define CEMAKE 016
+#define CEDROP 017
+#define CEATT 020
+#define CECOPY 021
+#define CEROLL 022
+#define CEDELALL 023
+#define CEUNFIX 024
+#define CEDRAG2 025
+#define CEDES 026
+#define CEDTAKE 027
+#define CEAXIS 030
+#define CESTIFF 031
+#define CESTSET 032
+#define CESNAP 033
+
+// The truss's analysis (sptruss.ac, bank 11). The main loop calls it every pass; it works only
+// while the solver sleeps, at most TRUSSMS on the clock a pass, comparing the truss with its
+// snapshot every TRUSSCHK. At most TANJ joints (more, with at most NCON members, is a mechanism
+// unless 18 or more are rollers), and TANI members at a joint. TANU is the most unknowns, two a
+// joint; TAPROF the most entries of the matrix's profile, three words each, which fill banks 14
+// and 15 after the unknowns' words and the members' directions. TAMAXF is the largest force the
+// readouts show. Then its states (taState), and why there is no answer (taWhy): a mechanism, a
+// load or force too large, a member of no length, too many joints or members at one, or a
+// profile past TAPROF. TASTIFF is no state but the readouts' writing for Stiff mode, the
+// members' stiffnesses in place of their forces.
+#define TRUSSMS 0d40
+#define TRUSSCHK 0d250
+#define TANJ 0d40
+#define TANI 0d15
+#define TANU (2 * TANJ)
+#define TAPROF ((0d8192 - TANU * 0d8 - NCON * 6) / 3)
+#define TAMAXF 0d99999
+#define TANONE 0
+#define TABUSY 1
+#define TAOK 2
+#define TABAD 3
+#define TASTIFF 4
+#define TAWMECH 2
+#define TAWLARGE 3
+#define TAWZERO 4
+#define TAWMANY 5
+// The units between a readout and its line, above a flat line or right of a steep one.
+#define ROGAP 4
+
+// A vertex placed in Line or Circle becomes a point only at the commit, so what the pseudo pen
+// location locked onto at its lift is kept until then (cKeep), KEEPSTART for the chain's start
+// or the arc's center, KEEPRIM for the arc's start; KEEPNOW holds the lock at the commit or a
+// drop itself.
+#define KEEPSTART 0
+#define KEEPRIM 1
+#define KEEPNOW 2
+
+// In Line, Circle and Move's drag the lines and arcs are searched only once the target has stayed
+// within SLOWD units on either axis of where it settled for SLOWMS on the clock, and always at a
+// lift, so that a stroke's band and a drag keep their rate over a large drawing. Timed, not
+// counted in passes, since a pass that searches takes many times as long as one that does not,
+// so a gate per pass would search every other pass under a moving hand.
+// Settled, the lines are swept LSSLICEMS of the clock a pass, the clock read every LSCHECK
+// lines, so that neither waits on a whole sweep; a sweep keeps the two nearest within SWREACH,
+// the reach and twice SLOWD more, since the target may move SLOWD on each axis while it runs.
+#define SLOWD 4
+#define SLOWMS 0d60
+#define LSSLICEMS 0d30
+#define LSCHECK 4
+#define SWREACH SNAP_BOX+1+SLOWD+SLOWD
+
+// The constraints' marks. Each constraint is a small dim circled letter at the average of its
+// points, as the thesis's figure 5.3 draws them; every constraint is marked while Show is on, in
+// every mode, and only the fixes' F in Fix mode with Show off (the attachers' A in Tie mode, the
+// rollers' O in Roller mode).
+// The list is NCON slots of FIXWORDS (FSGATE the slot's gate), then an end slot always shut;
+// each glyph draws its circle, of radius FIXR, and its letter (H, E, L, P, R, X, F, N, C, A, and
+// the truss's B, W and O). A mark's center is kept MKEDGE inside the screen, where an edge would
+// halt the display; Delete with Show on locks onto a letter within FIXR of the target's center.
+#define FIXWORDS 4
+#define FSGATE 2
+#define FIXR 0d10
+// The gap between a one-line mark's circle and its line, in screen units.
+#define MKGAP 2
+// A mark's margin, FIXR + 9, a unit past a roller's ticks, the widest glyph's reach (FIXR + 8
+// along its axis), so that any glyph at any place a slot holds stays on the screen. A number,
+// not FIXR + 9, since a define is pasted as text into 0d1023 - MKEDGE.
+#define MKEDGE 0d19
+// While Show is on, the main loop writes the marks again at most every MARKMS on the clock,
+// since writing every mark costs about a millisecond a constraint.
+#define MARKMS 0d100
+// The constraints' arms. With Show on, each E, P and R mark has a dotted dim run from its first
+// line's middle to its second's, through the mark. Their list, arList in bank 5, holds NCON
+// slots of ARMWORDS: ARMPARAM, the first middle's y and x words, and two
+// vectors at ARMSCALE, dots 4 apart as the radius band's are, the second with the escape; the
+// word after the last slot used is the list's halt. At most ARMSTEPS steps a run, two vectors'
+// worth. A slot's writer waits at most ARMWAIT polls of dra for the display to finish the slot
+// (two 127-step vectors take about 0.6 ms, a poll about 0.05).
+#define ARMWORDS 5
+#define ARMSCALE 2
+#define ARMSTEPS 0d254
+#define ARMWAIT 0100
+#define ARMPARAM (scale(ARMSCALE) | intensity(DIMINTENSITY) | lpoff | next(point))
+
+// The two-line constraint modes draw the first line picked bright, in the band's slot, until
+// the second lift.
+#define PICKPARAM (scale(DRAWSCALE) | intensity(PENINTENSITY) | lpoff | next(point))
+
+// An arm's tip stays TGTCLEAR inside the screen and below the menu region; a tip past an edge
+// is an edge violation, which halts the display. TGTREACH is how near the center can come with
+// every arm whole. An arm is shortened a step (4 units) at a time; FULLKEY is clipTarget's key
+// for every arm whole, 3 bits an arm, so TARGETARM is at most 7.
+#define TGTCLEAR 0d10
+#define TGTREACH (TGTCLEAR + (TARGETARM << TARGETSCALE))
+#define FULLKEY (TARGETARM * 01111)
+
+// The light pen's aperture, a diameter. The pen reaches a drawn point less than half of it
+// away, 10 units at APERTURE200, 13 at APERTURE250. While a list is open it is LISTAPERTURE
+// instead, so that the rows can stand closer; tracking is off then. The two are equal, each its
+// own define so that they can differ; a build may set LISTAPERTURE.
+#define APERTURE APERTURE200
+#ifndef LISTAPERTURE
+#define LISTAPERTURE APERTURE200
+#endif
+
+// The drawing's scale. A label's intensities, normal, lit and dim, and the drawing's are in
+// intensities.ah.
+#define DRAWSCALE 0
+
+// Menu bar. Items sit on a COLPITCH (128-unit) pitch from x=0, so a hit's column is x >> 7
+// (spmenus.ac's sar 7s, which changes with it). A label is at
+// most 7 characters (14 units each in character set 2 at scale 1), leaving at least 30 units
+// between neighbors, more than the light pen aperture, so one pen position cannot hit two
+// labels. Everything at or above BARYMIN is the menu region; the descender of a lower-case
+// letter reaches 4 units below BARY. The eighth item, View, fills the screen's last column.
+#define LABELSCALE 1
+#define LABELMARGIN 0d15
+#define BARY 0d1000
+#define BARYMIN 0d992
+#define NBAR 010
+#define CDRAW 0
+#define CEDIT 1
+#define CPICTURE 2
+#define CMISC 3
+#define CLOCATE 4
+#define CUNDO 5
+#define CSTOP 6
+#define CVIEW 7
+#define COLPITCH 0d128
+
+// What the undo record holds, a single level: nothing; parts added past the counts it keeps (a
+// line, an arc, an instance, a copy's parts); a step of draw mode's chain that added no line;
+// circle mode's center placed (or draw mode's start), or its start; a constraint added (Horv's
+// H, Fix's F, or one of the constraint mode's types), whose undoing puts back what the solver
+// moved for it; an instance taken apart, its parts added past the counts as a copy's are, and
+// the instance put back; a part scaled, every point and origin put back where it was and the
+// part's size or Length's value before.
+#define UNONE 0
+#define UPARTS 1
+#define USTEP 2
+#define UCENTER 3
+#define USTART 4
+#define UCONS 5
+#define UDISM 6
+#define USCALE 7
+
+// Drop-down lists. A list hangs below its bar item, at most MAXROWS rows on a ROWPITCH pitch
+// from ROWY0, with a Select box beside its highlighted row, and none while no row is. A hit on
+// a row highlights it, and the highlight stays while the pen moves sideways to the box; a hit on
+// the box acts on the highlighted row if it begins a press, the pen taken for lifted after
+// KBGAPMS with no menu hit, as on the pen keyboard, so a pen slid onto the box acts only once
+// lifted and put back.
+// The light pen has no pen-up, so hits stopping decides nothing else here, except that a list
+// with no menu hit for LISTIDLEMS closes. A pen within reach of a row's letters, 13 units tall,
+// can hit the row, so at a 36-unit pitch two rows' letters are 23 apart, more than twice
+// LISTAPERTURE's reach, so one pen position cannot hit two rows, though at APERTURE250's it
+// could. A row's band starts ROWSLOP below its baseline, in the gap under its letters, and the
+// box's BOXSLOP right of the list's column; both are odd, so a hit's even coordinate never
+// equals them. NOROW, no row, is above any row count.
+#ifndef ROWPITCH
+#define ROWPITCH 0d36
+#endif
+#define ROWY0 (BARY - ROWPITCH)
+#define ROWSLOP 0d9
+#define MAXROWS 6
+#define NOROW 0d63
+#define BOXDX 0d144
+#define BOXSLOP 0d129
+#define BOXW 0d32
+#define LISTIDLEMS 0d4000
+#define NITEMS 0d79
+
+// Each bar list's first item: Draw's Line, Edit's Move and Picture's Define (Misc's is IMISC,
+// View's IVIEW). Then each row of those lists, by its place in its list, row 0 at ROWY0. A
+// sublist stands beside the row that owns it, its first row level with that row: Truss's and
+// Dim's beside ROWTRUSS and ROWDIM, Constr's, Size's and Change's beside ROWCONSTR, ROWSIZE and
+// ROWCHANGE, Define's, Inst's and Copy's beside ROWDEFINE, ROWINST and ROWCOPY, and Drive's
+// beside ROWDRIVE. Edit's Scale row, ROWSCALE, stands after Size's.
+#define IDRAW 0
+#define IEDIT 5
+#define IPICTURE 0d12
+#define ROWLINE 0
+#define ROWCIRCLE 1
+#define ROWTRUSS 2
+#define ROWTEXT 3
+#define ROWDIM 4
+#define ROWMOVE 0
+#define ROWDELETE 1
+#define ROWCONSTR 2
+#define ROWSIZE 3
+#define ROWSCALE 4
+#define ROWCHANGE 5
+#define ROWDISMEM 6
+#define ROWDEFINE 0
+#define ROWINST 1
+#define ROWCOPY 2
+#define ROWCLEAR 3
+#define ROWTIE 4
+#define ROWDESIG 5
+#define ROWSAVE 0
+#define ROWLOAD 1
+#define ROWDRIVE 2
+#define ROWDIR 3
+#define ROWDELCONS 4
+#define ROWUNFIX 5
+
+// The item numbers of Size's x1, Inst's M1, Copy's M1, Define's M1, Misc's Save, Drive's D1,
+// Constr's Horv, Truss's Beam, Change's M1 and Dim's Number; the rest of each list or sublist
+// follows. Draw's rows are items 0 to 4 (Line, Circle, Truss, Text, Dim), Edit's 5 to 11 (Move,
+// Delete, Constr, Size, Scale, Change, Dismem; Scale item 9, ISCALE), Picture's 12
+// to 17 (Define, Inst, Copy, Clear, Tie, Desig), then Size's, Inst's, Copy's and Define's
+// sublists, Misc's rows from IMISC (Save, Load, Drive, Dir, Del cons, Unfix), Drive's D1 to D8,
+// Constr's eight rows, Truss's six (Beam, Load, Roller, Axis, Forces, Stiff), Change's seven, and
+// Dim's sublist (Number, Dist, Change and Gap); View's list comes last.
+// Change's sublist is M1 to M4, then Cycle, its row CYCLEROW, then Dwell and Seq, items IDWELL
+// and ISEQ. View's list is x1, x2, x4, x8, then Pan, its row VIEWPAN, and Center, its row
+// VIEWCENTER.
+#define ISCALE (IEDIT + ROWSCALE)
+#define IDISM (IEDIT + ROWDISMEM)
+#define ISIZE 0d18
+#define IINST 0d22
+#define ICOPY 0d26
+#define IDEFINE 0d30
+#define IMISC 0d34
+#define IDRIVE 0d40
+#define ICONSTR 0d48
+#define ICHANGE 0d62
+#define IDIM 0d69
+#define IVIEW 0d73
+#define VIEWPAN 4
+#define VIEWCENTER 5
+#define CYCLEROW 4
+#define IDWELL (ICHANGE + 5)
+#define ISEQ (ICHANGE + 6)
+
+// Constr's rows after Horv, ICONSTR + 1 to ICONSTR + 7, are Equal, Paral, Perp, Length and Mid
+// (each entering constraint mode for its type, rowCons), Fix, and Show, row SHOWROW. Truss's rows
+// follow them, so that rowCons serves Beam, Load, Axis and Stiff too; they are Beam, Load,
+// Roller, Axis, Forces, row FORCESROW, and Stiff.
+#define ICONS1 (ICONSTR + 1)
+#define SHOWROW 7
+#define ITRUSS (ICONSTR + SUBROWS)
+#define FORCESROW 4
+
+// Nested lists. A row whose label ends in ">" owns a sublist, which opens beside it while the
+// row is highlighted, its labels SUBDX right of the list's column, its first row level with the
+// row, on the same pitch, at most SUBROWS rows. The Select box then stands BOXDX right of the
+// sublist and acts on the sublist's highlighted row. A sublist's rows own nothing. Across, a
+// 7-character label ends at 113 units into the column, a sublist's starts at 159 and ends by
+// 257, and the box starts at 288; every gap exceeds the aperture, so one pen position cannot hit
+// two of them. A hit right of a sublist's rows is on its box from its descriptor's edge word
+// (DESCEDGE) on, the box's left side less BOXSLOP - BOXDX (15 units), odd, as BOXSLOP is.
+// Drive's sublist has 8 rows, a list at most MAXROWS.
+#define SUBDX 0d144
+#define SUBROWS 0d8
+
+// The lists share one Select box, listBox, only one list being open at a time. placeBox writes
+// its x as it writes its y, from the descriptor's edge word, which a list's descriptor holds as
+// a sublist's does, LISTEDGE, BOXSLOP right of its column. View's list, in the screen's last
+// column, has its box at VIEWBOXX instead, since BOXDX right of the column would pass the
+// screen's edge; that is 23 units right of Center's letters, the longest, more than the
+// aperture. For them its rows stand left of the column, from VIEWROWX; a hit left of a list's
+// edge is on its rows wherever it is.
+#define VIEWBOXX 0d976
+#define VIEWROWX 0d854
+
+// While a list is open the frame stops after the menu, so a sublist reaching into the canvas
+// crosses nothing.
+
+// A descriptor's words: the list's first word, its row count, its first item number, the
+// address of its tail word (0 in a sublist's), the address of its rows' sublist descriptors (0
+// when no row owns one), the address of its Select box's gate word, the x from which a hit right
+// of its rows is on its box (SUBEDGE in a sublist's, LISTEDGE in a list's), then each row's
+// parameter word. A sublist's rows own nothing, so its fifth word is 0. Whether a row can act is
+// its item's, not its descriptor's (sprows.ac's rowCan).
+#define DESCITEM 2
+#define DESCTAIL 3
+#define DESCSUBS 4
+#define DESCBOX 5
+#define DESCEDGE 6
+#define DESCROWS 7
+
+// The conditions a menu row may need met before it can act, one bit each of the census's
+// rowHave (spcensus.ac), in the order the census takes them, the first in the sign bit. A row's
+// word in rowNeeds (sprows.ac) is the conditions it needs, and a row needing none always acts.
+// P is the points the dot can take, the point table less the numbers' anchors. In order:
+// a point, a text or an instance; a line; two lines; P at least 1, 2 and 3; a number; an
+// instance; an instance or a text; a line, an arc or an instance; a line neither a member nor a
+// load; a member; a roller; a master defined; two masters defined; a constraint other than a
+// member, a load or a roller; a fix, an attacher or a designation; a view other than x1.
+#define ROWANY 0400000
+#define ROWL1 0200000
+#define ROWL2 0100000
+#define ROWP1 040000
+#define ROWP2 020000
+#define ROWP3 010000
+#define ROWN 04000
+#define ROWI 02000
+#define ROWIT 01000
+#define ROWLAI 0400
+#define ROWFREEL 0200
+#define ROWB 0100
+#define ROWO 040
+#define ROWM1 020
+#define ROWM2 010
+#define ROWDEL 04
+#define ROWUNF 02
+#define ROWVIEW 01
+
+// A Select box, its left side at bx, beside row r (row 0 at ROWY0), is a square BOXW across, its
+// top BOXRISE above the row's baseline, with "OK" in it at the labels' size on the row's
+// baseline, reached by an invisible vector from the square's corner, so that the y word, the
+// box's fourth, is its only absolute position. It is entered in parameter mode and starts with
+// a gate, its second word: shut, a jump to menuEnd, the light pen off, so nothing is drawn; open,
+// a jump to the next word. placeBox opens it and moves the box beside the highlighted row, and
+// shuts it while no row is. As assembled the gate is shut and the box beside row r. Ends in
+// parameter mode.
+// A pen anywhere inside a BOXW square is within LISTAPERTURE's reach, 10 units, of a side or
+// of "OK". The light pen sees only drawn points, so a larger outline alone is dead in its
+// middle beyond the reach.
+#define BOXRISE 0d22
+#define BOXTEXTDX 0d5
+#define BOXLBL (charsets(2) | scale(LABELSCALE) | intensity(NORMALINTENSITY) | lpon | next(character))
+#define BOXAT(bx, r) \
+    lpoff next(subroutine); \
+    jump menuEnd next(parameter); \
+    scale(0) intensity(NORMALINTENSITY) lpon next(point); \
+    y(ROWY0 - (r) * ROWPITCH + BOXRISE) next(point); \
+    x(bx) next(vector); \
+    deltax(BOXW) deltay(0) right visible; \
+    deltax(0) deltay(BOXW) down visible; \
+    deltax(BOXW) deltay(0) left visible; \
+    deltax(0) deltay(BOXW) up visible; \
+    deltax(BOXTEXTDX) deltay(BOXRISE) right down end; \
+    BOXLBL; \
+    type340 "OK"
+
+// A bar label's parameter word, normal and lit. Every label carries lpon, because drs leaves
+// the light pen off until the next lpon.
+#define LBLNORM (charsets(2) | scale(LABELSCALE) | intensity(NORMALINTENSITY) | lpon | next(point))
+#define LBLLIT (charsets(2) | scale(LABELSCALE) | intensity(SELECTINTENSITY) | lpon | next(point))
+#define LBLDIM (charsets(2) | scale(LABELSCALE) | intensity(DIMINTENSITY) | lpon | next(point))
+
+// Word 0 of every line slot, and of the band.
+#define DRAWPARAM (scale(DRAWSCALE) | intensity(DRAWINTENSITY) | lpoff | next(point))
+// The band's word 0 while it shows a circle's radius: dotted, since scale spaces a vector's dots
+// 2^RADSCALE apart, so its vectors are cut by RADSHIFT to keep the radius's length (spview.ac's
+// vwSeg, which cuts any band drawn with this word 0).
+#define RADSCALE 2
+#define RADSHIFT 2s
+#define RADPARAM (scale(RADSCALE) | intensity(DRAWINTENSITY) | lpoff | next(point))
+
+// The target's center stays TRKMARGIN inside the screen and below the menu region, the reach
+// of an 8-unit target, kept by clipping the arms (clipTarget), whose shortest is then 8 units,
+// two steps at scale 2.
+#define TRKMARGIN (TGTCLEAR + 0d8)
+#define TRKXMIN TRKMARGIN
+#define TRKXMAX (0d1023 - TRKMARGIN)
+#define TRKYMIN TRKMARGIN
+#define TRKYMAX (BARYMIN - TRKMARGIN)
+#define INITIALX 0d512
+#define INITIALY 0d512
+
+#define MAXPTS 0d256
+#define MAXLINES 0d264
+
+// No point, in a point index.
+#define NOPOINT 0777777
+
+// The pseudo pen location locks onto the nearest point within SNAP_BOX on both axes. In delete
+// and Horv modes it may lock onto a line within SNAP_BOX instead. The nearer wins, a point by up
+// to LOCKBIAS units, so a line whose major axis spans more than 2 * LOCKBIAS can be locked away
+// from its ends, and a point is easy to take where lines meet.
+#define SNAP_BOX 0d20
+#define LOCKBIAS 0d8
+
+// A stroke shorter than MINLINE on its major axis commits nothing. The target settles a few
+// units past a pen that stops, and Draw does not snap back onto the vertex a stroke starts
+// from, so a tap and a lift there would otherwise commit a sliver.
+#define MINLINE 0d4
+
+// The pseudo pen location's dot, full brightness while drawing or dragging, dimmed while Move
+// waits for a point (PENINTENSITY and HUNTINTENSITY, in intensities.ah).
+#define DOTPARAM (scale(DRAWSCALE) | intensity(PENINTENSITY) | lpoff | next(point))
+#define HUNTPARAM (scale(DRAWSCALE) | intensity(HUNTINTENSITY) | lpoff | next(point))
+
+// Marks, which show where an arc's points are while the target hides the dot. Each arc's
+// center, start and end carry a cross MARKARM units
+// each way, at MARKINTENSITY, one step dimmer than the drawing; a full circle's start and end,
+// one point, carry one. They are shown only in the modes where Move, Delete, Line or Circle can
+// take a point, and hidden with the drawing while a list is open. While the pseudo pen location
+// locks onto a point in those modes, a cross LOCKARM each way, at the dot's full brightness, is
+// drawn about the dot, past the target's arms (24, past the target's 20), each arm clipped
+// LOCKCLEAR inside the screen and below the menu region (clipLock).
+#define MARKARM 4
+#define LOCKARM 0d24
+#define LOCKCLEAR 0d2
+// The most polls clipLock waits for a frame end before rewriting the cross, about 2 s.
+#define LOCKPOLLS 0d60000
+
+// Move. Up to MAXDRAG of a dragged point's lines are rewritten in place as it moves; a point
+// with more has the whole list rebuilt instead, which is slow.
+#define MAXDRAG 0d32
+
+// Scale. The slider, drawn in the band's words, in screen units, is a zigzag of one
+// vector a doubling, SCDOUBLE units long and SCZIG steps high at SLIDESCALE (x2, so a doubling
+// of up to 254 units is one vector word), its corners the ticks, at most SCSIDE doublings each
+// side and only whole ones inside the target's reach. It stands off the pick, so as not to lie
+// on a level line, its upper line SCGAP below the dot, or, where its lower line would fall
+// under TRKYMIN, its lower line SCGAP above. The knob, the dot, rides at the pick's height.
+// The factor, in 1024ths (SCFRAC), is 2^k (1 + r/SCDOUBLE) at the pen's offset k doublings and
+// r units along it. The digits, the status word's block, stand SCTEXTDX right of the knob and
+// SCTEXTDY above the dot, at most at SCTEXTXMAX, so that its nine characters at the labels'
+// size end on the screen.
+#define SCDOUBLE 0d128
+#define SCSIDE 5
+#define SCZIG 0d16
+#define SCGAP 0d32
+#define SCFRAC 0d1024
+#define SLIDESCALE 1
+#define SLIDEPARAM (scale(SLIDESCALE) | intensity(SLIDEINTENSITY) | lpoff | next(point))
+#define SCTEXTDX 0d10
+#define SCTEXTDY 0d12
+#define SCTEXTXMAX 0d896
+// What Scale has picked up (the scale module's scKind), a line, a circle or an arc, scaled
+// smoothly; or a text, digits or an instance, stepped through the sizes. The digits' x is the
+// lower-case letter's code, shifted to with KCLOW.
+#define SCKLINE 1
+#define SCKARC 2
+#define SCKSTEP 3
+#define KCX 030
+
+// A change to the drawing marks the slots it changes stale, and the next rebuild writes only
+// those (markSlot, and the arc module's markStale). One more than NSTALE marks asks for the
+// whole list instead.
+#define NSTALE 0d32
+
+// A line, and the band, are drawn as the fewest steps of at most STEPMAX units on either axis,
+// each within a unit of the true line (emitVecs), so none exceeds STEPMAX and all stay inside
+// a vector's 127 units. NBAND steps reach across the screen, since 11 * 100 > 1023.
+#define STEPMAX 0d100
+#define NBAND 0d11
+
+// A line slot is the parameter word, the y word, the x word entering subroutine mode, the gate,
+// then NBAND vector words of which only the last carries end. The gate jumps into the last K of
+// them, or past the slot while the slot is rewritten.
+#define SLOTGATE 3
+#define SLOTVEC 4
+#define SLOTWORDS (SLOTVEC + NBAND)
+
+// The drawing list, in bank 1, is NGROUPS groups of 4 line slots, each group followed by a
+// 2-word call of the target, and 2 words at the end for the end-of-list jump when every slot is
+// in use. A call every 4 slots presents the target 100 times a second or more even when every
+// line spans the screen; a call every 16 gives about 40. Only as many of them call as PRESRATE
+// needs; the rest step over. slotAddr and rebuildDisplay depend on 4 slots per group.
+#define GROUPWORDS (4 * SLOTWORDS + 2)
+#define NGROUPS 0d66
+#define CALLOFFSET (4 * SLOTWORDS)
+#define DRAWLISTSIZE (NGROUPS * GROUPWORDS + 2)
+
+// Tracking is lost, Sutherland's termination signal, once LOSTMS have passed since the last
+// target hit and the target has been presented at least LOSTMIN times since. The pen can be
+// seen only when the target is drawn, so a display that stops showing it must not read as a
+// lift. A label fires again only after REARM frame ends with no menu hit, a count for the same
+// reason. A frame lasts from about 1.4 ms with no lines to about 15 ms with 64 short ones, 44 ms
+// with 192 short ones and about 0.3 s with 192 lines across the screen. What is for the eye is
+// timed on the 1 ms clock too; a pressed label stays lit FLASHMS, and the display is restarted
+// if no frame ends for WATCHDOGMS.
+#define LOSTMS 0d100
+#define LOSTMIN 0d4
+#define REARM 0d3
+#define FLASHMS 0d400
+#define WATCHDOGMS 0d500
+
+// Every presentation under a held pen is a hit, and a hit halts the display about 0.67 ms, so
+// presenting the target as often as the calls allow (about 930 times a second at short lines)
+// would cost a held pen a third of the frames. Sutherland needed about 100 a second; 125 loses
+// a hand slowing from 1500 units a second at 192 short lines, and 200 keeps it. So the frame
+// rate is measured over at least RATEMS and 2 frames, and the calls a frame are set to about
+// PRESRATE a second, the frame period over PRESMS, rounded. They are changed only when the
+// presentations a second leave PRESRATE's band, a presentation every PRESQMIN/4 to PRESQMAX/4
+// ms (160 to 250 a second), so a held pen's slowing does not move them. A drawing too slow to
+// reach the band with every call keeps every call. A window longer than RATEMAXMS is started
+// again.
+#define PRESRATE 0d200
+#define PRESMS 0d5
+#define PRESQMIN 0d16
+#define PRESQMAX 0d25
+#define RATEMS 0d250
+#define RATEMAXMS 0d2000
+
+// rateFrames less this is a discarded window; frames added to it cannot bring it to 0.
+#define RATEDISCARD 0d100000
+
+// The clock counts 0 to 59999 ms and wraps.
+#define CLOCKWRAP 0d60000
+
+// The most times the break routine tests for a closing halt's stop flag that is late.
+#define LATEPOLLS 0d200
+
+// Modes. MCONS is the constraint mode, for Equal, Paral, Perp, Length and Mid, and the truss's
+// Beam and Load (consType); MROLL is Roller's, which acts as Fix's does; MDISM is Dismember's,
+// which acts as Size's does; MDES is Designate's, which acts as Tie's does; MTEXT is Draw's
+// Text; MNUMBER is Dim's Number, which acts as Text mode does, on digits; MPAN is View's Pan,
+// entered as Fix mode is, whose lift drags the drawing, and MCENTER View's Center, likewise,
+// whose lift centers the view; MSCALE is Edit's Scale, a mode as Move is, whose lifts pick up
+// and put down the part it resizes.
+#define MIDLE 0
+#define MLOCATE 1
+#define MDRAW 2
+#define MMOVE 3
+#define MDELETE 4
+#define MHORV 5
+#define MCIRCLE 6
+#define MPLACE 7
+#define MSIZE 010
+#define MFIX 011
+#define MCONS 012
+#define MTIE 013
+#define MCHANGE 014
+#define MROLL 015
+#define MDISM 016
+#define MDES 017
+#define MTEXT 020
+#define MNUMBER 021
+#define MPAN 022
+#define MCENTER 023
+#define MSCALE 024
+
+// afTab's columns start this many words on, one type word for each mode from MFIX to MCENTER.
+#define AFCOLS (MCENTER - MFIX + 1)
+
+// Circle arcs. An arc is drawn as NARC chords to a full circle, NQ to a quarter. Its slot, like
+// a line slot, is the parameter word, the y and x words of the arc's end, the gate, then NARC vector
+// words, followed by a 2-word target call; the slot and the call are an arc group. Each arc's
+// call is one of the sites the target calls are spread over, after the full line groups'
+// (writeCalls). MAXARCS groups are in bank 0, beside the master store, with the band's slot and
+// 2 words each for the arc list's end and the band's. A radius from ARCRMIN to ARCRMAX keeps
+// every chord from 1.5 to 127 units, so no step is (0,0), which stops the 340, and none
+// exceeds a vector.
+#define NARC 0d64
+#define NQ (NARC / 4)
+#define ARCVEC 4
+#define ARCWORDS (ARCVEC + NARC)
+#define ARCGROUP (ARCWORDS + 2)
+#define MAXARCS 0d19
+// The arc table's per-arc tables, arcTC to arcTR, one after another.
+#define NATAB 6
+#define ARCRMIN 0d15
+#define ARCRMAX 0d1294
+// ARCRMAX squared and divided by 32 (rounded down), for a dismember's check of an arc's radius
+// at its scale; the square itself is past a word.
+#define ARCRSQ 0d52326
+// Through the view, an arc between two whole steps' vertices lies within ARCSAG of the chord
+// between them; the sagitta at the largest screen radius, 8 * ARCRMAX, is 12.4.
+#define ARCSAG 0d13
+
+// The arc module's entries, called through arcCall.
+#define AEINIT 0
+#define AEBEGIN 1
+#define AEBAND 2
+#define AECOMMIT 3
+#define AERADIUS 4
+#define AEDROP 5
+#define AEPICK 6
+#define AEDRAG 7
+#define AEDELETE 010
+#define AELOCK 011
+#define AECONS 012
+#define AEDEFINE 013
+#define AECOPY 014
+#define AEUNDO 015
+#define AECARRY 016
+#define AEORPHAN 017
+#define AECMERGE 020
+#define AEVIEW 021
+
+// Masters and instances. Master k is the drawing Define took, as a display subroutine of at
+// most MWORDS vector words relative to its origin, the center of its box; the last carries end,
+// so a save returns. NMASTER of them, each in a fixed part of a store in bank 0, since a save
+// reaches banks 0 and 1 only. Define refuses a master whose drawing would take more than MTIME,
+// in half microseconds, one presentation period, 5 ms, a word costing 5 us and 1.5 us a step,
+// where a vector of major axis M and minor m takes M + min(m, M - m) steps (measured). Its
+// moves are split into vectors of at most MSTEP units on either axis.
+#define NMASTER 4
+#define MWORDS 0d128
+#define MTIME 0d10000
+#define MSTEP 0d127
+
+// Why Define refused: nothing drawn, too many words, too slow, more than NCPCON constraints among
+// its points, an instance cycling (a cycling instance may call any master at its next step);
+// and for the instances it takes apart, the tables short of room for their parts, a part off
+// the canvas, an arc too large (a dismember's DMOFF and DMARC, each 4 on); and the masters'
+// texts' table short of room for the canvas's. Code 2 is not used, since every instance goes
+// into the master.
+#define DEFEMPTY 1
+#define DEFWORDS 3
+#define DEFTIME 4
+#define DEFCONS 5
+#define DEFCYCLE 6
+#define DEFNROOM 7
+#define DEFNOFF 010
+#define DEFNARC 011
+#define DEFTEXT 012
+
+// Copy's store. Define also keeps master k's parts in bank 5, for Copy to take apart, its
+// points relative to its origin, its lines and its arcs, as their tables hold them.
+// Room for every point and arc the canvas holds, CPPTS and CPARCS (powers of two, at least
+// MAXPTS and MAXARCS), and for CPLINES lines, as many as MWORDS words can draw, a line taking
+// one word at least; a drawing with more is refused as too many words (DEFWORDS). The
+// directory's copy box, cMinX to cMaxY, lies CBOXOFF words after the figure's, mMinX to mMaxY.
+#define CPPTS 0d256
+#define CPPSHIFT 8s
+#define CPLINES 0d128
+#define CPLSHIFT 7s
+#define CPARCS 0d32
+#define CPASHIFT 5s
+#define CBOXOFF (4 * NMASTER)
+// An arc's words in the store, arcTC to arcTK, the first three point indices.
+#define CPATAB 5
+
+// Why Copy refused, at its selection: the tables have no room for the master's parts
+// (COPYROOM), or the instance list none for the figure carried while it is placed (COPYINST).
+// Why a dismember refused (sizeResult): COPYROOM, 2 with no instance locked as
+// Size, a part off the canvas (DMOFF), or an arc's radius at the scale past ARCRMAX (DMARC).
+#define COPYROOM 1
+#define COPYINST 2
+#define DMOFF 4
+#define DMARC 5
+
+// An instance is a slot in the instance list, which the drawing enters after the arcs: the
+// parameter word (its scale, INSTINTENSITY, the drawing's, so that a figure built of instances
+// looks whole; lpoff), its origin's y and x words, the last entering subroutine mode, the gate,
+// a save of its master, and a 2-word target call. MAXINST slots, used from the first; the first
+// unused one's gate jumps to the list's end, instEnd, which follows the last slot. An instance
+// is drawn at LITINTENSITY instead while delete mode, Move or Size locks onto it.
+#define MAXINST 0d32
+#define INSTWORDS 6
+#define INSTGATE 3
+#define INSTCALL 5
+
+// The parameter word of the line or arc a lift will take, in delete mode, Move's hunt, Horv and
+// the constraint mode's line picks (splock.ac's lkShine), at LINELITINTENSITY, whose reasons
+// are with it in intensities.ah.
+#define LITPARAM (scale(DRAWSCALE) | intensity(LINELITINTENSITY) | lpoff | next(point))
+
+// Change > Cycle. Every cycling instance steps to the next master in turn on the clock. Each
+// master is shown for its dwell (Change > Dwell), CYCLEMS at the start, DWELLMIN at least, and
+// at most DWELLDIG digits typed. Change > Seq sets the order, at most NSEQ masters, M1 to M4 in
+// turn with none.
+#define CYCLEMS 0d250
+#define DWELLMIN 0d50
+#define DWELLDIG 4
+#define NSEQ KBMAX
+
+// Attachers and ties. Tie mode designates up to NATT of a drawing's points its attachers, in
+// order (CTATT entries); Define keeps those a line or an arc is on as the master's attachers, by
+// their master point indices (cpAtt, cpNAtt), and draws a cross MARKARM each way at each in the
+// master's words. Inst makes a tie point at
+// each attacher's place with the instance, master point j lying at iX + (cpX[k,j] << iScale),
+// and keeps it in the instance's tie list, iTie + a * MAXINST + i for attacher a of instance i,
+// NOPOINT where none. That is the solver's T, which holds the tie point there and the instance's
+// origin with it, the origin being the solver's variable MAXPTS + i. A tie point is kept
+// while it ties (ptUsed). NVAR is the solver's variables, the points and then the origins; the
+// point tables are laid out so that pointX + MAXPTS + i is iX + i, and pointY's likewise, so
+// every routine that reaches a point's coordinates reaches an origin's the same way.
+#define NATT 6
+#define NVAR (MAXPTS + MAXINST)
+
+// A master's constraints. Define keeps every
+// entry but a fix or an attacher whose points are all the master's, at most NCPCON of them
+// (more refused, DEFCONS), in master point indices, CW words each, in cpCon (bank 9), cpNCon
+// counting them. Copy's drop adds them past copyBase. Its attachers' points are listed in
+// cpMrg (bank 3) while they merge, so that the renames keep them (conRen); the carried one is
+// the last designated, its master point copyAtt while the copy is placed.
+#define NCPCON 0d16
+
+// The mark list follows the instance list's end, one block of MARKWORDS for each arc slot, the
+// same arcs in the same order, then markEnd. A block holds a parameter word entering subroutine
+// mode, the first gate, the center's cross (its y word, its x word MARKARM to the left entering
+// vector mode, and three vectors, the last ending vector mode), a parameter word, the start's
+// cross, a parameter word entering subroutine mode, the second gate, and the end's cross. An
+// unused block's first gate jumps to markEnd, and the arcs are dense, so the first unused block
+// ends the list; a used one's enters the center's cross. The second gate enters the end's cross,
+// or for a full circle goes on to the next block.
+#define MARKWORDS 0d20
+#define MKGATE1 1
+#define MKCEN 2
+#define MKSTART 0d8
+#define MKGATE2 0d14
+#define MKEND 0d15
+
+// Tape, Misc's first four rows. A picture, the drawing and the masters, is saved as P1 to P16
+// on the Microtape drive the Drive row selects, D1 to D8, drive 1 at the start; the user mounts
+// the tapes, with mtp or microtapes.txt, and the program issues no mmt. While a transfer runs
+// the break system is off and the display runs waitList, WAIT at the screen's center on a list
+// that loops on itself; after it a word at (STATX, STATY) says how it went, for MSGMS on the
+// clock, then is hidden by its gate. The tape module's answer, TSSAVED to TSWIPED, picks its
+// text (sptape.ac, tpMsgs), which it writes into the word (msgWord) itself. TSWIPED is a load
+// that failed after it began replacing the tables, which it leaves empty, and reads BAD BLOCK
+// too. TSOPEN is a read that succeeded, for Save's name or for Dir, after which no word is
+// shown and the keyboard or the directory opens. The Drive row's label holds the drive's digit
+// in the low 6 bits of its text's word DRVWORD, code 061 for drive 1.
+#define MSGMS 0d3000
+// The word stands under the bar at its right, ending by 886, left of View's column; no list or
+// box reaches x 718 to 886. The truss's UNSTABLE stands there too.
+#define STATX 0d760
+#define STATY 0d976
+#define TSSAVED 0
+#define TSLOADED 1
+#define TSNOTAPE 2
+#define TSLOCKED 3
+#define TSEMPTY 4
+#define TSBAD 5
+#define TSNOFLAG 6
+#define TSWIPED 7
+#define TSOPEN 0d8
+#define DRVWORD 2
+#define DRVCODE1 061
+// A picture's name, up to NAMELEN characters, kept as a fixed run of NAMEW
+// words of 340 text as the keyboard's field is kept: an upper shift first, a shift before each
+// change of case, upper shifts after the text and the end code in the run's last word, so that
+// a list draws it as it is. Twelve characters of alternating case are 24 codes and the end.
+// After SAVED or LOADED it is shown under the status word, from (NAMEX, NAMEY), ending by 886.
+#define NAMELEN 0d12
+#define NAMEW 0d9
+#define NAMEWC (NAMEW * 3)
+#define NAMEX 0d718
+#define NAMEY 0d952
+// The status word's parameter word, a label's, with the light pen off.
+#define STATPARAM (charsets(2) | scale(LABELSCALE) | intensity(NORMALINTENSITY) | lpoff | next(point))
+// WAIT during a transfer (waitList), its parameter word, at twice the labels' size, and its
+// start, about centered.
+#define WAITPARAM (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpoff | next(point))
+#define WAITX 0d456
+#define WAITY 0d500
+// INK while the target is hidden, the thesis's inking-up (inkBlock): WAIT's size, but with the
+// light pen on, about centered on the middle as WAIT is; a hit on it is Locate. INKWORDS is the
+// block's words after its first. penISR's inkHit takes a hit whose display address is from
+// inkBlock to one past the block's last word, since dra reads one past the word fetched.
+#define INKPARAM (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpon | next(point))
+#define INKX 0d474
+#define INKY 0d500
+#define INKWORDS 5
+
+// The pen keyboard (spkbd.ac, bank 12), a service a caller opens with a block of
+// six words (kind, limit, prompt, buffer, resume, run), which replaces the frame with its
+// list while it is open. A text is at most KBMAX characters; the caller's buffer is KBBUFW words
+// of 340 text, room for KBMAX characters with the upper shift that starts it, a shift before
+// each character and the end, 50 codes, or a fixed run of the block's sixth word's codes (a
+// name's, NAMEWC). The list's prompt is a run of KBPW words, its field of KBFW, room for the
+// text as in the buffer, the cursor with its shift and the end. Keys at scale 2, KBADV apart
+// along a text and KBH high, on a pitch of KBDX across from KBX0 and KBDY down from KBY0, the
+// action keys' row at KBYB; a hit answers a key from KBR left of it and below it, and KBRX right
+// of it and KBR above it (the pen's reach and some). A key acts at the first hit of a press, and
+// flashes KBFLASHMS;
+// a press ends, the pen taken for lifted, after KBGAPMS with no hit (no dwell, so nothing is
+// typed by a drag; 250 ms, so that a drag crossing the blank between keys in under a quarter
+// second is not a lift; the lists' Select box takes a lift the same way). A close
+// waits at most KBWAIT polls (about 0.6 s, twice a frame at 192 full-width lines) for the
+// display to leave the keyboard's list. A block of kind KBDIR opens the directory's screen
+// (the tape module's dirList) instead: Dir's, whose one key, OK, closes it, or Save's and Load's
+// picker, whose lines pick a picture (KAPICK) and whose Cancel closes it.
+#define KBMAX 0d24
+#define KBBUFW 0d17
+#define KBBUFC (KBBUFW * 3)
+#define KBPW 4
+#define KBPWC (KBPW * 3)
+#define KBFW 0d18
+#define KBFWC (KBFW * 3)
+#define KBTEXT 0
+#define KBNUM 1
+#define KBDIR 2
+#define KBDEC (KBNUM | KNUM)
+#define KBKEYS 0d50
+#define NOKEY KBKEYS
+#define KSHIFTKEY 0d44
+#define KBADV 0d28
+#define KBH 0d26
+#define KBR 0d24
+#define KBRX 0d12
+#define KBX0 0d112
+#define KBDX 0d80
+#define KBY0 0d720
+#define KBDY 0d80
+#define KBYB 0d280
+#define KBPY 0d880
+#define KBFY 0d820
+#define KBXSHIFT 0d48
+#define KBXSPACE 0d228
+#define KBXBACK 0d408
+#define KBXCLEAR 0d560
+#define KBXOK 0d740
+#define KBXCANCEL 0d836
+#define KBFLASHMS 0d150
+#define KBGAPMS 0d250
+#define KBWAIT 0d12000
+// The directory's screen (sptape.ac, dirList) has sixteen lines, P1 to P8 from (DIRX0, DIRY0) down
+// by DIRDY, P9 to P16 beside them DIRCOLDX right; each line's parameter word, y, x, its label in
+// two words ("P1  " to "P16 ", KCP the P) and its name's run, DLWORDS words, the name DLNAME from
+// the line's start; DIRCHARS characters a line. A hit answers a line from DIRRX left and right of
+// it and DIRRY below and above it, so the lines' records meet no other's. Its keys are the one
+// at the action keys' row, OK or Cancel, then the sixteen lines, DIRKEYS in all.
+#define DIRX0 0d48
+#define DIRCOLDX 0d480
+#define DIRY0 0d800
+#define DIRDY 0d64
+#define DLWORDS (5 + NAMEW)
+#define DLNAME 5
+#define DIRCHARS (4 + NAMELEN)
+#define DIRRX 0d12
+#define DIRRY 0d18
+#define DIRKEYS 0d17
+#define KCP 020
+// The keyboard's parameter words, a key, a key lit, and the prompt and the field, with the light
+// pen off.
+#define KBKEY (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpon | next(point))
+#define KBLIT (charsets(2) | scale(2) | intensity(SELECTINTENSITY) | lpon | next(point))
+#define KBTXT (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpoff | next(point))
+// 340 codes: the shifts, the end, the digit 0 (set 1; 1 to 9 follow it), a point, a space and
+// the cursor (set 2's underline); a run's pad (three upper shifts) and its last word (two and
+// the end); an empty text.
+#define KCUP 035
+#define KCLOW 036
+#define KCEND 037
+#define KCZERO 060
+#define KCDOT 056
+#define KCSPACE 040
+#define KCURSOR 060
+#define KBPAD 0353535
+#define KBBLANK 0353537
+#define KBEMPTY 0373737
+// A character kept in the text is its code, KLOWER for a lower-case letter. A key's code word is
+// its code, KLET for a letter, KNUM for a key of the number keyboard, KHIDE for Shift and Space,
+// which the number keyboard blanks; or KSPEC and the action, KASHIFT to KAPICK.
+#define KLOWER 0100
+#define KLET 0200
+#define KNUM 0400
+#define KSPEC 01000
+#define KHIDE 02000
+#define KASHIFT 0
+#define KABACK 1
+#define KACLEAR 2
+
+// Text (sptext.ac, bank 10). NTEXT texts on the canvas and NMTEXT in the masters, each at most
+// TEXTLEN characters, kept as the pen keyboard writes them, TXRUN words of 340 text. Every text
+// shown, a canvas text or an instance's copy of its master's, counts its characters and TXOWN
+// for its words against TEXTBUDGET; at about 27 us a character (measured), the texts' list takes
+// at most one presentation period. A text placed is at TXSCALE, x2, the labels'
+// size; at x1 a character steps TXADV units and stands TXH high, doubling with each scale. The pen
+// locks onto a text within TXREACH of its box, in screen units (the view module's vwTxr in page
+// units). TXINST in penInst names the text the pen locks onto
+// (the module's txPen); TXCARRY is the module's answer while Move carries a text. The texts' list
+// is two buffers of TXLISTW words, room for the most words TEXTBUDGET allows, a text of one
+// lower-case character costing 5 words (3 and a run of two: upper shift, lower shift, the
+// letter, the end) for 3 of the budget, and the halt. A text is drawn with the light pen
+// off, at NORMALINTENSITY, or LITINTENSITY while locked (TXPAR, TXPARL, at x1). The status words
+// shown at a refusal are TXSFULL, NO ROOM, and TXSOFF, OFF EDGE. txCall's entries are TXINIT to
+// TXFRESH.
+#define NTEXT 0d32
+#define NMTEXT 0d32
+#define TEXTLEN KBMAX
+#define TXRUN KBBUFW
+#define TEXTBUDGET 0d180
+#define TXOWN 2
+#define TXSCALE 1
+#define TXADV 7
+#define TXH 7
+#define TXREACH 0d8
+#define TXINST 0d64
+#define TXCARRY 0d65
+#define TXLISTW (TEXTBUDGET / 3 * 5 + 1)
+#define TXPAR (charsets(2) | scale(0) | intensity(NORMALINTENSITY) | lpoff | next(point))
+#define TXPARL (charsets(2) | scale(0) | intensity(LITINTENSITY) | lpoff | next(point))
+#define TXSFULL 0
+#define TXSOFF 1
+#define TXINIT 0
+#define TXCLEAR 1
+#define TXOPEN 2
+#define TXDONE 3
+#define TXPICK 4
+#define TXDROP 5
+#define TXUNDO 6
+#define TXSYNC 7
+#define TXFRESH 010
+#define KAOK 3
+#define KACANCEL 4
+#define KAPICK 5
+
+// Numbers and scalars. A scalar is a value, in thousandths of an inch,
+// NSCAL of them, free until a value is typed for it, then fixed. Its digits are a canvas text
+// naming it, at most SCALDIG digits and a sign, placed by their anchor, a point at their center
+// that the pen never locks onto. KCMINUS is the minus sign's 340 code, in the upper case, as the
+// digits' are.
+#define NSCAL 0d32
+#define SCALDIG 5
+#define KCMINUS 055
+// A scalar's units, MILSPERUNIT thousandths of an inch to a screen unit, so a length in the
+// solver's 32nds is its thousandths times 32 / MILSPERUNIT. A D is met only up to DMAXMILS, the
+// screen's diagonal. An O's gap is half the width of SCALDIG digits and a sign at the digits'
+// scale (GAPHALF at x1), plus GAPMARGIN.
+#define MILSPERUNIT 0d10
+#define DMAXMILS 0d14480
+#define GAPHALF ((SCALDIG + 1) * TXADV / 2)
+#define GAPMARGIN 0d8
+
+// The tape module's entries, called through tapeCall, a save, a load, and the directory's read
+// for Save's, Load's and Dir's screen.
+#define TESAVE 0
+#define TELOAD 1
+#define TEDIR 2
+
+// The view module's entries, called through vwEntry, View's x1 to x8 rows, Pan
+// mode's lift, Center mode's lift, and the note of Pan's stroke's start.
+#define VWSCALE 0
+#define VWPAN 1
+#define VWCENTER 2
+#define VWMARK 3
+
+// The most words one band pass posts for penISR, the restored word, the head's y and x, the part
+// step and the gate.
+#define APOSTS 5
+
+// The arc module's words from arcCX to arcQY in sparcdata.ac, which arcLock saves and puts back
+// so that a band in progress is untouched (arcKeep).
+#define AKEEPN 0d29
+
+// The tape module's constants (sptape.ac), its picture format, words, blocks and waits.
+// The tape's magic and its one format, 14, a picture as one stream in its slot, and the tape's
+// directory. A picture of any other format reads as EMPTY.
+#define TPMAGIC 0525253
+#define TPFORMAT 016
+// An instance's scale word on the tape. Its low two bits are the 340's scale k, 0 to 3, as
+// iScale holds it, and the sixteen above them a
+// multiplier code c, the instance's size 2^k times c / 2^15, c = 0 meaning exactly 2^k. A save
+// writes c = 0; a load keeps the bits TPKMASK keeps, so a later tape's c loads as 2^k.
+#define TPKMASK 3
+// The picture's runs' words (TPPICTURE), and the header's.
+#define TPWORDS 0d5586
+#define TPHDRWORDS 4
+// The tie lists' packed words.
+#define TPTIES (NATT * MAXINST / 2)
+// The cycle's settings' words, the dwells and the sequence's length, a run of the instance
+// module's, then the sequence, eight masters to a word, two bits each.
+#define TPSEQW (NSEQ / 010)
+#define TPCYC (NMASTER + 1 + TPSEQW)
+// The masters' constraints' words (cpCon, in bank 9), and each master's count.
+#define TPXCON (NMASTER * NCPCON * CW)
+#define TPXWORDS (TPXCON + NMASTER)
+// The texts' words (TPTEXTS).
+#define TPTWORDS (2 + NMASTER + NTEXT * (5 + TXRUN) + NMTEXT * (6 + TXRUN))
+// The digits' words, bank 3's run from txAn to scFix, then the text module's from mtAn to mtFix
+// (TPDIGITS), TPSWORDS in all.
+#define TPSCAN (2 * NTEXT + 1 + 2 * NSCAL)
+#define TPSMAS (3 * NMTEXT)
+#define TPSWORDS (TPSCAN + TPSMAS)
+// A picture's stream is the header, the constraint table, the ties, the name, the cycle's
+// settings, the masters' constraints and counts, the texts, the digits and the picture's runs,
+// then TPPAD zeros and the header again as its last words; TPPBLOCKS blocks of the picture's
+// slot, TPSLOT blocks, the rest spare for a later part.
+#define TPSTREAM (2 * TPHDRWORDS + CONWORDS + TPTIES + NAMEW + TPCYC + TPXWORDS + TPTWORDS     + TPSWORDS + TPWORDS)
+#define TPPBLOCKS 0d32
+#define TPSLOT 0d35
+#define TPPAD (TPPBLOCKS * 0d256 - TPSTREAM)
+// The pictures, P1 to P16, are TPHALF slots from block 1, the tape's directory block, then the
+// other TPHALF.
+#define NPICT 0d16
+#define TPHALF 0d8
+#define TPDIRBLK (1 + TPHALF * TPSLOT)
+// The tape's directory, each picture's entry, its format word (TPFORMAT, or anything else for
+// no picture) and its name's run; the entries' words, also the third word of the directory's
+// header, which tells it from a picture's.
+#define TPDENT (1 + NAMEW)
+#define TPDIRW (NPICT * TPDENT)
+// The directory's runs and their words, in the stream's order: the master directory, mLen to
+// cpNA in bank 2; the instance table, instCount and iMaster in bank 10; the arc table, arcCount
+// to arcTR in bank 2; TPDIRWORDS the three together. A failed second pass zeroes all three.
+#define TPMDIRWORDS (0d12 * NMASTER)
+#define TPINSTWORDS (1 + MAXINST)
+#define TPARCWORDS (1 + 6 * MAXARCS)
+#define TPDIRWORDS (TPMDIRWORDS + TPINSTWORDS + TPARCWORDS)
+// The selection delay is 34 ms; the transfer waits this long on the clock after mse.
+#define TPSELMS 0d45
+// Idle polls of a seek before it gives up with no flag, about 3 s.
+#define TPTMO 0d70000

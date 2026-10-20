@@ -1,0 +1,931 @@
+Sketchpad, a light pen drawing program for the Type 340
+// A light pen drawing program for the Type 340 display, after Ivan Sutherland's Sketchpad. A
+// menu bar of light pen labels runs across the top, a tracking target follows the pen through
+// the display's pen prediction, and the picture (points, lines, circle arcs, texts, numbers and
+// instances of masters, held by constraints, with a truss analysis) is kept as a Type 340
+// display list.
+// Starts at boot, at 100, which opens the extend window and enters the main bank, bank 4.
+// Needs banks 0 to 15, the BBN timesharing clock (IOT 32) for its 1 ms counter, and the Type 550
+// Microtape to keep pictures. Includes TYPE340/type340defs.ah, LIGHTPEN/lightpen.ah,
+// CLOCK/clockdefs.ah, MICROTAPE/type550defs.ah and TYPE340/trackingTarget.ah; the target's words
+// follow trackingTarget.ac's shape. The constants are in sketchpad.ah and the intensities in
+// intensities.ah, beside this file.
+// Banks. 0 holds the break routine, the frame and every display word but the line slots, which
+// alone fill bank 1. 2 holds the arc module, deletion and merging, Define and the master
+// directory; 3 the point, line, instance and scalar tables, the dispatch tables and the texts'
+// list; 4 the main bank, with the start-up, the main loop, the menus and the modes; 5 Copy's
+// store and the constraints' arms' list; 6 the tape module, start-up's gates, the menu census
+// and the scale module; 7 the instance module and the menu rows' answers; 8 the constraint
+// module; 9 its table, the solver's point tables and the places kept for Undo; 10 the text
+// module and the instance table; 11 the truss's analysis, its floating point and the lock's
+// display; 12 the break-time helpers, the pen keyboard and the view; 13 the truss's data and
+// readouts, the constraints' marks, the line search and the arcs through the view; 14 and 15
+// the truss's matrix.
+// The code is in the sp*.ac files beside this one, each included where its bank stands, in
+// memory order. This file keeps bank 0's variables, the other banks' tables and the bank
+// directives.
+// The user guide is UsingSketchpad.md and the design SketchpadTechnicalDesign.md, beside this
+// file.
+//
+// 18-Oct-2026 Claude: first release.
+// 18-Oct-2026 Claude: production cleanup, comments only.
+
+#include <TYPE340/type340defs.ah>
+#include <LIGHTPEN/lightpen.ah>
+#include <CLOCK/clockdefs.ah>
+#include <MICROTAPE/type550defs.ah>
+
+// The brightness of each kind of thing drawn, the tracking target's among them; before
+// trackingTarget.ah, which defaults TARGETINTENSITY only if it is not defined.
+#include "intensities.ah"
+
+// Every other constant, and the BOXAT macro, the target's arm and scale among them; before
+// trackingTarget.ah, which defaults what is not defined.
+#include "sketchpad.ah"
+#include <TYPE340/trackingTarget.ah>
+
+// Bank 0's variables, those penISR and the routines beside it use.
+// Mailboxes written by penISR, copied and cleared for the main loop by snapshot, with the break
+// masked.
+// menuArmed is set when a menu hit follows REARM frame ends with none; frameAt is the clock's
+// reading at the latest frame end.
+var frameTicks, frameAt
+var menuHits, menuX, menuY, menuArmed
+var tgtHits, tgtX, tgtY
+
+// Kept by penISR from frame to frame, frame ends since the last menu hit, saturating at REARM,
+// target presentations since the last target hit, saturating at LOSTMIN, and the clock's
+// reading at the last target hit (the main loop also sets it when it restarts the count).
+var menuGap, trackMiss, lastHitAt
+
+// Nonzero while the target is displayed; penISR moves the target only then.
+var tracking
+
+// Nonzero while a list is open; penISR then posts hits below the bar as menu hits.
+var listOpen
+
+// frameGo is where penISR, the watchdog and init start the display, the frame or the pen
+// keyboard's list while it is open. kbOn is nonzero while the keyboard is open, when penISR
+// posts every hit as a menu hit (spkbd.ac).
+var frameGo, kbOn
+
+// Nonzero while the truss's readouts are shown, when penISR starts their list (roList, bank 13)
+// at the frame's closing halt. The analysis (sptruss.ac) sets and clears it.
+var roOn
+
+// The texts' list to start at the frame's closing halt, before the readouts, 0 for none. It is
+// one of the text module's two buffers in bank 3, which its txSync sets.
+var txGo
+
+// Nonzero while the constraints' arms are shown, when penISR starts their list (arList, bank 5)
+// at the frame's closing halt, before the texts'. The view module's arBegin and arOne set and
+// clear it.
+var arGo
+
+// Menu hits in the frame being drawn, kept by penISR.
+var frameMenuHits
+
+// Diagnostic counters kept by penISR. strayCount counts breaks with no display flag while the
+// display runs, lateCount closing halts whose stop flag showed late, and multiFrames frames with
+// two or more menu hits.
+var edgeCount, strayCount, lateCount, multiFrames
+
+// The main loop's copy of the mailboxes, taken by snapshot.
+var sTicks, sFrameAt, sMenuHits, sMenuX, sMenuY, sMenuArmed, sTgtHits, sTgtX, sTgtY
+
+// Target presentations per frame, which penISR counts down.
+var callsPerFrame
+
+// An end pair posted by rebuildDisplay for penISR to write, its address (0 when none is
+// waiting) and its two words; and bandPost, the arc band's words the arc module posted for
+// penISR to write (commitFlip), 0 when none are waiting.
+var flipAt, flipW0, flipW1, bandPost
+
+// The target's arms drawn now (tgtKey, clipTarget's key), and a move penISR posted for tgtFlip
+// because it changes them (tgtPend set, the new key, and the center's two words). tgtLX and
+// tgtLY are the last hit's center words, which penISR has placed or posted; placeTarget clears
+// tgtLX, since its move to the middle keeps the arms the last hit left.
+var tgtKey, tgtNewKey, tgtPend, tgtPY, tgtPX, tgtLX, tgtLY
+
+// The drawing list, alone in bank 1. Its line slots, target calls and end-of-list jump are all
+// written at run time. It is placed ahead of the code so that every reference to it is a
+// backward one, which keeps its address literals out of am1's forward-reference pool defect.
+// The frame enters it from call0; the line list's end jumps to the arc list in bank 0. The
+// 340's subroutine words reach both banks, and a save made here returns here. The CPU only
+// stores into it, by full address, from the main bank, whose extend window is open, and from
+// bank 2 inside a window. Every bank but 0 is free from its first word.
+bank 1
+0/
+drawList,
+    table DRAWLISTSIZE, 0
+
+// The point and line tables in bank 3, with Define's words and the drag's point marks. Ahead of
+// the code for the same reason as the drawing list. The main bank and bank 2 reach them through
+// a pointer made from their 16-bit address, bank 2 inside an extend window.
+bank 3
+0/
+// Point table, raster coordinates, each axis's table followed by the instances' origins on that
+// axis (NVAR words in all). instCount and each instance's master are in bank 10. The tie lists
+// follow the scales, so that iScale and iTie are NATT + 1 tables MAXINST apart (instRemove).
+pointX,
+    table MAXPTS, 0
+iX,
+    table MAXINST, 0
+pointY,
+    table MAXPTS, 0
+iY,
+    table MAXINST, 0
+
+// Line table, point indices.
+lineFrom,
+    table MAXLINES, 0
+lineTo,
+    table MAXLINES, 0
+
+// Define's words, before they go into the store.
+defBuf,
+    table MWORDS, 0
+
+// The points that move with a drag (arcPick, arcDrag, and the instance module's carry,
+// instPick), a mark for each, nonzero for a point that moves. Define's map borrows it
+// (instMap).
+ptMark,
+    table MAXPTS, 0
+
+// Each instance's cycle flag, 1 while it cycles (Change > Cycle). It stands before iScale and
+// the tie lists, MAXINST apart as they are, so that instRemove moves the three together.
+iCyc,
+    table MAXINST, 0
+iScale,
+    table MAXINST, 0
+iTie,
+    table NATT * MAXINST, 0
+// A copy's attachers' points while they merge at its drop, NOPOINT otherwise. Right after the
+// tie lists, so that conRen, which renames the tie lists, renames them too.
+cpMrg,
+    table NATT, NOPOINT
+// The designated points, in order, while a copy's attachers merge into them at its drop,
+// NOPOINT otherwise. Right after cpMrg, so that conRen renames them too and copyMerge empties
+// both together.
+desPt,
+    table NATT, NOPOINT
+// Each canvas text's anchor while it is digits, NOPOINT for a plain text and for every text
+// from the text module's txN on. Right after desPt, so that conRen renames them too.
+txAn,
+    table NTEXT, NOPOINT
+// Each canvas text's scalar while it is digits; then the scalars, scN of them, each its value in
+// thousandths of an inch and 1 while it is fixed (a value typed). The text module writes them
+// through their 16-bit addresses, and the constraint module's D and Y write scVal; the main
+// bank's findNearPoint reads scN. txAn to scFix is one run, which a save writes and a load reads
+// whole (sptape.ac, TPDIGITS).
+txSv,
+    table NTEXT, 0
+scN, 0
+scVal,
+    table NSCAL, 0
+scFix,
+    table NSCAL, 0
+// The constraint module's words for the scalars. Each scalar's D's and Y's, counted when the
+// sets are built; each scalar's value kept for Undo of an entry (cSnap); and each entry's
+// scalar, by its place in the table, NOPOINT for one that names none (cScBind).
+scDN,
+    table NSCAL, 0
+scYN,
+    table NSCAL, 0
+uScV,
+    table NSCAL, 0
+cScOf,
+    table NCON, NOPOINT
+
+// Three of the main bank's tables, each item's count, a drag's lines and the rebuild's stale
+// marks, all reached through a 16-bit address.
+// Item number -> times acted on.
+itemCount,
+    table NITEMS, 0
+
+// Move: the lines on the point being dragged, as line indices.
+dragLines,
+    table MAXDRAG, 0
+
+// Line indices whose slots the next rebuild writes; staleN of them are in use.
+staleList,
+    table NSTALE, 0
+
+// The main bank's dispatch tables, the rest of them in spdispatch.ac, included below. The main
+// bank reads each through a 16-bit address, its window open, and calls the routine a word names
+// by its low 12 bits, in the main bank.
+// Where row i's band starts. A hit at or above it, and below row i-1's, is on row i. A
+// sublist's rows take the bands from its owning row's on, to row MAXROWS + SUBROWS - 2.
+rowThr,
+    ROWY0 - ROWSLOP
+    ROWY0 - ROWPITCH - ROWSLOP
+    ROWY0 - 0d2 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d3 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d4 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d5 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d6 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d7 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d8 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d9 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d10 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d11 * ROWPITCH - ROWSLOP
+    ROWY0 - 0d12 * ROWPITCH - ROWSLOP
+
+// Bar column -> its action, called via jsp.
+barTable,
+    actOpen:4           // Draw
+    actOpen:4           // Edit
+    actOpen:4           // Picture
+    actOpen:4           // Misc
+    actLocate:4
+    actUndo:4
+    actStop:4
+    actOpen:4           // View
+
+// Item number -> its action, called via jsp once its list has closed.
+itemAct,
+    actLine:4           // Draw: Line
+    actCircle:4         // Draw: Circle
+    nothing:4           // Draw: Truss, which owns a sublist
+    actText:4           // Draw: Text
+    nothing:4           // Draw: Dim, which owns a sublist
+    actMove:4           // Edit: Move
+    actDelete:4         // Edit: Delete
+    nothing:4           // Edit: Constr, which owns a sublist
+    nothing:4           // Edit: Size, which owns a sublist
+    actScale:4          // Edit: Scale
+    nothing:4           // Edit: Change, which owns a sublist
+    actDism:4           // Edit: Dismem
+    nothing:4           // Picture: Define, which owns a sublist
+    nothing:4           // Picture: Inst, which owns a sublist
+    nothing:4           // Picture: Copy, which owns a sublist
+    actClear:4          // Picture: Clear
+    actTie:4            // Picture: Tie
+    actDes:4            // Picture: Desig
+    actSize:4           // Size: x1
+    actSize:4           // Size: x2
+    actSize:4           // Size: x4
+    actSize:4           // Size: x8
+    actInst:4           // Inst: M1
+    actInst:4           // Inst: M2
+    actInst:4           // Inst: M3
+    actInst:4           // Inst: M4
+    actCopy:4           // Copy: M1
+    actCopy:4           // Copy: M2
+    actCopy:4           // Copy: M3
+    actCopy:4           // Copy: M4
+    actDefine:4         // Define: M1
+    actDefine:4         // Define: M2
+    actDefine:4         // Define: M3
+    actDefine:4         // Define: M4
+    actSave:4           // Misc: Save
+    actLoad:4           // Misc: Load
+    nothing:4           // Misc: Drive, which owns a sublist
+    actDir:4            // Misc: Dir
+    actDelCons:4        // Misc: Del cons
+    actUnfix:4          // Misc: Unfix
+    actDrive:4          // Drive: D1
+    actDrive:4          // Drive: D2
+    actDrive:4          // Drive: D3
+    actDrive:4          // Drive: D4
+    actDrive:4          // Drive: D5
+    actDrive:4          // Drive: D6
+    actDrive:4          // Drive: D7
+    actDrive:4          // Drive: D8
+    actHorv:4           // Constr: Horv
+    actCons:4           // Constr: Equal
+    actCons:4           // Constr: Paral
+    actCons:4           // Constr: Perp
+    actCons:4           // Constr: Length
+    actCons:4           // Constr: Mid
+    actFix:4            // Constr: Fix
+    actShow:4           // Constr: Show
+    actCons:4           // Truss: Beam
+    actCons:4           // Truss: Load
+    actRoller:4         // Truss: Roller
+    actCons:4           // Truss: Axis
+    actForces:4         // Truss: Forces
+    actCons:4           // Truss: Stiff
+    actChange:4         // Change: M1
+    actChange:4         // Change: M2
+    actChange:4         // Change: M3
+    actChange:4         // Change: M4
+    actChange:4         // Change: Cycle
+    actCyKb:4           // Change: Dwell
+    actCyKb:4           // Change: Seq
+    actNumber:4         // Dim: Number
+    actCons:4           // Dim: Dist
+    actCons:4           // Dim: Change
+    actCons:4           // Dim: Gap
+    actView:4           // View: x1
+    actView:4           // View: x2
+    actView:4           // View: x4
+    actView:4           // View: x8
+    actPan:4            // View: Pan
+    actCenter:4         // View: Center
+
+// Constr's rows from ICONS1, Truss's after them, and Dim's Dist, Change and Gap past Change's
+// and Number -> the constraint mode's type.
+rowCons,
+    CTEQ                // Equal
+    CTPAR               // Paral
+    CTPERP              // Perp
+    CTLEN               // Length
+    CTMID               // Mid
+    0                   // Fix, which has its own action
+    0                   // Show, likewise
+    CTBEAM              // Truss: Beam
+    CTLOAD              // Truss: Load
+    0                   // Truss: Roller, which has its own action
+    CTROLL              // Truss: Axis, a roller's axis
+    0                   // Truss: Forces, which has its own action
+    CTSTIFF             // Truss: Stiff, a member's stiffness
+    table IDIM + 1 - (ICONS1 + 0d13), 0 // Change's rows and Dim's Number, each its own action
+    CTDIST              // Dim: Dist
+    CTCHG               // Dim: Change
+    CTGAP               // Dim: Gap
+
+// An unused mark block's words, which markUnused copies; markWrite then writes the positions
+// and the gates. Each cross is drawn from MARKARM left of its point, right through it, back to
+// below it, and up through it.
+markTpl,
+    scale(DRAWSCALE) intensity(MARKINTENSITY) lpoff next(subroutine)
+    jump markEnd:0 next(parameter)
+    y(0) next(point)
+    x(0) next(vector)
+    deltax(2 * MARKARM) deltay(0) right visible
+    deltax(MARKARM) deltay(MARKARM) left down
+    deltax(0) deltay(2 * MARKARM) up visible end
+    lpoff next(point)
+    y(0) next(point)
+    x(0) next(vector)
+    deltax(2 * MARKARM) deltay(0) right visible
+    deltax(MARKARM) deltay(MARKARM) left down
+    deltax(0) deltay(2 * MARKARM) up visible end
+    lpoff next(subroutine)
+    jump markEnd:0 next(parameter)
+    y(0) next(point)
+    x(0) next(vector)
+    deltax(2 * MARKARM) deltay(0) right visible
+    deltax(MARKARM) deltay(MARKARM) left down
+    deltax(0) deltay(2 * MARKARM) up visible end
+
+#include "spdispatch.ac"
+
+// The texts' list, two buffers, each holding per text shown its parameter, y and x words and
+// its run, then the halt. The text module (sptext.ac) writes them through their 16-bit
+// addresses, and penISR starts the one shown (txGo) after the frame's closing halt; no other
+// list is in this bank.
+txBufA,
+    table TXLISTW, 0
+txBufB,
+    table TXLISTW, 0
+
+// Each truss joint's unit axis while it is a roller, a_x then a_y, three-word numbers, which the
+// truss module (sptruss.ac) writes and reads through its 16-bit address.
+taAX,
+    table TANJ * 6, 0
+
+// For each truss member, nonzero when an end is a roller on an axis not level (taMI), and its
+// Beam parameter word, its stiffness (taMK), which the truss module reaches likewise.
+taMI,
+    table NCON, 0
+taMK,
+    table NCON, 0
+
+// Ten of the truss module's three-word numbers (spfloat.ac), which it reaches likewise. The
+// pivot being formed and the quotient l of the factorization (taD, taL), 1/L's two inputs (drX,
+// drY) and a member's six products (asP1 to asP6, through asPrT and asTab).
+taD,
+    table 3, 0
+taL,
+    table 3, 0
+drX,
+    table 3, 0
+drY,
+    table 3, 0
+asP1,
+    table 3, 0
+asP2,
+    table 3, 0
+asP3,
+    table 3, 0
+asP4,
+    table 3, 0
+asP5,
+    table 3, 0
+asP6,
+    table 3, 0
+
+// Each instance hidden by the view, nonzero while its figure is not wholly on the screen or
+// would pass x8. Written by the instance module's instView, read only while the view is
+// magnified, by the lock and the texts' list.
+iHid,
+    table MAXINST, 0
+
+// Each constraint mark's slot hidden by the view, nonzero while the place it marks is off the
+// screen. Written by the marks module's mkMarks for slot j, read by its mkNear, which passes
+// over a hidden mark. All 0 at x1.
+mkHid,
+    table NCON, 0
+
+// Each constraint's rank on its line, for a mark that stands on one: how many entries before it
+// in the table name the same line. Counted again by the marks module's mkRanks only when the
+// table has changed (mkRkOld, set by bank 8's cBuild), and read by its cMkPos, so that writing
+// the marks while points move does not count them again.
+mkRank,
+    table NCON, 0
+
+// Copy's store, in bank 5 with the constraints' arms' list after it. Master k's points relative
+// to its origin from cpX and cpY + k * CPPTS, its lines, indices into those points, from cpFrom
+// and cpTo + k * CPLINES, and its arcs as the arc table holds them, from cpC to cpK + k *
+// CPARCS. Written by Define in bank 2 and read by Copy in the main bank and bank 2, through
+// 16-bit addresses. Ahead of the code for the same reason as the drawing list.
+bank 5
+0/
+cpX,
+    table NMASTER * CPPTS, 0
+cpY,
+    table NMASTER * CPPTS, 0
+cpFrom,
+    table NMASTER * CPLINES, 0
+cpTo,
+    table NMASTER * CPLINES, 0
+cpC,
+    table NMASTER * CPARCS, 0
+cpS,
+    table NMASTER * CPARCS, 0
+cpE,
+    table NMASTER * CPARCS, 0
+cpD,
+    table NMASTER * CPARCS, 0
+cpK,
+    table NMASTER * CPARCS, 0
+// Master k's attachers, their master point indices in designation order from cpAtt + k * NATT,
+// cpNAtt + k of them. After cpK, so that the tape's run of the store takes them with it.
+cpAtt,
+    table NMASTER * NATT, 0
+cpNAtt,
+    table NMASTER, 0
+// The constraints' arms' list, after the store and outside the tape's run of it. A display list
+// that penISR starts by dla after the frame's closing halt while arGo is set, since the 340
+// jumps only within banks 0 and 1, and which ends in a halt. NCON slots of ARMWORDS, packed,
+// slot k the k-th E, P or R entry in the table, and the word after the last used, its parameter
+// word's place, the halt. The view module's arBegin and arOne (bank 12) write it, through
+// 16-bit addresses. Assembled empty.
+arList,
+    lpoff halt interrupt
+    table NCON * ARMWORDS, 0
+    lpoff halt interrupt
+    halt
+
+// arcKeep's save of the arc module's words arcCX to arcQY (bank 2, spedit.ac), which arcKeep
+// reaches inside an extend window.
+akSave,
+    table AKEEPN, 0
+bank 0
+
+#include "spbreak.ac"
+
+#include "spframe.ac"
+
+variables
+constants
+
+// The main bank holds the start-up, the main loop, the menus, the mode handlers and the drawing
+// list's upkeep, with their variables; their tables are in bank 3, and the instance code is bank
+// 7's module, entered only through instCall. It runs with the extend window open, so a reference to
+// a word in bank 0 (penISR's variables, the display) is made through its 16-bit address,
+// OP i [X:0], and one to a table in bank 3 through a pointer made from [X:3]. It is placed
+// after banks 0 and 3, so that every reference it makes to them is a backward one.
+bank 4
+0/
+#include "spmain.ac"
+
+#include "spmenus.ac"
+
+#include "spundo.ac"
+
+#include "spmodes.ac"
+
+#include "sppen.ac"
+
+#include "spdisplay.ac"
+
+variables
+constants
+
+// The arc module, alone in bank 2. It holds the arcs' geometry, their table, and the words of
+// their slots and of the arc band in bank 0; and, since arcs hang on points, the routines that
+// remove points and lines, merge and delete; and Define and the master directory, and Copy's
+// store and its arcs; the main bank takes a copy's points and lines from the store itself. The
+// main bank enters it only through arcCall, with an entry number
+// (AEINIT to AEUNDO), and reads Define's words through their 16-bit address; the module runs
+// with the extend window closed, opening it only to read the variables of the main bank and
+// bank 0 and the tables of banks 3, 5 and 8 and to store into them or the display lists, and it
+// calls nothing outside bank 2 but bank 12's lineArc, loadLine and vwCross and bank 13's vaSlot
+// and vaBand, each by jsp i [X:01n]. It is placed after banks 0 and 4, so that every reference
+// it makes to them is a backward one.
+// Vertex k of an arc is its start rotated k steps of 2pi/NARC about the center, worked out
+// directly from the start with a quarter-wave table of sines, so no error builds up from step
+// to step and a full circle closes exactly on its start. Offsets from the center are kept in
+// 32nds of a unit, rounded to a unit only for the display. An arc slot's vectors run the full
+// circle backward, from vertex NARC down to vertex 0, the start; only the last carries end. The
+// gate enters the last k of them for an arc of k whole steps, or the word before those, which
+// then holds the part step from the end to vertex k.
+bank 2
+0/
+
+#include "sparcs.ac"
+
+#include "spedit.ac"
+
+#include "spdrag.ac"
+
+#include "spdefine.ac"
+
+#include "sparcdata.ac"
+
+constants
+
+// The tape module, in bank 6. It moves a picture to or from the Microtape, with the display on
+// WAIT (waitList) and the break system off, and keeps the tape's directory and its screen. The
+// main bank enters it through tapeCall, with an entry number (TESAVE to TEDIR), and at
+// tpPickName for Save's name; it runs with the extend window open, reaching the picture's words
+// in banks 0, 2, 3, 4, 5, 7, 9 and 10 through 16-bit addresses, and calls nothing outside bank
+// 6 but the view module's vwInit. It is placed after the banks it reaches, so that every
+// reference it makes to them is a backward one. After it, start-up's gates (spinit.ac's
+// initGates), run once between bank 12's initVars and the main bank's init. Then the menu's
+// census (spcensus.ac), which the main bank's actOpen takes as a list opens. Then the scale
+// module (spscale.ac), Edit > Scale and its mode, entered by the main bank's gates.
+bank 6
+0/
+
+#include "sptape.ac"
+
+#include "spinit.ac"
+
+#include "spcensus.ac"
+
+#include "spscale.ac"
+
+constants
+
+// The instance module, in bank 7. It keeps the instance list's slots in bank 0, and adds,
+// places, moves, locks, sizes and removes an instance. The main bank enters it only through
+// instCall, with an entry number
+// (IEINIT to IEVIEW; the view module enters it too, for IEVIEW), and writes litInst at init
+// through its 16-bit address; it runs with the extend window open, reaching the main bank's
+// variables, the master directory in bank 2 and the instance tables in banks 3 and 10 through
+// 16-bit addresses, and calls nothing outside bank 7 but the text module's entries for it (bank
+// 10) and the view module's vwBox (bank 12), as spinst.ac's header says. It is placed last, so
+// that every reference it makes to the other banks is a backward one. After it, which menu
+// rows can act (sprows.ac's rowCan), entered by the main bank's menus directly, from the census
+// in bank 6.
+bank 7
+0/
+
+#include "spinst.ac"
+
+#include "sprows.ac"
+
+// arcFill's kept offsets (bank 2), vertices 0 to NQ-1 of the circle it fills, each v then u.
+arcOff,
+    table 2*NQ, 0
+
+constants
+
+// The constraint module's tables, alone in bank 9, the places it keeps for Undo and the point
+// tables it works on. The module reaches them through their 16-bit addresses, and bank 2's
+// ptMarked and the main bank's conRedraw read cFlag so. Placed before bank 8, so that every
+// reference the module makes to them is a backward one. Each point table has a word for each of
+// the solver's variables (NVAR), the points' and then the instances' origins'.
+bank 0d9
+0/
+
+// Every point's place when an entry was added (cSnap), read back by cUndo.
+uSX,
+    table NVAR, 0
+uSY,
+    table NVAR, 0
+
+// Each point's flags: FIN while it is the solver's, FFIX while it is fixed, FMOV while it is
+// moved by the last publish (cPublish) or put back by Undo (cUndo), and FTCH while this pass's
+// sweeps have touched it (cTouch). Bank 2's ptMarked reads FMOV in place of ptMark while the arc
+// module works out the arcs on the moved points (conArcs), and conRedraw reads it.
+cFlag,
+    table NVAR, 0
+
+// The points this pass's sweeps touched, once each, in the order touched (cTouch); cPublish
+// then compacts the ones it moved to the front, cMovN of them, which carry the FMOV marks, and
+// so do the points Undo put back (cUndo). The next pass clears the marks from the front alone
+// (cUnmark).
+cPub,
+    table NVAR, 0
+
+// The working values, in 32nds of a unit, of the solver's points.
+wX,
+    table NVAR, 0
+wY,
+    table NVAR, 0
+
+// Where the last publish found each point it moved, or Undo each point it put back, for
+// cRevert.
+oX,
+    table NVAR, 0
+oY,
+    table NVAR, 0
+
+// The solver's points (cBuild).
+cIn,
+    table NVAR, 0
+
+// The ties the solver keeps (cBuild), each tie's place in the tie lists, a * MAXINST + i.
+cTies,
+    table NATT * MAXINST, 0
+
+// Each entry's lines' lengths, in 32nds, as the last sweep found or set them, two words an entry
+// by its place in the table (line A-B's, then line C-D's). An E's or an L's root starts from them
+// (cProjM). A place another entry has taken since only costs that root more steps (cHyp). A C
+// entry keeps its circle's radius in its first word likewise (cProjK, cRim).
+cLast,
+    table NCON * 2, 0
+
+// Each arc's radius, in 32nds, as its implicit C last brought its ends to it, by the arc's index:
+// both rays' roots start from it (cProjC, cRim). An arc replaced or renumbered
+// since only costs those roots more steps (cHyp).
+cArcG,
+    table MAXARCS, 0
+
+// The lines on the solver's points (cBuild), which the main bank's conRedraw reads too.
+cLines,
+    table MAXLINES, 0
+
+// The masters' constraints, master k's from cpCon + k * NCPCON * CW, CW words each as
+// the table holds them but in master point indices, cpNCon + k of them. Written by Define (the
+// instance module's instDef), read by Copy's drop (cCopy), and saved with each picture
+// (sptape.ac).
+cpCon,
+    table NMASTER * NCPCON * CW, 0
+cpNCon,
+    table NMASTER, 0
+
+// The arcs the solver keeps (cBuild); cKeep's slots, a line, a second line and an arc each; and
+// per constraint type, indexed by the type word's low bits (CTMASK), how many points it names
+// (A, A and B, A to C, or A to D).
+cArcs,
+    table MAXARCS, 0
+kpLock,
+    table 0d9, 0
+cNPts,
+    0
+    2                   // CTHL
+    2                   // CTHP
+    1                   // CTF
+    4                   // CTEQ
+    2                   // CTLEN
+    4                   // CTPAR
+    4                   // CTPERP
+    3                   // CTMID
+    3                   // CTON
+    3                   // CTONC
+    1                   // CTATT
+    2                   // CTBEAM
+    2                   // CTLOAD
+    3                   // CTROLL: its point, then its axis's line
+    1                   // CTDES
+    3                   // CTDIST: line A-B, then the digits' anchor
+    3                   // CTCHG: likewise
+    2                   // CTGAP: its point, then the digits' anchor
+
+// Per type, indexed likewise, the mark's call of its glyph; a designation's mark calls instead
+// the digit for its place in the order, from cDgTab, designation 1 first (cMarks).
+cGlyph,
+    0
+    save gH:0 next(subroutine)
+    save gH:0 next(subroutine)
+    save gF:0 next(subroutine)
+    save gE:0 next(subroutine)
+    save gL:0 next(subroutine)
+    save gP:0 next(subroutine)
+    save gR:0 next(subroutine)
+    save gX:0 next(subroutine)
+    save gN:0 next(subroutine)
+    save gC:0 next(subroutine)
+    save gA:0 next(subroutine)
+    save gB:0 next(subroutine)
+    save gW:0 next(subroutine)
+    save gO0:0 next(subroutine)  // a roller's mark is cRlTab's instead (cMarks)
+    save gD1:0 next(subroutine)
+    save gD:0 next(subroutine)
+    save gY:0 next(subroutine)
+    save gO:0 next(subroutine)
+cDgTab,
+    save gD1:0 next(subroutine)
+    save gD2:0 next(subroutine)
+    save gD3:0 next(subroutine)
+    save gD4:0 next(subroutine)
+    save gD5:0 next(subroutine)
+    save gD6:0 next(subroutine)
+
+// A roller's mark by its axis's direction, k * 22.5 degrees counterclockwise from level, k 0 to 7
+// (cRlDir).
+cRlTab,
+    save gO0:0 next(subroutine)
+    save gO1:0 next(subroutine)
+    save gO2:0 next(subroutine)
+    save gO3:0 next(subroutine)
+    save gO4:0 next(subroutine)
+    save gO5:0 next(subroutine)
+    save gO6:0 next(subroutine)
+    save gO7:0 next(subroutine)
+
+// A mark on one line stands beside it (cMkPos). Per type, indexed like cNPts, where the entry
+// names its line, 1 when in words 1 and 2 (H, L, a Beam's B, a Load's W), 2 when in words 2 and
+// 3 after its point (X, N), 0 for a mark not on one line.
+cLnTab,
+    0
+    1                   // CTHL
+    1                   // CTHP
+    0                   // CTF
+    0                   // CTEQ
+    1                   // CTLEN
+    0                   // CTPAR
+    0                   // CTPERP
+    2                   // CTMID
+    2                   // CTON
+    0                   // CTONC
+    0                   // CTATT
+    1                   // CTBEAM
+    1                   // CTLOAD
+    0                   // CTROLL
+    0                   // CTDES
+    0                   // CTDIST
+    0                   // CTCHG
+    0                   // CTGAP
+
+// Per direction k (cRlDir: k * 22.5 degrees from level), the direction of the mark's offset
+// from its place on the line, x then y, at right angles to it, in thousandths of the distance
+// (cMkPos scales it, quantizing once). Above a flat line (k 0 to 2, 6, 7), right of a steep one
+// (k 3 to 5), as the truss's readouts stand. The cosines and sines of 0, 22.5, 45 and 67.5
+// degrees.
+cOfX,
+    0
+    -0d383
+    -0d707
+    0d924
+    0d1000
+    0d924
+    0d707
+    0d383
+cOfY,
+    0d1000
+    0d924
+    0d707
+    -0d383
+    0
+    0d383
+    0d707
+    0d924
+
+// The constraint table, conTab (spcons.ac's header describes it), cCount, then NCON entries
+// of CW words.
+conTab,
+cCount, 0
+cEntries,
+    table NCON * CW, 0
+
+constants
+
+// The constraint module, alone in bank 8, the solver and the sets it works on; its table and
+// point tables are in bank 9. The main bank enters it only through conCall, with an entry
+// number (CEINIT to CESTSET); it runs with the extend window open, reaching the point, line and
+// arc tables, the main bank's variables and its tables in bank 9 through 16-bit addresses, and
+// calls nothing outside bank 8 but the marks in bank 13 (spmarks.ac). Bank 2, the main bank and
+// the tape module reach its table and words through their 16-bit addresses. It is placed last,
+// so that every reference it makes to the other banks is a backward one.
+bank 0d8
+0/
+
+#include "spcons.ac"
+
+constants
+
+// The text module, in bank 10 with its tables. The main bank enters it through txCall, the
+// instance module and initVars at its entries, by their 16-bit addresses; its list is in bank 3.
+bank 0d10
+0/
+
+#include "sptext.ac"
+
+// The instance table, instCount instances, each its master; their origins, scales and ties are
+// in bank 3. Every user reaches it through its 16-bit address.
+instCount, 0
+iMaster,
+    table MAXINST, 0
+
+constants
+
+// The truss's analysis, in bank 11, the members' forces, a slice a pass, and the readouts,
+// whose list is in bank 13; then its floating point (spfloat.ac).
+// The main bank enters it at taInit and taTick; it runs with the extend window open, reaching
+// the constraint table, the point table, the main bank's words, bank 0's and banks 14 and 15's
+// through 16-bit addresses, and calls nothing outside bank 11. Placed after the banks it
+// reaches but 14 and 15, which hold only reserved words. Then the display of what a lift will
+// take (splock.ac); the main bank enters it through showDot and the entries its header names,
+// and it calls nothing outside banks 11 and 12.
+bank 0d11
+0/
+
+#include "sptruss.ac"
+#include "spfloat.ac"
+#include "splock.ac"
+
+constants
+
+// Bank 12 holds the copy of penISR's mailboxes for the main loop (snapshot), the writes made
+// between frames (commitFlip and tgtFlip) and the lock mark's arms (clipLock). None is reached
+// by the display. Each runs with the extend window open, reaching bank 0's and the main bank's
+// words through 16-bit addresses, and calls nothing outside bank 12. Placed last, so that every
+// reference it makes to the other banks is a backward one. Then the pen keyboard (spkbd.ac),
+// entered the same way, with its list and the directory's, which penISR starts by full address.
+// Then the view module (spview.ac), entered the same way.
+bank 0d12
+0/
+
+#include "spaux.ac"
+#include "spkbd.ac"
+#include "spview.ac"
+
+constants
+
+// Bank 13's data. The truss's snapshot, which taCheck (sptruss.ac) compares and writes through
+// 16-bit addresses. Reached the same way, the incidences, whose words hold the map until the
+// analysis's directions pass writes them (taInc, taMap), and each member's coefficients on its
+// ends' horizontal or axis unknowns (tdC, A's then B's); the rollers' axes, taAX, and the
+// members' taMI and taMK are in bank 3. Then the readouts' list (roList), which penISR starts by
+// full address, per readout a parameter, a y and an x word and at most three of characters, one
+// for each entry at most, then UNSTABLE's six words and the halt.
+bank 0d13
+0/
+
+taSnap,
+    table NCON * 0d8, 0
+taInc,
+taMap,
+    table MAXPTS, 0
+tdC,
+    table NCON * 6, 0
+roList,
+    table NCON * 6 + 7, 0
+
+// After the data, the constraints' marks (spmarks.ac). The constraint module enters them at
+// mkMarks and mkNear by their 16-bit addresses; they run with the extend window open, reaching
+// bank 8's words, the constraint table and bank 0's fixList through 16-bit addresses, and call
+// nothing outside bank 13.
+#include "spmarks.ac"
+
+// Then the line search, which finds the nearest line to the target's center, and in Line,
+// Circle and Move the second nearest and the two lines' crossing, swept a slice a pass. The
+// main bank's placeLock
+// enters it at lineSearch; it runs with the extend window open, reaching the point and line
+// tables and the main bank's variables through 16-bit addresses, and calls nothing outside bank
+// 13. Placed after the banks it reaches, so that every reference it makes to them is a backward
+// one.
+#include "spsearch.ac"
+
+// Then the arcs through the magnifier's view (spvarc.ac). The arc module enters it at vaSlot
+// and vaBand by their 16-bit addresses; it runs with the extend window
+// open, reaching the arc module's words, the slots and bank 12's view module through 16-bit
+// addresses, and calls nothing outside banks 12 and 13 (the clipper, through vwClipX).
+#include "spvarc.ac"
+
+constants
+
+// The truss's direct solve, banks 14 and 15, data only, reached by sptruss.ac through 16-bit
+// addresses and written before each is read, so not on the tape. Per unknown its
+// row's base address and first coupled unknown (tdU), 1/D (tdRD) and the right side, then the
+// displacements (tdY); per member e_x and e_y (tdE); then the matrix's profile, run on through
+// bank 15 (tdK, tdK2). Numbers are three words (spfloat.ac).
+bank 0d14
+0/
+
+tdU,
+    table TANU * 2
+tdRD,
+    table TANU * 3
+tdY,
+    table TANU * 3
+tdE,
+    table NCON * 6
+tdK,
+    table 0d4096 - TANU * 0d8 - NCON * 6
+
+bank 0d15
+0/
+
+tdK2,
+    table 0d4096
+
+bank 0
+start boot

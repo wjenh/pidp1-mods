@@ -1,0 +1,3011 @@
+// sptext.ac -- text. The texts on the canvas and in the masters; the pen's lock onto a text and
+// its light; the keyboard opened on a text and its answer; Move's carry, Delete, Size, Undo and
+// Clear of a text; Define's, Copy's and an instance's texts; and the texts' list, which the main
+// loop's pass writes into the buffer not shown. Then numbers, Number mode's digits and their
+// scalars, placed, typed, moved, sized, deleted and undone as texts are.
+//
+// Bank 10, from its first word, alone. Entered at txEntry from the main bank's txCall, at txInit
+// from bank 12's initVars, at txIsAn from the main bank's findNearPoint, and at txLock, txShine,
+// txDelete, txSize, txFits, txDefRoom, txDefine, txCopyRoom, txNestRoom and txParts from the
+// instance module, each by jsp i [X:012]; runs with the extend window open throughout, so every
+// indirect address is a 16-bit one. Each entry returns by jmp i, and the module calls nothing
+// outside bank 10. It reads the view module's words in bank 12, since every text is written
+// through the view (txView), and the instance module's iHid in bank 3.
+// A text is kept as the pen keyboard writes it, TXRUN words of 340 text (an upper shift first, a
+// shift before each change of case, then the end code), with its origin, its first character's
+// lower left, its scale (0 to 3, x1 to x8), its characters, and its words up to its end. The
+// canvas's texts are txX to txW and txRun, txN of them, in the order placed, so that Undo removes
+// those past its count; the masters' texts are mtM to mtW and mtRun, mtN of them, mtM naming the
+// master and mtDX, mtDY the offset from the master's origin at x1.
+// A canvas text is digits while bank 3's txAn names its anchor, a point at its box's center, and
+// txSv its scalar (scVal, scFix); the anchor is the digits' master, their origin worked out from
+// it and their box, and their characters from the scalar's value (txDgSet). The pen locks onto
+// digits by their box, as onto a text, and never onto their anchor as a point. A D, Y or O names
+// digits by their anchor. The constraint module's sweeps write the scalars and move the anchors,
+// and its cScChg asks txSync to write the digits again (txDgSync); this module sets its cTopo,
+// cRld and the main bank's conWake when digits move, size or go, or a value is typed.
+// A master's digits keep their anchor's master index, value and fix (mtAn, mtVal, mtFix). Copy
+// and a dismember give each copy an anchor and scalar of its own (txParts), and an instance
+// shows the value at its scale (txSyDg).
+// The texts' list is two buffers in bank 3, txBufA and txBufB (placed by sketchpad.am1, to spare
+// this bank's room), reached through their 16-bit addresses. txSync writes the one not shown and
+// then shows it, by txGo, which penISR starts at the frame's closing halt. A buffer is written
+// only once two frames have ended since the other was shown, so the display never reads one
+// being written.
+// Part of sketchpad.am1, included where it stands.
+
+// The module's entry, from the main bank's txCall. Run entry n with the argument in AC, and
+// return across the banks with AC as the routine leaves it, as the instance module's instEntry.
+// Entry: IO = n; AC = the return address, which carries the main bank; txCall (bank 4) = the
+// argument. Exit: AC as the entry leaves it. IO is clobbered. Called via jsp i [txEntry:012].
+txEntry,
+    dac txEnRtn
+    dio txEnP
+    lac txEnP
+    add [txEnTab:012]
+    dac txEnP
+    lac i [txCall:4]
+    xct i txEnP
+    jmp i txEnRtn
+txEnRtn, 0
+txEnP, 0
+
+// Entry n -> its call.
+txEnTab,
+    jsp txInit          // TXINIT
+    jsp txClear         // TXCLEAR
+    jsp txOpen          // TXOPEN
+    jda txDone          // TXDONE
+    jsp txPick          // TXPICK
+    jsp txDrop          // TXDROP
+    jda txUndo          // TXUNDO
+    jsp txSync          // TXSYNC
+    jsp txFresh         // TXFRESH
+
+// A scale's shift, 0 to 3 places left, for xct.
+txShTab,
+    nop
+    sal 1s
+    sal 2s
+    sal 3s
+
+// The texts at the program's start, none on the canvas or in the masters, none lit or carried,
+// none shown, both buffers holding only their halt, and buffer A written first, at once.
+// AC is clobbered, IO preserved. Called via jsp i [txInit:012], from bank 12's initVars after it
+// clears frameTotal, or through txEntry.
+txInit,
+    dac txInRtn
+    dzm mtN
+    dzm txMCost
+    dzm txMCost+1
+    dzm txMCost+2
+    dzm txMCost+3
+    dzm i [txGo:0]
+    lac [lpoff halt interrupt]
+    dac i [txBufA:3]
+    dac i [txBufB:3]
+    dzm txBufSel
+    lac i [frameTotal:4]
+    sub [2]
+    dac txHeld
+    jsp txClear
+    jmp i txInRtn
+txInRtn, 0
+
+// Clear's texts (TXCLEAR). The canvas's are removed with their scalars, none lit or carried; the
+// masters' stay. At txFresh (TXFRESH), after a load wrote the tables (the main bank's
+// tapeRebuild), every text, set of digits and scalar is kept as the load wrote them (sptape.ac),
+// none lit or carried, and the list is written again. Every set of digits is written again from
+// its scalar at the next pass (its value shown -0, which no value is, and cScChg raised;
+// txDgSync), since a save may have caught digits whose rewrite the keyboard held back. Either way
+// no text from txN on is digits.
+// AC is clobbered, IO preserved. Called via jsp.
+txClear,
+    dzm txN
+    dzm i [scN:3]
+txFresh,
+    local txClRtn, txClLp, txClP
+    dap txClRtn
+    lac [NOPOINT]
+    dac txLit
+    dac txCarry
+    law 1
+    dac txDirty
+    dac i [cScChg:010]
+    lac [txDv:012]
+    dac txClP
+txClLp,
+    lac [0777777]       // -0
+    dac i txClP
+    idx txClP
+    sas [txDv:012+NTEXT] // skip once every word is written
+    jmp txClLp
+    lac txN
+    jda txAnFill
+txClRtn, jmp .
+txClP, 0
+    endloc
+
+// The main loop's pass (TXSYNC). With the texts changed since the last write (txDirty), the list
+// is written into the buffer not shown, once two frames have ended since the swap that showed the
+// other (frameTotal; the first may have begun before it), then shown; txGo names it, or is 0 with
+// nothing to show. The canvas's texts go first, the one lit at LITINTENSITY; then for each
+// instance its master's texts, at its origin plus each text's offset at the instance's scale, at
+// the text's scale plus the instance's, at most x8; a copy of digits shows their value at the
+// instance's scale, centered where their center falls (txSyDg). A text that would leave the
+// screen, or pass TEXTBUDGET, is not shown (txPut). The refusals keep the texts inside both at
+// x1, so this only guards the frame there; magnified, every text goes through the view, and an
+// instance the view hides (iHid) shows none of its master's. txShown is the budget the list
+// uses. First, once the constraint module has changed a scalar or moved a point (its cScChg),
+// the digits are written again (txDgSync).
+// AC and IO are clobbered. Called via jsp.
+txSync,
+    local txSyRtn, txSyGo, txSyBufB, txSyCan, txSyInst, txSyIL, txSyTL, txSyTN, txSyIN, txSyEnd, \
+        txSySc, txSyPut, txSyHas, txSyShow, txSyShB, txSyBuf, txSyK, txSyI, txSyP, txSyM, txSyH, \
+        txSyX, txSyY, txSyPl, txSyD, txSyVw
+    dap txSyRtn
+    lac i [cScChg:010]
+    sza                 // skip unless a scalar or an anchor may have changed
+    jsp txDgSync
+    lac txDirty
+    sza i               // skip if the texts changed
+    jmp txSyRtn
+    lac i [frameTotal:4]
+    sub txHeld
+    sub [2]
+    spa                 // skip once two frames have ended since the last swap
+    jmp txSyRtn
+    dzm txDirty
+    dzm txShown
+    lac txBufSel
+    sza                 // skip if buffer A is next
+    jmp txSyBufB
+    lac [txBufA:3]
+    jmp txSyGo
+txSyBufB,
+    lac [txBufB:3]
+txSyGo,
+    dac txPtW
+    dac txSyBuf
+
+    // The canvas's texts.
+    dzm txSyK
+txSyCan,
+    lac txSyK
+    sad txN             // skip while texts remain
+    jmp txSyInst
+    jda txLoad
+    dzm txPtLit
+    lac txSyK
+    sad txLit           // skip unless it is lit
+    idx txPtLit
+    jsp txPut
+    idx txSyK
+    jmp txSyCan
+
+    // Each instance's copies of its master's texts, none lit.
+txSyInst,
+    lac mtN
+    sza i               // skip if a master has texts
+    jmp txSyEnd
+    dzm txSyI
+txSyIL,
+    lac txSyI
+    sad i [instCount:012] // skip while instances remain
+    jmp txSyEnd
+    lac i [vwS:014]
+    sza i               // skip unless at x1, where no instance is hidden
+    jmp txSyVw
+    lac txSyI
+    add [iHid:3]
+    dac txSyP
+    lac i txSyP
+    sza                 // skip unless the view hides the instance, and so its texts
+    jmp txSyIN
+txSyVw,
+    lac txSyI
+    add [iMaster:012]
+    dac txSyP
+    lac i txSyP
+    dac txSyM
+    lac txSyI
+    add [iScale:3]
+    dac txSyP
+    lac i txSyP
+    dac txSyS
+    add [txShTab:012]
+    dac txSyP
+    lac i txSyP
+    dac txSyH
+    lac txSyI
+    add [iX:3]
+    dac txSyP
+    lac i txSyP
+    dac txSyX
+    lac txSyI
+    add [iY:3]
+    dac txSyP
+    lac i txSyP
+    dac txSyY
+    dzm txSyT
+txSyTL,
+    lac txSyT
+    sad mtN             // skip while the masters' texts remain
+    jmp txSyIN
+    add [mtM:012]
+    dac txSyP
+    lac i txSyP
+    sas txSyM           // skip if the instance's master's
+    jmp txSyTN
+    lac txSyT
+    jda mtLoad
+    dzm txPtLit
+    lac txSyT
+    add [mtAn:012]
+    dac txSyP
+    lac i txSyP
+    dac txSyD
+    sad [NOPOINT]       // skip if digits, placed by their center, which their width follows
+    jmp txSyPl
+    jsp txOnScr         // their box in the master
+    lac txOnW
+    sar 1s
+    add txPtX
+    dac txPtX
+    lac txOnH
+    sar 1s
+    add txPtY
+    dac txPtY
+txSyPl,
+    lac txPtX
+    xct txSyH
+    add txSyX
+    dac txPtX
+    lac txPtY
+    xct txSyH
+    add txSyY
+    dac txPtY
+    lac txPtSc
+    add txSyS
+    sub [4]
+    spa                 // skip if past x8
+    jmp txSySc
+    law 3
+    dac txPtSc
+    jmp txSyPut
+txSySc,
+    add [4]
+    dac txPtSc
+txSyPut,
+    lac txSyD
+    sas [NOPOINT]       // skip unless digits
+    jsp txSyDg
+    jsp txPut
+txSyTN,
+    idx txSyT
+    jmp txSyTL
+txSyIN,
+    idx txSyI
+    jmp txSyIL
+
+    // The halt, then the buffer shown, or none with nothing in it; the other is written next.
+txSyEnd,
+    lac [lpoff halt interrupt]
+    dac i txPtW
+    lac txPtW
+    sas txSyBuf         // skip if the buffer holds no text
+    jmp txSyHas
+    cla
+    jmp txSyShow
+txSyHas,
+    lac txSyBuf
+txSyShow,
+    dac i [txGo:0]
+    lac i [frameTotal:4]
+    dac txHeld
+    lac txBufSel
+    sza i               // skip if B was written
+    jmp txSyShB
+    dzm txBufSel
+    jmp txSyRtn
+txSyShB,
+    law 1
+    dac txBufSel
+txSyRtn, jmp .
+txSyBuf, 0
+txSyK, 0
+txSyI, 0
+txSyT, 0
+txSyP, 0
+txSyM, 0
+txSyS, 0
+txSyH, 0
+txSyX, 0
+txSyY, 0
+txSyD, 0
+    endloc
+
+// txSync's copy of the masters' digits txSyT in an instance at scale txSyS. Their master's value
+// at that scale (txMag) is written into txIRun, never the keyboard's txKb, which may be open;
+// their place is the lower left of a box centered on txPtX, txPtY, where txSync put their
+// center. Entry: txPtSc. Exit: txPtX, txPtY, txPtCh, txPtWn, txPtR.
+// AC and IO are clobbered. Called via jsp.
+txSyDg,
+    local txSdRtn, txSdP
+    dap txSdRtn
+    lac txSyT
+    add [mtVal:012]
+    dac txSdP
+    lac i txSdP
+    lio txSyS
+    jda txMag
+    lio [txIRun:012]
+    dio txDgTo
+    jda txDigits
+    jsp txCount
+    lac [txKb:012]
+    dac txDgTo
+    lac txCnC
+    dac txPtCh
+    lac txCnW
+    dac txPtWn
+    lac [txIRun:012]
+    dac txPtR
+    jsp txOnScr
+    lac txOnW
+    sar 1s
+    dac txSdP
+    lac txPtX
+    sub txSdP
+    dac txPtX
+    lac txOnH
+    sar 1s
+    dac txSdP
+    lac txPtY
+    sub txSdP
+    dac txPtY
+txSdRtn, jmp .
+txSdP, 0
+    endloc
+
+// A value at a scale, for the digits of a copy or an instance, doubled once for each step of
+// scale, its magnitude held at 99999 (five digits), the sign kept.
+// Entry: AC = the value, never -0; IO = the scale, 0 to 3. Exit: AC = the value at that scale.
+// IO is clobbered. Called via jda.
+txMag, 0
+    local txMgRtn, txMgPos, txMgLp, txMgDbl, txMgCap, txMgOut, txMgP, txMgN, txMgS, txMgV
+    dap txMgRtn
+    dzm txMgS
+    lac txMag
+    dac txMgV
+    sma                 // skip if negative
+    jmp txMgPos
+    cma
+    dac txMgV
+    law 1
+    dac txMgS
+txMgPos,
+    dio txMgN
+    lac txMgN
+    add [1]
+    cma
+    dac txMgN           // -(scale + 1), so the first isp leaves -scale
+txMgLp,
+    isp txMgN           // skip once every doubling is done
+    jmp txMgDbl
+    jmp txMgOut
+txMgDbl,
+    lac txMgV
+    sub [0d50000]
+    sma                 // skip unless the double would pass 99999
+    jmp txMgCap
+    lac txMgV
+    add txMgV
+    dac txMgV
+    jmp txMgLp
+txMgCap,
+    lac [0d99999]
+    dac txMgV
+txMgOut,
+    lac txMgS
+    sza i               // skip if the value was negative
+    jmp txMgP
+    lac txMgV
+    cma
+    jmp txMgRtn
+txMgP,
+    lac txMgV
+txMgRtn, jmp .
+txMgN, 0
+txMgS, 0
+txMgV, 0
+    endloc
+
+// Write one text's words at txPtW. They are its parameter word at scale txPtSc, at LITINTENSITY
+// with txPtLit set, the light pen off; its y and x words; then its run, txPtWn words from txPtR;
+// its place and scale go through the view (txView). Passed over, nothing written, when it would
+// leave the screen or take txShown past TEXTBUDGET.
+// Entry: txPtX, txPtY, txPtSc on the page; txPtCh, txPtWn, txPtR, txPtLit. Exit: txPtW past
+// the words; txPtX, txPtY, txPtSc on the screen. AC and IO are clobbered. Called via jsp.
+txPut,
+    local txPuRtn, txPuLit, txPuSc, txPuCp, txPuT, txPuN, txPuP
+    dap txPuRtn
+    lac txShown
+    add txPtCh
+    add [TXOWN]
+    dac txPuT
+    sub [TEXTBUDGET+1]
+    sma                 // skip if within the budget
+    jmp txPuRtn
+    jsp txView
+    sza                 // skip if on the screen
+    jmp txPuRtn
+    lac txPuT
+    dac txShown
+    lac txPtLit
+    sza                 // skip unless lit
+    jmp txPuLit
+    lac [TXPAR]
+    jmp txPuSc
+txPuLit,
+    lac [TXPARL]
+txPuSc,
+    dac txPuN
+    lac txPtSc
+    sal 4s
+    add txPuN
+    dac i txPtW
+    idx txPtW
+    lac txPtY
+    ior [y(0) next(point)]
+    dac i txPtW
+    idx txPtW
+    lac txPtX
+    ior [x(0) next(character)]
+    dac i txPtW
+    idx txPtW
+    lac txPtR
+    dac txPuP
+    lac txPtWn
+    cma
+    dac txPuN
+txPuCp,
+    lac i txPuP
+    dac i txPtW
+    idx txPuP
+    idx txPtW
+    isp txPuN           // skip once every word is copied
+    jmp txPuCp
+txPuRtn, jmp .
+txPuT, 0
+txPuN, 0
+txPuP, 0
+    endloc
+
+// Whether a text at (txPtX, txPtY), scale txPtSc, txPtCh characters, lies on the screen. Its box
+// is TXADV units a character wide and TXH high at x1, doubling with each scale.
+// Exit: AC = 0 on the screen, 1 off it; txOnW, txOnH its box's width and height. IO is
+// clobbered. Called via jsp.
+txOnScr,
+    local txOsRtn, txOsOff, txOsSh
+    dap txOsRtn
+    lac txPtSc
+    add [txShTab:012]
+    dac txOsSh
+    lac i txOsSh
+    dac txOsSh
+    lac txPtCh
+    sal 3s
+    sub txPtCh          // TXADV, 7, units a character
+    xct txOsSh
+    dac txOnW
+    law TXH
+    xct txOsSh
+    dac txOnH
+    lac txPtX
+    spa                 // skip unless off the left edge
+    jmp txOsOff
+    add txOnW
+    sub [0d1024]
+    sma                 // skip unless off the right edge
+    jmp txOsOff
+    lac txPtY
+    spa                 // skip unless off the bottom
+    jmp txOsOff
+    add txOnH
+    sub [0d1024]
+    sma                 // skip unless off the top
+    jmp txOsOff
+    cla
+    jmp txOsRtn
+txOsOff,
+    law 1
+txOsRtn, jmp .
+txOsSh, 0
+    endloc
+
+// A text's place and scale taken through the view, screen = (page << vwS) - vwOut on each axis,
+// the scale the text's plus the view's, at most x8; then whether it lies on the screen (txOnScr)
+// and under the view's top (the view module's vwTop, the canvas's when magnified, the screen's
+// at x1, where txOnScr's test is the same). The identity at x1.
+// Entry: txPtX, txPtY, txPtSc on the page; txPtCh. Exit: them on the screen; AC 0 on the screen,
+// 1 off it; txOnW and txOnH as txOnScr leaves them. IO is clobbered. Called via jsp.
+txView,
+    local txVwRtn, txVwOn, txVwIn, txVwSh
+    dap txVwRtn
+    lac i [vwS:014]
+    add [txShTab:012]
+    dac txVwSh
+    lac i txVwSh
+    dac txVwSh
+    lac txPtX
+    xct txVwSh
+    sub i [vwOutX:014]
+    dac txPtX
+    lac txPtY
+    xct txVwSh
+    sub i [vwOutY:014]
+    dac txPtY
+    lac txPtSc
+    add i [vwS:014]
+    dac txPtSc
+    sub [4]
+    spa                 // skip if past x8
+    jmp txVwOn
+    law 3
+    dac txPtSc
+txVwOn,
+    jsp txOnScr
+    sza                 // skip if on the screen
+    jmp txVwRtn
+    lac txPtY
+    add txOnH
+    sub i [vwTopP:014]
+    spa                 // skip if past the view's top
+    jmp txVwIn
+    law 1
+    jmp txVwRtn
+txVwIn,
+    cla
+txVwRtn, jmp .
+txVwSh, 0
+    endloc
+
+// Canvas text k's words into txPut's, its place, scale, characters, words and run.
+// Entry: AC = k. AC is clobbered, IO preserved. Called via jda.
+txLoad, 0
+    local txLdRtn, txLdP
+    dap txLdRtn
+    lac txLoad
+    add [txX:012]
+    dac txLdP
+    lac i txLdP
+    dac txPtX
+    lac txLoad
+    add [txY:012]
+    dac txLdP
+    lac i txLdP
+    dac txPtY
+    lac txLoad
+    add [txSc:012]
+    dac txLdP
+    lac i txLdP
+    dac txPtSc
+    lac txLoad
+    add [txCh:012]
+    dac txLdP
+    lac i txLdP
+    dac txPtCh
+    lac txLoad
+    add [txW:012]
+    dac txLdP
+    lac i txLdP
+    dac txPtWn
+    lac txLoad
+    jda txRunOf
+    add [txRun:012]
+    dac txPtR
+txLdRtn, jmp .
+txLdP, 0
+    endloc
+
+// The masters' text t's words into txPut's, its offset as its place, its scale, characters,
+// words and run. Entry: AC = t. AC is clobbered, IO preserved. Called via jda.
+mtLoad, 0
+    local mtLdRtn, mtLdP
+    dap mtLdRtn
+    lac mtLoad
+    add [mtDX:012]
+    dac mtLdP
+    lac i mtLdP
+    dac txPtX
+    lac mtLoad
+    add [mtDY:012]
+    dac mtLdP
+    lac i mtLdP
+    dac txPtY
+    lac mtLoad
+    add [mtSc:012]
+    dac mtLdP
+    lac i mtLdP
+    dac txPtSc
+    lac mtLoad
+    add [mtCh:012]
+    dac mtLdP
+    lac i mtLdP
+    dac txPtCh
+    lac mtLoad
+    add [mtW:012]
+    dac mtLdP
+    lac i mtLdP
+    dac txPtWn
+    lac mtLoad
+    jda txRunOf
+    add [mtRun:012]
+    dac txPtR
+mtLdRtn, jmp .
+mtLdP, 0
+    endloc
+
+// A run's offset in its table, k * TXRUN, TXRUN being 17 (KBBUFW), so 16k + k.
+// Entry: AC = k. Exit: AC = 17k. IO is preserved. Called via jda.
+txRunOf, 0
+    dap txRoRtn
+    lac txRunOf
+    sal 4s
+    add txRunOf
+txRoRtn, jmp .
+
+// Copy a run of TXRUN words. Entry: AC = from, IO = to (16-bit addresses). AC and IO are
+// clobbered. Called via jda.
+txCopy, 0
+    local txCoRtn, txCoLp, txCoT, txCoN
+    dap txCoRtn
+    dio txCoT
+    law i TXRUN
+    dac txCoN
+txCoLp,
+    lac i txCopy
+    dac i txCoT
+    idx txCopy
+    idx txCoT
+    isp txCoN           // skip once every word is copied
+    jmp txCoLp
+txCoRtn, jmp .
+txCoT, 0
+txCoN, 0
+    endloc
+
+// The pen's lock onto a text, for the instance module's instLock. In Move, Delete, Size, Scale
+// and Text modes it is the canvas's text whose box (txOnScr's), widened by TXREACH on every side
+// (the view module's vwTxr, in page units), holds the target's center (hitX, hitY), one the view
+// does not show passed over, the nearest box center winning on the larger axis distance, as
+// instances are weighed by their origins; it wins over the instance instLock found when nearer
+// than its origin (txLockD). While Move carries a text (txCarry), that text instead moves so
+// that the place it was picked up at (txGripX, txGripY) is at the target's center, held where it
+// would leave the screen, and always wins; carried digits take their anchor with them (txToAn).
+// Text mode passes over digits, and Number mode over plain texts, as the constraint mode does
+// for a D's, a Y's or an O's digits.
+// Entry: txLockD = the instance's distance. Exit: AC = TXINST with txPen the text and txLockD its
+// distance, TXCARRY with txPen the text carried, NOPOINT when none wins. IO is clobbered.
+// Called via jsp i [txLock:012], from bank 7.
+txLock,
+    local txLkGo, txLkMove, txLkHeld, txLkLp, txLkNx, txLkCmp, txLkOut, txLkNone, txLkRtn, \
+        txLkK, txLkBest, txLkBO, txLkD, txLkT, txLkCX, txLkCY, txLkNum, txLkS, txLkBox
+    dac txLkRtn
+    lac [NOPOINT]
+    dac txLkBest
+    lac [0377777]
+    dac txLkBO
+    law 2               // the kind passed over, none
+    dac txLkS
+    lac i [mode:4]
+    sad [MMOVE]         // skip unless move mode
+    jmp txLkMove
+    sad [MDELETE]       // skip unless delete mode
+    jmp txLkGo
+    sad [MSIZE]         // skip unless Size mode
+    jmp txLkGo
+    sad [MSCALE]        // skip unless Scale mode, which takes texts and digits as Size does
+    jmp txLkGo
+    sad [MNUMBER]       // skip unless Number mode
+    jmp txLkNum
+    sad [MCONS]         // skip unless the constraint mode, here only for a D's, Y's or O's digits
+    jmp txLkNum
+    sas [MTEXT]         // skip if Text mode
+    jmp txLkOut
+    law 1               // Text mode passes over digits
+    dac txLkS
+    jmp txLkGo
+txLkNum,
+    dzm txLkS           // Number mode, over plain texts
+    jmp txLkGo
+txLkMove,
+    lac txCarry
+    sad [NOPOINT]       // skip if a text is carried
+    jmp txLkGo
+    dac txPen
+    jda txLoad
+    lac i [hitX:4]
+    sub txGripX
+    dac txPtX
+    lac i [hitY:4]
+    sub txGripY
+    dac txPtY
+    jsp txOnScr
+    sza                 // skip if it stays on the screen
+    jmp txLkHeld
+    lac txPen
+    add [txX:012]
+    dac txLkT
+    lac txPtX
+    dac i txLkT
+    lac txPen
+    add [txY:012]
+    dac txLkT
+    lac txPtY
+    dac i txLkT
+    lac txPen
+    jda txToAn
+    law 1
+    dac txDirty
+txLkHeld,
+    lac [TXCARRY]
+    jmp i txLkRtn
+
+txLkGo,
+    dzm txLkK
+txLkLp,
+    lac txLkK
+    sad txN             // skip while texts remain
+    jmp txLkOut
+    jda txKind
+    sad txLkS           // skip unless of the kind the mode passes over
+    jmp txLkNx
+    lac txLkK
+    jda txLoad
+    lac i [vwS:014]
+    sza i               // skip unless at x1, where every text is shown
+    jmp txLkBox
+    jsp txView          // through the view; a text not shown is not locked
+    sza                 // skip if shown
+    jmp txLkNx
+    lac txLkK
+    jda txLoad          // its place on the page again
+txLkBox,
+    jsp txOnScr         // its box
+    lac i [hitX:4]
+    sub txPtX
+    add i [vwTxr:014]
+    spa                 // skip unless left of the box
+    jmp txLkNx
+    lac txPtX
+    add txOnW
+    add i [vwTxr:014]
+    sub i [hitX:4]
+    spa                 // skip unless right of the box
+    jmp txLkNx
+    lac i [hitY:4]
+    sub txPtY
+    add i [vwTxr:014]
+    spa                 // skip unless below the box
+    jmp txLkNx
+    lac txPtY
+    add txOnH
+    add i [vwTxr:014]
+    sub i [hitY:4]
+    spa                 // skip unless above the box
+    jmp txLkNx
+
+    // The box center's distance, the larger axis's, nearer than the best so far.
+    lac txOnW
+    sar 1s
+    add txPtX
+    sub i [hitX:4]
+    spa
+    cma
+    dac txLkD
+    lac txOnH
+    sar 1s
+    add txPtY
+    sub i [hitY:4]
+    spa
+    cma
+    dac txLkT
+    sub txLkD
+    spa                 // skip unless the y distance is the smaller
+    jmp txLkCmp
+    lac txLkT
+    dac txLkD
+txLkCmp,
+    lac txLkD
+    sub txLkBO
+    sma                 // skip if nearer than the best so far
+    jmp txLkNx
+    lac txLkD
+    dac txLkBO
+    lac txLkK
+    dac txLkBest
+txLkNx,
+    idx txLkK
+    jmp txLkLp
+
+    // Against the instance.
+txLkOut,
+    lac txLkBest
+    sad [NOPOINT]       // skip if a text holds the target's center
+    jmp i txLkRtn
+    dac txPen
+    lac txLkBO
+    sub txLockD
+    sma                 // skip if nearer than the instance
+    jmp txLkNone
+    lac txLkBO
+    dac txLockD
+    lac [TXINST]
+    jmp i txLkRtn
+txLkNone,
+    lac [NOPOINT]
+    jmp i txLkRtn
+txLkRtn, 0
+txLkK, 0
+txLkBest, 0
+txLkBO, 0
+txLkD, 0
+txLkT, 0
+txLkS, 0
+    endloc
+
+// The light, for the instance module's instShine. TXINST lights the text the pen locks onto
+// (txPen) at LITINTENSITY, anything else puts out the text lit; the list is written again when
+// the light changes. Entry: txArg = instShine's argument. Exit: AC = the argument, NOPOINT for
+// TXINST, so that instShine dims the instance lit. IO is clobbered. Called via
+// jsp i [txShine:012], from bank 7.
+txShine,
+    local txShRtn, txShSet, txShOut, txShNew
+    dac txShRtn
+    lac [NOPOINT]
+    dac txShNew
+    lac txArg
+    sas [TXINST]        // skip if a text is to be lit
+    jmp txShSet
+    lac txPen
+    dac txShNew
+txShSet,
+    lac txShNew
+    sad txLit           // skip if the light changes
+    jmp txShOut
+    dac txLit
+    law 1
+    dac txDirty
+txShOut,
+    lac txArg
+    sad [TXINST]        // skip unless a text
+    lac [NOPOINT]
+    jmp i txShRtn
+txShRtn, 0
+txShNew, 0
+    endloc
+
+// Delete's text, for the instance module's instRemove (penInst TXINST). The text the pen locks
+// onto (txPen) is removed. Digits' anchor goes too, listed as a removed instance's tie point is,
+// in the instance module's tgList for Delete's arcOrphans, which removes it as nothing is on it;
+// and their scalar goes when no other digits name it (txScGc).
+// AC and IO are clobbered. Called via jsp i [txDelete:012], from bank 7, which has emptied tgList.
+txDelete,
+    local txDeRtn, txDeGo
+    dac txDeRtn
+    lac txPen
+    jda txKind
+    sza i               // skip if digits, whose anchor goes too
+    jmp txDeGo
+    lac txAnK
+    dac i [tgList:7]
+    law 1
+    dac i [tgN:7]
+txDeGo,
+    lac txPen
+    jda txRemove
+    jsp txScGc
+    jmp i txDeRtn
+txDeRtn, 0
+    endloc
+
+// Remove canvas text k, the last text moving into its place, its anchor and scalar with it; none
+// is lit or carried after, and the slot the last leaves is plain.
+// Entry: AC = k. AC and IO are clobbered. Called via jda.
+txRemove, 0
+    local txRmRtn, txRmEnd, txRmGo, txRmL, txRmTo
+    dap txRmRtn
+    lac [NOPOINT]
+    dac txLit
+    dac txCarry
+    law 1
+    dac txDirty
+    lac txN
+    sub [1]
+    dac txN
+    sad txRemove        // skip unless k is the last
+    jmp txRmEnd
+    dac txRmL
+    add [txAn:3]
+    dac txRmGo
+    lac txRemove
+    add [txAn:3]
+    dac txRmTo
+    lac i txRmGo
+    dac i txRmTo
+    lac txRmL
+    add [txSv:3]
+    dac txRmGo
+    lac txRemove
+    add [txSv:3]
+    dac txRmTo
+    lac i txRmGo
+    dac i txRmTo
+    lac txRmL
+    jda txLoad          // the last
+    lac txRemove
+    add [txX:012]
+    dac txRmGo
+    lac txPtX
+    dac i txRmGo
+    lac txRemove
+    add [txY:012]
+    dac txRmGo
+    lac txPtY
+    dac i txRmGo
+    lac txRemove
+    add [txSc:012]
+    dac txRmGo
+    lac txPtSc
+    dac i txRmGo
+    lac txRemove
+    add [txCh:012]
+    dac txRmGo
+    lac txPtCh
+    dac i txRmGo
+    lac txRemove
+    add [txW:012]
+    dac txRmGo
+    lac txPtWn
+    dac i txRmGo
+    lac txRemove
+    jda txRunOf
+    add [txRun:012]
+    dac txRmGo
+    lio txRmGo
+    lac txPtR
+    jda txCopy
+txRmEnd,
+    lac txN
+    jda txAnFill
+txRmRtn, jmp .
+txRmGo, 0
+txRmL, 0
+txRmTo, 0
+    endloc
+
+// Size for a text, for the instance module's instSize (penInst TXINST). The text the pen locks
+// onto (txPen) is set to scale sizeArg, refused where it would then leave the screen. A text's
+// size does not change its cost. A text keeps its origin; digits keep their center, their
+// anchor, and the constraint module builds its sets again, for an O's gap.
+// Exit: AC = 0 set, 1 refused. IO is clobbered. Called via jsp i [txSize:012], from bank 7.
+txSize,
+    local txSzRtn, txSzPl, txSzChk, txSzT
+    dac txSzRtn
+    lac txPen
+    jda txLoad
+    lac i [sizeArg:4]
+    dac txPtSc
+    lac txPen
+    jda txKind
+    sza i               // skip if digits
+    jmp txSzPl
+    jsp txFromAn
+    jmp txSzChk
+txSzPl,
+    jsp txOnScr
+txSzChk,
+    sza                 // skip if it stays on the screen
+    jmp i txSzRtn
+    lac txPen
+    add [txSc:012]
+    dac txSzT
+    lac txPtSc
+    dac i txSzT
+    lac txPen
+    add [txX:012]
+    dac txSzT
+    lac txPtX
+    dac i txSzT
+    lac txPen
+    add [txY:012]
+    dac txSzT
+    lac txPtY
+    dac i txSzT
+    law 1
+    dac txDirty
+    dac i [cTopo:010]   // an O's gap follows the digits' scale
+    dac i [conWake:4]
+    cla
+    jmp i txSzRtn
+txSzRtn, 0
+txSzT, 0
+    endloc
+
+// Text mode's lift (TXOPEN, the main bank's textLost). It gives the keyboard's block (txBlk) on
+// the text the pen locks onto (penInst TXINST, txPen), to edit it, its run copied into txKb; or,
+// with none, on an empty text to be placed at the pseudo pen location (penX, penY). Refused, with
+// the status word NO ROOM, while the canvas holds NTEXT texts. Number mode's lift gives the
+// number keyboard's block (txNBlk) on the digits the pen locks onto, their value in txKb, the
+// answer then theirs (txNumEd); or, with none, a new set of digits placed there (txNumNew).
+// Exit: AC = the block's 16-bit address, 1 for digits placed, 0 for none. AC and IO are
+// clobbered. Called via jsp.
+txOpen,
+    local txOpRtn, txOpEd, txOpGo, txOpFull, txOpNum, txOpDg, txOpP
+    dap txOpRtn
+    dzm txNumEd
+    lac i [mode:4]
+    sad [MNUMBER]       // skip unless Number mode
+    jmp txOpNum
+    lac i [penInst:4]
+    sad [TXINST]        // skip unless a text is locked
+    jmp txOpEd
+    lac txN
+    sad [NTEXT]         // skip unless the canvas is full
+    jmp txOpFull
+    lac [NOPOINT]
+    dac txEd
+    lac i [penX:4]
+    dac txNX
+    lac i [penY:4]
+    dac txNY
+    lac [KBBLANK]
+    dac txKb
+    jmp txOpGo
+txOpEd,
+    lac txPen
+    dac txEd
+    jda txRunOf
+    add [txRun:012]
+    lio [txKb:012]
+    jda txCopy
+txOpGo,
+    lac [txBlk:012]
+    jmp txOpRtn
+txOpNum,
+    lac i [penInst:4]
+    sad [TXINST]        // skip unless digits are locked
+    jmp txOpDg
+    jsp txNumNew
+    jmp txOpRtn
+txOpDg,
+    lac txPen
+    dac txEd
+    law 1
+    dac txNumEd
+    lac txPen
+    add [txSv:3]
+    dac txOpP
+    lac i txOpP
+    add [scVal:3]
+    dac txOpP
+    lac i txOpP
+    jda txDigits
+    lac [txNBlk:012]
+    jmp txOpRtn
+txOpFull,
+    law TXSFULL
+    jda txSay
+    cla
+txOpRtn, jmp .
+txOpP, 0
+    endloc
+
+// The keyboard's answer (TXDONE, the main bank's txKbDone). OK places the text typed (txKb) at
+// (txNX, txNY), at TXSCALE, or puts it in place of the text edited (txEd), whose place and scale
+// stay; an empty text deletes the text edited, and places none. Refused, nothing changed, with
+// the status word NO ROOM where the texts would pass TEXTBUDGET (txTotal), or OFF EDGE where the
+// text would leave the screen. Cancel changes nothing. The number keyboard's answer on digits is
+// txNumDone's.
+// Entry: AC = 1 for OK, 0 for Cancel. Exit: AC = 0 placed, 1 edited or deleted, 2 nothing.
+// IO is clobbered. Called via jda.
+txDone, 0
+    local txDnRtn, txDnTx, txDnNew, txDnFit, txDnPut, txDnEd, txDnEmpty, txDnFull, txDnOff, \
+        txDnSay, txDnNo, txDnK, txDnT
+    dap txDnRtn
+    lac txNumEd
+    sza i               // skip if the number keyboard was open on digits
+    jmp txDnTx
+    lac txDone
+    jda txNumDone
+    jmp txDnRtn
+txDnTx,
+    lac txDone
+    sza i               // skip if OK
+    jmp txDnNo
+    jsp txCount
+    lac txEd
+    sad [NOPOINT]       // skip if a text is edited
+    jmp txDnNew
+    jda txLoad          // its place and scale, and its characters before
+    lac txCnC
+    sza i               // skip unless the text was emptied
+    jmp txDnEmpty
+    jsp txTotal
+    sub txPtCh          // its characters before give way to the new
+    jmp txDnFit
+txDnNew,
+    lac txCnC
+    sza i               // skip unless empty
+    jmp txDnNo
+    lac txNX
+    dac txPtX
+    lac txNY
+    dac txPtY
+    law TXSCALE
+    dac txPtSc
+    jsp txTotal
+    add [TXOWN]
+txDnFit,
+    add txCnC
+    sub [TEXTBUDGET+1]
+    sma                 // skip if within the budget
+    jmp txDnFull
+    lac txCnC
+    dac txPtCh
+    jsp txOnScr
+    sza                 // skip if on the screen
+    jmp txDnOff
+
+    // Written, a new one past the last, with its place and scale; then the characters, the words
+    // and the run.
+    lac txEd
+    dac txDnK
+    sas [NOPOINT]       // skip if a new text
+    jmp txDnPut
+    lac txN
+    dac txEd
+    idx txN
+    lac txEd
+    add [txX:012]
+    dac txDnT
+    lac txPtX
+    dac i txDnT
+    lac txEd
+    add [txY:012]
+    dac txDnT
+    lac txPtY
+    dac i txDnT
+    lac txEd
+    add [txSc:012]
+    dac txDnT
+    lac txPtSc
+    dac i txDnT
+txDnPut,
+    lac txEd
+    add [txCh:012]
+    dac txDnT
+    lac txCnC
+    dac i txDnT
+    lac txEd
+    add [txW:012]
+    dac txDnT
+    lac txCnW
+    dac i txDnT
+    lac txEd
+    jda txRunOf
+    add [txRun:012]
+    dac txDnT
+    lio txDnT
+    lac [txKb:012]
+    jda txCopy
+    law 1
+    dac txDirty
+    lac txDnK
+    sas [NOPOINT]       // skip if placed
+    jmp txDnEd
+    cla
+    jmp txDnRtn
+txDnEd,
+    law 1
+    jmp txDnRtn
+txDnEmpty,
+    lac txEd
+    jda txRemove
+    law 1
+    jmp txDnRtn
+txDnFull,
+    law TXSFULL
+    jmp txDnSay
+txDnOff,
+    law TXSOFF
+txDnSay,
+    jda txSay
+txDnNo,
+    law 2
+txDnRtn, jmp .
+txDnK, 0
+txDnT, 0
+    endloc
+
+// The characters and the words of the run txDgTo names, the keyboard's text txKb but while
+// txSyDg writes an instance's digits. It counts every code to the end code but the shifts, and
+// the words up to the one holding the end.
+// Exit: txCnC, txCnW. AC is clobbered, IO preserved. Called via jsp.
+txCount,
+    local txCnRtn, txCnWd, txCnCd, txCnNx, txCnP, txCnV, txCnJ
+    dap txCnRtn
+    dzm txCnC
+    dzm txCnW
+    lac txDgTo
+    dac txCnP
+txCnWd,
+    idx txCnW
+    lac i txCnP
+    dac txCnV
+    idx txCnP
+    law i 3
+    dac txCnJ
+txCnCd,
+    lac txCnV
+    ral 6s              // rotated, the next code into the low six bits
+    dac txCnV
+    and [077]
+    sad [KCEND]         // skip unless the end
+    jmp txCnRtn
+    sad [KCUP]          // skip unless the upper shift
+    jmp txCnNx
+    sad [KCLOW]         // skip unless the lower shift
+    jmp txCnNx
+    idx txCnC
+txCnNx,
+    isp txCnJ           // skip once the word's three codes are seen
+    jmp txCnCd
+    lac txCnW
+    sas [TXRUN]         // skip at the run's last word
+    jmp txCnWd
+txCnRtn, jmp .
+txCnP, 0
+txCnV, 0
+txCnJ, 0
+    endloc
+
+// The budget the texts take, each canvas text's characters and TXOWN, and each instance's texts'
+// (txInCost), whether or not txPut shows them. Exit: AC = the total. IO is preserved. Called via
+// jsp.
+txTotal,
+    local txToRtn, txToC, txToI0, txToI, txToN, txToK, txToS, txToP
+    dap txToRtn
+    dzm txToS
+    dzm txToK
+txToC,
+    lac txToK
+    sad txN             // skip while texts remain
+    jmp txToI0
+    add [txCh:012]
+    dac txToP
+    lac i txToP
+    add [TXOWN]
+    add txToS
+    dac txToS
+    idx txToK
+    jmp txToC
+txToI0,
+    dzm txToK
+txToI,
+    lac txToK
+    sad i [instCount:012] // skip while instances remain
+    jmp txToN
+    jda txInCost
+    add txToS
+    dac txToS
+    idx txToK
+    jmp txToI
+txToN,
+    lac txToS
+txToRtn, jmp .
+txToK, 0
+txToS, 0
+txToP, 0
+    endloc
+
+// Instance i's texts' cost, its master's (txMCost), or the largest master's while it cycles, as
+// its next step may call any. Entry: AC = i. Exit: AC = the cost. IO is preserved. Called via jda.
+txInCost, 0
+    local txIcRtn, txIcCy, txIcP
+    dap txIcRtn
+    lac txInCost
+    add [iCyc:3]
+    dac txIcP
+    lac i txIcP
+    sza                 // skip unless it cycles
+    jmp txIcCy
+    lac txInCost
+    add [iMaster:012]
+    dac txIcP
+    lac i txIcP
+    add [txMCost:012]
+    dac txIcP
+    lac i txIcP
+    jmp txIcRtn
+txIcCy,
+    jsp txMaxM
+txIcRtn, jmp .
+txIcP, 0
+    endloc
+
+// The largest master's texts' cost, a cycle's. Exit: AC = txMaxV = the cost. IO is preserved.
+// Called via jsp.
+txMaxM,
+    dap txMmRtn
+    dzm txMaxV
+    lac txMCost
+    jda txMaxOf
+    lac txMCost+1
+    jda txMaxOf
+    lac txMCost+2
+    jda txMaxOf
+    lac txMCost+3
+    jda txMaxOf
+txMmRtn, jmp .
+
+// Whether the texts fit the budget with an instance's change, for the instance module, with
+// master txArg's texts added (none for NOPOINT; the largest master's for NMASTER, a cycle's), and
+// instance txArg2's taken away (txInCost; none for NOPOINT). Refused with the status word NO ROOM.
+// Exit: AC = 0 fits, 1 refused. IO is clobbered. Called via jsp i [txFits:012], from bank 7.
+txFits,
+    local txFiRtn, txFiAdd, txFiMax, txFiSum, txFiChk, txFiNo, txFiP, txFiS
+    dac txFiRtn
+    jsp txTotal
+    dac txFiS
+    lac txArg2
+    sad [NOPOINT]       // skip if an instance is replaced
+    jmp txFiAdd
+    jda txInCost
+    dac txFiP
+    lac txFiS
+    sub txFiP
+    dac txFiS
+txFiAdd,
+    lac txArg
+    sad [NOPOINT]       // skip if a master is added
+    jmp txFiChk
+    sad [NMASTER]       // skip unless the largest
+    jmp txFiMax
+    add [txMCost:012]
+    dac txFiP
+    lac i txFiP
+    jmp txFiSum
+txFiMax,
+    jsp txMaxM
+txFiSum,
+    add txFiS
+    dac txFiS
+txFiChk,
+    lac txFiS
+    sub [TEXTBUDGET+1]
+    sma                 // skip if within the budget
+    jmp txFiNo
+    cla
+    jmp i txFiRtn
+txFiNo,
+    law TXSFULL
+    jda txSay
+    law 1
+    jmp i txFiRtn
+txFiRtn, 0
+txFiS, 0
+txFiP, 0
+    endloc
+
+// The larger of AC and the largest so far, txMaxV, which a run of calls leaves the largest; the
+// caller clears txMaxV first. Entry: AC. Exit: AC = txMaxV = the larger. IO is preserved. Called
+// via jda.
+txMaxOf, 0
+    dap txMxRtn
+    lac txMaxOf
+    sub txMaxV
+    spa                 // skip unless smaller
+    jmp txMxOld
+    lac txMaxOf
+    dac txMaxV
+txMxOld,
+    lac txMaxV
+txMxRtn, jmp .
+txMaxV, 0
+
+// Move's lift on a text (TXPICK, the main bank's pickUp, penInst TXINST). With none carried, pick
+// up the text the pen locks onto (txPen), held at the target's center's offset from its origin;
+// with one carried, drop it where it stands. AC is clobbered, IO preserved. Called via jsp.
+txPick,
+    local txPkRtn, txPkDrop, txPkP
+    dap txPkRtn
+    lac txCarry
+    sas [NOPOINT]       // skip if none is carried
+    jmp txPkDrop
+    lac txPen
+    dac txCarry
+    add [txX:012]
+    dac txPkP
+    lac i [hitX:4]
+    sub i txPkP
+    dac txGripX
+    lac txPen
+    add [txY:012]
+    dac txPkP
+    lac i [hitY:4]
+    sub i txPkP
+    dac txGripY
+    jmp txPkRtn
+txPkDrop,
+    lac [NOPOINT]
+    dac txCarry
+txPkRtn, jmp .
+txPkP, 0
+    endloc
+
+// Drop the text Move carries, if any, where it stands (TXDROP, for Move's Locate and endChain).
+// AC is clobbered, IO preserved. Called via jsp.
+txDrop,
+    dap txDrRtn
+    lac [NOPOINT]
+    dac txCarry
+txDrRtn, jmp .
+
+// Undo's texts (TXUNDO). Those past the record's count are removed, as the points and lines are,
+// digits' anchors with the points and their scalars after them (txScGc).
+// Entry: AC = the count. AC and IO are clobbered. Called via jda.
+txUndo, 0
+    dap txUnRtn
+    lac txUndo
+    sub txN
+    sma                 // skip if texts lie past the count
+    jmp txUnRtn
+    lac txUndo
+    dac txN
+    jda txAnFill
+    jsp txScGc
+    lac [NOPOINT]
+    dac txLit
+    dac txCarry
+    law 1
+    dac txDirty
+txUnRtn, jmp .
+
+// Show status word n of txWords under the bar, as the tape's are shown, for MSGMS (the main bank's
+// onClock hides it), its name line blank. The words first, then the gate that shows them.
+// Entry: AC = n. AC and IO are clobbered. Called via jda.
+txSay, 0
+    local txSaRtn, txSaLp, txSaPd, txSaP, txSaQ, txSaN
+    dap txSaRtn
+    lac txSay
+    sal 2s              // four words a word
+    add [txWords:012]
+    dac txSaP
+    lac [msgText:0]
+    dac txSaQ
+    law i 4
+    dac txSaN
+txSaLp,
+    lac i txSaP
+    dac i txSaQ
+    idx txSaP
+    idx txSaQ
+    isp txSaN           // skip once the four words are written
+    jmp txSaLp
+    // A blank name run, as the tape module's tpBlank, of pads with the end code in the last word
+    // only. An end code in an earlier word returns the 340 to parameter mode there, and the run's
+    // next word then reads as a parameter word. A pad's bits are a halt, which would end every
+    // frame at the status word for MSGMS, the list, the drawing and the target undrawn.
+    lac [msgName:0]
+    dac txSaQ
+    law i NAMEW - 1
+    dac txSaN
+txSaPd,
+    lac [KBPAD]
+    dac i txSaQ
+    idx txSaQ
+    isp txSaN           // skip once the pads are written
+    jmp txSaPd
+    lac [KBBLANK]
+    dac i txSaQ
+    lac [jump msgWord:0 next(parameter)]
+    dac i [statGate:0]
+    lac i [now:4]
+    dac i [msgStart:4]
+    law 1
+    dac i [msgOn:4]
+txSaRtn, jmp .
+txSaP, 0
+txSaQ, 0
+txSaN, 0
+    endloc
+
+// Define's room, for the instance module's instMap. The masters' table must take the canvas's
+// texts, less master masterArg's, which they replace. Exit: AC = 0, or DEFTEXT. IO is
+// clobbered. Called via jsp i [txDefRoom:012], from bank 7.
+txDefRoom,
+    local txDrRtn, txDrLp, txDrNx, txDrChk, txDrOK, txDrK, txDrN, txDrP
+    dac txDrRtn
+    lac mtN
+    add txN
+    dac txDrN
+    dzm txDrK
+txDrLp,
+    lac txDrK
+    sad mtN             // skip while the masters' texts remain
+    jmp txDrChk
+    add [mtM:012]
+    dac txDrP
+    lac i txDrP
+    sas i [masterArg:4] // skip if the master's
+    jmp txDrNx
+    lac txDrN
+    sub [1]
+    dac txDrN
+txDrNx,
+    idx txDrK
+    jmp txDrLp
+txDrChk,
+    lac txDrN
+    sub [NMTEXT+1]
+    spa                 // skip if past NMTEXT
+    jmp txDrOK
+    law DEFTEXT
+    jmp i txDrRtn
+txDrOK,
+    cla
+    jmp i txDrRtn
+txDrRtn, 0
+txDrK, 0
+txDrN, 0
+txDrP, 0
+    endloc
+
+// Define's texts, for the instance module's instDef. Master dfK's texts in the masters' table are
+// replaced by the canvas's, each kept relative to the master's origin (the arc module's dfCX,
+// dfCY), and the master's box (mMinX to mMaxY) widened to hold each at its size, so that an
+// instance's box, its lock and its refusals at the screen's edges take in its texts. txMCost is
+// the master's texts' characters and TXOWN each. Digits keep their anchor and scalar (mtAn,
+// mtVal, mtFix). The canvas is left with none. txDefRoom has checked for room.
+// AC and IO are clobbered. Called via jsp i [txDefine:012], from bank 7.
+txDefine,
+    local txDfRtn, txDfDrop, txDfKeep, txDfMoved, txDfDrNx, txDfDNx, txDfLp, txDfX1, txDfY0, \
+        txDfY1, txDfNxI, txDfNx, txDfCost, txDfK, txDfI, txDfJ, txDfP, txDfQ, txDfC, txDfV
+    dac txDfRtn
+    lac i [dfK:2]
+    dac txDfK
+
+    // The master's old texts out, the rest closing up in order.
+    dzm txDfI
+    dzm txDfJ
+txDfDrop,
+    lac txDfI
+    sad mtN             // skip while the masters' texts remain
+    jmp txDfDNx
+    add [mtM:012]
+    dac txDfP
+    lac i txDfP
+    sas txDfK           // skip if the master's, which goes
+    jmp txDfKeep
+    jmp txDfDrNx
+txDfKeep,
+    lac txDfI
+    sad txDfJ           // skip unless in place already
+    jmp txDfMoved
+    lio txDfJ
+    jda mtMove
+txDfMoved,
+    idx txDfJ
+txDfDrNx,
+    idx txDfI
+    jmp txDfDrop
+txDfDNx,
+    lac txDfJ
+    dac mtN
+
+    // The canvas's texts in, relative to the origin; the cost, and the box.
+    dzm txDfC
+    dzm txDfI
+txDfLp,
+    lac txDfI
+    sad txN             // skip while the canvas's texts remain
+    jmp txDfNx
+    jda txLoad
+    lac mtN
+    add [mtM:012]
+    dac txDfP
+    lac txDfK
+    dac i txDfP
+    lac txPtX
+    sub i [dfCX:2]
+    dac txPtX
+    lac mtN
+    add [mtDX:012]
+    dac txDfP
+    lac txPtX
+    dac i txDfP
+    lac txPtY
+    sub i [dfCY:2]
+    dac txPtY
+    lac mtN
+    add [mtDY:012]
+    dac txDfP
+    lac txPtY
+    dac i txDfP
+    lac mtN
+    add [mtSc:012]
+    dac txDfP
+    lac txPtSc
+    dac i txDfP
+    lac mtN
+    add [mtCh:012]
+    dac txDfP
+    lac txPtCh
+    dac i txDfP
+    lac mtN
+    add [mtW:012]
+    dac txDfP
+    lac txPtWn
+    dac i txDfP
+    lac mtN
+    jda txRunOf
+    add [mtRun:012]
+    dac txDfQ
+    lio txDfQ
+    lac txPtR
+    jda txCopy
+
+    // Digits keep their anchor's master index, which instMap marked, and their scalar's value
+    // and fix; their cost and box are taken at SCALDIG + 1 characters about their center, the
+    // most an instance at any scale shows (txMag).
+    lac mtN
+    add [mtAn:012]
+    dac txDfP
+    lac [NOPOINT]
+    dac i txDfP         // plain, unless digits
+    lac txDfI
+    jda txKind
+    sza i               // skip if digits
+    jmp txDfCost
+    lac txAnK
+    add [ptMark:3]
+    dac txDfQ
+    lac i txDfQ
+    sub [1]
+    dac i txDfP
+    lac txDfI
+    add [txSv:3]
+    dac txDfQ
+    lac i txDfQ
+    dac txDfV
+    add [scVal:3]
+    dac txDfQ
+    lac mtN
+    add [mtVal:012]
+    dac txDfP
+    lac i txDfQ
+    dac i txDfP
+    lac txDfV
+    add [scFix:3]
+    dac txDfQ
+    lac mtN
+    add [mtFix:012]
+    dac txDfP
+    lac i txDfQ
+    dac i txDfP
+    jsp txOnScr
+    lac txOnW
+    sar 1s
+    add txPtX
+    dac txDfV           // their center
+    law SCALDIG+1
+    dac txPtCh
+    jsp txOnScr
+    lac txOnW
+    sar 1s
+    dac txDfQ
+    lac txDfV
+    sub txDfQ
+    dac txPtX
+txDfCost,
+    lac txPtCh
+    add [TXOWN]
+    add txDfC
+    dac txDfC
+    idx mtN
+
+    // The box widened to the text's, txOnScr's width and height from its offset (whether the
+    // offset is on the screen does not matter).
+    jsp txOnScr
+    lac txDfK
+    add [mMinX:2]
+    dac txDfP
+    lac txPtX
+    sub i txDfP
+    sma                 // skip if left of the box
+    jmp txDfX1
+    lac txPtX
+    dac i txDfP
+txDfX1,
+    lac txDfK
+    add [mMaxX:2]
+    dac txDfP
+    lac txPtX
+    add txOnW
+    dac txDfV
+    sub i txDfP
+    spa                 // skip unless inside the box's right side
+    jmp txDfY0
+    lac txDfV
+    dac i txDfP
+txDfY0,
+    lac txDfK
+    add [mMinY:2]
+    dac txDfP
+    lac txPtY
+    sub i txDfP
+    sma                 // skip if below the box
+    jmp txDfY1
+    lac txPtY
+    dac i txDfP
+txDfY1,
+    lac txDfK
+    add [mMaxY:2]
+    dac txDfP
+    lac txPtY
+    add txOnH
+    dac txDfV
+    sub i txDfP
+    spa                 // skip unless inside the box's top
+    jmp txDfNxI
+    lac txDfV
+    dac i txDfP
+txDfNxI,
+    idx txDfI
+    jmp txDfLp
+txDfNx,
+    lac txDfK
+    add [txMCost:012]
+    dac txDfP
+    lac txDfC
+    dac i txDfP
+    jsp txClear
+    jmp i txDfRtn
+txDfRtn, 0
+txDfK, 0
+txDfI, 0
+txDfJ, 0
+txDfP, 0
+txDfQ, 0
+txDfC, 0
+txDfV, 0
+    endloc
+
+// Move the masters' text t into slot j, for txDefine's closing up, its digits' words with it.
+// Entry: AC = t, IO = j. AC and IO are clobbered. Called via jda.
+mtMove, 0
+    local mtMvRtn, mtMvLp, mtMvP, mtMvJ, mtMvM
+    dap mtMvRtn
+    dio mtMvJ
+    lac mtMove
+    add [mtM:012]
+    dac mtMvP
+    lac i mtMvP
+    dac mtMvM
+    lac mtMove
+    jda mtLoad
+    lac mtMvJ
+    add [mtM:012]
+    dac mtMvP
+    lac mtMvM
+    dac i mtMvP
+    lac mtMvJ
+    add [mtDX:012]
+    dac mtMvP
+    lac txPtX
+    dac i mtMvP
+    lac mtMvJ
+    add [mtDY:012]
+    dac mtMvP
+    lac txPtY
+    dac i mtMvP
+    lac mtMvJ
+    add [mtSc:012]
+    dac mtMvP
+    lac txPtSc
+    dac i mtMvP
+    lac mtMvJ
+    add [mtCh:012]
+    dac mtMvP
+    lac txPtCh
+    dac i mtMvP
+    lac mtMvJ
+    add [mtW:012]
+    dac mtMvP
+    lac txPtWn
+    dac i mtMvP
+    lac mtMvJ
+    jda txRunOf
+    add [mtRun:012]
+    dac mtMvP
+    lio mtMvP
+    lac txPtR
+    jda txCopy
+
+    // Its anchor, value and fix, three tables NMTEXT apart.
+    lac mtMove
+    add [mtAn:012]
+    dac mtMvP
+    lac mtMvJ
+    add [mtAn:012]
+    dac mtMvM
+    law i 3
+    dac mtMvJ
+mtMvLp,
+    lac i mtMvP
+    dac i mtMvM
+    lac mtMvP
+    add [NMTEXT]
+    dac mtMvP
+    lac mtMvM
+    add [NMTEXT]
+    dac mtMvM
+    isp mtMvJ           // skip once the three are moved
+    jmp mtMvLp
+mtMvRtn, jmp .
+mtMvP, 0
+mtMvJ, 0
+mtMvM, 0
+    endloc
+
+// Copy's room, for the instance module's copyRoom. The canvas must take master copyArg's texts,
+// and the scalars a scalar for each of its sets of digits.
+// Exit: AC = 0 if they fit, COPYROOM if not. IO is clobbered. Called via jsp i [txCopyRoom:012],
+// from bank 7.
+txCopyRoom,
+    local txCrRtn, txCrLp, txCrNx, txCrChk, txCrNo, txCrK, txCrN, txCrP
+    dac txCrRtn
+    lac txN
+    dac txCrN
+    dzm txCrK
+txCrLp,
+    lac txCrK
+    sad mtN             // skip while the masters' texts remain
+    jmp txCrChk
+    add [mtM:012]
+    dac txCrP
+    lac i txCrP
+    sas i [copyArg:4]   // skip if the master's
+    jmp txCrNx
+    idx txCrN
+txCrNx,
+    idx txCrK
+    jmp txCrLp
+txCrChk,
+    lac txCrN
+    sub [NTEXT+1]
+    sma                 // skip unless past NTEXT
+    jmp txCrNo
+    lac i [copyArg:4]
+    jda mtDigs
+    add i [scN:3]
+    sub [NSCAL+1]
+    sma                 // skip if the scalars take its digits' too
+    jmp txCrNo
+    cla
+    jmp i txCrRtn
+txCrNo,
+    law COPYROOM
+    jmp i txCrRtn
+txCrRtn, 0
+txCrK, 0
+txCrN, 0
+txCrP, 0
+    endloc
+
+// Define's room for its instances' texts, for the instance module's instNest. The canvas must
+// take every instance's master's texts at once, as Define takes the instances apart, and the
+// scalars a scalar for each of their sets of digits. Exit: AC = 0 if they fit, DEFNROOM if not.
+// IO is clobbered. Called via jsp i [txNestRoom:012], from bank 7.
+txNestRoom,
+    local txNrRtn, txNrM, txNrI0, txNrI, txNrChk, txNrS, txNrSc, txNrNo, txNrK, txNrN, txNrP
+    dac txNrRtn
+
+    // Each master's count of texts.
+    dzm txNrC
+    dzm txNrC+1
+    dzm txNrC+2
+    dzm txNrC+3
+    dzm txNrK
+txNrM,
+    lac txNrK
+    sad mtN             // skip while the masters' texts remain
+    jmp txNrI0
+    add [mtM:012]
+    dac txNrP
+    lac i txNrP
+    add [txNrC:012]
+    dac txNrP
+    idx i txNrP
+    idx txNrK
+    jmp txNrM
+
+    // The canvas's and every instance's master's.
+txNrI0,
+    lac txN
+    dac txNrN
+    dzm txNrK
+txNrI,
+    lac txNrK
+    sad i [instCount:012] // skip while instances remain
+    jmp txNrChk
+    add [iMaster:012]
+    dac txNrP
+    lac i txNrP
+    add [txNrC:012]
+    dac txNrP
+    lac i txNrP
+    add txNrN
+    dac txNrN
+    idx txNrK
+    jmp txNrI
+txNrChk,
+    lac txNrN
+    sub [NTEXT+1]
+    sma                 // skip unless past NTEXT
+    jmp txNrNo
+
+    // The scalars, the canvas's and one for each set of digits of every instance's master.
+    lac i [scN:3]
+    dac txNrN
+    dzm txNrK
+txNrS,
+    lac txNrK
+    sad i [instCount:012] // skip while instances remain
+    jmp txNrSc
+    add [iMaster:012]
+    dac txNrP
+    lac i txNrP
+    jda mtDigs
+    add txNrN
+    dac txNrN
+    idx txNrK
+    jmp txNrS
+txNrSc,
+    lac txNrN
+    sub [NSCAL+1]
+    sma                 // skip if the scalars take them
+    jmp txNrNo
+    cla
+    jmp i txNrRtn
+txNrNo,
+    law DEFNROOM
+    jmp i txNrRtn
+txNrRtn, 0
+txNrK, 0
+txNrN, 0
+txNrP, 0
+txNrC,
+    table NMASTER, 0
+    endloc
+
+// Copy's drop, its texts, for the instance module's copyParts. Master copyArg's texts are added
+// to the canvas at (copyX, copyY), each offset at a dismember's scale (dismShift, x1 for a copy),
+// at its scale plus that scale, at most x8, as an instance shows them; digits get a new anchor
+// and scalar. Run before copyParts adds the points. The caller has checked for room.
+// AC and IO are clobbered. Called via jsp i [txParts:012], from bank 7.
+txParts,
+    local txPaRtn, txPaFind, txPaNxS, txPaGo, txPaLp, txPaNx, txPaSc, txPaPut, txPaPl, txPaS, \
+        txPaK, txPaP, txPaQ, txPaH, txPaT, txPaV
+    dac txPaRtn
+    lac i [dismShift:7]
+    dac txPaH
+
+    // The scale whose shift dismShift is.
+    dzm txPaS
+txPaFind,
+    lac txPaS
+    add [txShTab:012]
+    dac txPaP
+    lac i txPaP
+    sas txPaH           // skip if the scale's shift
+    jmp txPaNxS
+    jmp txPaGo
+txPaNxS,
+    idx txPaS
+    sas [4]             // skip once every scale is tried
+    jmp txPaFind
+    dzm txPaS           // none, so x1
+txPaGo,
+    dzm txPaK
+txPaLp,
+    lac txPaK
+    sad mtN             // skip while the masters' texts remain
+    jmp i txPaRtn
+    add [mtM:012]
+    dac txPaP
+    lac i txPaP
+    sas i [copyArg:4]   // skip if the master's
+    jmp txPaNx
+    lac txPaK
+    jda mtLoad
+    lac txPtX
+    xct txPaH
+    add i [copyX:4]
+    dac txPtX
+    lac txPtY
+    xct txPaH
+    add i [copyY:4]
+    dac txPtY
+    lac txPtSc
+    add txPaS
+    sub [4]
+    spa                 // skip if past x8
+    jmp txPaSc
+    law 3
+    dac txPtSc
+    jmp txPaPut
+txPaSc,
+    add [4]
+    dac txPtSc
+txPaPut,
+    lac txN
+    dac txPaT
+    idx txN
+    lac txPaT
+    add [txX:012]
+    dac txPaP
+    lac txPtX
+    dac i txPaP
+    lac txPaT
+    add [txY:012]
+    dac txPaP
+    lac txPtY
+    dac i txPaP
+    lac txPaT
+    add [txSc:012]
+    dac txPaP
+    lac txPtSc
+    dac i txPaP
+    lac txPaT
+    add [txCh:012]
+    dac txPaP
+    lac txPtCh
+    dac i txPaP
+    lac txPaT
+    add [txW:012]
+    dac txPaP
+    lac txPtWn
+    dac i txPaP
+    lac txPaT
+    jda txRunOf
+    add [txRun:012]
+    dac txPaP
+    lio txPaP
+    lac txPtR
+    jda txCopy
+
+    // Digits take as anchor the copy's point, which copyParts adds past the points the table
+    // holds now (copyBase), and a new scalar, the master's value at the scale, its fix kept;
+    // they are written again from it before the list is (txDgSync), as their value shown is set
+    // to -0, which no value is.
+    lac txPaK
+    add [mtAn:012]
+    dac txPaP
+    lac i txPaP
+    sad [NOPOINT]       // skip if digits
+    jmp txPaPl
+    add i [pointCount:4]
+    dac txPaV
+    lac txPaT
+    add [txAn:3]
+    dac txPaP
+    lac txPaV
+    dac i txPaP
+    lac i [scN:3]
+    dac txPaV
+    idx i [scN:3]
+    lac txPaT
+    add [txSv:3]
+    dac txPaP
+    lac txPaV
+    dac i txPaP
+    lac txPaK
+    add [mtFix:012]
+    dac txPaP
+    lac txPaV
+    add [scFix:3]
+    dac txPaQ
+    lac i txPaP
+    dac i txPaQ
+    lac txPaK
+    add [mtVal:012]
+    dac txPaP
+    lac txPaV
+    add [scVal:3]
+    dac txPaQ
+    lac i txPaP
+    lio txPaS
+    jda txMag
+    dac i txPaQ
+    lac txPaT
+    add [txDv:012]
+    dac txPaP
+    lac [0777777]
+    dac i txPaP
+    law 1
+    dac i [cScChg:010]
+txPaPl,
+    law 1
+    dac txDirty
+txPaNx,
+    idx txPaK
+    jmp txPaLp
+txPaRtn, 0
+txPaS, 0
+txPaK, 0
+txPaP, 0
+txPaQ, 0
+txPaH, 0
+txPaT, 0
+txPaV, 0
+    endloc
+
+// Master m's sets of digits among the masters' texts, the scalars a copy of it adds.
+// Entry: AC = m. Exit: AC = the count. IO is preserved. Called via jda.
+mtDigs, 0
+    local mtDgRtn, mtDgLp, mtDgNx, mtDgOut, mtDgK, mtDgN, mtDgP
+    dap mtDgRtn
+    dzm mtDgN
+    dzm mtDgK
+mtDgLp,
+    lac mtDgK
+    sad mtN             // skip while the masters' texts remain
+    jmp mtDgOut
+    add [mtM:012]
+    dac mtDgP
+    lac i mtDgP
+    sas mtDigs          // skip if the master's
+    jmp mtDgNx
+    lac mtDgK
+    add [mtAn:012]
+    dac mtDgP
+    lac i mtDgP
+    sas [NOPOINT]       // skip unless digits
+    idx mtDgN
+mtDgNx,
+    idx mtDgK
+    jmp mtDgLp
+mtDgOut,
+    lac mtDgN
+mtDgRtn, jmp .
+mtDgK, 0
+mtDgN, 0
+mtDgP, 0
+    endloc
+
+// Numbers. A set of digits is a canvas text whose anchor (txAn, bank 3) names a point at its
+// box's center and whose scalar (txSv) holds the value it shows.
+
+// Whether canvas text k is digits, and its anchor.
+// Entry: AC = k. Exit: AC = 1 for digits, 0 for a plain text; txAnK the anchor, NOPOINT for a
+// plain text. IO is preserved. Called via jda.
+txKind, 0
+    local txKdRtn, txKdPl, txKdP
+    dap txKdRtn
+    lac txKind
+    add [txAn:3]
+    dac txKdP
+    lac i txKdP
+    dac txAnK
+    sad [NOPOINT]       // skip if digits
+    jmp txKdPl
+    law 1
+    jmp txKdRtn
+txKdPl,
+    cla
+txKdRtn, jmp .
+txKdP, 0
+    endloc
+
+// Every canvas text's anchor from k on made NOPOINT, so that no text past txN is digits, conRen
+// renames live anchors only, and a text added later starts plain.
+// Entry: AC = k. AC is clobbered, IO preserved. Called via jda.
+txAnFill, 0
+    local txAfRtn, txAfLp, txAfP
+    dap txAfRtn
+    lac txAnFill
+    add [txAn:3]
+    dac txAfP
+txAfLp,
+    lac txAfP
+    sad [txAn:3+NTEXT]  // skip while words remain
+    jmp txAfRtn
+    lac [NOPOINT]
+    dac i txAfP
+    idx txAfP
+    jmp txAfLp
+txAfRtn, jmp .
+txAfP, 0
+    endloc
+
+// Whether the main bank's findNearPoint's point (scanidx) is a set of digits' anchor, which the
+// pen never locks onto as a point.
+// Exit: AC = 1 if it is, 0 if not. IO is preserved. Called via jsp i [txIsAn:012], from bank 4.
+txIsAn,
+    local txIaRtn, txIaLp, txIaNo, txIaYes, txIaP, txIaE
+    dac txIaRtn
+    lac [txAn:3]
+    dac txIaP
+    add txN
+    dac txIaE
+txIaLp,
+    lac txIaP
+    sad txIaE           // skip while texts remain
+    jmp txIaNo
+    lac i txIaP
+    sad i [scanidx:4]   // skip unless it names the point
+    jmp txIaYes
+    idx txIaP
+    jmp txIaLp
+txIaNo,
+    cla
+    jmp i txIaRtn
+txIaYes,
+    law 1
+    jmp i txIaRtn
+txIaRtn, 0
+txIaP, 0
+txIaE, 0
+    endloc
+
+// Digits k's anchor written from their place, the center of their box, from txPtX, txPtY, txOnW
+// and txOnH as txOnScr left them for that place. Nothing for a plain text. Only a constraint can
+// be on an anchor, so no slot is written; the constraint module is asked to take it up (cRld),
+// and woken.
+// Entry: AC = k. AC is clobbered, IO preserved. Called via jda.
+txToAn, 0
+    local txTaRtn, txTaP
+    dap txTaRtn
+    lac txToAn
+    jda txKind
+    sza i               // skip if digits
+    jmp txTaRtn
+    lac txAnK
+    add [pointX:3]
+    dac txTaP
+    lac txOnW
+    sar 1s
+    add txPtX
+    dac i txTaP
+    lac txAnK
+    add [pointY:3]
+    dac txTaP
+    lac txOnH
+    sar 1s
+    add txPtY
+    dac i txTaP
+    law 1               // the solver takes the anchor up, an O's
+    dac i [cRld:010]
+    dac i [conWake:4]
+txTaRtn, jmp .
+txTaP, 0
+    endloc
+
+// A set of digits' place from its anchor txAnK, at scale txPtSc with txPtCh characters. It is the
+// lower left of a box centered on the anchor; and whether that box lies on the screen.
+// Exit: AC = 0 on the screen, 1 off it; txPtX, txPtY; txOnW, txOnH. IO is clobbered. Called via
+// jsp.
+txFromAn,
+    local txFaRtn, txFaP, txFaT
+    dap txFaRtn
+    jsp txOnScr         // the box's width and height, wherever it stands
+    lac txOnW
+    sar 1s
+    dac txFaT
+    lac txAnK
+    add [pointX:3]
+    dac txFaP
+    lac i txFaP
+    sub txFaT
+    dac txPtX
+    lac txOnH
+    sar 1s
+    dac txFaT
+    lac txAnK
+    add [pointY:3]
+    dac txFaP
+    lac i txFaP
+    sub txFaT
+    dac txPtY
+    jsp txOnScr
+txFaRtn, jmp .
+txFaP, 0
+txFaT, 0
+    endloc
+
+// Pack a code into the run txDigits writes. A word is written once it holds three.
+// Entry: AC = the code. AC is clobbered, IO preserved. Called via jda.
+txEmit, 0
+    dap txEmRtn
+    lac txEmW
+    ral 6s
+    ior txEmit
+    dac txEmW
+    idx txEmN
+    sas [3]             // skip once the word holds three codes
+    jmp txEmRtn
+    lac txEmW
+    dac i txEmP
+    idx txEmP
+    dzm txEmW
+    dzm txEmN
+txEmRtn, jmp .
+
+// A value as digits in the run txDgTo names (txKb but in txSyDg), as the keyboard keeps a text.
+// It writes an upper shift, a minus sign when the value is negative, its digits with no leading
+// zeros (0 alone for 0), then end codes through the run's last word, by taking each power of ten
+// away in turn, as the instance module's cyPutNum does, with no divide.
+// Entry: AC = the value, -99999 to 99999, never -0. AC and IO are clobbered. Called via jda.
+txDigits, 0
+    local txDgRtn, txDgPos, txDgPow, txDgSub, txDgOut, txDgNx, txDgPad, txDgV, txDgD, txDgT, \
+        txDgL
+    dap txDgRtn
+    lac txDgTo
+    dac txEmP
+    dzm txEmW
+    dzm txEmN
+    law KCUP
+    jda txEmit
+    lac txDigits
+    dac txDgV
+    sma                 // skip if negative
+    jmp txDgPos
+    cma
+    dac txDgV
+    law KCMINUS
+    jda txEmit
+txDgPos,
+    dzm txDgL
+    lac [txTens:012]
+    dac txDgT
+txDgPow,
+    dzm txDgD
+txDgSub,
+    lac txDgV
+    sub i txDgT
+    spa                 // skip if the power goes once more
+    jmp txDgOut
+    dac txDgV
+    idx txDgD
+    jmp txDgSub
+txDgOut,
+    lac txDgD
+    ior txDgL
+    sza i               // skip unless a leading zero
+    jmp txDgNx
+    lac txDgD
+    add [KCZERO]
+    jda txEmit
+    law 1
+    dac txDgL
+txDgNx,
+    idx txDgT
+    sas [txTens:012+SCALDIG] // skip once the units are done
+    jmp txDgPow
+    lac txDgL
+    sza                 // skip if no digit was written (the value is 0)
+    jmp txDgPad
+    law KCZERO
+    jda txEmit
+txDgPad,
+    law KCEND
+    jda txEmit
+    lac txEmN
+    sza                 // skip at a word's end
+    jmp txDgPad
+    lac txDgTo
+    sad [txIRun:012]    // skip unless an instance's copy, read only to the word holding its end
+    jmp txDgRtn
+    lac txEmP
+    sub txDgTo
+    sas [TXRUN]         // skip once the run's last word is written
+    jmp txDgPad
+txDgRtn, jmp .
+txDgV, 0
+txDgD, 0
+txDgT, 0
+txDgL, 0
+    endloc
+
+// The value typed in txKb on Number's keyboard, a minus sign or none, then one to SCALDIG digits,
+// the shifts passed over.
+// Exit: AC = 0 with txNumV the value, 1 for an empty text, 2 for anything else (a point, a sign
+// not first or alone, more than SCALDIG digits). IO is clobbered. Called via jsp.
+txParse,
+    local txPsRtn, txPsWd, txPsCd, txPsMin, txPsNx, txPsEnd, txPsVal, txPsPos, txPsBad, txPsP, \
+        txPsW, txPsJ, txPsN, txPsS, txPsC
+    dap txPsRtn
+    dzm txNumV
+    dzm txPsN
+    dzm txPsS
+    lac [txKb:012]
+    dac txPsP
+txPsWd,
+    lac i txPsP
+    dac txPsW
+    idx txPsP
+    law i 3
+    dac txPsJ
+txPsCd,
+    lac txPsW
+    ral 6s              // rotated, the next code into the low six bits
+    dac txPsW
+    and [077]
+    sad [KCEND]         // skip unless the end
+    jmp txPsEnd
+    sad [KCUP]          // skip unless the upper shift
+    jmp txPsNx
+    sad [KCLOW]         // skip unless the lower shift
+    jmp txPsNx
+    sad [KCMINUS]       // skip unless a minus sign
+    jmp txPsMin
+    sub [KCZERO]
+    spa                 // skip unless below 0
+    jmp txPsBad
+    dac txPsC
+    sub [0d10]
+    sma                 // skip if a digit
+    jmp txPsBad
+    idx txPsN
+    sub [SCALDIG+1]
+    sma                 // skip if SCALDIG digits or fewer
+    jmp txPsBad
+    lac txNumV
+    sal 2s
+    add txNumV
+    sal 1s              // ten times
+    add txPsC
+    dac txNumV
+    jmp txPsNx
+txPsMin,
+    lac txPsN
+    ior txPsS
+    sza                 // skip if nothing came before it
+    jmp txPsBad
+    idx txPsS
+txPsNx,
+    isp txPsJ           // skip once the word's three codes are seen
+    jmp txPsCd
+    lac txPsP
+    sas [txKb:012+TXRUN] // skip past the run's last word
+    jmp txPsWd
+txPsEnd,
+    lac txPsN
+    sza                 // skip if no digit was typed
+    jmp txPsVal
+    lac txPsS
+    sza                 // skip if nothing was typed
+    jmp txPsBad
+    law 1
+    jmp txPsRtn
+txPsVal,
+    lac txPsS
+    sza i               // skip if negative
+    jmp txPsPos
+    lac txNumV
+    sza                 // skip if 0, which stays +0
+    cma
+    dac txNumV
+txPsPos,
+    cla
+    jmp txPsRtn
+txPsBad,
+    law 2
+txPsRtn, jmp .
+txPsP, 0
+txPsW, 0
+txPsJ, 0
+txPsN, 0
+txPsS, 0
+txPsC, 0
+    endloc
+
+// Digits k written from their scalar's value, their run, characters and words, and their place
+// about their anchor at their scale. Refused, nothing written, with the status word NO ROOM
+// where the texts would pass TEXTBUDGET, or OFF EDGE where the digits would leave the screen.
+// Entry: AC = k. Exit: AC = 0 written, 1 refused. IO is clobbered. Called via jda.
+txDgSet, 0
+    local txDsRtn, txDsFull, txDsOff, txDsSay, txDsK, txDsP, txDsQ
+    dap txDsRtn
+    lac txDgSet
+    dac txDsK
+    add [txSv:3]
+    dac txDsP
+    lac i txDsP
+    add [scVal:3]
+    dac txDsP
+    lac txDsK
+    add [txDv:012]
+    dac txDsQ
+    lac i txDsP
+    dac i txDsQ         // the value shown, for txDgSync, refused or not
+    jda txDigits
+    jsp txCount
+    lac txDsK
+    jda txLoad          // its scale, and its characters before
+    jsp txTotal
+    sub txPtCh          // its characters before give way to the new
+    add txCnC
+    sub [TEXTBUDGET+1]
+    sma                 // skip if within the budget
+    jmp txDsFull
+    lac txCnC
+    dac txPtCh
+    lac txDsK
+    jda txKind          // its anchor
+    jsp txFromAn
+    sza                 // skip if on the screen
+    jmp txDsOff
+    lac txDsK
+    add [txX:012]
+    dac txDsP
+    lac txPtX
+    dac i txDsP
+    lac txDsK
+    add [txY:012]
+    dac txDsP
+    lac txPtY
+    dac i txDsP
+    lac txDsK
+    add [txCh:012]
+    dac txDsP
+    lac txCnC
+    dac i txDsP
+    lac txDsK
+    add [txW:012]
+    dac txDsP
+    lac txCnW
+    dac i txDsP
+    lac txDsK
+    jda txRunOf
+    add [txRun:012]
+    dac txDsP
+    lio txDsP
+    lac [txKb:012]
+    jda txCopy
+    law 1
+    dac txDirty
+    cla
+    jmp txDsRtn
+txDsFull,
+    law TXSFULL
+    jmp txDsSay
+txDsOff,
+    law TXSOFF
+txDsSay,
+    jda txSay
+    law 1
+txDsRtn, jmp .
+txDsK, 0
+txDsP, 0
+txDsQ, 0
+    endloc
+
+// The digits written again after the constraint module changed a scalar or moved a point (its
+// cScChg, cleared here). Each set whose scalar's value is not the one it shows (txDv), or whose
+// anchor the last publish or Undo moved (its FMOV mark), is written by txDgSet, which may refuse
+// and leave it as it was. Not while the keyboard is open, whose text txDgSet would spoil; the
+// flag waits.
+// AC and IO are clobbered. Called via jsp.
+txDgSync,
+    local txGsRtn, txGsLp, txGsNx, txGsSet, txGsK, txGsP, txGsQ
+    dap txGsRtn
+    lac i [kbOn:0]
+    sza                 // skip unless the keyboard is open
+    jmp txGsRtn
+    dzm i [cScChg:010]
+    lac i [scN:3]
+    sza i               // skip if a scalar exists
+    jmp txGsRtn
+    dzm txGsK
+txGsLp,
+    lac txGsK
+    sad txN             // skip while texts remain
+    jmp txGsRtn
+    add [txAn:3]
+    dac txGsP
+    lac i txGsP
+    sad [NOPOINT]       // skip if digits
+    jmp txGsNx
+    add [cFlag:011]
+    dac txGsP
+    lac i txGsP
+    and [FMOV]
+    sza                 // skip unless the solver moved the anchor
+    jmp txGsSet
+    lac txGsK
+    add [txSv:3]
+    dac txGsP
+    lac i txGsP
+    add [scVal:3]
+    dac txGsP
+    lac txGsK
+    add [txDv:012]
+    dac txGsQ
+    lac i txGsP
+    sad i txGsQ         // skip unless the value shown
+    jmp txGsNx
+txGsSet,
+    lac txGsK
+    jda txDgSet
+txGsNx,
+    idx txGsK
+    jmp txGsLp
+txGsRtn, jmp .
+txGsK, 0
+txGsP, 0
+txGsQ, 0
+    endloc
+
+// Number mode's lift on no digits, a new set at the pseudo pen location (penX, penY), its anchor
+// a new point there, its scalar a new one, free and 0, at TXSCALE. Refused, with the status word
+// NO ROOM, while the canvas holds NTEXT texts, the point table MAXPTS points or the scalars
+// NSCAL; and as txDgSet refuses.
+// Exit: AC = 1 placed, 0 refused. AC and IO are clobbered. Called via jsp.
+txNumNew,
+    local txNnRtn, txNnFull, txNnNo, txNnK, txNnA, txNnS, txNnP
+    dap txNnRtn
+    lac txN
+    sad [NTEXT]         // skip unless the canvas is full
+    jmp txNnFull
+    lac i [pointCount:4]
+    sad [MAXPTS]        // skip unless the point table is full
+    jmp txNnFull
+    lac i [scN:3]
+    sad [NSCAL]         // skip unless every scalar is in use
+    jmp txNnFull
+
+    // The anchor, the scalar and the text past the last of each, taken only once written.
+    lac i [pointCount:4]
+    dac txNnA
+    add [pointX:3]
+    dac txNnP
+    lac i [penX:4]
+    dac i txNnP
+    lac txNnA
+    add [pointY:3]
+    dac txNnP
+    lac i [penY:4]
+    dac i txNnP
+    lac i [scN:3]
+    dac txNnS
+    add [scVal:3]
+    dac txNnP
+    dzm i txNnP
+    lac txNnS
+    add [scFix:3]
+    dac txNnP
+    dzm i txNnP
+    lac txN
+    dac txNnK
+    add [txAn:3]
+    dac txNnP
+    lac txNnA
+    dac i txNnP
+    lac txNnK
+    add [txSv:3]
+    dac txNnP
+    lac txNnS
+    dac i txNnP
+    lac txNnK
+    add [txSc:012]
+    dac txNnP
+    law TXSCALE
+    dac i txNnP
+    lac txNnK
+    add [txCh:012]
+    dac txNnP
+    dzm i txNnP
+    idx txN
+    lac txNnK
+    jda txDgSet
+    sza                 // skip if written
+    jmp txNnNo
+    idx i [pointCount:4]
+    idx i [scN:3]
+    law 1
+    jmp txNnRtn
+txNnNo,
+    lac txNnK
+    dac txN
+    jda txAnFill        // its slot plain again
+    cla
+    jmp txNnRtn
+txNnFull,
+    law TXSFULL
+    jda txSay
+    cla
+txNnRtn, jmp .
+txNnK, 0
+txNnA, 0
+txNnS, 0
+txNnP, 0
+    endloc
+
+// The number keyboard's answer on digits txEd. OK on a value sets their scalar to it and fixes
+// it, the digits then written again (txDgSet), which may refuse, the scalar left as it was; OK on
+// an empty text frees the scalar, its value kept; anything else typed, and Cancel, change
+// nothing. A change wakes the solver, for a D on the scalar.
+// Entry: AC = 1 for OK, 0 for Cancel. Exit: AC = 1 changed, 2 nothing. IO is clobbered.
+// Called via jda.
+txNumDone, 0
+    local txNdRtn, txNdFree, txNdYes, txNdNo, txNdV, txNdF, txNdPv, txNdPf
+    dap txNdRtn
+    dzm txNumEd
+    lac txNumDone
+    sza i               // skip if OK
+    jmp txNdNo
+    lac txEd
+    add [txSv:3]
+    dac txNdPv
+    lac i txNdPv
+    add [scFix:3]
+    dac txNdPf
+    lac i txNdPv
+    add [scVal:3]
+    dac txNdPv
+    jsp txParse
+    sad [1]             // skip unless empty
+    jmp txNdFree
+    sza                 // skip if a value
+    jmp txNdNo
+    lac i txNdPv
+    dac txNdV
+    lac i txNdPf
+    dac txNdF
+    lac txNumV
+    dac i txNdPv
+    law 1
+    dac i txNdPf
+    lac txEd
+    jda txDgSet
+    sza i               // skip if refused
+    jmp txNdYes
+    lac txNdV
+    dac i txNdPv
+    lac txNdF
+    dac i txNdPf
+txNdNo,
+    law 2
+    jmp txNdRtn
+txNdFree,
+    dzm i txNdPf
+txNdYes,
+    law 1
+    dac i [cTopo:010]   // a D on the scalar drives or reads anew, the solver woken by the build
+    dac i [conWake:4]
+txNdRtn, jmp .
+txNdV, 0
+txNdF, 0
+txNdPv, 0
+txNdPf, 0
+    endloc
+
+// The scalars no digits name are removed, each such one, the last scalar taking its place and the
+// digits naming the last following it. Run after digits go, by a Delete or an Undo. A removal
+// asks the constraint module to build its sets again, so that its numbers find their scalars.
+// AC and IO are clobbered. Called via jsp.
+txScGc,
+    local txSgRtn, txSgLp, txSgK, txSgNx, txSgKeep, txSgGo, txSgRn, txSgRnNx, txSgS, txSgL, \
+        txSgI, txSgP, txSgQ
+    dap txSgRtn
+    dzm txSgS
+txSgLp,
+    lac txSgS
+    sad i [scN:3]       // skip while scalars remain
+    jmp txSgRtn
+    dzm txSgI
+txSgK,
+    lac txSgI
+    sad txN             // skip while texts remain
+    jmp txSgGo
+    jda txKind
+    sza i               // skip if digits
+    jmp txSgNx
+    lac txSgI
+    add [txSv:3]
+    dac txSgP
+    lac i txSgP
+    sad txSgS           // skip unless they name the scalar
+    jmp txSgKeep
+txSgNx,
+    idx txSgI
+    jmp txSgK
+txSgKeep,
+    idx txSgS
+    jmp txSgLp
+
+    // None names it, so the last scalar goes into its place, then the digits naming the last are
+    // renamed, and the same place is looked at again.
+txSgGo,
+    law 1               // the constraint module binds its numbers again (cScBind)
+    dac i [cTopo:010]
+    dac i [conWake:4]
+    lac i [scN:3]
+    sub [1]
+    dac i [scN:3]
+    dac txSgL
+    sad txSgS           // skip unless it was the last
+    jmp txSgRtn
+    lac txSgL
+    add [scVal:3]
+    dac txSgP
+    lac txSgS
+    add [scVal:3]
+    dac txSgQ
+    lac i txSgP
+    dac i txSgQ
+    lac txSgL
+    add [scFix:3]
+    dac txSgP
+    lac txSgS
+    add [scFix:3]
+    dac txSgQ
+    lac i txSgP
+    dac i txSgQ
+    dzm txSgI
+txSgRn,
+    lac txSgI
+    sad txN             // skip while texts remain
+    jmp txSgLp
+    add [txSv:3]
+    dac txSgP
+    lac i txSgP
+    sas txSgL           // skip if it names the last
+    jmp txSgRnNx
+    lac txSgS
+    dac i txSgP
+txSgRnNx,
+    idx txSgI
+    jmp txSgRn
+txSgRtn, jmp .
+txSgS, 0
+txSgL, 0
+txSgI, 0
+txSgP, 0
+txSgQ, 0
+    endloc
+
+// The module's words.
+txLit, 0                // the canvas text lit, NOPOINT for none
+txCarry, 0              // the canvas text Move carries, NOPOINT for none
+txGripX, 0              // the target's center's offset from its origin at the pick-up
+txGripY, 0
+txPen, 0                // the text the pen locks onto, which TXINST names
+txLockD, 0              // txLock's distance: the instance's on entry, the text's on exit
+txArg, 0                // the instance module's arguments: txShine's, and txFits' master
+txArg2, 0               // txFits' instance replaced
+txEd, 0                 // the text the keyboard edits, NOPOINT for a new one
+txNX, 0                 // a new text's origin
+txNY, 0
+txDirty, 0              // nonzero when the texts have changed since the list was written
+txShown, 0              // the budget the list shown uses
+txBufSel, 0             // the buffer written next: 0 A, 1 B
+txHeld, 0               // frameTotal at the last swap
+txCnC, 0                // txCount's characters and words
+txCnW, 0
+txOnW, 0                // txOnScr's box: width and height
+txOnH, 0
+txPtX, 0                // txPut's text: its place, scale, characters, words, run and light;
+txPtY, 0                // and where its words go
+txPtSc, 0
+txPtCh, 0
+txPtWn, 0
+txPtR, 0
+txPtLit, 0
+txPtW, 0
+txNumEd, 0              // 1 while the number keyboard is open on digits (txEd), else 0
+txAnK, 0                // txKind's anchor
+txNumV, 0               // txParse's value
+txEmP, 0                // txEmit's place: the next word, the word being packed, its codes
+txEmW, 0
+txEmN, 0
+txDgTo, txKb:012        // the run txDigits writes and txCount reads: txKb, but in txSyDg
+
+// The keyboard's block (spkbd.ac's kbOpen). It holds a text of at most TEXTLEN characters, the
+// prompt, the buffer txKb, the main bank's resume txKbDone, and a text ended at its end.
+txBlk, KBTEXT
+    TEXTLEN
+    txPrm:012
+    txKb:012
+    txKbDone:4
+    0
+txPrm, type340 "Text"
+txKb,
+    table TXRUN, 0
+
+// The number keyboard's block for digits. It holds a sign and SCALDIG digits at most, the
+// prompt, the same buffer and resume, and a text ended at its end.
+txNBlk, KBNUM
+    SCALDIG + 1
+    txNPrm:012
+    txKb:012
+    txKbDone:4
+    0
+txNPrm, type340 "Number"
+
+// The powers of ten txDigits takes away, the largest first.
+txTens,
+    0d10000
+    0d1000
+    0d100
+    0d10
+    1
+
+// The status words, four words of nine characters each, TXSFULL then TXSOFF.
+txWords,
+    type340 "NO ROOM  "
+    type340 "OFF EDGE "
+
+// Each canvas text's value as its digits were last written (txDgSet), for txDgSync; a plain
+// text's is never read.
+txDv,
+    table NTEXT, 0
+
+// The texts' counts and costs, then their tables. In this order, txN to mtRun is one run of
+// words, which a picture's save writes and its load reads whole (sptape.ac, TPTEXTS), so that its
+// write changes runs once.
+txN, 0                  // the canvas's texts
+mtN, 0                  // the masters' texts
+txMCost,                // each master's texts' cost: their characters and TXOWN each
+    table NMASTER, 0
+
+// The canvas's texts.
+txX,
+    table NTEXT, 0
+txY,
+    table NTEXT, 0
+txSc,
+    table NTEXT, 0
+txCh,
+    table NTEXT, 0
+txW,
+    table NTEXT, 0
+txRun,
+    table NTEXT * TXRUN, 0
+
+// The masters' texts.
+mtM,
+    table NMTEXT, 0
+mtDX,
+    table NMTEXT, 0
+mtDY,
+    table NMTEXT, 0
+mtSc,
+    table NMTEXT, 0
+mtCh,
+    table NMTEXT, 0
+mtW,
+    table NMTEXT, 0
+mtRun,
+    table NMTEXT * TXRUN, 0
+
+// The masters' digits, past the texts' run, a separate run that a save writes in the digits'
+// block (sptape.ac, TPDIGITS). First each master's text's anchor, the master index of the point
+// at its center, NOPOINT for a plain text; then a set of digits' value and fix, its scalar's at
+// Define. Three tables NMTEXT apart, in this order (mtMove, TPDIGITS).
+mtAn,
+    table NMTEXT, NOPOINT
+mtVal,
+    table NMTEXT, 0
+mtFix,
+    table NMTEXT, 0
+
+// An instance's copy of digits, as txSyDg writes it.
+txIRun,
+    table TXRUN, 0
+

@@ -1,0 +1,1831 @@
+// spaux.ac -- routines kept out of banks 0, 2 and 4 to leave them room, none of which the
+// display reaches: the main loop's copy of penISR's mailboxes (snapshot), the writes penISR and
+// the watchdog make between frames (commitFlip, and penISR's tgtFlip), the target's arms for a
+// new center (penISR's clipTarget, with the arm steps), the lock mark's arms (clipLock), a
+// stroke's plan and its vectors (splitPlan, emitVecs), the frame's target calls (writeCalls), a
+// line's ends for Define (loadLine) and a list's Select box (placeBox); then Move's drag of a
+// whole line, and the first part of start-up (initVars).
+//
+// Bank 12, from its first word, alone. Every routine here runs with the extend window open and
+// is entered by jsp i [X:014] (clipTarget and placeBox by its jda form) from a caller whose
+// window is open: the main bank, penISR, which opens it first, or bank 2's arc module, which
+// opens it for the call; or, as the arm steps are, by a jda from inside bank 12. Each reaches the
+// other banks' words through their 16-bit addresses, returns by jmp i (the arm steps by a jmp
+// within the bank), and calls nothing outside bank 12.
+// Part of sketchpad.am1, included where it stands.
+
+// Copy the mailboxes penISR writes and clear its counts, with the break masked.
+// AC is clobbered, IO preserved. Called via jsp i [snapshot:014].
+snapshot,
+    dac snRtn
+    lsm
+    lac i [frameTicks:0]
+    dac i [sTicks:0]
+    dzm i [frameTicks:0]
+    lac i [frameAt:0]
+    dac i [sFrameAt:0]
+    lac i [menuHits:0]
+    dac i [sMenuHits:0]
+    dzm i [menuHits:0]
+    lac i [menuX:0]
+    dac i [sMenuX:0]
+    lac i [menuY:0]
+    dac i [sMenuY:0]
+    lac i [menuArmed:0]
+    dac i [sMenuArmed:0]
+    dzm i [menuArmed:0]
+    lac i [tgtHits:0]
+    dac i [sTgtHits:0]
+    dzm i [tgtHits:0]
+    lac i [tgtX:0]
+    dac i [sTgtX:0]
+    lac i [tgtY:0]
+    dac i [sTgtY:0]
+    esm
+    jmp i snRtn
+snRtn, 0
+
+// Write the end pair rebuildDisplay posted, if any, into bank 1, then the arc band's words the
+// arc module posted (bandPost of them, addresses in arcPostA and words in arcPostW, in bank 2).
+// Called only just before a dla, by penISR with the display halted between frames, and by the
+// watchdog and tapeCall, with the break masked.
+// AC is clobbered, IO preserved. Called via jsp i [commitFlip:014].
+commitFlip,
+    local cfBand, cfLoop, cfRtn, cfPtr, cfA, cfW, cfN
+    dac cfRtn
+    lac i [flipAt:0]
+    sza i               // skip if a pair is waiting
+    jmp cfBand
+    dac cfPtr
+    lac i [flipW0:0]
+    dac i cfPtr
+    idx cfPtr
+    lac i [flipW1:0]
+    dac i cfPtr
+    dzm i [flipAt:0]
+cfBand,
+    lac i [bandPost:0]
+    sza i               // skip if band words are waiting
+    jmp i cfRtn
+    cma
+    dac cfN
+    lac [arcPostA:2]
+    dac cfA
+    lac [arcPostW:2]
+    dac cfW
+cfLoop,
+    lac i cfA
+    dac cfPtr
+    lac i cfW
+    dac i cfPtr
+    idx cfA
+    idx cfW
+    isp cfN
+    jmp cfLoop
+    dzm i [bandPost:0]
+    jmp i cfRtn
+cfRtn, 0
+cfPtr, 0
+cfA, 0
+cfW, 0
+cfN, 0
+    endloc
+
+// Write a posted move of the target, its center and arms together, the arms clipTarget made in
+// bank 0's tgtNew. Called from penISR's commit, the one time the display is halted between
+// frames, so no frame draws a center with arms that do not fit it.
+// AC is clobbered, IO preserved. Called via jsp i [tgtFlip:014].
+tgtFlip,
+    local rtn
+    dac rtn
+    lac i [tgtPend:0]
+    sza i               // skip if a move is posted
+    jmp i rtn
+    dzm i [tgtPend:0]
+    lac i [tgtNew:0]
+    dac i [tgtVec:0]
+    lac i [tgtNew:0+1]
+    dac i [tgtVec:0+1]
+    lac i [tgtNew:0+2]
+    dac i [tgtVec:0+2]
+    lac i [tgtNew:0+3]
+    dac i [tgtVec:0+3]
+    lac i [tgtNew:0+4]
+    dac i [tgtVec:0+4]
+    lac i [tgtNew:0+5]
+    dac i [tgtVec:0+5]
+    lac i [tgtNew:0+6]
+    dac i [tgtVec:0+6]
+    lac i [tgtNew:0+7]
+    dac i [tgtVec:0+7]
+    lac i [tgtNew:0+0d8]
+    dac i [tgtVec:0+0d8]
+    lac i [tgtNew:0+0d9]
+    dac i [tgtVec:0+0d9]
+    lac i [tgtNew:0+0d10]
+    dac i [tgtVec:0+0d10]
+    lac i [tgtNew:0+0d11]
+    dac i [tgtVec:0+0d11]
+    lac i [tgtNew:0+0d12]
+    dac i [tgtVec:0+0d12]
+    lac i [tgtNew:0+0d13]
+    dac i [tgtVec:0+0d13]
+    lac i [tgtNewKey:0]
+    dac i [tgtKey:0]
+    lac i [tgtPY:0]
+    dac i [trackY:0]
+    lac i [tgtPX:0]
+    dac i [trackX:0]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The target's arms for a new center. An arm whose tip would come within TGTCLEAR of an edge
+// or of the menu region loses the steps that cross it, and a diagonal takes the shorter of its
+// two axes, so the display never halts on an edge violation at the target, nor sees a hit on it
+// in the bar. With the center TGTREACH or more inside, every arm is whole, found by four
+// compares. If the arms are the ones drawn now (tgtKey), it returns 0 and penISR moves the
+// target at once. Otherwise it writes them to bank 0's tgtNew and returns 1, and penISR posts
+// the move for tgtFlip, which writes arms and center together at the frame end. A hit pauses
+// the display inside the target, and drs resumes it from where the beam stands, so arms
+// rewritten then would be drawn from the old arms' path, and run off an edge. tgtKey starts at
+// 0, so the first hit posts the assembled arms again, unchanged.
+// Entry: AC = the center's x, IO = its y. Exit: AC = 0 or 1, as above; IO is clobbered.
+// Called from penISR via eem; dac i [clipTarget:014]; jsp i [clipTarget:014+1].
+clipTarget, 0
+    local rtn, ctClip, ctHave, ctNew, ctWhole, ctRtn, ctR, ctL, ctU, ctD, ct2, ctY
+    dac ctRtn
+    dio ctY
+    lac clipTarget
+    sub [TGTREACH]
+    spa                 // skip if the left arm is whole
+    jmp ctClip
+    lac clipTarget
+    sub [0d1023 - TGTREACH + 1]
+    sma                 // skip if the right arm is whole
+    jmp ctClip
+    lac ctY
+    sub [TGTREACH]
+    spa                 // skip if the lower arm is whole
+    jmp ctClip
+    lac ctY
+    sub [BARYMIN - TGTREACH + 1]
+    sma                 // skip if the upper arm is whole
+    jmp ctClip
+    law FULLKEY
+    sas i [tgtKey:0]    // skip if the whole arms are the ones drawn now
+    jmp ctWhole
+    cla
+    jmp rtn
+ctWhole,
+    law TARGETARM
+    dac ctR
+    dac ctL
+    dac ctU
+    dac ctD
+    law FULLKEY
+    jmp ctNew
+ctClip,
+    lac [0d1023]
+    sub clipTarget
+    jda armSteps
+    dac ctR
+    lac clipTarget
+    jda armSteps
+    dac ctL
+    lac [BARYMIN]
+    sub ctY
+    jda armSteps
+    dac ctU
+    lac ctY
+    jda armSteps
+    dac ctD
+    sal 3s
+    add ctU
+    sal 3s
+    add ctL
+    sal 3s
+    add ctR
+ctHave,
+    sas i [tgtKey:0]    // skip if the arms are the ones drawn now
+    jmp ctNew
+    cla
+    jmp rtn
+ctNew,
+    dac i [tgtNewKey:0]
+
+    // The + arms go out, across to the other tip, and back to the center.
+    lac ctR
+    ior [right visible]
+    dac i [tgtNew:0]
+    lac ctR
+    add ctL
+    ior [left]
+    dac i [tgtNew:0+1]
+    lac ctL
+    ior [right visible]
+    dac i [tgtNew:0+2]
+    lac ctU
+    sal 8s
+    ior [up visible]
+    dac i [tgtNew:0+3]
+    lac ctU
+    add ctD
+    sal 8s
+    ior [down]
+    dac i [tgtNew:0+4]
+    lac ctD
+    sal 8s
+    ior [up visible]
+    dac i [tgtNew:0+5]
+
+    // The diagonals go out and back, each the shorter of its two axes.
+    lac ctR
+    lio ctU
+    jda diagSteps
+    dac ct2
+    ior [right up visible]
+    dac i [tgtNew:0+6]
+    lac ct2
+    ior [left down]
+    dac i [tgtNew:0+7]
+    lac ctL
+    lio ctU
+    jda diagSteps
+    dac ct2
+    ior [left up visible]
+    dac i [tgtNew:0+0d8]
+    lac ct2
+    ior [right down]
+    dac i [tgtNew:0+0d9]
+    lac ctR
+    lio ctD
+    jda diagSteps
+    dac ct2
+    ior [right down visible]
+    dac i [tgtNew:0+0d10]
+    lac ct2
+    ior [left up]
+    dac i [tgtNew:0+0d11]
+    lac ctL
+    lio ctD
+    jda diagSteps
+    dac ct2
+    ior [left down visible]
+    dac i [tgtNew:0+0d12]
+    lac ct2
+    ior [right up end]
+    dac i [tgtNew:0+0d13]
+    law 1
+rtn, jmp i ctRtn
+ctRtn, 0
+ctR, 0
+ctL, 0
+ctU, 0
+ctD, 0
+ct2, 0
+ctY, 0
+    endloc
+
+// An arm's steps for a tip TGTCLEAR inside an edge `d` units from the center, (d - TGTCLEAR)
+// over a step (TARGETSHIFT), at most TARGETARM. The clamps keep d at least TRKMARGIN, so it is
+// at least 1.
+// Entry: AC = d. Exit: AC = the steps. IO is preserved. Called via jda.
+armSteps, 0
+    local rtn, asShort
+    dap rtn
+    lac armSteps
+    sub [TGTCLEAR]
+    sar TARGETSHIFT
+    dac armSteps
+    sub [TARGETARM]
+    spa                 // skip if at or past a whole arm
+    jmp asShort
+    law TARGETARM
+    jmp rtn
+asShort,
+    lac armSteps
+rtn, jmp .
+    endloc
+
+// A diagonal's two deltas, the shorter of two arms' steps, in both the x and y fields.
+// Entry: AC = one arm's steps, IO = the other's. Exit: AC = deltay(k) | deltax(k). IO is
+// preserved. Called via jda.
+diagSteps, 0
+    local rtn, dsBoth, dsIO
+    dap rtn
+    dio dsIO
+    lac diagSteps
+    sub dsIO
+    spa                 // skip if the first is the longer, or equal, to take the other
+    jmp dsBoth
+    lac dsIO
+    dac diagSteps
+dsBoth,
+    lac diagSteps
+    sal 8s
+    add diagSteps
+rtn, jmp .
+dsIO, 0
+    endloc
+
+// Place the dot at (penX, penY) through the view (the view module's vwDot), and clip the lock
+// mark's arms to its new place. Each arm is LOCKARM, less what would come within LOCKCLEAR of
+// an edge or of the menu region, so the display never halts on an edge violation there. The
+// arms' words change only when an arm does. When they do, lockGate is closed first and a frame end
+// waited for, so the display is not inside them while they are written, which near an edge can
+// stop the main loop for a frame. While the arms are unchanged the dot's two words may be
+// written one at a time, since each arm depends on one axis only. The dot's words are written
+// last.
+// Entry: penX, penY. Exit: AC = 0 if an arm has no room (no lock mark is drawn), else 1.
+// IO is clobbered. Called via jsp i [clipLock:014].
+clipLock,
+    local rtn, clR, clL, clU, clD, cutR, cutL, cutU, cutD, clNew, clWait, clWrite, clFits, \
+        clNone, clTicks, clPoll, clDot, clRes
+    dac rtn
+    jsp vwDot
+    lac [0d1023 - LOCKCLEAR]
+    sub vwDX
+    jda lockSteps
+    dac clR
+    sub [1]
+    spa                 // skip if the right arm has room
+    jmp clNone
+    lac vwDX
+    sub [LOCKCLEAR]
+    jda lockSteps
+    dac clL
+    sub [1]
+    spa                 // skip if the left arm has room
+    jmp clNone
+    lac [BARYMIN - LOCKCLEAR]
+    sub vwDY
+    jda lockSteps
+    dac clU
+    sub [1]
+    spa                 // skip if the upper arm has room
+    jmp clNone
+    lac vwDY
+    sub [LOCKCLEAR]
+    jda lockSteps
+    dac clD
+    sub [1]
+    spa                 // skip if the lower arm has room
+    jmp clNone
+
+    // The words hold each arm LOCKARM less its cut; the cuts start at 0, every arm whole.
+    lac [LOCKARM]
+    sub clR
+    sas cutR            // skip if the right arm is unchanged
+    jmp clNew
+    lac [LOCKARM]
+    sub clL
+    sas cutL            // skip if the left arm is unchanged
+    jmp clNew
+    lac [LOCKARM]
+    sub clU
+    sas cutU            // skip if the upper arm is unchanged
+    jmp clNew
+    lac [LOCKARM]
+    sub clD
+    sas cutD            // skip if the lower arm is unchanged
+    jmp clNew
+    jmp clFits
+
+clNew,
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [lockGate:0]
+    lac i [frameTicks:0]
+    dac clTicks
+    lac [0-LOCKPOLLS]
+    dac clPoll
+clWait,
+    lac i [frameTicks:0]
+    sas clTicks         // skip while no frame has ended
+    jmp clWrite
+    isp clPoll          // skip when the polls are used up
+    jmp clWait
+clWrite,
+    // From the dot to the left tip, across to the right tip, to the lower tip, up to the top.
+    lac clL
+    ior [left]
+    dac i [lockVec:0]
+    lac clL
+    add clR
+    ior [right visible]
+    dac i [lockVec:0+1]
+    lac clD
+    sal 8s
+    add clR
+    ior [left down]
+    dac i [lockVec:0+2]
+    lac clD
+    add clU
+    sal 8s
+    ior [up visible end]
+    dac i [lockVec:0+3]
+    lac [LOCKARM]
+    sub clR
+    dac cutR
+    lac [LOCKARM]
+    sub clL
+    dac cutL
+    lac [LOCKARM]
+    sub clU
+    dac cutU
+    lac [LOCKARM]
+    sub clD
+    dac cutD
+clFits,
+    law 1
+    jmp clDot
+clNone,
+    cla
+clDot,
+    dac clRes
+    lac vwDY
+    ior [y(0) next(point)]
+    dac i [dotY:0]
+    lac vwDX
+    ior [x(0) show next(parameter)]
+    dac i [dotX:0]
+    lac clRes
+    jmp i rtn
+rtn, 0
+clRes, 0
+clR, 0
+clL, 0
+clU, 0
+clD, 0
+cutR, 0
+cutL, 0
+cutU, 0
+cutD, 0
+clTicks, 0
+clPoll, 0
+    endloc
+
+// An arm of the lock mark, d, the room to its edge, at most LOCKARM.
+// Entry: AC = d. Exit: AC = the arm. IO is preserved. Called via jda.
+lockSteps, 0
+    local rtn, lsShort
+    dap rtn
+    lac lockSteps
+    sub [LOCKARM]
+    spa                 // skip if at or past a whole arm
+    jmp lsShort
+    lac [LOCKARM]
+    jmp rtn
+lsShort,
+    lac lockSteps
+rtn, jmp .
+    endloc
+
+// Plan a stroke from (fx, fy) to (tx, ty) as K steps. K is the fewest with K * STEPMAX at least
+// the larger of |dx| and |dy|; |dx| and |dy| divided by K give each step's size and the
+// remainders that emitVecs spreads over the steps.
+// Entry: the main bank's fx, fy, tx and ty. Exit: the main bank's splitDX, splitDY, splitK,
+// stepAbsX, stepAbsY, splitRemX and splitRemY. AC is clobbered, IO preserved.
+// Called via jsp i [splitPlan:014].
+splitPlan,
+    local rtn, spIO, spAX, spAY, spMax, spK, spMaxY, spMaxD
+    dac rtn
+    dio spIO
+    lac i [tx:4]
+    sub i [fx:4]
+    dac i [splitDX:4]
+    spa                 // skip unless dx is negative
+    cma
+    dac spAX
+    lac i [ty:4]
+    sub i [fy:4]
+    dac i [splitDY:4]
+    spa                 // skip unless dy is negative
+    cma
+    dac spAY
+    lac spAX
+    sub spAY
+    spa                 // skip if |dx| is the larger, or they are equal
+    jmp spMaxY
+    lac spAX
+    jmp spMaxD
+spMaxY,
+    lac spAY
+spMaxD,
+    dac spMax
+
+    // K by one divide, (max + STEPMAX - 1) / STEPMAX, a max of 0 taken as 1, in the divide's
+    // form below. The dividend is far under 2^17, so the divide cannot overflow.
+    lac spMax
+    sza i               // skip unless the larger distance is 0
+    law 1
+    add [STEPMAX-1]
+    dac spK
+    lio spK
+    cla
+    scl 1s
+    div [STEPMAX]
+    cla                 // no skip is overflow
+    dac spK
+    dac i [splitK:4]
+
+    // The steps and remainders by the hardware divide. The dividend goes in shifted left one
+    // place, and a successful div skips. K is 1 or more, so the divide cannot overflow; if it
+    // did, the skipped cla would make the step 0.
+    lio spAX
+    cla
+    scl 1s
+    div spK
+    cla                 // no skip is overflow
+    dac i [stepAbsX:4]
+    dio i [splitRemX:4]
+    lio spAY
+    cla
+    scl 1s
+    div spK
+    cla                 // no skip is overflow
+    dac i [stepAbsY:4]
+    dio i [splitRemY:4]
+    lio spIO
+    jmp i rtn
+rtn, 0
+spIO, 0
+spAX, 0
+spAY, 0
+spMax, 0
+spK, 0
+    endloc
+
+// Write splitPlan's K steps from (fx, fy) to (tx, ty) into the last K words of an area of NBAND
+// vector words, the last with the vector end. Each step is |dx|/K and |dy|/K rounded down, plus
+// a unit whenever the remainders summed so far reach another K, so every step ends within a
+// unit of the true line and the K steps sum to it exactly. The unit is added to the packed
+// word. Neither size exceeds 101, so it stays inside its 7-bit field. Each store goes through
+// the open window, so the area may be in any bank. Its callers are writeBand's writeSeg and
+// writeSlot.
+// Entry: emitArea = the area's full address; splitPlan's results, the main bank's splitDX,
+// splitDY, splitK, stepAbsX, stepAbsY, splitRemX and splitRemY. Exit: AC = the address of the
+// first word written. IO is preserved. Called via jsp i [emitVecs:014].
+emitVecs,
+    local rtn, evYNeg, evXSign, evXNeg, evSteps, evLoop, evX, evY, evLast, \
+        evPtr, evFirst, evVec, evBase, evAccX, evAccY, evK, evRemX, evRemY, evI
+    dac rtn
+    lac i [splitK:4]
+    dac evK
+    lac i [splitRemX:4]
+    dac evRemX
+    lac i [splitRemY:4]
+    dac evRemY
+    lac emitArea
+    add [NBAND]
+    sub evK
+    dac evPtr
+    dac evFirst
+
+    // The base word holds the rounded-down sizes, with their signs.
+    lac i [stepAbsY:4]
+    sal 8s
+    dac evBase
+    lac i [splitDY:4]
+    spa                 // skip if dy is plus
+    jmp evYNeg
+    jmp evXSign
+evYNeg,
+    lac evBase
+    ior [0100000]
+    dac evBase
+evXSign,
+    lac evBase
+    ior i [stepAbsX:4]
+    ior [visible]
+    dac evBase
+    lac i [splitDX:4]
+    spa                 // skip if dx is plus
+    jmp evXNeg
+    jmp evSteps
+evXNeg,
+    lac evBase
+    ior [0200]
+    dac evBase
+evSteps,
+    dzm evAccX
+    dzm evAccY
+    law 1
+    dac evI
+evLoop,
+    lac evBase
+    dac evVec
+    lac evAccX
+    add evRemX
+    dac evAccX
+    sub evK
+    spa                 // skip once the remainders reach another unit
+    jmp evX
+    dac evAccX
+    idx evVec           // a unit more of x
+evX,
+    lac evAccY
+    add evRemY
+    dac evAccY
+    sub evK
+    spa                 // skip once the remainders reach another unit
+    jmp evY
+    dac evAccY
+    lac evVec
+    add [0400]          // a unit more of y
+    dac evVec
+evY,
+    lac evI
+    sad evK             // skip while steps remain after this one
+    jmp evLast
+    lac evVec
+    dac i evPtr
+    idx evPtr
+    idx evI
+    jmp evLoop
+evLast,
+    lac evVec
+    ior [visible end]
+    dac i evPtr
+    lac evFirst
+    jmp i rtn
+rtn, 0
+evPtr, 0
+evFirst, 0
+evVec, 0
+evBase, 0
+evAccX, 0
+evAccY, 0
+evK, 0
+evRemX, 0
+evRemY, 0
+evI, 0
+    endloc
+
+// emitVecs's area, which its caller sets.
+emitArea, 0
+
+// Write the frame's target calls, all stepping over, or call0 and liveN of the spreadG sites'
+// calls calling the target, the rest stepping over. The sites are the spreadL full line groups,
+// then the spreadA arc groups, then the spreadI instances, in the frame's order. call0 opens the
+// frame, so the site calls are spaced as if liveN+1 were spread over the sites and the last, at
+// the frame's end next to the next call0, dropped. An accumulator adds liveN+1 a site, and a site
+// calls when it reaches spreadG, over the first spreadG-1 sites; that gives liveN calls, their
+// gaps differing by one site at most. With liveN at spreadG every site calls. Groups that are not
+// sites step over. Each call word is stored whole, a call of the target or a jump to the word
+// after it, so the display may run through it while it changes; the parameter word before it,
+// entering subroutine mode, never changes and is not written here (initGates writes the line
+// groups', the arc and instance slots' writers theirs). Calling, it also shuts INK's gate.
+// Entry: IO = nonzero to call, zero to step over. AC and IO are clobbered. Called via
+// jsp i [writeCalls:014].
+writeCalls,
+    local rtn, wcAll, wcCall0, wcLoop, wcBres, wcKeep, wcLive, wcCount, wcOver, wcPut, wcArcs, \
+        wcInsts, wcFlag, wcSite, wcGap, wcS, wcN, wcAcc, wcLim, wcStep, wcR, wcKind
+    dac rtn
+    dio wcFlag
+
+    // wcLim: the sites below it may call. wcStep: the accumulator's step, 0 when all of them
+    // call.
+    dzm wcLim
+    dzm wcStep
+    dzm wcAcc
+    lac wcFlag
+    sza i               // skip to call the target
+    jmp wcCall0
+    lac i [liveN:4]
+    sub i [spreadG:4]
+    sma                 // skip if liveN is below spreadG, to spread them
+    jmp wcAll
+    lac i [spreadG:4]
+    sub [1]
+    dac wcLim
+    lac i [liveN:4]
+    add [1]
+    dac wcStep
+    jmp wcCall0
+wcAll,
+    lac i [spreadG:4]
+    dac wcLim
+wcCall0,
+    lac wcFlag
+    sza                 // skip when stepping over, AC 0
+    lac [save tracker:0 next(parameter)]
+    sza i               // skip to call the target
+    lac [jump call0:0+1 next(parameter)]
+    dac i [call0:0]
+
+    // With the target shown, INK goes (spframe.ac's inkGate), for good, since tracking once on is
+    // only ever turned off while a list or the keyboard holds the screen. Stepping over leaves it.
+    lac wcFlag
+    sza                 // skip when stepping over, AC 0
+    lac [jump pickGate:0 next(subroutine)]
+    sza                 // skip when stepping over
+    dac i [inkGate:0]
+
+    // The line groups, then the arc groups, then the instances. wcR counts each kind's groups
+    // up to 0, wcS the sites among them, and wcN the sites left of the kind being written.
+    lac [drawList:1+CALLOFFSET+1]
+    dac wcSite
+    lac [GROUPWORDS]
+    dac wcGap
+    lac i [spreadL:4]
+    dac wcN
+    law i NGROUPS
+    dac wcR
+    dzm wcKind
+    dzm wcS
+wcLoop,
+    lac wcN
+    sza i               // skip if the group is a site
+    jmp wcOver
+    sub [1]
+    dac wcN
+    lac wcS
+    sub wcLim
+    sma                 // skip if the site is below wcLim
+    jmp wcCount
+    lac wcStep
+    sza                 // skip if every site below wcLim calls
+    jmp wcBres
+    jmp wcLive
+wcBres,
+    add wcAcc
+    sub i [spreadG:4]
+    spa                 // skip once the accumulator reaches spreadG; this site calls
+    jmp wcKeep
+    dac wcAcc
+wcLive,
+    idx wcS
+    lac [save tracker:0 next(parameter)]
+    jmp wcPut
+wcKeep,
+    add i [spreadG:4]
+    dac wcAcc
+wcCount,
+    idx wcS
+wcOver,
+    lac wcSite
+    add [1]
+    ior [jump next(parameter)]
+wcPut,
+    dac i wcSite
+    lac wcSite
+    add wcGap
+    dac wcSite
+    isp wcR             // skip once the kind's groups are written
+    jmp wcLoop
+    idx wcKind
+    sad [1]             // skip unless the line groups are done
+    jmp wcArcs
+    sad [2]             // skip unless the arc groups are done
+    jmp wcInsts
+    jmp i rtn
+wcArcs,
+    lac [arcList:0+ARCWORDS+1]
+    dac wcSite
+    lac [ARCGROUP]
+    dac wcGap
+    lac i [spreadA:4]
+    dac wcN
+    law i MAXARCS
+    dac wcR
+    jmp wcLoop
+wcInsts,
+    lac [instList:0+INSTCALL]
+    dac wcSite
+    law INSTWORDS
+    dac wcGap
+    lac i [spreadI:4]
+    dac wcN
+    law i MAXINST
+    dac wcR
+    jmp wcLoop
+rtn, 0
+wcFlag, 0
+wcSite, 0
+wcGap, 0
+wcS, 0
+wcN, 0
+wcAcc, 0
+wcLim, 0
+wcStep, 0
+wcR, 0
+wcKind, 0
+    endloc
+
+// Line i's ends, from bank 3's tables, into the arc module's lnFrom to lnY1 (bank 2), their
+// point indices and coordinates. Its one caller is Define's walk (spdefine.ac's defWalk).
+// Entry: IO = i. AC is clobbered, IO preserved. Called via jsp i [loadLine:014].
+loadLine,
+    local rtn, llPtr, llFrom, llTo
+    dac rtn
+    dio llFrom          // i, until its ends are read
+    lac llFrom
+    add [lineTo:3]
+    dac llPtr
+    lac i llPtr
+    dac llTo
+    dac i [lnTo:2]
+    lac llFrom
+    add [lineFrom:3]
+    dac llPtr
+    lac i llPtr
+    dac llFrom
+    dac i [lnFrom:2]
+    add [pointX:3]
+    dac llPtr
+    lac i llPtr
+    dac i [lnX0:2]
+    lac llFrom
+    add [pointY:3]
+    dac llPtr
+    lac i llPtr
+    dac i [lnY0:2]
+    lac llTo
+    add [pointX:3]
+    dac llPtr
+    lac i llPtr
+    dac i [lnX1:2]
+    lac llTo
+    add [pointY:3]
+    dac llPtr
+    lac i llPtr
+    dac i [lnY1:2]
+    jmp i rtn
+rtn, 0
+llPtr, 0
+llFrom, 0
+llTo, 0
+    endloc
+
+// Show a list's Select box beside a row, or hide it beside row 0, by writing the box's y word
+// (two after its gate, the row's baseline, from the band it takes, plus BOXRISE) and its gate.
+// The y word goes first when showing, the gate first when hiding, so the display never draws
+// the box at the row it is leaving. Every box is assembled beside row 0, so a hidden one's y is
+// as assembled whichever of the sublists sharing it hid it. Showing, the box's x word (three
+// after its gate) is written too, before the gate, from the descriptor's edge, since the lists
+// share one box, and a sublist's box takes the x it was assembled with.
+// Entry: AC = the row, counted from the list's first, NOROW to hide; the main bank's pbDesc = the
+// list's descriptor, pbFirst = the band its first row takes. AC and IO are clobbered. Called by
+// the main bank via dac i [placeBox:014]; jsp i [placeBox:014+1].
+placeBox, 0
+    local rtn, pbHide, pbPark, pbBand, pbPtr, pbWord, pbGate, pbX
+    dac rtn
+    lac i [pbDesc:4]
+    add [DESCEDGE]
+    dac pbPtr
+    lac i pbPtr
+    add [x(BOXDX - BOXSLOP) next(vector)]
+    dac pbX
+    lac placeBox
+    sad [NOROW]         // skip if a row is given
+    jmp pbPark
+    add i [pbFirst:4]
+pbBand,
+    add [rowThr:3]
+    dac pbPtr
+    lac i pbPtr
+    add [y(ROWSLOP + BOXRISE) next(point)]
+    dac pbWord
+    lac i [pbDesc:4]
+    add [DESCBOX]
+    dac pbPtr
+    lac i pbPtr
+    dac pbGate
+    add [2]
+    dac pbPtr
+    lac placeBox
+    sad [NOROW]         // skip if a row is given
+    jmp pbHide
+    lac pbWord
+    dac i pbPtr
+    idx pbPtr
+    lac pbX
+    dac i pbPtr
+    lac pbGate
+    add [1]
+    ior [jump next(parameter)]
+    dac i pbGate
+    jmp i rtn
+pbHide,
+    lac [jump menuEnd:0 next(parameter)]
+    dac i pbGate
+    lac pbWord
+    dac i pbPtr
+    jmp i rtn
+pbPark,
+    cla                 // hidden, beside row 0, where every box is assembled
+    jmp pbBand
+rtn, 0
+pbPtr, 0
+pbWord, 0
+pbGate, 0
+pbX, 0
+    endloc
+
+// Move's drag of a whole line, its pick-up, each step's move and the arcs that follow it, and
+// the drop's merge into another line. While the line is dragged, its from end is
+// the main bank's dragIdx and its to end bandIdx, so that the lock passes over both and every
+// line and arc on them, and dragLine names it.
+
+// Pick up line dragLine. Its from end becomes dragIdx and its to end bandIdx, and the grip, the
+// place on it that follows the pseudo pen location, is where the dot is, on the line.
+// Entry: the main bank's dragLine, penX, penY. AC is clobbered, IO preserved. Called via jsp i
+// [linePick:014].
+linePick,
+    local rtn, lkPtr
+    dac rtn
+    lac i [dragLine:4]
+    add [lineFrom:3]
+    dac lkPtr
+    lac i lkPtr
+    dac lineEndA
+    dac i [dragIdx:4]
+    lac i [dragLine:4]
+    add [lineTo:3]
+    dac lkPtr
+    lac i lkPtr
+    dac lineEndB
+    dac i [bandIdx:4]
+    lac i [penX:4]
+    dac lineGripX
+    lac i [penY:4]
+    dac lineGripY
+    idx linePicks
+    jmp i rtn
+rtn, 0
+lkPtr, 0
+    endloc
+
+// This step's move of the line dragged, the pseudo pen location less the grip, held where an
+// end, or the center of a chord on them (an arc whose start and end are its two ends, which
+// moves whole with it), would leave the target's bounds, TRKXMIN to TRKXMAX and TRKYMIN to
+// TRKYMAX (lineBound); one already outside them may only come back. A point that moves with the
+// line (ptMark), such as the center of a half circle on its diameter, is never what it follows.
+// With the lock on one, the line follows the target's center. The ends' places before the step
+// are kept, for lineArc and lineApply.
+// Entry: the main bank's penX, penY, penIdx, hitX, hitY. Exit: lineStepX, lineStepY; lineAX,
+// lineAY, lineBX, lineBY; AC = 1 if the line moves, 0 if not. IO is clobbered. Called via jsp i
+// [lineStep:014].
+lineStep,
+    local rtn, spPen, spStep, spLoop, spKeep, spI, spT
+    dac rtn
+    lac i [penIdx:4]
+    sad [NOPOINT]       // skip if the lock is on a point
+    jmp spPen
+    add [ptMark:3]
+    dac spT
+    lac i spT
+    sza i               // skip if it moves with the line
+    jmp spPen
+    lac i [hitX:4]
+    lio i [hitY:4]
+    jmp spStep
+spPen,
+    lac i [penX:4]
+    lio i [penY:4]
+spStep,
+    sub lineGripX
+    dac lineStepX
+    dio spT
+    lac spT
+    sub lineGripY
+    dac lineStepY
+    lac lineEndA
+    jda lineBound
+    lac lineEndB
+    jda lineBound
+    dzm spI
+spLoop,
+    lac spI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp spKeep
+    jda lineChord
+    sas [NOPOINT]       // skip unless a chord
+    jda lineBound
+    idx spI
+    jmp spLoop
+spKeep,
+    lac lineEndA
+    jda lineXY
+    dac lineAX
+    dio lineAY
+    lac lineEndB
+    jda lineXY
+    dac lineBX
+    dio lineBY
+    lac lineStepX
+    ior lineStepY
+    sza                 // skip unless the line moves
+    law 1
+    jmp i rtn
+rtn, 0
+spI, 0
+spT, 0
+    endloc
+
+// Hold the step so that point p stays inside the target's bounds, or comes no further out
+// (lineAxis, on each axis).
+// Entry: AC = p; lineStepX, lineStepY. Exit: those held. AC and IO are clobbered. Called via
+// jda.
+lineBound, 0
+    local rtn, bdY
+    dap rtn
+    lac lineBound
+    jda lineXY
+    dio bdY
+    dac lineClampC
+    lac [TRKXMIN]
+    dac lineClampLo
+    lac [TRKXMAX]
+    dac lineClampHi
+    lac lineStepX
+    jda lineAxis
+    dac lineStepX
+    lac bdY
+    dac lineClampC
+    lac [TRKYMIN]
+    dac lineClampLo
+    lac [TRKYMAX]
+    dac lineClampHi
+    lac lineStepY
+    jda lineAxis
+    dac lineStepY
+rtn, jmp .
+bdY, 0
+    endloc
+
+// A step s on one axis held so that coordinate c goes no further than lo to hi. A plus step is
+// at most hi - c, or 0 with c past hi already; a minus step at least lo - c, or 0 with c below lo
+// already.
+// Entry: AC = s; lineClampC, lineClampLo, lineClampHi. Exit: AC = s held. IO is preserved.
+// Called via jda.
+lineAxis, 0
+    local rtn, axLow, axKeep, axR
+    dap rtn
+    lac lineAxis
+    spa                 // skip if the step is plus
+    jmp axLow
+    lac lineClampHi
+    sub lineClampC
+    spa                 // skip unless c is past hi already
+    cla
+    dac axR
+    lac lineAxis
+    sub axR
+    spa                 // skip if the step reaches hi
+    jmp axKeep
+    lac axR
+    jmp rtn
+axLow,
+    lac lineClampLo
+    sub lineClampC
+    sma                 // skip if c is above lo
+    cla
+    dac axR
+    lac lineAxis
+    sub axR
+    sma                 // skip if the step reaches below lo
+    jmp axKeep
+    lac axR
+    jmp rtn
+axKeep,
+    lac lineAxis
+rtn, jmp .
+axR, 0
+    endloc
+
+// Point p's coordinates, from bank 3's table.
+// Entry: AC = p. Exit: AC = x, IO = y. Called via jda.
+lineXY, 0
+    local rtn, xyPtr
+    dap rtn
+    lac lineXY
+    add [pointY:3]
+    dac xyPtr
+    lio i xyPtr
+    lac lineXY
+    add [pointX:3]
+    dac xyPtr
+    lac i xyPtr
+rtn, jmp .
+xyPtr, 0
+    endloc
+
+// Point p to (linePutX, linePutY) in bank 3's table.
+// Entry: AC = p. AC is clobbered, IO preserved. Called via jda.
+linePut, 0
+    local rtn, ptPtr
+    dap rtn
+    lac linePut
+    add [pointX:3]
+    dac ptPtr
+    lac linePutX
+    dac i ptPtr
+    lac linePut
+    add [pointY:3]
+    dac ptPtr
+    lac linePutY
+    dac i ptPtr
+rtn, jmp .
+ptPtr, 0
+    endloc
+
+// Arc i's center, start and end, from the arc module's table (bank 2).
+// Entry: AC = i. Exit: lineArcC, lineArcS, lineArcE. AC is clobbered, IO preserved. Called via
+// jda.
+lineArcLoad, 0
+    local rtn, alPtr
+    dap rtn
+    lac lineArcLoad
+    add [arcTC:2]
+    dac alPtr
+    lac i alPtr
+    dac lineArcC
+    lac lineArcLoad
+    add [arcTS:2]
+    dac alPtr
+    lac i alPtr
+    dac lineArcS
+    lac lineArcLoad
+    add [arcTE:2]
+    dac alPtr
+    lac i alPtr
+    dac lineArcE
+rtn, jmp .
+alPtr, 0
+    endloc
+
+// Whether point p is the loaded arc's center, start or end (lineArcLoad).
+// Entry: AC = p. Exit: AC = 1 if so, 0 if not. IO is preserved. Called via jda.
+lineOnArc, 0
+    local rtn, oaYes
+    dap rtn
+    lac lineOnArc
+    sad lineArcC        // skip unless it is the center
+    jmp oaYes
+    sad lineArcS        // skip unless it is the start
+    jmp oaYes
+    sad lineArcE        // skip unless it is the end
+    jmp oaYes
+    cla
+    jmp rtn
+oaYes,
+    law 1
+rtn, jmp .
+    endloc
+
+// Arc i's center if its start and end are the two ends of the line dragged (a chord), else
+// NOPOINT.
+// Entry: AC = i. Exit: AC = the center or NOPOINT; lineArcC to lineArcE arc i's. IO is
+// preserved. Called via jda.
+lineChord, 0
+    local rtn, chFromTo, chToFrom, chNo
+    dap rtn
+    lac lineChord
+    jda lineArcLoad
+    lac lineArcS
+    sad lineEndA        // skip unless the start is the from end
+    jmp chFromTo
+    sad lineEndB        // skip unless the start is the to end
+    jmp chToFrom
+    jmp chNo
+chFromTo,
+    lac lineArcE
+    sas lineEndB        // skip if the end is the to end
+    jmp chNo
+    lac lineArcC
+    jmp rtn
+chToFrom,
+    lac lineArcE
+    sas lineEndA        // skip if the end is the from end
+    jmp chNo
+    lac lineArcC
+    jmp rtn
+chNo,
+    lac [NOPOINT]
+rtn, jmp .
+    endloc
+
+// Whether arc i moves with the drag, for the arc module's arcPick and arcDrag (bank 2). For a
+// point's drag, whether the point dragged (dgP) is its center, start or end, as arcOn says. For a
+// line dragged whole (dragLine), whether either end is on it, and by which of its points it
+// moves as a point's drag moves it. That is its center when that is an end, the arc moving
+// whole with it; its center too when its start and end are the two ends (a chord), which moves
+// whole as far as they do; else its rim point on the line, which sets its radius, the other rim
+// point going along its ray, as for a full circle's one rim point. The arc module's dgP is set
+// to that point, and dgX, dgY to where it goes, an end from where it was before this step
+// (lineAX to lineBY), a chord's center from where it is, each moved by the step.
+// Entry: IO = i; the arc module's dgP; the main bank's dragLine; lineStepX, lineStepY, lineAX to
+// lineBY. Exit: AC = 1 if the arc moves, 0 if not. IO is clobbered. Called via jsp i
+// [lineArc:014], the window open.
+lineArc,
+    local rtn, arLine, arStart, arOnE, arCen, arSet, arNotA, arTable, arMove, arNo, \
+        arIsEnd, arIeYes, arIeRtn, arT, arP
+    dac rtn
+    dio arT
+    lac arT
+    jda lineArcLoad
+    lac i [dragLine:4]
+    sas [NOPOINT]       // skip if a point is dragged
+    jmp arLine
+    lac i [dgP:2]
+    jda lineOnArc
+    jmp i rtn
+arLine,
+    lac lineArcC
+    jda arIsEnd
+    sza                 // skip unless its center is an end
+    jmp arCen
+    lac lineArcS
+    jda arIsEnd
+    dac arT             // whether its start is an end
+    lac lineArcE
+    jda arIsEnd
+    sza i               // skip if its end is an end
+    jmp arStart
+    lac lineArcS
+    sad lineArcE        // skip unless one point, a full circle's one rim point
+    jmp arOnE
+    lac arT
+    sza                 // skip unless only its end is an end
+    jmp arCen           // a chord, which moves whole, by its center
+arOnE,
+    lac lineArcE
+    jmp arSet
+arStart,
+    lac arT
+    sza i               // skip if its start is an end
+    jmp arNo
+    lac lineArcS
+    jmp arSet
+arCen,
+    lac lineArcC
+arSet,
+    dac arP
+    dac i [dgP:2]
+
+    // Where it goes.
+    sas lineEndA        // skip if it is the from end
+    jmp arNotA
+    lac lineAX
+    lio lineAY
+    jmp arMove
+arNotA,
+    sas lineEndB        // skip if it is the to end
+    jmp arTable
+    lac lineBX
+    lio lineBY
+    jmp arMove
+arTable,
+    jda lineXY          // a chord's center, where it is
+arMove,
+    add lineStepX
+    dac i [dgX:2]
+    dio arT
+    lac arT
+    add lineStepY
+    dac i [dgY:2]
+    law 1
+    jmp i rtn
+arNo,
+    cla
+    jmp i rtn
+rtn, 0
+arT, 0
+arP, 0
+
+// Whether point p is an end of the line dragged.
+// Entry: AC = p. Exit: AC = 1 if so, 0 if not. IO is preserved. Called via jda.
+arIsEnd, 0
+    dap arIeRtn
+    lac arIsEnd
+    sad lineEndA        // skip unless the from end
+    jmp arIeYes
+    sad lineEndB        // skip unless the to end
+    jmp arIeYes
+    cla
+    jmp arIeRtn
+arIeYes,
+    law 1
+arIeRtn, jmp .
+    endloc
+
+// Move the line dragged by this step. Its ends move from where they were (lineAX to lineBY),
+// the center of each chord on them by as much (once, however many chords share it), and the
+// grip with them.
+// Entry: lineStepX, lineStepY, lineAX to lineBY. AC and IO are clobbered. Called via jsp i
+// [lineApply:014].
+lineApply,
+    local rtn, apLoop, apDup, apMove, apNext, apI, apJ, apC
+    dac rtn
+    lac lineAX
+    add lineStepX
+    dac linePutX
+    lac lineAY
+    add lineStepY
+    dac linePutY
+    lac lineEndA
+    jda linePut
+    lac lineBX
+    add lineStepX
+    dac linePutX
+    lac lineBY
+    add lineStepY
+    dac linePutY
+    lac lineEndB
+    jda linePut
+    lac lineGripX
+    add lineStepX
+    dac lineGripX
+    lac lineGripY
+    add lineStepY
+    dac lineGripY
+    dzm apI
+apLoop,
+    lac apI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp i rtn
+    jda lineChord
+    sad [NOPOINT]       // skip if a chord
+    jmp apNext
+    dac apC
+    dzm apJ
+apDup,
+    lac apJ
+    sad apI             // skip while earlier arcs remain
+    jmp apMove
+    jda lineChord
+    sad apC             // skip unless an earlier chord on this center, which moved it
+    jmp apNext
+    idx apJ
+    jmp apDup
+apMove,
+    lac apC
+    jda lineXY
+    add lineStepX
+    dac linePutX
+    dio linePutY
+    lac linePutY
+    add lineStepY
+    dac linePutY
+    lac apC
+    jda linePut
+apNext,
+    idx apI
+    jmp apLoop
+rtn, 0
+apI, 0
+apJ, 0
+apC, 0
+    endloc
+
+// The drop's pairing, each end of the line dragged with an end of the line the
+// pseudo pen location locks onto (penLine), from with from and to with to, or crossed, whichever
+// pairing's two distances sum the less, each the larger of the axis distances as a point's lock
+// measures it; a tie keeps them uncrossed. None when an arc is on both ends of the line dragged
+// (a radius, a chord), since its arcs could not follow both ends going separate ways. With a
+// pairing, the from end is set to go first, as dragIdx, with the main bank's penX, penY its
+// partner's place; and dragLine and bandIdx become NOPOINT, so that each end goes as a point's
+// drag takes it.
+// Entry: the main bank's penLine. Exit: AC = 0 for a pairing, 1 for none; lineQ1, lineQ1X,
+// lineQ1Y the from end's partner and its place; lineQ2, lineQ2X, lineQ2Y the to end's; lineP1X,
+// lineP1Y the from end's place. IO is clobbered. Called via jsp i [linePair:014].
+linePair,
+    local rtn, prLoop, prNext, prPair, prSet, prNo, prI, prQF, prQT, prD, prT
+    dac rtn
+    dzm prI
+prLoop,
+    lac prI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp prPair
+    jda lineArcLoad
+    lac lineEndA
+    jda lineOnArc
+    sza i               // skip if the from end is on it
+    jmp prNext
+    lac lineEndB
+    jda lineOnArc
+    sza                 // skip unless the to end is on it too
+    jmp prNo
+prNext,
+    idx prI
+    jmp prLoop
+prPair,
+    lac i [penLine:4]
+    add [lineFrom:3]
+    dac prD
+    lac i prD
+    dac prQF
+    lac i [penLine:4]
+    add [lineTo:3]
+    dac prD
+    lac i prD
+    dac prQT
+    lac lineEndA
+    lio prQF
+    jda lineDist
+    dac prD
+    lac lineEndB
+    lio prQT
+    jda lineDist
+    add prD
+    dac prD             // uncrossed
+    lac lineEndA
+    lio prQT
+    jda lineDist
+    dac prT
+    lac lineEndB
+    lio prQF
+    jda lineDist
+    add prT             // crossed
+    sub prD
+    sma                 // skip if crossed is the less
+    jmp prSet
+    lac prQF
+    lio prQT
+    dac prQT
+    dio prQF
+prSet,
+    lac prQF
+    dac lineQ1
+    jda lineXY
+    dac lineQ1X
+    dio lineQ1Y
+    lac prQT
+    dac lineQ2
+    jda lineXY
+    dac lineQ2X
+    dio lineQ2Y
+    lac lineEndA
+    jda lineXY
+    dac lineP1X
+    dio lineP1Y
+    lac [NOPOINT]
+    dac i [dragLine:4]
+    dac i [bandIdx:4]
+    lac lineEndA
+    dac i [dragIdx:4]
+    lac lineQ1X
+    dac i [penX:4]
+    lac lineQ1Y
+    dac i [penY:4]
+    cla
+    jmp i rtn
+prNo,
+    law 1
+    jmp i rtn
+rtn, 0
+prI, 0
+prQF, 0
+prQT, 0
+prD, 0
+prT, 0
+    endloc
+
+// The distance from point p to point q, the larger of the axis distances, as findNearPoint
+// measures it.
+// Entry: AC = p, IO = q. Exit: AC = the distance. IO is clobbered. Called via jda.
+lineDist, 0
+    local rtn, dsXLarger, dsQ, dsX, dsY
+    dap rtn
+    dio dsQ
+    lac lineDist
+    jda lineXY
+    dac dsX
+    dio dsY
+    lac dsQ
+    jda lineXY
+    sub dsX
+    jda lineAbs
+    dac dsX
+    dio dsQ
+    lac dsQ
+    sub dsY
+    jda lineAbs
+    dac dsY
+    sub dsX
+    spa                 // skip if the y distance is the larger
+    jmp dsXLarger
+    lac dsY
+    jmp rtn
+dsXLarger,
+    lac dsX
+rtn, jmp .
+dsQ, 0
+dsX, 0
+dsY, 0
+    endloc
+
+// Magnitude of a signed word; -0 gives +0.
+// Entry: AC = the word. Exit: AC = its magnitude. IO is preserved. Called via jda.
+lineAbs, 0
+    local rtn
+    dap rtn
+    lac lineAbs
+    sma                 // skip if negative
+    jmp rtn
+    cma
+rtn, jmp .
+    endloc
+
+// The drop's to end set to go (lineDrop), as dragIdx, with the main bank's penX, penY its
+// partner's place.
+// AC is clobbered, IO preserved. Called via jsp i [lineSecond:014].
+lineSecond,
+    local rtn
+    dac rtn
+    lac lineEndB
+    dac i [dragIdx:4]
+    lac lineQ2X
+    dac i [penX:4]
+    lac lineQ2Y
+    dac i [penY:4]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The drop's from end set to go back where it was, its to end refused (lineDrop).
+// AC is clobbered, IO preserved. Called via jsp i [lineBack:014].
+lineBack,
+    local rtn
+    dac rtn
+    lac lineEndA
+    dac i [dragIdx:4]
+    lac lineP1X
+    dac i [penX:4]
+    lac lineP1Y
+    dac i [penY:4]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Point dragIdx to the pseudo pen location, as dragTo moves a point (lineDrop's lineEnd).
+// AC is clobbered, IO preserved. Called via jsp i [linePenPut:014].
+linePenPut,
+    local rtn
+    dac rtn
+    lac i [penX:4]
+    dac linePutX
+    lac i [penY:4]
+    dac linePutY
+    lac i [dragIdx:4]
+    jda linePut
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The drop's first merge set up, for the arc module's dropMerge, which merges dragIdx into
+// penIdx, here the from end into its partner. Both ends must sit on their partners, which an end's
+// arcs carrying the other's partner would spoil; else neither merges (lineMergeOff), penIdx
+// NOPOINT.
+// Exit: the main bank's dragIdx, penIdx; lineMergeOff. AC and IO are clobbered. Called via jsp i
+// [lineMerge1:014].
+lineMerge1,
+    local rtn, m1Off
+    dac rtn
+    lac lineEndA
+    dac i [dragIdx:4]
+    lac lineQ1
+    dac i [penIdx:4]
+    dzm lineMergeOff
+    lac lineEndA
+    lio lineQ1
+    jda lineDist
+    sza                 // skip if the from end sits on its partner
+    jmp m1Off
+    lac lineEndB
+    lio lineQ2
+    jda lineDist
+    sza i               // skip unless the to end missed its partner
+    jmp i rtn
+m1Off,
+    law 1
+    dac lineMergeOff
+    lac [NOPOINT]
+    dac i [penIdx:4]
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The drop's second merge set up. Of the two points at the to end's partner's place, the second
+// found merges into the first. They are found by their place, since the first merge may have
+// renumbered the points. With the merge off, or fewer than two there, penIdx is NOPOINT, and
+// dropMerge does nothing.
+// Exit: the main bank's dragIdx, penIdx; lineMerges counted with two. AC and IO are clobbered.
+// Called via jsp i [lineMerge2:014].
+lineMerge2,
+    local rtn, m2Loop, m2Next, m2Found, m2K, m2First, m2T
+    dac rtn
+    lac [NOPOINT]
+    dac m2First
+    dac i [penIdx:4]
+    lac lineMergeOff
+    sza                 // skip unless the merge is off
+    jmp i rtn
+    dzm m2K
+m2Loop,
+    lac m2K
+    sad i [pointCount:4] // skip while points remain
+    jmp i rtn
+    jda lineXY
+    sas lineQ2X         // skip if its x is the place's
+    jmp m2Next
+    dio m2T
+    lac m2T
+    sas lineQ2Y         // skip if its y is the place's
+    jmp m2Next
+    lac m2First
+    sas [NOPOINT]       // skip if it is the first found
+    jmp m2Found
+    lac m2K
+    dac m2First
+m2Next,
+    idx m2K
+    jmp m2Loop
+m2Found,
+    dac i [penIdx:4]
+    lac m2K
+    dac i [dragIdx:4]
+    idx lineMerges
+    jmp i rtn
+rtn, 0
+m2K, 0
+m2First, 0
+m2T, 0
+    endloc
+
+// The line drag's words.
+lineEndA, 0             // the line's from end and to end, as linePick found them
+lineEndB, 0
+lineGripX, 0            // the grip, the place on the line that follows the pseudo pen location
+lineGripY, 0
+lineStepX, 0            // this step's move
+lineStepY, 0
+lineAX, 0               // the ends' places before this step
+lineAY, 0
+lineBX, 0
+lineBY, 0
+lineQ1, 0               // the drop's partner of the from end, and its place
+lineQ1X, 0
+lineQ1Y, 0
+lineQ2, 0               // and of the to end
+lineQ2X, 0
+lineQ2Y, 0
+lineP1X, 0              // the from end's place before the drop moved it
+lineP1Y, 0
+lineMergeOff, 0         // nonzero when the drop merges neither end (lineMerge1)
+linePutX, 0             // linePut's place
+linePutY, 0
+lineClampC, 0           // lineAxis's coordinate and bounds
+lineClampLo, 0
+lineClampHi, 0
+lineArcC, 0             // lineArcLoad's arc, its center, start and end
+lineArcS, 0
+lineArcE, 0
+// Counters of lines picked up and of line drops that merged.
+linePicks, 0
+lineMerges, 0
+
+// Start-up, its first part. Every main-bank word the program depends on is set, the counts
+// cleared, the clock started; then it enters bank 6's initGates, which enters init's rest. Core
+// persists across restarts, so every word is set here, each through its 16-bit address.
+// Entered from boot (bank 0) by jmp i [initVars:014], the window open. It does not return; AC
+// and IO are clobbered.
+initVars,
+    local ivItems, ivClock, ivPtr
+    lsm
+
+    // A display left running by the program loaded before this one would read the lists
+    // below while they are written, so it is held on a halt that asks for no break.
+    lio [parked:0]
+    dla
+    cbs
+    dzm i [frameTicks:0]
+    dzm i [menuHits:0]
+    dzm i [menuArmed:0]
+    dzm i [tgtHits:0]
+    dzm i [tracking:0]
+    dzm i [edgeCount:0]
+    dzm i [strayCount:0]
+    dzm i [lateCount:0]
+    dzm i [watchdogCount:4]
+    dzm i [frameTotal:4]
+    dzm i [fireCount:4]
+    dzm i [mode:4]
+    dzm i [flashOn:4]
+    dzm i [trackMiss:0]
+    dzm i [trackLost:4]
+    dzm i [dirty:4]
+    dzm i [staleN:4]
+    dzm i [pointCount:4]
+    dzm i [lineCount:4]
+    dzm i [listOpen:0]
+    jsp i [kbInit:014]  // the pen keyboard closed, so the display starts at the frame
+    jsp i [vwInit:014]  // the view at x1
+    dzm i [subDesc:4]
+    dzm i [frameMenuHits:0]
+    dzm i [trkSaved:4]
+    dzm i [multiFrames:0]
+    dzm i [selectCount:4]
+    dzm i [closeCount:4]
+    dzm i [strokeLive:4]
+    dzm i [vertexCount:4]
+    dzm i [fullCount:4]
+    dzm i [lostCount:4]
+    dzm i [dragMoved:4]
+    dzm i [dragN:4]
+    dzm i [dragFull:4]
+    dzm i [pickCount:4]
+    dzm i [dropCount:4]
+    dzm i [linePicks:014]
+    dzm i [lineMerges:014]
+    dzm i [mergeCount:4]
+    dzm i [deleteCount:4]
+    dzm i [horvCount:4]
+    dzm i [fixCount:4]
+    dzm i [consCount:4]
+    dzm i [consPick:4]
+    dzm i [showOn:4]    // before CEINIT writes the marks, and the first setMode
+    dzm i [forcesOn:4]
+    dzm i [marksAt:4]
+    dzm i [clearCount:4]
+    dzm i [delConsCount:4]
+    dzm i [unfixCount:4]
+    dzm i [rebuildMs:4]
+    dzm i [liveN:4]
+    dzm i [spreadG:4]
+    dzm i [spreadL:4]
+    dzm i [spreadA:4]
+    dzm i [spreadI:4]
+    dzm i [defineResult:4]
+    dzm i [defineCount:4]
+    dzm i [sizeResult:4]
+    dzm i [sizeCount:4]
+    dzm i [copyResult:4]
+    dzm i [copyCount:4]
+    dzm i [undoKind:4]  // before the labels are painted, so Undo's is dim
+    dzm i [undoChain:4]
+    dzm i [undoCount:4]
+    dzm i [uLk:4]
+    dzm i [aimMode:4]
+    dzm i [atLift:4]
+    dzm i [swOn:015]    // the line search holds no sweep from before a restart
+    dzm i [rsOK:015]
+    dzm i [tapeResult:4]
+    dzm i [tapeCount:4]
+    dzm i [msgOn:4]
+    dzm i [tapeDrive:4]
+    lac [0-RATEDISCARD]
+    dac i [rateFrames:4]
+    law 1
+    dac i [callsPerFrame:0]
+    lac [NOPOINT]
+    dac i [startPointIdx:4]
+    dac i [dragIdx:4]
+    dac i [bandIdx:4]
+    dac i [dragLine:4]
+    dac i [penLine:4]
+    dac i [penCons:4]
+    dac i [penInst:4]
+    dac i [dragInst:4]
+    dac i [copyInst:4]  // before the first setMode, which drops a copy being placed
+    dac i [copyAtt:4]
+    dac i [litInst:7]   // before anything can light or dim an instance
+    jsp i [lkInit:0d11] // likewise a line or an arc, and no pick marked
+    lac [DOTPARAM]
+    dac i [dotBlock:0]
+    lac [NBAR]
+    dac i [modeCol:4]
+    dac i [flashCol:4]
+    dac i [lastMenuCol:4]
+    dac i [lastAction:4]
+    dac i [openCol:4]
+    lac [NOROW]
+    dac i [hiRow:4]
+    dac i [subHi:4]
+    dac i [lastItem:4]
+    lac [REARM]
+    dac i [menuGap:0]
+
+    lac [itemCount:3]
+    dac ivPtr
+ivItems,
+    dzm i ivPtr
+    idx ivPtr
+    sad [itemCount:3+NITEMS] // skip until every count is cleared
+    jmp ivClock
+    jmp ivItems
+ivClock,
+
+    // The clock counts only while enabled.
+    lac [clsena]
+    cls
+    rck
+    dio i [now:4]
+    dio i [lastTick:4]
+    dio i [lastHitAt:0]
+    jsp i [txInit:012]  // the texts, after frameTotal, which its list's buffers count from
+    jmp i [initGates:6] // the gates and the empty drawing list, then the main bank's init
+ivPtr, 0
+    endloc

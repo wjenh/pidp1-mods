@@ -1,0 +1,1189 @@
+// spvarc.ac -- the arcs through the magnifier's view. An arc's slot written for its run on the
+// screen, and Circle's band pointed at the run nearest its end; finer chords where the screen
+// radius passes ARCRMAX.
+//
+// Bank 13, after spsearch.ac. Bank 12 holds the view module (spview.ac), whose clipper (vwClipS,
+// entered through vwClipX), view words and fine sine table this code reaches through 16-bit
+// addresses. Every entry runs with the extend window open and is entered by jsp i [X:015],
+// vaSlot from the arc module's arcWriteSlot and vaBand from its arcBandPass. Each reads the arc
+// module's words in bank 2 and writes the slots in bank 0 through 16-bit addresses, returns by
+// jmp i, and calls nothing outside banks 12 and 13.
+// Part of sketchpad.am1, included where it stands.
+
+// Write an arc's slot through the view (arcWriteSlot, when magnified). It writes the arc's
+// longest run on the screen, anchored at the slot's last vector word, the head's y and x on the
+// run's first point and the gate entering it; or nothing, the gate left jumping past the slot,
+// when none of the arc is on the screen. The caller has written the gate past the slot already,
+// so the display cannot enter the vectors once a frame has ended. At x1 it does nothing, and the
+// caller writes the slot itself.
+// Entry: IO = the slot's full address; bank 2's arc words as for its arcHead. Exit: AC = 0 at
+// x1, else 1. IO is clobbered. Called via jsp i [vaSlot:015].
+vaSlot,
+    local rtn, svDone
+    dac rtn
+    dio vaSlotA
+    lac i [vwS:014]
+    sza i               // skip if magnified
+    jmp i rtn
+    lac i [frameTicks:0]
+    dac vaTicks
+    dzm vaBandM
+    jsp vaBuild
+    sza                 // skip if a run shows
+    jmp svDone
+    jsp vaWords
+    lac vaSlotA
+    add [1]
+    dac vaT
+    lac vaWY
+    dac i vaT
+    idx vaT
+    lac vaWX
+    dac i vaT
+    lac vaHW
+    dac i vaHA
+    lac vaSlotA
+    add [ARCVEC-1]
+    dac vaT
+    lac vaWG
+    dac i vaT
+svDone,
+    law 1
+    jmp i rtn
+rtn, 0
+    endloc
+
+// One pass of Circle's band through the view (arcBandPass, when magnified, or after a change of
+// view at x1). After arcSweep, arcEnd and arcSnap, it points the band at the run nearest its end.
+// The band's vectors are written whole (vaBuild, the gate first closed) only when a direction
+// is chosen anew, the arc is not the one they were written for, the view changed (arcRebase),
+// or the run the end is on is not the one they hold; otherwise only the head moves. Either way
+// the head's words, and the word the last entry took over, are posted for penISR (vaPost),
+// since the display may be partway through the band; at most five, as arcBandPass posts.
+// arcPart is left at the entry word, so that arcBandPass's passes at x1 put it back.
+// Entry: bank 2's arc words; no posted words waiting (bandPost 0). Exit: AC = 0. IO is
+// clobbered. Called via jsp i [vaBand:015].
+vaBand,
+    local rtn, bdBuild, bdPost, bdNew, bdSame, bdNone, bdOut
+    dac rtn
+    dzm vaPN
+    lac [arcBand:0]
+    dac vaSlotA
+    law 1
+    dac vaBandM
+    lac i [arcDir:2]
+    sza i               // skip once a direction is chosen
+    jmp bdNone
+    jsp vaSetup
+    lac i [arcRebase:2]
+    sza                 // skip unless the view changed
+    jmp bdBuild
+    lac vaValid
+    sza i               // skip if the band's vectors are written
+    jmp bdBuild
+    lac vaDir
+    sas vaBDir          // skip if the direction is the one they were written for
+    jmp bdBuild
+    lac vaU
+    sas vaBU            // skip if the start's offset is theirs
+    jmp bdBuild
+    lac vaV
+    sas vaBV
+    jmp bdBuild
+    lac vaX32
+    sas vaBX            // skip if the center is theirs
+    jmp bdBuild
+    lac vaY32
+    sas vaBY
+    jmp bdBuild
+    lac vaJ
+    add vaStep
+    dac vaRTop          // the entry is sought from the end
+    jsp vaHead
+    sza                 // skip if one was found on the window
+    jmp bdBuild
+    jsp vaCont
+    sza                 // skip if it runs on into the window's run
+    jmp bdBuild
+    jmp bdPost
+
+    // The vectors written whole, the gate closed first; no words are posted.
+bdBuild,
+    dzm i [arcRebase:2]
+    dzm vaValid
+    dzm vaOldA
+    dzm i [arcPart:2]
+    lac [jump arcBand:0+ARCWORDS next(parameter)]
+    dac i [arcBand:0+ARCVEC-1]
+    lac i [frameTicks:0]
+    dac vaTicks
+    jsp vaBuild
+    sza                 // skip if a run shows, else the gate stays closed
+    jmp bdOut
+    lac vaDir
+    dac vaBDir
+    lac vaU
+    dac vaBU
+    lac vaV
+    dac vaBV
+    lac vaX32
+    dac vaBX
+    lac vaY32
+    dac vaBY
+    lac vaHB
+    dac vaRunHi
+    law 1
+    dac vaValid
+
+    // The word an earlier entry took over put back, unless the entry stays there.
+bdPost,
+    lac vaOldA
+    sza i               // skip if an entry took over a word
+    jmp bdNew
+    sad vaHA            // skip unless the entry stays there
+    jmp bdSame
+    lio vaOldA
+    lac vaOldW
+    jda vaPost
+bdNew,
+    lac vaHA
+    dac vaOldA
+    lac i vaHA
+    dac vaOldW
+bdSame,
+    lio vaHA
+    lac vaHW
+    jda vaPost
+    jsp vaWords
+    lio [arcBand:0+1]
+    lac vaWY
+    jda vaPost
+    lio [arcBand:0+2]
+    lac vaWX
+    jda vaPost
+    lio [arcBand:0+ARCVEC-1]
+    lac vaWG
+    jda vaPost
+    lac vaOldA
+    dac i [arcPart:2]
+    jmp bdOut
+
+    // With no direction the gate jumps past the band, and the vectors are written anew once one
+    // is chosen.
+bdNone,
+    dzm vaValid
+    dzm vaOldA
+    dzm i [arcPart:2]
+    lio [arcBand:0+ARCVEC-1]
+    lac [jump arcBand:0+ARCWORDS next(parameter)]
+    jda vaPost
+bdOut,
+    lac vaPN
+    dac i [bandPost:0]
+    cla
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Work out an arc's run through the view, and write its window's vectors and find its entry, by
+// vaSetup, the walk, a frame end awaited since vaTicks, then vaFill and vaHead.
+// Entry: vaSlotA, vaBandM, vaTicks; the slot's gate jumping past it. Exit: AC = 0 and vaHead's
+// results; or AC nonzero, nothing written, when none of the arc is on the screen. IO is
+// clobbered. Called via jsp.
+vaBuild,
+    local rtn
+    dap rtn
+    jsp vaSetup
+    jsp vaWalk
+    sza                 // skip if a run was found
+    jmp rtn
+    jsp vaWait
+    jsp vaFill
+    jsp vaHead
+rtn, jmp .
+    endloc
+
+// Wait for a frame to end since vaTicks, so that a display which was inside a slot when its gate
+// closed has left it; at most LOCKPOLLS polls, for a display parked or stopped.
+// AC is clobbered, IO preserved. Called via jsp.
+vaWait,
+    local rtn, wtLoop, wtN
+    dap rtn
+    lac [0-LOCKPOLLS]
+    dac wtN
+wtLoop,
+    lac i [frameTicks:0]
+    sas vaTicks         // skip while no frame has ended
+    jmp rtn
+    isp wtN             // skip when the polls are used up
+    jmp wtLoop
+rtn, jmp .
+wtN, 0
+    endloc
+
+// The arc as the view shows it, from bank 2's words. It sets the start's offset, the direction
+// and the center for vaVtx; the chord, vaStep 512ths of a turn, 8 (a whole step) while the
+// screen radius is within ARCRMAX, halved while it is past, down to 1, and vaLog, the shift that
+// divides by it; the end on the screen, and its offset from the center (vaNX, vaNY) shifted up
+// for vaCross; vaJ, the last vertex at or before the end; and vaBase, the walk's last vertex,
+// the start, or for a full circle a whole step's vertex off the screen, the end then a turn
+// above it, so that a run through the start is not cut in two.
+// AC and IO are clobbered. Called via jsp.
+vaSetup,
+    local rtn, stLoop, stShift, stNorm, stJ, stFine, stFull, stScan, stBase, stR, stT, stI
+    dap rtn
+    lac i [arcU:2]
+    dac vaU
+    lac i [arcV:2]
+    dac vaV
+    lac i [arcDir:2]
+    dac vaDir
+    lac i [vwSal:014]
+    dac vaSal
+    lac i [vwOutX:014]
+    dac vaOutX
+    lac i [vwOutY:014]
+    dac vaOutY
+    lac i [vwS:014]
+    add [vaShT:015]
+    dac stT
+    lac i stT
+    dac vaSh
+    lac i [vwSar:014]
+    dac stI
+    law 020
+    xct stI             // half a screen unit in 32nds of a page unit, 16 >> vwS
+    dac stT
+    lac i [arcCX:2]
+    sal 5s
+    add stT
+    dac vaX32
+    lac i [arcCY:2]
+    sal 5s
+    add stT
+    dac vaY32
+    law 010
+    dac vaStep
+    law 3
+    dac vaLg
+    lac i [arcR32:2]
+    sar 5s
+    xct vaSal
+    dac stR             // the screen radius, at most 8 * ARCRMAX
+stLoop,
+    lac stR
+    sub [ARCRMAX+1]
+    spa                 // skip while past ARCRMAX
+    jmp stShift
+    lac vaStep
+    sad [1]             // skip unless the chord is already the finest
+    jmp stShift
+    sar 1s
+    dac vaStep
+    lac vaLg
+    sub [1]
+    dac vaLg
+    lac stR
+    sar 1s
+    dac stR
+    jmp stLoop
+stShift,
+    lac vaLg
+    add [vaLgT:015]
+    dac stT
+    lac i stT
+    dac vaLog
+    lac i [arcEX:2]
+    xct vaSal
+    sub vaOutX
+    dac vaEX
+    lac i [arcEY:2]
+    xct vaSal
+    sub vaOutY
+    dac vaEY
+    lac i [arcEX:2]
+    sub i [arcCX:2]
+    dac vaNX
+    lac i [arcEY:2]
+    sub i [arcCY:2]
+    dac vaNY
+    law i 0d16
+    dac stI
+stNorm,
+    lac vaNX
+    spa                 // skip unless minus
+    cma
+    dac stT
+    lac vaNY
+    spa                 // skip unless minus
+    cma
+    ior stT
+    and [0300000]
+    sza                 // skip while both are under 2^15
+    jmp stJ
+    lac vaNX
+    sal 1s
+    dac vaNX
+    lac vaNY
+    sal 1s
+    dac vaNY
+    isp stI             // skip when the shifts are used up, the end on the center
+    jmp stNorm
+stJ,
+    dzm vaBase
+    lac i [arcK:2]
+    sad [NARC]          // skip unless a full circle
+    jmp stFull
+    sal 3s
+    dac vaJ
+    add [010]
+    dac stT             // the next whole step's vertex
+stFine,
+    lac vaJ
+    add vaStep
+    sad stT             // skip unless that is the next whole step's vertex
+    jmp rtn
+    dac stI
+    jda vaCross
+    spa                 // skip if the end is at or past the vertex
+    jmp rtn
+    lac stI
+    dac vaJ
+    jmp stFine
+
+    // For a full circle, the vertex the last one's walk began at if it is still off the screen,
+    // else the first whole step's vertex off it; with none, the start.
+stFull,
+    lac vaLast
+    dac stI
+    jda vaVtx
+    lio vaY
+    lac vaX
+    jda vaOn
+    sza                 // skip if on the screen
+    jmp stBase
+    dzm stI
+stScan,
+    lac stI
+    jda vaVtx
+    lio vaY
+    lac vaX
+    jda vaOn
+    sza                 // skip if on the screen
+    jmp stBase
+    lac stI
+    add [010]
+    dac stI
+    sas [0d512]         // skip once every whole step's vertex is on the screen
+    jmp stScan
+    dzm stI
+stBase,
+    lac stI
+    dac vaBase
+    dac vaLast
+    add [0d512]
+    dac vaJ
+    jda vaVtx
+    lac vaX
+    dac vaEX
+    lac vaY
+    dac vaEY
+rtn, jmp .
+stR, 0
+stT, 0
+stI, 0
+    endloc
+
+// The sine and cosine of i 512ths of a turn in the arc's direction (counterclockwise when vaDir
+// is plus), from the quarter table vaSin; any i from 0 to 1023.
+// Entry: AC = i. Exit: vaS, vaC. AC is clobbered, IO preserved. Called via jda.
+vaSinCos, 0
+    local rtn, scEven, scHalf, scJ, scP, scA
+    dap rtn
+    lac vaSinCos
+    and [0177]
+    dac scJ
+    add [vaSin:014]
+    dac scP
+    lac i scP
+    dac scA             // sin j
+    dac vaS
+    lac [vaSin:014+0200]
+    sub scJ
+    dac scP
+    lac i scP           // sin(128 - j), cos j
+    dac vaC
+    lac vaSinCos
+    and [0200]
+    sza i               // skip in quadrants 1 and 3, where the two trade places, cosine negated
+    jmp scEven
+    lac vaC
+    dac vaS
+    lac scA
+    cma
+    dac vaC
+scEven,
+    lac vaSinCos
+    and [0400]
+    sza i               // skip in quadrants 2 and 3, where both negate
+    jmp scHalf
+    lac vaS
+    cma
+    dac vaS
+    lac vaC
+    cma
+    dac vaC
+scHalf,
+    lac vaDir
+    sma                 // skip if clockwise, when the sine negates
+    jmp rtn
+    lac vaS
+    cma
+    dac vaS
+rtn, jmp .
+scJ, 0
+scP, 0
+scA, 0
+    endloc
+
+// Vertex i of the arc, i 512ths of a turn from the start, as the start's offset rotated, in 32nds
+// of a page unit, and its point on the screen, (center * 32 + offset) >> (5 - vwS) - vwOut,
+// rounded. At a whole step's vertex, the offset is arcVertex's.
+// Entry: AC = i, 0 to 1023. Exit: vaUk, vaVk, vaX, vaY. AC and IO are clobbered. Called via jda.
+vaVtx, 0
+    local rtn, vxT
+    dap rtn
+    lac vaVtx
+    jda vaSinCos
+    lac vaU
+    mul vaC
+    dac vxT
+    lac vaV
+    mul vaS
+    cma
+    add vxT
+    dac vaUk            // U cos - V sin
+    add vaX32
+    xct vaSh
+    sub vaOutX
+    dac vaX
+    lac vaU
+    mul vaS
+    dac vxT
+    lac vaV
+    mul vaC
+    add vxT
+    dac vaVk            // U sin + V cos
+    add vaY32
+    xct vaSh
+    sub vaOutY
+    dac vaY
+rtn, jmp .
+vxT, 0
+    endloc
+
+// The cross product of vertex i's offset and the end's (vaNX, vaNY), signed so that plus means
+// the end lies at or past vertex i in the arc's direction, as arcCrossUV signs the pen's.
+// Entry: AC = i. Exit: AC = the cross product; vaVtx's results for i. IO is clobbered. Called
+// via jda.
+vaCross, 0
+    local rtn, crPos, crT
+    dap rtn
+    lac vaCross
+    jda vaVtx
+    lac vaVk
+    mul vaNX
+    dac crT
+    lac vaUk
+    mul vaNY
+    sub crT
+    dac crT
+    lac vaDir
+    sma                 // skip if clockwise
+    jmp crPos
+    lac crT
+    cma
+    jmp rtn
+crPos,
+    lac crT
+rtn, jmp .
+crT, 0
+    endloc
+
+// Walk the arc through the view from its end down to vertex vaBase, the end and then the
+// vertices vaStep apart, a whole step's finer vertices passed over where the chord between its
+// two vertices lies ARCSAG or more clear of the screen, as the arc between them then does. Each
+// piece from one point to the next is clipped to the screen (vaSeg), a piece of no length
+// counting as off it, and the runs of pieces on the screen are counted. The first is taken for
+// the band (vaBandM set), the longest for an arc in the table.
+// Entry: vaSetup's results. Exit: AC = 0 and the run, vaRTop the upper vertex of its first
+// piece's chord (vaJ + vaStep for the piece from the end) and vaRLo the lower vertex of its
+// last piece's; or AC nonzero when none of the arc is on the screen. IO is clobbered. Called
+// via jsp.
+vaWalk,
+    local rtn, wkNext, wkFine, wkSeg, wkCount, wkHid, wkClose, wkStep, wkEnd, wkDone, wkNone, \
+        wkA, wkB, wkIn, wkTop, wkN, wkLo, wkBest
+    dap rtn
+    dzm wkIn
+    dzm wkBest
+    lac vaEX
+    dac vaPX
+    lac vaEY
+    dac vaPY
+    lac vaJ
+    add vaStep
+    dac wkA
+    lac vaJ
+    dac wkB
+    jda vaVtx
+    jmp wkSeg
+wkNext,
+    lac wkA
+    sad vaBase          // skip unless the walk is at its last vertex
+    jmp wkEnd
+    and [7]
+    sza                 // skip at a whole step's vertex
+    jmp wkFine
+    lac vaStep
+    sad [010]           // skip unless the chords are whole steps already
+    jmp wkFine
+    lac wkA
+    sub [010]
+    dac wkB
+    jda vaVtx
+    jsp vaFar
+    sza                 // skip unless the whole step lies clear of the screen
+    jmp wkSeg
+wkFine,
+    lac wkA
+    sub vaStep
+    dac wkB
+    jda vaVtx
+wkSeg,
+    lac vaX
+    dac vaQX
+    lac vaY
+    dac vaQY
+    jsp vaSeg
+    sza                 // skip if a piece shows
+    jmp wkHid
+    lac wkIn
+    sza                 // skip unless a run is under way; else the piece starts one
+    jmp wkCount
+    law 1
+    dac wkIn
+    lac wkA
+    dac wkTop
+    dzm wkN
+wkCount,
+    idx wkN
+    lac vaLv
+    sza i               // skip if the piece leaves the screen, the run ending at its lower vertex
+    jmp wkStep
+    lac wkB
+    jmp wkClose
+wkHid,
+    lac wkIn
+    sza i               // skip if a run is under way, which ends at the upper vertex, on the screen
+    jmp wkStep
+    lac wkA
+
+    // A run ends at vertex AC.
+wkClose,
+    dac wkLo
+    dzm wkIn
+    lac wkBest
+    sub wkN
+    sma                 // skip if the run is longer than the best so far
+    jmp wkStep
+    lac wkN
+    dac wkBest
+    lac wkTop
+    dac vaRTop
+    lac wkLo
+    dac vaRLo
+    lac vaBandM
+    sza                 // skip unless the band, which takes the first
+    jmp wkDone
+wkStep,
+    lac vaQX
+    dac vaPX
+    lac vaQY
+    dac vaPY
+    lac wkB
+    dac wkA
+    jmp wkNext
+wkEnd,
+    lac wkIn
+    sza i               // skip if a run reaches the last vertex, ending there
+    jmp wkDone
+    lac wkA
+    jmp wkClose
+wkDone,
+    lac wkBest
+    sza i               // skip if a run was found
+    jmp wkNone
+    cla
+    jmp rtn
+wkNone,
+    law 1
+rtn, jmp .
+wkA, 0
+wkB, 0
+wkIn, 0
+wkTop, 0
+wkN, 0
+wkLo, 0
+wkBest, 0
+    endloc
+
+// 1 if the chord from (vaPX, vaPY) to (vaX, vaY) lies ARCSAG or more clear of the screen (its top
+// the view's, vwTopA), both ends that far past the same edge; else 0.
+// AC is the result, IO preserved. Called via jsp.
+vaFar,
+    local rtn, frRight, frLow, frHigh, frNo, frYes
+    dap rtn
+    lac vaPX
+    add [ARCSAG]
+    sma                 // skip if that far left of the screen
+    jmp frRight
+    lac vaX
+    add [ARCSAG]
+    spa                 // skip unless the other end is too
+    jmp frYes
+frRight,
+    lac [0d1023+ARCSAG]
+    sub vaPX
+    sma                 // skip if that far right of the screen
+    jmp frLow
+    lac [0d1023+ARCSAG]
+    sub vaX
+    spa                 // skip unless the other end is too
+    jmp frYes
+frLow,
+    lac vaPY
+    add [ARCSAG]
+    sma                 // skip if that far below the screen
+    jmp frHigh
+    lac vaY
+    add [ARCSAG]
+    spa                 // skip unless the other end is too
+    jmp frYes
+frHigh,
+    lac i [vwTopA:014]
+    sub vaPY
+    sma                 // skip if that far above the view's top
+    jmp frNo
+    lac i [vwTopA:014]
+    sub vaY
+    spa                 // skip unless the other end is too
+    jmp frYes
+frNo,
+    cla
+    jmp rtn
+frYes,
+    law 1
+rtn, jmp .
+    endloc
+
+// Clip the piece from (vaPX, vaPY) to (vaQX, vaQY) to the screen (bank 12's vwClipS, through
+// vwClipX). vaEnt is set when its first point moved, entering the screen, vaLv when its last
+// did, leaving it.
+// Exit: AC = 0 and the piece from (vaCX0, vaCY0) to (vaCX1, vaCY1); or AC = 1 when none of it is
+// on the screen or it has no length there. IO is preserved. Called via jsp.
+vaSeg,
+    local rtn, sgShow, sgEnt, sgLv, sgLeave, sgOut, sgOk
+    dap rtn
+    lac vaPX
+    dac i [vcX0:014]
+    lac vaPY
+    dac i [vcY0:014]
+    lac vaQX
+    dac i [vcX1:014]
+    lac vaQY
+    dac i [vcY1:014]
+    jsp i [vwClipX:014]
+    lac i [vwHid:014]
+    sza                 // skip if a part is on the screen
+    jmp sgOut
+    lac i [vcX0:014]
+    dac vaCX0
+    lac i [vcY0:014]
+    dac vaCY0
+    lac i [vcX1:014]
+    dac vaCX1
+    lac i [vcY1:014]
+    dac vaCY1
+    lac vaCX0
+    sas vaCX1           // skip if the x are the same
+    jmp sgShow
+    lac vaCY0
+    sas vaCY1           // skip if the y are too, no length
+    jmp sgShow
+sgOut,
+    law 1
+    jmp rtn
+sgShow,
+    dzm vaEnt
+    lac vaCX0
+    sas vaPX            // skip unless the first point moved
+    jmp sgEnt
+    lac vaCY0
+    sas vaPY
+    jmp sgEnt
+    jmp sgLv
+sgEnt,
+    law 1
+    dac vaEnt
+sgLv,
+    dzm vaLv
+    lac vaCX1
+    sas vaQX            // skip unless the last point moved
+    jmp sgLeave
+    lac vaCY1
+    sas vaQY
+    jmp sgLeave
+    jmp sgOk
+sgLeave,
+    law 1
+    dac vaLv
+sgOk,
+    cla
+rtn, jmp .
+    endloc
+
+// 0 if the point is on the screen under the view's top (vwTopP), else 1.
+// Entry: AC = x, IO = y. Exit: AC = the result. IO is preserved. Called via jda.
+vaOn, 0
+    local rtn, onOff
+    dap rtn
+    lac vaOn
+    spa                 // skip unless left of the screen
+    jmp onOff
+    sub [0d1024]
+    sma                 // skip unless right of it
+    jmp onOff
+    lai
+    spa                 // skip unless below it
+    jmp onOff
+    sub i [vwTopP:014]
+    sma                 // skip unless above the view's top
+    jmp onOff
+    cla
+    jmp rtn
+onOff,
+    law 1
+rtn, jmp .
+    endloc
+
+// Write the window's NARC vector words into the slot. Word p is the chord from vertex
+// vaWHi - p * vaStep to the next below, vaWHi being NARC chords above vaWLo, the run's lower
+// vertex, so the run's last piece is the last word, which carries end. A chord on the screen is
+// its vector; one leaving it, the vector to the edge with end; any other, which the display
+// reaches only as an entry vaHead writes over it, the chord's vector with end.
+// Entry: vaWalk's run; vaSlotA. AC and IO are clobbered. Called via jsp.
+vaFill,
+    local rtn, flLoop, flOdd, flStore, flPut, flA, flP, flPtr, flT
+    dap rtn
+    lac vaRLo
+    dac vaWLo
+    lac vaStep
+    sal 6s
+    add vaWLo
+    dac vaWHi
+    dac flA
+    jda vaVtx
+    lac vaX
+    dac vaPX
+    lac vaY
+    dac vaPY
+    lac vaSlotA
+    add [ARCVEC]
+    dac flPtr
+    dzm flP
+flLoop,
+    lac flA
+    sub vaStep
+    dac flA
+    jda vaVtx
+    lac vaX
+    dac vaQX
+    lac vaY
+    dac vaQY
+    jsp vaSeg
+    sza                 // skip if a piece shows
+    jmp flOdd
+    lac vaEnt
+    sza                 // skip unless the piece enters the screen
+    jmp flOdd
+    jsp vaPiece
+    jmp flStore
+flOdd,
+    lac vaQY
+    sub vaPY
+    dac flT
+    lac vaQX
+    sub vaPX
+    lio flT
+    jda vaPack
+    ior [end]
+flStore,
+    dac flT
+    lac flP
+    sas [0d63]          // skip if the last word, which carries end
+    jmp flPut
+    lac flT
+    ior [end]
+    dac flT
+flPut,
+    lac flT
+    dac i flPtr
+    idx flPtr
+    lac vaQX
+    dac vaPX
+    lac vaQY
+    dac vaPY
+    idx flP
+    sas [0d64]          // skip once every word is written
+    jmp flLoop
+rtn, jmp .
+flA, 0
+flP, 0
+flPtr, 0
+flT, 0
+    endloc
+
+// The clipped piece's vector word, from (vaCX0, vaCY0) to (vaCX1, vaCY1), with end when it leaves
+// the screen (vaLv).
+// Exit: AC = the word. IO is clobbered. Called via jsp.
+vaPiece,
+    local rtn, pcDone, pcT
+    dap rtn
+    lac vaCY1
+    sub vaCY0
+    dac pcT
+    lac vaCX1
+    sub vaCX0
+    lio pcT
+    jda vaPack
+    dac pcT
+    lac vaLv
+    sza i               // skip if the piece leaves the screen
+    jmp pcDone
+    lac pcT
+    ior [end]
+    dac pcT
+pcDone,
+    lac pcT
+rtn, jmp .
+pcT, 0
+    endloc
+
+// The entry is the first piece on the screen walking down from the run's top, vaRTop (the end
+// when it is vaJ + vaStep, else that vertex), within the window. Its first point is the head,
+// its vector the entry word, with end when it leaves the screen or is the last word, placed
+// where its chord's word is, so the window's vectors run on from its lower vertex.
+// Entry: vaSetup's results, the window (vaWHi, vaWLo), vaRTop, vaSlotA. Exit: AC = 0 and vaHX,
+// vaHY the head, vaHW the entry word, vaHA its full address, vaHB its chord's lower vertex; or
+// AC = 1 when nothing is on the screen within the window, 2 when the window's vectors cannot run
+// on from it (its chord above the window, or it leaves the screen before the last word). IO is
+// clobbered. Called via jsp.
+vaHead,
+    local rtn, hdTop, hdNext, hdShow, hdWord, hdPut, hdNone, hdBad, hdA, hdB, hdP
+    dap rtn
+    lac vaRTop
+    dac hdA
+    lac vaJ
+    add vaStep
+    sas hdA             // skip if the top is the end
+    jmp hdTop
+    lac vaEX
+    dac vaPX
+    lac vaEY
+    dac vaPY
+    jmp hdNext
+hdTop,
+    lac hdA
+    jda vaVtx
+    lac vaX
+    dac vaPX
+    lac vaY
+    dac vaPY
+hdNext,
+    lac hdA
+    sub vaStep
+    dac hdB
+    sub vaWLo
+    spa                 // skip unless below the window
+    jmp hdNone
+    lac hdB
+    jda vaVtx
+    lac vaX
+    dac vaQX
+    lac vaY
+    dac vaQY
+    jsp vaSeg
+    sza i               // skip unless a piece shows
+    jmp hdShow
+    lac vaQX
+    dac vaPX
+    lac vaQY
+    dac vaPY
+    lac hdB
+    dac hdA
+    jmp hdNext
+hdShow,
+    lac vaWHi
+    sub hdA
+    spa                 // skip unless the chord is above the window
+    jmp hdBad
+    xct vaLog
+    dac hdP
+    lac vaLv
+    sza i               // skip if the piece leaves the screen, allowed only as the last word
+    jmp hdWord
+    lac hdP
+    sas [0d63]          // skip if the last word
+    jmp hdBad
+hdWord,
+    jsp vaPiece
+    dac vaHW
+    lac hdP
+    sas [0d63]          // skip if the last word, which carries end
+    jmp hdPut
+    lac vaHW
+    ior [end]
+    dac vaHW
+hdPut,
+    lac vaCX0
+    dac vaHX
+    lac vaCY0
+    dac vaHY
+    lac vaSlotA
+    add [ARCVEC]
+    add hdP
+    dac vaHA
+    lac hdB
+    dac vaHB
+    cla
+    jmp rtn
+hdNone,
+    law 1
+    jmp rtn
+hdBad,
+    law 2
+rtn, jmp .
+hdA, 0
+hdB, 0
+hdP, 0
+    endloc
+
+// Whether the band's entry runs on into the window's run, its chord's lower vertex vaHB at or
+// below vaRunHi, the highest vertex known to be joined to the run by chords on the screen; past
+// it, vaRunHi is raised over the vertices between while they are on the screen.
+// Exit: AC = 0 if it does, else nonzero. IO is clobbered. Called via jsp.
+vaCont,
+    local rtn, cnLoop, cnOk, cnI
+    dap rtn
+cnLoop,
+    lac vaRunHi
+    sub vaHB
+    sma                 // skip if the entry's chord is above vaRunHi
+    jmp cnOk
+    lac vaRunHi
+    add vaStep
+    dac cnI
+    jda vaVtx
+    lio vaY
+    lac vaX
+    jda vaOn
+    sza                 // skip if that vertex is on the screen
+    jmp rtn
+    lac cnI
+    dac vaRunHi
+    jmp cnLoop
+cnOk,
+    cla
+rtn, jmp .
+cnI, 0
+    endloc
+
+// The head's words, vaWY and vaWX, the y and x words of its point, and vaWG, the gate entering
+// the entry word, as arcHead writes them.
+// AC is clobbered, IO preserved. Called via jsp.
+vaWords,
+    local rtn
+    dap rtn
+    lac vaHY
+    and [01777]
+    ior [y(0) next(point)]
+    dac vaWY
+    lac vaHX
+    and [01777]
+    ior [x(0) next(subroutine)]
+    dac vaWX
+    lac vaHA
+    ior [jump next(vector)]
+    dac vaWG
+rtn, jmp .
+    endloc
+
+// Post a word for penISR to write between frames (commitFlip), as arcPut does while posting, as
+// the vaPN'th, its address in bank 2's arcPostA and the word in arcPostW.
+// Entry: AC = the word, IO = its full address. AC and IO are clobbered. Called via jda.
+vaPost, 0
+    local rtn, poP
+    dap rtn
+    lac vaPN
+    add [arcPostA:2]
+    dac poP
+    dio i poP
+    lac vaPN
+    add [arcPostW:2]
+    dac poP
+    lac vaPost
+    dac i poP
+    idx vaPN
+rtn, jmp .
+poP, 0
+    endloc
+
+// A visible vector word from its deltas, as arcPack makes it, each kept within 127 (vaMag).
+// Entry: AC = dx, IO = dy. Exit: AC = the word, without end. IO is clobbered. Called via jda.
+vaPack, 0
+    local rtn, pkW
+    dap rtn
+    lai
+    jda vaMag
+    sal 8s
+    dac pkW
+    lac vaPack
+    jda vaMag
+    ior pkW
+    ior [visible]
+rtn, jmp .
+pkW, 0
+    endloc
+
+// A delta's field in a vector word, its magnitude kept within 127, with 0200 set when it is
+// minus; -0 as +0.
+// Entry: AC = the delta. Exit: AC = the field. IO is preserved. Called via jda.
+vaMag, 0
+    local rtn, mgPos, mgIn, mgOr, mgSign, mgM
+    dap rtn
+    dzm mgSign
+    lac vaMag
+    sma                 // skip if minus
+    jmp mgPos
+    cma
+    sza i               // skip unless -0
+    jmp rtn
+    dac mgM
+    law 0200
+    dac mgSign
+    lac mgM
+mgPos,
+    sub [0d128]
+    spa                 // skip if 128 or more, kept at 127
+    jmp mgIn
+    law 0d127
+    jmp mgOr
+mgIn,
+    add [0d128]
+mgOr,
+    ior mgSign
+rtn, jmp .
+mgSign, 0
+mgM, 0
+    endloc
+
+// The shift from 32nds of a page unit to screen units, by scale, x1 to x8, sar (5 - vwS).
+vaShT,
+    sar 5s
+    sar 4s
+    sar 3s
+    sar 2s
+// The shift dividing by a chord of 2^n 512ths of a turn, n 0 to 3.
+vaLgT,
+    nop
+    sar 1s
+    sar 2s
+    sar 3s
+
+// The arcs through the view's words. The slot written, and whether it is the band's (its
+// first run taken, not its longest); frameTicks when its gate closed.
+vaSlotA, 0
+vaBandM, 0
+vaTicks, 0
+// The arc as vaSetup leaves it. The start's offset from the center in 32nds of a page unit, the
+// view's shift left and offsets (bank 12's vwSal, vwOutX and vwOutY), the direction, the center
+// in 32nds plus half a screen unit, the shift to screen units, the chord in 512ths of a turn,
+// its log and the shift dividing by it; the walk's last vertex, and the last one a full circle's
+// walk began at; the vertex at or before the end, the end on the screen, and its offset from the
+// center for vaCross.
+vaU, 0
+vaV, 0
+vaSal, nop
+vaOutX, 0
+vaOutY, 0
+vaDir, 0
+vaX32, 0
+vaY32, 0
+vaSh, nop
+vaStep, 0
+vaLg, 0
+vaLog, nop
+vaBase, 0
+vaLast, 0
+vaJ, 0
+vaEX, 0
+vaEY, 0
+vaNX, 0
+vaNY, 0
+// vaSinCos's and vaVtx's results.
+vaS, 0
+vaC, 0
+vaUk, 0
+vaVk, 0
+vaX, 0
+vaY, 0
+// A piece's points, upper and lower, the part on the screen, and whether its clip moved them
+// (vaSeg).
+vaPX, 0
+vaPY, 0
+vaQX, 0
+vaQY, 0
+vaCX0, 0
+vaCY0, 0
+vaCX1, 0
+vaCY1, 0
+vaEnt, 0
+vaLv, 0
+// The run (vaWalk) and the window its vectors are written for (vaFill).
+vaRTop, 0
+vaRLo, 0
+vaWHi, 0
+vaWLo, 0
+// The entry (vaHead) and the head's words (vaWords).
+vaHX, 0
+vaHY, 0
+vaHW, 0
+vaHA, 0
+vaHB, 0
+vaWY, 0
+vaWX, 0
+vaWG, 0
+// The band between passes, the words posted; whether its vectors are written, and for which
+// direction, start and center; the word its entry took over and its address; the highest vertex
+// joined to the window's run on the screen.
+vaPN, 0
+vaValid, 0
+vaBDir, 0
+vaBU, 0
+vaBV, 0
+vaBX, 0
+vaBY, 0
+vaOldA, 0
+vaOldW, 0
+vaRunHi, 0
+vaT, 0

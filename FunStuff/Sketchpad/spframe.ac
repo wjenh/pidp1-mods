@@ -1,0 +1,857 @@
+// spframe.ac -- bank 0's storage, the display list. It holds the frame, the bar's labels and
+// status word, the drop-down selector, the target calls, the instance slots, the arcs' marks, the
+// pseudo pen location and the lock mark, the constraints' marks and their glyphs, the lists, the
+// status words, the arc slots and band, and the master store. The bar's and the lists' tables
+// are in bank 3 (spdispatch.ac).
+//
+// Bank 0, after spbreak.ac. Needs sketchpad.ah's defines; the 340's words reach bank 1's
+// line slots by full address.
+// Part of sketchpad.am1, included where it stands.
+
+// A constraint's glyph g, called from its mark's slot in subroutine mode. It draws the circle
+// (gRing), then its letter, each a separate save. A save returns at the first end, and the 340
+// keeps one return address, so the glyph first keeps its slot's in its last word, ret (deposit,
+// which writes a jump there to the address the last save kept), and jumps back by it. One circle
+// so serves every letter.
+#define GLYPH(g, ret, letter) \
+g,  deposit ret next(subroutine); \
+    save gRing next(parameter); \
+    lpoff next(subroutine); \
+    save letter next(vector); \
+    lpoff next(subroutine); \
+ret, 0
+
+// The Select box of the list in column c, beside its first row (BOXAT, sketchpad.ah).
+#define SELECTBOX(c) BOXAT((c) * COLPITCH + BOXDX, 0)
+
+// The display list, one frame. penISR restarts it at `frame` after the closing halt.
+frame,
+bar0, LBLNORM
+    y(BARY) next(point)
+    x(CDRAW * COLPITCH + LABELMARGIN) next(character)
+    type340 "Draw"
+bar1, LBLNORM
+    y(BARY) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Edit"
+bar2, LBLNORM
+    y(BARY) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Picture"
+bar3, LBLNORM
+    y(BARY) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Misc"
+bar4, LBLNORM
+    y(BARY) next(point)
+    x(CLOCATE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Locate"
+bar5, LBLDIM            // dim while there is nothing to undo (paintLabel)
+    y(BARY) next(point)
+    x(CUNDO * COLPITCH + LABELMARGIN) next(character)
+    type340 "Undo"
+bar6, LBLNORM
+    y(BARY) next(point)
+    x(CSTOP * COLPITCH + LABELMARGIN) next(character)
+    type340 "Stop"
+bar7, LBLNORM
+    y(BARY) next(point)
+    x(CVIEW * COLPITCH + LABELMARGIN) next(character)
+    type340 "View"
+
+// The status word after a transfer. statGate jumps to its word, which jumps back to statEnd, or
+// while none is shown straight there (tapeCall, onClock).
+    lpoff next(subroutine)
+statGate, jump statEnd next(parameter)
+
+// The drop-down selector. menuJmp is patched to the open list, which jumps back to menuEnd.
+statEnd, lpoff next(subroutine)
+menuJmp, jump menuEnd next(parameter)
+
+// The frame-start target call; writeCalls makes it a call or a jump to the next word. Then the
+// drawing list, in bank 1; drawJmp goes to the frame's end instead while a list is open.
+menuEnd, next(subroutine)
+call0, save tracker next(parameter)
+    next(subroutine)
+drawJmp, jump drawList:1 next(parameter)
+
+// The drawing's end, the arc list's, jumps here, to the instance list of MAXINST slots of
+// INSTWORDS, written at run time, the first unused slot's gate jumping to instEnd, which follows
+// the last. showGate enters the constraints' marks (fixList), which go on to markGate, in Fix
+// mode and while Show is on, and goes straight to markGate otherwise (setShow). markGate enters
+// the arcs' marks in draw, circle, move, delete and Fix modes, and steps over them in every
+// other (setMode); the mark list's blocks are written with the arc slots. markEnd sets the scale
+// and intensity of the pick marks, which pickGate enters while Dist, Change or Gap has a point
+// picked (splock.ac's pmShow; the crosses in spbreak.ac's spare words) and steps over otherwise.
+// Before it inkGate enters INK, the one word the pen can touch while the target is hidden, from
+// start-up (initGates) until the target first shows (writeCalls); INK's last word puts markEnd's
+// scale and intensity back. Then bandGate steps over the band and the pseudo pen location
+// in Locate's mode and idle, enters them in draw mode once the chain's start is placed and for
+// the radius in circle mode, enters the arc band instead once the arc's start is placed, which
+// jumps back here for the radius, and goes straight to the dot in the other modes and while
+// draw mode waits for its start or circle mode for a center. bandStart is dotted for the radius
+// (RADPARAM). bandJmp enters the last K of the band's vectors, or goes straight to the dot for a
+// zero-length band. The dot's parameter word dims it while move mode waits for a point, and
+// lockGate draws the lock mark about it while it locks onto what a lift takes (showDot). All
+// written at run time.
+drawEnd,
+instList,
+    table MAXINST * INSTWORDS, 0
+instEnd, lpoff next(subroutine)
+showGate, jump markGate next(subroutine)
+markGate, jump markEnd next(parameter)
+markList,
+    table MAXARCS * MARKWORDS, 0
+markEnd, scale(DRAWSCALE) intensity(PENINTENSITY) lpoff next(subroutine)
+inkGate, jump inkBlock next(parameter)
+inkBlock, INKPARAM
+    y(INKY) next(point)
+    x(INKX) next(character)
+    type340 "INK"
+    scale(DRAWSCALE) intensity(PENINTENSITY) lpoff next(subroutine)
+pickGate, jump bandGate next(subroutine)
+bandGate, jump frameHalt next(parameter)
+bandStart, DRAWPARAM
+bandY, y(INITIALY) next(point)
+bandX, x(INITIALX) next(subroutine)
+bandJmp, jump dotBlock next(parameter)
+bandVec,
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right
+    deltax(1) deltay(0) right end
+dotBlock, DOTPARAM
+dotY, y(INITIALY) next(point)
+dotX, x(INITIALX) show next(parameter)
+    scale(DRAWSCALE) intensity(PENINTENSITY) lpoff next(subroutine)
+lockGate, jump frameHalt next(parameter)
+lockVec,
+    deltax(LOCKARM) deltay(0) left
+    deltax(2 * LOCKARM) deltay(0) right visible
+    deltax(LOCKARM) deltay(LOCKARM) left down
+    deltax(0) deltay(2 * LOCKARM) up visible end
+
+frameHalt, lpoff halt interrupt
+    halt
+
+// A halt that asks for no break, where init holds a display left running by an earlier program.
+parked, lpoff halt
+
+// The constraints' marks, entered from showGate in Fix mode and while Show is on, the list then
+// jumping on to markGate. NCON slots, each the mark's y word, its x word, the gate, which calls
+// the constraint's glyph or, past the last mark, jumps to markGate, and a parameter word going
+// on to the next slot; then a slot always shut. The constraint module's cMarks writes them, and
+// keeps every slot the display can reach whole.
+fixList,
+    table NCON * FIXWORDS, 0
+    y(0d512) next(point)
+    x(0d512) next(subroutine)
+    jump markGate next(subroutine)
+
+// The glyphs (GLYPH), each called from its slot with the beam on the mark's center. Each is the
+// circle of radius FIXR (gRing) and a letter 10 high inside it: H, F, E, L, P, R, X, N, C or A,
+// or the truss's B, W or O, or a designation's digit, 1 to 6, gD1 to gD6 in order, which the
+// constraint module's cDgTab names, or a number's D, Y or O, the O without a roller's ticks.
+// Each letter's strokes start where the circle ends, FIXR right of the center.
+    GLYPH(gH, gHRet, lH)
+    GLYPH(gF, gFRet, lF)
+    GLYPH(gE, gERet, lE)
+    GLYPH(gL, gLRet, lL)
+    GLYPH(gP, gPRet, lP)
+    GLYPH(gR, gRRet, lR)
+    GLYPH(gX, gXRet, lX)
+    GLYPH(gN, gNRet, lN)
+    GLYPH(gC, gCRet, lC)
+    GLYPH(gA, gARet, lA)
+    GLYPH(gB, gBRet, lB)
+    GLYPH(gW, gWRet, lW)
+    GLYPH(gD1, gD1Ret, lD1)
+    GLYPH(gD2, gD2Ret, lD2)
+    GLYPH(gD3, gD3Ret, lD3)
+    GLYPH(gD4, gD4Ret, lD4)
+    GLYPH(gD5, gD5Ret, lD5)
+    GLYPH(gD6, gD6Ret, lD6)
+    GLYPH(gD, gDRet, lD)
+    GLYPH(gY, gYRet, lY)
+    GLYPH(gO, gOPRet, lO)
+
+// A roller's mark, the O with two dim ticks along its axis, FIXR + 2 to FIXR + 8 out on each
+// side of the center. gOk is the axis at k * 22.5 degrees counterclockwise from level (the
+// constraint module's cRlTab). It draws its ticks, from the center and back to it, then the
+// circle and the O, which every gOk shares (gOTail).
+gO0, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d12) deltay(0d0) right up
+    deltax(0d6) deltay(0d0) right up visible
+    deltax(0d30) deltay(0d0) left up
+    deltax(0d6) deltay(0d0) left up visible
+    deltax(0d18) deltay(0d0) right up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO1, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d11) deltay(0d5) right up
+    deltax(0d6) deltay(0d2) right up visible
+    deltax(0d28) deltay(0d12) left down
+    deltax(0d6) deltay(0d2) left down visible
+    deltax(0d17) deltay(0d7) right up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO2, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d8) deltay(0d8) right up
+    deltax(0d5) deltay(0d5) right up visible
+    deltax(0d21) deltay(0d21) left down
+    deltax(0d5) deltay(0d5) left down visible
+    deltax(0d13) deltay(0d13) right up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO3, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d5) deltay(0d11) right up
+    deltax(0d2) deltay(0d6) right up visible
+    deltax(0d12) deltay(0d28) left down
+    deltax(0d2) deltay(0d6) left down visible
+    deltax(0d7) deltay(0d17) right up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO4, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d0) deltay(0d12) right up
+    deltax(0d0) deltay(0d6) right up visible
+    deltax(0d0) deltay(0d30) right down
+    deltax(0d0) deltay(0d6) right down visible
+    deltax(0d0) deltay(0d18) right up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO5, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d5) deltay(0d11) left up
+    deltax(0d2) deltay(0d6) left up visible
+    deltax(0d12) deltay(0d28) right down
+    deltax(0d2) deltay(0d6) right down visible
+    deltax(0d7) deltay(0d17) left up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO6, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d8) deltay(0d8) left up
+    deltax(0d5) deltay(0d5) left up visible
+    deltax(0d21) deltay(0d21) right down
+    deltax(0d5) deltay(0d5) right down visible
+    deltax(0d13) deltay(0d13) left up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gO7, deposit gORet next(parameter)
+    scale(DRAWSCALE) intensity(DIMINTENSITY) lpoff next(vector)
+    deltax(0d11) deltay(0d5) left up
+    deltax(0d6) deltay(0d2) left up visible
+    deltax(0d28) deltay(0d12) right down
+    deltax(0d6) deltay(0d2) right down visible
+    deltax(0d17) deltay(0d7) left up end
+    lpoff next(subroutine)
+    jump gOTail next(subroutine)
+gOTail, save gRing next(parameter)
+    lpoff next(subroutine)
+    save lO next(vector)
+    lpoff next(subroutine)
+gORet, 0
+
+// The circle, out to the right, then 16 chords round, ending FIXR right of the center (the
+// vectors are for a radius of 10).
+gRing, scale(DRAWSCALE) intensity(MARKINTENSITY) lpoff next(vector)
+    deltax(FIXR) deltay(0) right
+    deltax(1) deltay(4) left up visible
+    deltax(2) deltay(3) left up visible
+    deltax(3) deltay(2) left up visible
+    deltax(4) deltay(1) left up visible
+    deltax(4) deltay(1) left down visible
+    deltax(3) deltay(2) left down visible
+    deltax(2) deltay(3) left down visible
+    deltax(1) deltay(4) left down visible
+    deltax(1) deltay(4) right down visible
+    deltax(2) deltay(3) right down visible
+    deltax(3) deltay(2) right down visible
+    deltax(4) deltay(1) right down visible
+    deltax(4) deltay(1) right up visible
+    deltax(3) deltay(2) right up visible
+    deltax(2) deltay(3) right up visible
+    deltax(1) deltay(4) right up visible end
+
+// The letters, in vector mode, from FIXR right of the center.
+lH, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0) right
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(5) left up
+    deltax(6) deltay(0) right visible end
+lF, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0) right visible
+    deltax(6) deltay(5) left down
+    deltax(5) deltay(0) right visible end
+lE, deltax(FIXR - 3) deltay(5) left down
+    deltax(6) deltay(0) left visible
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0) right visible
+    deltax(6) deltay(5) left down
+    deltax(5) deltay(0) right visible end
+lL, deltax(FIXR + 3) deltay(5) left up
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(0) right visible end
+lP, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) left visible end
+lR, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) left visible
+    deltax(6) deltay(5) right down visible end
+lX, deltax(FIXR + 3) deltay(5) left down
+    deltax(6) deltay(0d10) right up visible
+    deltax(6) deltay(0) left
+    deltax(6) deltay(0d10) right down visible end
+lN, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0d10) right down visible
+    deltax(0) deltay(0d10) up visible end
+lC, deltax(FIXR - 3) deltay(5) left up
+    deltax(6) deltay(0) left visible
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(0) right visible end
+lA, deltax(FIXR + 3) deltay(5) left down
+    deltax(3) deltay(0d10) right up visible
+    deltax(3) deltay(0d10) right down visible
+    deltax(5) deltay(3) left up
+    deltax(4) deltay(0) right visible end
+lB, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(4) deltay(0) right visible
+    deltax(2) deltay(2) right down visible
+    deltax(2) deltay(3) left down visible
+    deltax(4) deltay(0) left visible
+    deltax(4) deltay(0) right
+    deltax(2) deltay(2) right down visible
+    deltax(2) deltay(3) left down visible
+    deltax(4) deltay(0) left visible end
+lW, deltax(FIXR + 4) deltay(5) left up
+    deltax(2) deltay(0d10) right down visible
+    deltax(2) deltay(6) right up visible
+    deltax(2) deltay(6) right down visible
+    deltax(2) deltay(0d10) right up visible end
+lO, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(0) left visible end
+
+// The digits, 10 high and 6 wide like the letters.
+lD1, deltax(FIXR) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(2) deltay(2) left down visible end
+lD2, deltax(FIXR + 3) deltay(5) left up
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) left visible
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) right visible end
+lD3, deltax(FIXR + 3) deltay(5) left up
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(0) left visible
+    deltax(1) deltay(5) right up
+    deltax(5) deltay(0) right visible end
+lD4, deltax(FIXR + 3) deltay(5) left up
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) up
+    deltax(0) deltay(0d10) down visible end
+lD5, deltax(FIXR - 3) deltay(5) left up
+    deltax(6) deltay(0) left visible
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) down visible
+    deltax(6) deltay(0) left visible end
+lD6, deltax(FIXR - 3) deltay(5) left up
+    deltax(6) deltay(0) left visible
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) up visible
+    deltax(6) deltay(0) left visible end
+
+// The numbers' letters, D and Y.
+lD, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(3) deltay(0) right visible
+    deltax(3) deltay(3) right down visible
+    deltax(0) deltay(4) down visible
+    deltax(3) deltay(3) left down visible
+    deltax(3) deltay(0) left visible end
+lY, deltax(FIXR + 3) deltay(5) left up
+    deltax(3) deltay(5) right down visible
+    deltax(3) deltay(5) right up visible
+    deltax(3) deltay(5) left down
+    deltax(0) deltay(5) down visible end
+
+// The tracking target, called as a display subroutine; save returns at the closing vector end.
+// penISR writes trackY and trackX. It is trackingTarget.ac's shape, each arm drawn out from the
+// center and back so that clipTarget can shorten any one, the + arms out and across, the
+// diagonals out and back. Assembled whole.
+tracker, scale(TARGETSCALE) intensity(TARGETINTENSITY) lpon next(point)
+trackY, y(INITIALY) next(point)
+trackX, x(INITIALX) next(parameter)
+    scale(TARGETSCALE) intensity(TARGETINTENSITY) lpon next(vector)
+tgtVec,
+    deltax(TARGETARM) deltay(0) right visible
+    deltax(2 * TARGETARM) deltay(0) left
+    deltax(TARGETARM) deltay(0) right visible
+    deltax(0) deltay(TARGETARM) up visible
+    deltax(0) deltay(2 * TARGETARM) down
+    deltax(0) deltay(TARGETARM) up visible
+    deltax(TARGETARM) deltay(TARGETARM) right up visible
+    deltax(TARGETARM) deltay(TARGETARM) left down
+    deltax(TARGETARM) deltay(TARGETARM) left up visible
+    deltax(TARGETARM) deltay(TARGETARM) right down
+    deltax(TARGETARM) deltay(TARGETARM) right down visible
+    deltax(TARGETARM) deltay(TARGETARM) left up
+    deltax(TARGETARM) deltay(TARGETARM) left down visible
+    deltax(TARGETARM) deltay(TARGETARM) right up end
+    halt
+
+// The drop-down lists, reached from menuJmp; each jumps back to menuEnd. Every row is a separate
+// block, highlighted by patching its parameter word. A list's tail word jumps to the lists'
+// Select box, listBox, after Draw's list, which placeBox moves beside the open list, or to the
+// open sublist, which ends in its box, shared with the list's other sublists, and jumps back to
+// menuEnd. Define's label is cut to 7 characters, "Define>", to keep its gap to the list's
+// Select box, and Constr's likewise.
+listDraw,
+dr0, LBLNORM
+    y(ROWY0 - ROWLINE * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + LABELMARGIN) next(character)
+    type340 "Line"
+dr1, LBLNORM
+    y(ROWY0 - ROWCIRCLE * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + LABELMARGIN) next(character)
+    type340 "Circle"
+dr2, LBLNORM
+    y(ROWY0 - ROWTRUSS * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + LABELMARGIN) next(character)
+    type340 "Truss>"
+dr3, LBLNORM
+    y(ROWY0 - ROWTEXT * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + LABELMARGIN) next(character)
+    type340 "Text"
+dr4, LBLNORM
+    y(ROWY0 - ROWDIM * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + LABELMARGIN) next(character)
+    type340 "Dim>"
+    lpoff next(subroutine)
+drTail, jump listBox next(parameter)
+listBox,
+    SELECTBOX(0)
+    lpoff next(subroutine)
+    jump menuEnd next(parameter)
+
+listEdit,
+ed0, LBLNORM
+    y(ROWY0 - ROWMOVE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Move"
+ed1, LBLNORM
+    y(ROWY0 - ROWDELETE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Delete"
+ed2, LBLNORM
+    y(ROWY0 - ROWCONSTR * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Constr>"
+ed3, LBLNORM
+    y(ROWY0 - ROWSIZE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Size >"
+ed4, LBLNORM
+    y(ROWY0 - ROWSCALE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Scale"
+ed5, LBLNORM
+    y(ROWY0 - ROWCHANGE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Change>"
+ed6, LBLNORM
+    y(ROWY0 - ROWDISMEM * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Dismem"
+    lpoff next(subroutine)
+edTail, jump listBox next(parameter)
+
+listPicture,
+pc0, LBLNORM
+    y(ROWY0 - ROWDEFINE * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Define>"
+pc1, LBLNORM
+    y(ROWY0 - ROWINST * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Inst >"
+pc2, LBLNORM
+    y(ROWY0 - ROWCOPY * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Copy >"
+pc3, LBLNORM
+    y(ROWY0 - ROWCLEAR * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Clear"
+pc4, LBLNORM
+    y(ROWY0 - ROWTIE * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Tie"
+pc5, LBLNORM
+    y(ROWY0 - ROWDESIG * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Desig"
+    lpoff next(subroutine)
+pcTail, jump listBox next(parameter)
+
+// The sublists, reached from their lists' tail words, each beside the row that owns it. The
+// sublists of one list stand in one column and only one is open at a time, so they share one
+// Select box, to spare bank 0's room. Size's and Constr's jump to Change's, chBox, Copy's and
+// Define's to Inst's; Drive's, alone in Misc's column, has its own, dvBox. Each descriptor names
+// the box its sublist uses. Every sublist's box is assembled beside row 0, where placeBox parks
+// a hidden one, so a closed list's box words stay as assembled whichever sublist used it.
+listSize,
+sz0, LBLNORM
+    y(ROWY0 - ROWSIZE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x1"
+sz1, LBLNORM
+    y(ROWY0 - (ROWSIZE + 0d1) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x2"
+sz2, LBLNORM
+    y(ROWY0 - (ROWSIZE + 0d2) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x4"
+sz3, LBLNORM
+    y(ROWY0 - (ROWSIZE + 0d3) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x8"
+    lpoff next(subroutine)
+    jump chBox next(parameter)
+
+// Constr's rows. Horv; Equal, Paral, Perp, Length and Mid, the constraint mode's types; Fix;
+// and Show, lit while on (paintAny).
+listConstr,
+cn0, LBLNORM
+    y(ROWY0 - ROWCONSTR * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Horv"
+cn1, LBLNORM
+    y(ROWY0 - (ROWCONSTR + 0d1) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Equal"
+cn2, LBLNORM
+    y(ROWY0 - (ROWCONSTR + 0d2) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Paral"
+cn3, LBLNORM
+    y(ROWY0 - (ROWCONSTR + 0d3) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Perp"
+cn4, LBLNORM
+    y(ROWY0 - (ROWCONSTR + 0d4) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Length"
+cn5, LBLNORM
+    y(ROWY0 - (ROWCONSTR + 0d5) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Mid"
+cn6, LBLNORM
+    y(ROWY0 - (ROWCONSTR + 0d6) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Fix"
+cn7, LBLNORM
+    y(ROWY0 - (ROWCONSTR + SHOWROW) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Show"
+    lpoff next(subroutine)
+    jump chBox next(parameter)
+
+// Truss's rows. Beam, Load, Roller and Axis, modes; Forces, lit while on (paintAny); Stiff, a
+// mode.
+listTruss,
+tr0, LBLNORM
+    y(ROWY0 - ROWTRUSS * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Beam"
+tr1, LBLNORM
+    y(ROWY0 - (ROWTRUSS + 0d1) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Load"
+tr2, LBLNORM
+    y(ROWY0 - (ROWTRUSS + 0d2) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Roller"
+tr3, LBLNORM
+    y(ROWY0 - (ROWTRUSS + 0d3) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Axis"
+tr4, LBLNORM
+    y(ROWY0 - (ROWTRUSS + FORCESROW) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Forces"
+tr5, LBLNORM
+    y(ROWY0 - (ROWTRUSS + 0d5) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Stiff"
+trBox,
+    BOXAT(CDRAW * COLPITCH + SUBDX + BOXDX, 0)
+    lpoff next(subroutine)
+    jump menuEnd next(parameter)
+
+// Dim's rows, Number, Dist, Change and Gap, each a mode. The sublist shares Truss's box, as the
+// sublists of one list do.
+listDim,
+dm0, LBLNORM
+    y(ROWY0 - ROWDIM * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Number"
+dm1, LBLNORM
+    y(ROWY0 - (ROWDIM + 0d1) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Dist"
+dm2, LBLNORM
+    y(ROWY0 - (ROWDIM + 0d2) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Change"
+dm3, LBLNORM
+    y(ROWY0 - (ROWDIM + 0d3) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Gap"
+    lpoff next(subroutine)
+    jump trBox next(parameter)
+
+listInst,
+mi0, LBLNORM
+    y(ROWY0 - ROWINST * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M1"
+mi1, LBLNORM
+    y(ROWY0 - (ROWINST + 0d1) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M2"
+mi2, LBLNORM
+    y(ROWY0 - (ROWINST + 0d2) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M3"
+mi3, LBLNORM
+    y(ROWY0 - (ROWINST + 0d3) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M4"
+miBox,
+    BOXAT(CPICTURE * COLPITCH + SUBDX + BOXDX, 0)
+    lpoff next(subroutine)
+    jump menuEnd next(parameter)
+
+listCopy,
+mc0, LBLNORM
+    y(ROWY0 - ROWCOPY * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M1"
+mc1, LBLNORM
+    y(ROWY0 - (ROWCOPY + 0d1) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M2"
+mc2, LBLNORM
+    y(ROWY0 - (ROWCOPY + 0d2) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M3"
+mc3, LBLNORM
+    y(ROWY0 - (ROWCOPY + 0d3) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M4"
+    lpoff next(subroutine)
+    jump miBox next(parameter)
+
+listDefine,
+md0, LBLNORM
+    y(ROWY0 - ROWDEFINE * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M1"
+md1, LBLNORM
+    y(ROWY0 - (ROWDEFINE + 0d1) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M2"
+md2, LBLNORM
+    y(ROWY0 - (ROWDEFINE + 0d2) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M3"
+md3, LBLNORM
+    y(ROWY0 - (ROWDEFINE + 0d3) * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "M4"
+    lpoff next(subroutine)
+    jump miBox next(parameter)
+
+// Misc's list. The tape's rows, Drive alone owning a sublist, then Del cons and Unfix. The Drive
+// row's label shows the drive in use, its digit in the text's word DRVWORD (drvLabel). Save,
+// Load (picking on the directory's screen), Dir, Del cons and Unfix act.
+listMisc,
+ms0, LBLNORM
+    y(ROWY0 - ROWSAVE * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Save"
+ms1, LBLNORM
+    y(ROWY0 - ROWLOAD * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Load"
+ms2, LBLNORM
+    y(ROWY0 - ROWDRIVE * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+drvText, type340 "Drive 1>"
+ms3, LBLNORM
+    y(ROWY0 - ROWDIR * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Dir"
+ms4, LBLNORM
+    y(ROWY0 - ROWDELCONS * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Del cons"
+ms5, LBLNORM
+    y(ROWY0 - ROWUNFIX * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Unfix"
+    lpoff next(subroutine)
+msTail, jump listBox next(parameter)
+
+// View's list. The view's scale, x1 to x8; Pan, a mode whose lift drags the drawing; and Center,
+// a mode whose lift centers the view. Its rows stand from VIEWROWX, left of the column, and its
+// box is the lists', at VIEWBOXX.
+listView,
+vi0, LBLNORM
+    y(ROWY0) next(point)
+    x(VIEWROWX + LABELMARGIN) next(character)
+    type340 "x1"
+vi1, LBLNORM
+    y(ROWY0 - ROWPITCH) next(point)
+    x(VIEWROWX + LABELMARGIN) next(character)
+    type340 "x2"
+vi2, LBLNORM
+    y(ROWY0 - 0d2 * ROWPITCH) next(point)
+    x(VIEWROWX + LABELMARGIN) next(character)
+    type340 "x4"
+vi3, LBLNORM
+    y(ROWY0 - 0d3 * ROWPITCH) next(point)
+    x(VIEWROWX + LABELMARGIN) next(character)
+    type340 "x8"
+vi4, LBLNORM
+    y(ROWY0 - 0d4 * ROWPITCH) next(point)
+    x(VIEWROWX + LABELMARGIN) next(character)
+    type340 "Pan"
+vi5, LBLNORM
+    y(ROWY0 - 0d5 * ROWPITCH) next(point)
+    x(VIEWROWX + LABELMARGIN) next(character)
+    type340 "Center"
+    lpoff next(subroutine)
+viTail, jump listBox next(parameter)
+
+listDrive,
+dv0, LBLNORM
+    y(ROWY0 - ROWDRIVE * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D1"
+dv1, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d1) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D2"
+dv2, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d2) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D3"
+dv3, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d3) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D4"
+dv4, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d4) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D5"
+dv5, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d5) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D6"
+dv6, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d6) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D7"
+dv7, LBLNORM
+    y(ROWY0 - (ROWDRIVE + 0d7) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "D8"
+dvBox,
+    BOXAT(CMISC * COLPITCH + SUBDX + BOXDX, 0)
+    lpoff next(subroutine)
+    jump menuEnd next(parameter)
+
+// The status word, at the labels' size with the light pen off, from (STATX, STATY) under the
+// bar's right, jumping back to statEnd. Its four text words are written at run time, by the tape
+// module during a transfer, while the display shows WAIT. Every text is nine characters, padded
+// with spaces, so its end is always in the fourth word. A frame that reads the words while they
+// are written draws parts of two texts, never past the end. The ninth character ends by 886.
+// Under it is the picture's name after SAVED or LOADED, blank otherwise, a name's run, msgName,
+// written by the tape module with the text.
+msgWord, STATPARAM
+    y(STATY) next(point)
+    x(STATX) next(character)
+msgText, type340 "         "
+    STATPARAM
+    y(NAMEY) next(point)
+    x(NAMEX) next(character)
+msgName,
+    table NAMEW - 1, KBPAD
+    KBBLANK
+    lpoff next(subroutine)
+    jump statEnd next(parameter)
+
+// The arc slots, MAXARCS groups of an arc slot and its target call, then the arc list's
+// end; and the arc band. The line list's end in bank 1 jumps to the arc list, whose unused
+// slots and end jump back to drawEnd. All written at run time, by the main bank and bank 2.
+arcList,
+    table MAXARCS * ARCGROUP + 2, 0
+arcBand,
+    table ARCWORDS + 2, 0
+
+// The master store, master k's words from masters + k * MWORDS, written by Define. An instance's
+// gate calls one with save, so the store is in bank 0.
+masters,
+    table NMASTER * MWORDS, 0
+
+// The screen during a transfer, a self-contained block started by the tape module and cut off by
+// tapeCall's dla of the frame. It draws WAIT, then eight invisible vectors out and back, then
+// round again, with no halt, since the CPU polls the tape with the break system off and cannot
+// restart it. Each word fetched steals a CPU cycle; the vectors, 127 steps at 1.5 us for one
+// fetch each, make the loop about 15 fetches in 1.8 ms, about 4% of the tape loop's cycles.
+waitList, WAITPARAM
+    y(WAITY) next(point)
+    x(WAITX) next(character)
+    type340 "WAIT"
+    scale(0) lpoff next(vector)
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left end
+    lpoff next(subroutine)
+    jump waitList next(parameter)

@@ -1,0 +1,525 @@
+// spdisplay.ac -- the drawing list's upkeep: the target calls' spread (the frame's calls are
+// written in bank 12, writeCalls), the rebuild, a line's slot and its split into vectors, and the
+// redraw of the lines the constraint solver moved.
+//
+// Bank 4, after sppen.ac. Writes bank 1's line slots and bank 0's display words by full
+// address; reads the constraint module's count in bank 8 (cLnN) and its lists and flags in bank 9
+// by full address.
+// Part of sketchpad.am1, included where it stands.
+
+// Spread the target calls over the sites the display reaches, when they change: the full line
+// groups (lineCount / 4), the arc groups and the instances (arcCount and instCount, read from
+// bank 2). The calls keep their share of the sites: liveN becomes liveN * the new count
+// / spreadG, rounded, and spreadG the new count. From no sites it stays 0; the frame-rate window
+// corrects either. Then setCalls. When every site calls, every one still does, and only each
+// kind's calls between its old count and its new are written, as setCalls would write them:
+// with every line across the screen a deletion or a commit then writes one call, not all of
+// them. Called from rebuildDisplay for the lines, from arcCall for the arcs, and after each
+// instance routine for the instances. It never calls arcCall, so a caller may keep a word in
+// arcCall's acAC across it, as spmodes.ac's instance placing does.
+// AC and IO are clobbered. Called via jsp.
+respread,
+    local rtn, rsNew, rsSome, rsSet, rsDone, rsL, rsA, rsI, rsT, rsDen
+    dap rtn
+    lac lineCount
+    sar 2s
+    dac rsL
+    lac i [arcCount:2]
+    dac rsA
+    lac i [instCount:012]
+    dac rsI
+    add rsA
+    add rsL
+    dac rsT
+    lac rsL
+    sas spreadL         // skip unless the full line groups change
+    jmp rsNew
+    lac rsA
+    sas spreadA         // skip unless the arcs change
+    jmp rsNew
+    lac rsI
+    sas spreadI         // skip unless the instances change
+    jmp rsNew
+    jmp rtn
+rsNew,
+    lac spreadG
+    sza i               // skip if the calls were spread over some sites
+    jmp rsSet
+    lac liveN
+    sub spreadG
+    spa                 // skip if every site calls
+    jmp rsSome
+    lac rsT
+    dac liveN
+    add [1]
+    dac i [callsPerFrame:0]
+    lac [0-RATEDISCARD]
+    dac rateFrames
+    lac i [tracking:0]
+    sza i               // skip if the target is displayed
+    jmp rsDone
+    lac [drawList:1+CALLOFFSET+1]
+    dac spanBase
+    lac [GROUPWORDS]
+    dac spanGap
+    lio rsL
+    lac spreadL
+    jda callSpan
+    lac [arcList:0+ARCWORDS+1]
+    dac spanBase
+    lac [ARCGROUP]
+    dac spanGap
+    lio rsA
+    lac spreadA
+    jda callSpan
+    lac [instList:0+INSTCALL]
+    dac spanBase
+    law INSTWORDS
+    dac spanGap
+    lio rsI
+    lac spreadI
+    jda callSpan
+rsDone,
+    lac rsL
+    dac spreadL
+    lac rsA
+    dac spreadA
+    lac rsI
+    dac spreadI
+    lac rsT
+    dac spreadG
+    jmp rtn
+
+    // (2 * liveN * new + spreadG) / (2 * spreadG), in the divide's form: the dividend shifted
+    // left one place, and a successful div skips. The product is at most 2 * 78 * 78, and the
+    // quotient at most the new count, so neither overflows; under 2^17, mul's product is its
+    // low part, realigned by scr 1s.
+rsSome,
+    lac rsT
+    mul liveN
+    scr 1s
+    lai
+    sal 1s
+    add spreadG
+    dac rsDen
+    lio rsDen
+    lac spreadG
+    sal 1s
+    dac rsDen
+    cla
+    scl 1s
+    div rsDen
+    cla                 // no skip: overflow
+rsSet,
+    dac liveN
+    lac rsL
+    dac spreadL
+    lac rsA
+    dac spreadA
+    lac rsI
+    dac spreadI
+    lac rsT
+    dac spreadG
+    jsp setCalls
+rtn, jmp .
+rsL, 0
+rsA, 0
+rsI, 0
+rsT, 0
+rsDen, 0
+    endloc
+
+// Write the calls of one kind's groups between an old count and a new: calling where the count
+// grows, stepping over where it shrinks.
+// Entry: AC = the old count, IO = the new; spanBase = the kind's first call word, spanGap =
+// the words from one of its calls to the next. AC and IO are clobbered. Called via jda.
+callSpan, 0
+    local rtn, csDown, csGo, csLoop, csTo, csSite
+    dap rtn
+    dio csTo
+    lac csTo
+    sad callSpan        // skip if the count changes
+    jmp rtn
+    dzm callWord
+    sub callSpan
+    spa                 // skip if the count grows
+    jmp csDown
+    lac [save tracker:0 next(parameter)]
+    dac callWord
+    jmp csGo
+csDown,
+    lac csTo            // shrinking: the calls from the new count to the old step over
+    lio callSpan
+    dac callSpan
+    dio csTo
+csGo,
+    lac spanGap         // the gap times a count is inside a bank: mul's low part, realigned
+    mul callSpan
+    scr 1s
+    lai
+    add spanBase
+    dac csSite
+csLoop,
+    lac callSpan
+    sad csTo            // skip until every call between the counts is written
+    jmp rtn
+    lac csSite
+    jda writeCall
+    lac csSite
+    add spanGap
+    dac csSite
+    idx callSpan
+    jmp csLoop
+rtn, jmp .
+csTo, 0
+csSite, 0
+    endloc
+
+// Write one target call: the call word is callWord, or when callWord is 0 a jump to the word
+// after it. Either form is one legal subroutine word, so the display may run through the call
+// while it changes; the word before it, entering subroutine mode, never changes (initGates
+// writes the line groups', the arc and instance slots' writers theirs).
+// Entry: AC = the call word's full address, bank 0 or 1. AC and IO are clobbered. Called via
+// jda.
+writeCall, 0
+    local rtn, wlStore
+    dap rtn
+    lac callWord
+    sza                 // skip when stepping over
+    jmp wlStore
+    lac writeCall
+    add [1]
+    ior [jump next(parameter)]
+wlStore,
+    dac i writeCall
+rtn, jmp .
+    endloc
+
+// Full address of line slot i in the drawing list, in bank 1.
+// Entry: AC = slot index, 0 to MAXLINES. Exit: AC = the address. IO is preserved.
+// Called via jda.
+slotAddr, 0
+    local rtn, saGroup, saT
+    dap rtn
+    lac slotAddr
+    sar 2s
+    dac saGroup
+    sal 6s              // group * 64
+    sub saGroup
+    sub saGroup         // group * 62, GROUPWORDS
+    dac saT
+    lac slotAddr
+    and [3]
+    dac saGroup
+    sal 4s
+    sub saGroup         // slot in group * 15, SLOTWORDS
+    add saT
+    add [drawList:1]
+rtn, jmp .
+saGroup, 0
+saT, 0
+    endloc
+
+// Bring the drawing list up to the point and line tables: a slot per line (writeSlot), then
+// the end pair (a parameter word entering subroutine mode, and a jump to the arc list). With
+// dirty set every slot is written; otherwise only the slots marked stale that the display
+// already shows, and the new slots past the old end. The display runs while this writes; each
+// displayed slot is rewritten as writeSlot says, and slots past the displayed end are
+// unreachable. The first two words of the slot where the old and new lists end differently
+// cannot be changed in place: halfway, the display reads a jump as a point or a y word as a
+// jump, and it has been seen to run off into core. So that pair is posted to penISR (flipAt,
+// flipW0, flipW1), which writes it while the display is halted between frames. The main loop
+// does not call this again until it has.
+// Sets shownCount, and the target calls through respread when the full groups change; clears
+// dirty and staleN. AC and IO are clobbered. Called via jsp.
+rebuildDisplay,
+    local rtn, rdLoop, rdGrow, rdSlots, rdMarks, rdMGo, rdMLoop, rdMNext, rdNew, rdNext, \
+        rdPost, rdIdx, rdPtr, rdFlip, rdOld, rdLim, rdLine
+    dap rtn
+    dzm rdFlip
+    lac shownCount
+    dac rdOld
+
+    // A change in the full groups spreads the target calls over the new ones. Growing, the new
+    // groups are not reached until the end pair moves; shrinking, the calls past the new end
+    // are stepped over a frame early.
+    jsp respread
+
+    // A list that shrinks posts its new end pair. One that grows writes it at once, past the
+    // displayed end; the old end's slot is then posted from the loop below.
+    lac lineCount
+    sub shownCount
+    sza i               // skip if the length changes
+    jmp rdSlots
+    sma                 // skip if the list shrinks
+    jmp rdGrow
+    lac lineCount
+    jda slotAddr
+    dac rdFlip
+    lac [next(subroutine)]
+    dac i [flipW0:0]
+    lac [jump arcList:0 next(parameter)]
+    dac i [flipW1:0]
+    jmp rdSlots
+rdGrow,
+    lac lineCount
+    jda slotAddr
+    dac rdPtr
+    lac [next(subroutine)]
+    dac i rdPtr
+    idx rdPtr
+    lac [jump arcList:0 next(parameter)]
+    dac i rdPtr
+
+    // The whole list: every slot from 0, in the loop that writes new slots.
+rdSlots,
+    lac dirty
+    sza i               // skip if the whole list is asked for
+    jmp rdMarks
+    dzm dirty
+    dzm rdIdx
+    jmp rdLoop
+
+    // The marked slots the display shows lines in: those below both the old length and the
+    // new. A mark at or past the new length is for a line since removed; one at or past the old
+    // length is a new slot, written below.
+rdMarks,
+    lac lineCount
+    dac rdLim
+    sub rdOld
+    spa                 // skip unless the list shrinks
+    jmp rdMGo
+    lac rdOld
+    dac rdLim
+rdMGo,
+    dzm rdIdx
+rdMLoop,
+    lac rdIdx
+    sad staleN          // skip while marks remain
+    jmp rdNew
+    add [staleList:3]
+    dac rdPtr
+    lac i rdPtr
+    dac rdLine
+    sub rdLim
+    sma                 // skip if the slot is below rdLim
+    jmp rdMNext
+    dzm slotHold
+    lac rdLine
+    jda writeSlot
+rdMNext,
+    idx rdIdx
+    jmp rdMLoop
+
+    // The new slots, from the old end to the new. The one at the old end holds the displayed
+    // end pair: its first two words are posted.
+rdNew,
+    lac rdOld
+    dac rdIdx
+rdLoop,
+    lac rdIdx
+    sub lineCount
+    sma                 // skip while slots remain
+    jmp rdPost
+    dzm slotHold
+    lac rdIdx
+    sad rdOld           // skip unless this slot holds the displayed end pair
+    idx slotHold
+    lac rdIdx
+    jda writeSlot
+    lac slotHold
+    sza i               // skip if the slot holds the displayed end pair
+    jmp rdNext
+    lac slotBase
+    dac rdFlip
+    lac slotPrm
+    dac i [flipW0:0]
+    lac ywordv
+    dac i [flipW1:0]
+rdNext,
+    idx rdIdx
+    jmp rdLoop
+
+    // flipAt goes last: penISR reads flipW0 and flipW1 once it is set.
+rdPost,
+    dzm staleN
+    lac lineCount
+    dac shownCount
+    lac rdFlip
+    dac i [flipAt:0]
+rtn, jmp .
+rdIdx, 0
+rdPtr, 0
+rdFlip, 0
+rdOld, 0
+rdLim, 0
+rdLine, 0
+    endloc
+
+// Write line i's slot: the y and x words of its start, then splitPlan's steps to its end in the
+// last K of the NBAND vector words, which the gate then enters; both ends through the view and
+// clipped to the screen (vwLine), and for a line off the screen the gate jumping past the slot
+// (vwEmit). A displayed slot is rewritten
+// blank, write, unblank: the gate first jumps past the slot, so the display skips the line,
+// then the words are written, then the gate enters the vectors. So a frame draws the old line,
+// nothing, or the new one, never a mix of the two, which with up to NBAND vectors could run
+// off the screen. With slotHold set the slot holds the displayed end pair, which reaches none
+// of it: its first two words are left for the caller to post, and the rest is written directly.
+// A zero-length line gets a 1-unit x delta (vwLine), since a (0,0) vector stops the 340. The
+// parameter word is LITPARAM for the line lit, DRAWPARAM for any other (bank 11's lkPrm).
+// Entry: AC = the line index; slotHold. Exit: slotBase, ywordv, slotPrm; lineGen counted. AC
+// and IO are clobbered. Called via jda.
+writeSlot, 0
+    local rtn, wsBody, wsGate, wsPtr, wsX
+    dap rtn
+    idx lineGen         // a line may have changed: the line search's sweep is stale
+
+    // The line's ends from the tables in bank 3: six reads by full address.
+    lac writeSlot
+    add [lineFrom:3]
+    dac tptr
+    lac i tptr
+    dac fromv
+    lac writeSlot
+    add [lineTo:3]
+    dac tptr
+    lac i tptr
+    dac tov
+    lac fromv
+    add [pointX:3]
+    dac tptr
+    lac i tptr
+    dac fx
+    lac fromv
+    add [pointY:3]
+    dac tptr
+    lac i tptr
+    dac fy
+    lac tov
+    add [pointX:3]
+    dac tptr
+    lac i tptr
+    dac tx
+    lac tov
+    add [pointY:3]
+    dac tptr
+    lac i tptr
+    dac ty
+
+    jsp i [vwLine:014]
+    lac fy
+    and [01777]
+    ior [y(0) next(point)]
+    dac ywordv
+    lac fx
+    and [01777]
+    ior [x(0) next(subroutine)]
+    dac wsX
+
+    jsp i [lkPrm:0d11]
+    dac slotPrm
+    lac writeSlot
+    jda slotAddr
+    dac slotBase
+    add [SLOTGATE]
+    dac wsGate
+    lac slotHold
+    sza                 // skip unless the slot holds the displayed end pair
+    jmp wsBody
+    lac slotBase
+    add [SLOTWORDS]
+    ior [jump next(parameter)]
+    dac i wsGate
+    lac slotPrm
+    dac i slotBase
+    lac slotBase
+    add [1]
+    dac wsPtr
+    lac ywordv
+    dac i wsPtr
+wsBody,
+    lac slotBase
+    add [2]
+    dac wsPtr
+    lac wsX
+    dac i wsPtr
+    lac slotBase
+    add [SLOTVEC]
+    dac i [emitArea:014]
+    jsp i [vwEmit:014]
+    dac i wsGate
+rtn, jmp .
+wsGate, 0
+wsPtr, 0
+wsX, 0
+    endloc
+
+// Redraw the lines on the points the constraint module moved or put back (its FMOV marks), from
+// its list of the lines on its points (cLines): in place, a slot each, while the display list
+// matches the tables, as redrawDrag does; otherwise their slots are marked for the next rebuild.
+// A listed line past the count, one removed since the module's last build, is passed over.
+// AC and IO are clobbered. Called via jsp.
+conRedraw,
+    local rtn, crLoop, crMine, crMark, crNext, crK, crN, crL, crHow, crT
+    dap rtn
+    lac lineCount
+    xor shownCount
+    ior dirty
+    ior staleN
+    ior i [flipAt:0]
+    dac crHow
+    dzm slotHold
+    lac i [cLnN:010]
+    dac crN
+    dzm crK
+crLoop,
+    lac crK
+    sad crN             // skip while lines remain
+    jmp rtn
+    add [cLines:011]
+    dac crT
+    lac i crT
+    dac crL
+    sub lineCount
+    sma                 // skip if it is still a line
+    jmp crNext
+    lac crL
+    add [lineFrom:3]
+    dac crT
+    lac i crT
+    add [cFlag:011]
+    dac crT
+    lac i crT
+    and [FMOV]
+    sza                 // skip unless its start moved
+    jmp crMine
+    lac crL
+    add [lineTo:3]
+    dac crT
+    lac i crT
+    add [cFlag:011]
+    dac crT
+    lac i crT
+    and [FMOV]
+    sza i               // skip if its end moved
+    jmp crNext
+crMine,
+    lac crHow
+    sza                 // skip if the list matches the tables: write in place
+    jmp crMark
+    lac crL
+    jda writeSlot
+    jmp crNext
+crMark,
+    lac crL
+    jda markSlot
+crNext,
+    idx crK
+    jmp crLoop
+rtn, jmp .
+crK, 0
+crN, 0
+crL, 0
+crHow, 0
+crT, 0
+    endloc

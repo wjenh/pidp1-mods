@@ -222,7 +222,7 @@ ovRun,
 // One drum transfer of ovXDia, ovXDwc and ovXDcl.
 // It is made when the drum is idle, it wll be waited for.
 // One that ends in error is made again counting each in ovRetries, OV_TRIES in all before ovErrDrum.
-// A swap that ends in an error when OV_SINGLE_PASS is not defined goes to ovFailSwap instead.
+// A swap that ends in an error when OV_TWO_PASS is defined goes to ovFailSwap instead.
 // AC and IO are not preserved.
 // Called via jsp, from this bank only.
 ovXfer,

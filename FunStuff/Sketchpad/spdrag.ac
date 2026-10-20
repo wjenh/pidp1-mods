@@ -1,0 +1,836 @@
+// spdrag.ac -- a drag's arcs: which arcs a dragged point carries, their moves and whether
+// they fit; and the arcs on the points the constraint solver moved.
+//
+// Bank 2, after spedit.ac.
+// Part of sketchpad.am1, included where it stands.
+
+// Whether arcNorm's direction lies inside the loaded arc's angle. A full circle always holds it,
+// an arc of under half a turn when it is past its start and short of its end, a longer one when
+// it is past its start or short of its end.
+// Exit: AC = 1 if inside, 0 if not. IO is clobbered. Called via jsp.
+arcInside,
+    local rtn, inLong, inSign, inYes, inNo, inA, inB
+    dap rtn
+    lac arcK
+    sad [NARC]          // skip unless a full circle
+    jmp inYes
+    cla
+    jda arcCross        // plus if past the start
+    dac inA
+    lac arcEX
+    sub arcCX
+    sal 5s
+    dac arcUk
+    lac arcEY
+    sub arcCY
+    sal 5s
+    dac arcVk
+    jsp arcCrossUV      // plus if past the end
+    cma
+    dac inB             // plus if short of the end
+    lac arcK
+    sub [NARC/2]
+    sma                 // skip if under half a turn, where both must hold
+    jmp inLong
+    lac inA
+    ior inB
+    jmp inSign
+inLong,
+    lac inA
+    and inB
+inSign,
+    spa                 // skip if plus, inside
+    jmp inNo
+inYes,
+    law 1
+    jmp rtn
+inNo,
+    cla
+rtn, jmp .
+inA, 0
+inB, 0
+    endloc
+
+// Move mode's pick-up of point dgP (the main bank's dragIdx). The lines to redraw as it moves,
+// those on it and on the points its arcs carry (an arc's start and end when it is the center,
+// the other rim point when it is a rim point), go into bank 3's dragLines, up to MAXDRAG, with
+// dragFull set beyond; ptMark is set for it and the carried points, for arcDrag. For a line
+// dragged whole, its to end (bandIdx) is marked too, and each arc on either end carries as bank
+// 12's lineArc says, by the point it names (dgP), a chord's center among them.
+// AC and IO are clobbered. Called via jsp.
+arcPick,
+    local rtn, pkClear, pkArcs, pkRim, pkEnd, pkArcNext, pkLines, pkLoop, pkMine, pkOver, \
+        pkNext, pkDone, pkI, pkN, pkFull, pkT, pkC, pkS, pkE, pkLn, pkF, pkO
+    dap rtn
+    lac [dragIdx:4]
+    jda getW
+    dac dgP
+    lac [ptMark:3]
+    dac pkT
+    law i MAXPTS
+    dac pkI
+    eem
+pkClear,
+    dzm i pkT
+    idx pkT
+    isp pkI             // skip once every mark is clear
+    jmp pkClear
+    lem
+    lac dgP
+    jda ptMarkOn
+    lac [bandIdx:4]
+    jda getW
+    sas [NOPOINT]       // skip unless a line's to end
+    jda ptMarkOn
+
+    // The points its arcs carry.
+    dzm pkI
+pkArcs,
+    lac pkI
+    sad arcCount        // skip while arcs remain
+    jmp pkLines
+    lio pkI
+    eem
+    jsp i [lineArc:014]
+    lem
+    sza i               // skip if the arc moves with the drag
+    jmp pkArcNext
+    lac dgP
+    jda ptMarkOn
+    lac pkI
+    add [arcTC]
+    dac pkT
+    lac i pkT
+    dac pkC
+    lac pkI
+    add [arcTS]
+    dac pkT
+    lac i pkT
+    dac pkS
+    lac pkI
+    add [arcTE]
+    dac pkT
+    lac i pkT
+    dac pkE
+    lac pkC
+    sas dgP             // skip if it is the center, which moves the start and end
+    jmp pkRim
+    lac pkS
+    jda ptMarkOn
+    lac pkE
+    jda ptMarkOn
+    jmp pkArcNext
+pkRim,
+    lac pkS
+    sas dgP             // skip if it is the start, which moves the end
+    jmp pkEnd
+    lac pkE
+    jda ptMarkOn
+    jmp pkArcNext
+pkEnd,
+    lac pkE
+    sas dgP             // skip if it is the end, which moves the start
+    jmp pkArcNext
+    lac pkS
+    jda ptMarkOn
+pkArcNext,
+    idx pkI
+    jmp pkArcs
+
+    // The lines on any of them. One window serves the scan, and the ends' marks are read as
+    // ptMarked reads them, through pointers stepped down the line tables.
+pkLines,
+    dzm pkN
+    dzm pkFull
+    dzm pkI
+    lac [lineCount:4]
+    jda getW
+    dac pkLn
+    lac [lineFrom:3]
+    dac pkF
+    lac [lineTo:3]
+    dac pkO
+    eem
+pkLoop,
+    lac pkI
+    sad pkLn            // skip while lines remain
+    jmp pkDone
+    lac i pkF
+    add pmBase
+    dac pkT
+    lac i pkT
+    and [1]
+    sza                 // skip unless the line starts at a point that moves
+    jmp pkMine
+    lac i pkO
+    add pmBase
+    dac pkT
+    lac i pkT
+    and [1]
+    sza i               // skip if the line ends at a point that moves
+    jmp pkNext
+pkMine,
+    lac pkN
+    sad [MAXDRAG]       // skip unless dragLines is full
+    jmp pkOver
+    add [dragLines:3]
+    dac pkT
+    lac pkI
+    dac i pkT
+    idx pkN
+    jmp pkNext
+pkOver,
+    law 1
+    dac pkFull
+pkNext,
+    idx pkF
+    idx pkO
+    idx pkI
+    jmp pkLoop
+pkDone,
+    lac pkN
+    dac i [dragN:4]
+    lac pkFull
+    dac i [dragFull:4]
+    lem
+rtn, jmp .
+pkI, 0
+pkN, 0
+pkFull, 0
+pkT, 0
+pkC, 0
+pkS, 0
+pkE, 0
+pkLn, 0
+pkF, 0
+pkO, 0
+    endloc
+
+
+// In Move mode the dragged point dgP goes to the pseudo pen location, and the arcs on it follow.
+// Its center carries an arc, the start and end with it. A rim point sets the radius,
+// and the arc's other rim point moves along its ray from the center onto the new circle, the
+// whole steps worked out again; a full circle's one rim point sets the radius alone. Refused,
+// nothing moved, if any such arc would leave the canvas or its radius ARCRMIN to ARCRMAX. Then
+// their points are written and their slots, and every other arc on a point that moves with the
+// drag (ptMark) is written again from its points. The caller moves the dragged point itself.
+// For a line dragged whole, bank 12's lineArc says for each arc which point
+// it moves by and where that goes (dgP, dgX, dgY), and the caller moves the line's ends.
+// Exit: AC = 0 moved, 1 refused. IO is clobbered. Called via jsp.
+arcDrag,
+    local rtn, dgLoop, dgNext, dgPut0, dgPut, dgPutNext, dgSlot0, dgSlot, dgOther, dgSlotNext, \
+        dgDone, dgNo, dgI
+    dap rtn
+    lac [dragIdx:4]
+    jda getW
+    dac dgP
+    lac mPenX
+    dac dgX
+    lac mPenY
+    dac dgY
+
+    // Where each arc on the point goes, and whether it fits.
+    dzm dgI
+dgLoop,
+    lac dgI
+    sad arcCount        // skip while arcs remain
+    jmp dgPut0
+    lio dgI
+    eem
+    jsp i [lineArc:014]
+    lem
+    sza i               // skip if the arc is on the dragged point
+    jmp dgNext
+    lac dgI
+    jda mvArc
+    sza                 // skip if it fits
+    jmp dgNo
+dgNext,
+    idx dgI
+    jmp dgLoop
+
+    // Their points and whole steps.
+dgPut0,
+    dzm dgI
+dgPut,
+    lac dgI
+    sad arcCount        // skip while arcs remain
+    jmp dgSlot0
+    lio dgI
+    eem
+    jsp i [lineArc:014]
+    lem
+    sza i               // skip if the arc is on the dragged point
+    jmp dgPutNext
+    lac dgI
+    jda mvPoints
+dgPutNext,
+    idx dgI
+    jmp dgPut
+
+    // Their slots, and the slots of the other arcs on the points they carry.
+dgSlot0,
+    dzm dgI
+dgSlot,
+    lac dgI
+    sad arcCount        // skip while arcs remain
+    jmp dgDone
+    lio dgI
+    eem
+    jsp i [lineArc:014]
+    lem
+    sza i               // skip if the arc is on the dragged point
+    jmp dgOther
+    lac dgI
+    jda mvSet
+    lac dgI
+    jda arcWriteI
+    jmp dgSlotNext
+dgOther,
+    lac dgI
+    jda arcMoved
+    sza i               // skip if one of its points moves with the drag
+    jmp dgSlotNext
+    lac dgI
+    jda arcRewrite
+dgSlotNext,
+    idx dgI
+    jmp dgSlot
+dgDone,
+    cla
+    jmp rtn
+dgNo,
+    law 1
+rtn, jmp .
+dgI, 0
+    endloc
+
+// Where arc i goes with its point dgP at (dgX, dgY), into mvSX to mvK, then set up as the arc
+// being written (mvSet) and checked. It is refused if its radius leaves ARCRMIN to ARCRMAX, or a
+// vertex up to its whole steps or its end leaves the canvas. A rim point dropped on the other
+// makes a full circle of an arc of half a turn or more, and leaves a shorter one no step.
+// Entry: AC = i. Exit: AC = 0 fits, 1 refused. IO is clobbered. Called via jda.
+mvArc, 0
+    local rtn, maRim, maPart, maEnd, maSteps, maNone, maMet, maFind, maSet, maNo, maP, maC, \
+        maS, maE, maSX, maSY, maEX, maEY, maK, maR, maT, maU
+    dap rtn
+    lac mvArc
+    add [arcTC]
+    dac maP
+    lac i maP
+    dac maC
+    lac mvArc
+    add [arcTS]
+    dac maP
+    lac i maP
+    dac maS
+    lac mvArc
+    add [arcTE]
+    dac maP
+    lac i maP
+    dac maE
+    lac mvArc
+    add [arcTK]
+    dac maP
+    lac i maP
+    dac maK
+    lac maC
+    sas dgP             // skip if it is the center, which moves the arc whole
+    jmp maRim
+    lac dgP
+    jda ptXY
+    dac maT
+    dio maU
+    lac dgX
+    sub maT
+    dac maT             // the move on x
+    lac dgY
+    sub maU
+    dac maU             // and on y
+    lac maS
+    jda ptXY
+    add maT
+    dac maSX
+    dio maSY
+    lac maSY
+    add maU
+    dac maSY
+    lac maE
+    jda ptXY
+    add maT
+    dac maEX
+    dio maEY
+    lac maEY
+    add maU
+    dac maEY
+    jmp maSet
+
+    // A rim point: the radius from the center to where it goes.
+maRim,
+    lac maC
+    jda ptXY
+    dac arcCX
+    dio arcCY
+    lac dgY
+    sub arcCY
+    dac maT
+    lio maT
+    lac dgX
+    sub arcCX
+    jda arcHypot
+    dac maR
+    sub [ARCRMIN*0d32]
+    spa                 // skip unless the radius is under ARCRMIN
+    jmp maNo
+    sub [(ARCRMAX-ARCRMIN)*0d32+1]
+    sma                 // skip unless the radius is over ARCRMAX
+    jmp maNo
+    lac maS
+    sas maE             // skip if a full circle, its one rim point dragged
+    jmp maPart
+    lac dgX
+    dac maSX
+    dac maEX
+    lac dgY
+    dac maSY
+    dac maEY
+    jmp maSet
+maPart,
+    lac maS
+    sas dgP             // skip if it is the start; the end moves onto the new circle
+    jmp maEnd
+    lac dgX
+    dac maSX
+    lac dgY
+    dac maSY
+    lac maE
+    jda ptXY
+    dac arcQX
+    dio arcQY
+    jsp arcNorm
+    lac maR
+    dac arcR32
+    jsp arcRay
+    lac arcX
+    dac maEX
+    lac arcY
+    dac maEY
+    jmp maSteps
+maEnd,
+    lac dgX
+    dac maEX
+    lac dgY
+    dac maEY
+    lac maS
+    jda ptXY
+    dac arcQX
+    dio arcQY
+    jsp arcNorm
+    lac maR
+    dac arcR32
+    jsp arcRay
+    lac arcX
+    dac maSX
+    lac arcY
+    dac maSY
+
+    // Its whole steps, from the new start round to the new end. When the rim points meet, the
+    // start dropped on the end or the end on the start, the arc closes to a full circle if it
+    // had swept half a turn or more (mergePoint's rule), and has no step otherwise; decided here,
+    // since arcFindK cannot tell the two apart.
+maSteps,
+    lac maEX
+    sas maSX            // skip if the x are the same
+    jmp maFind
+    lac maEY
+    sas maSY            // skip if the y are the same
+    jmp maFind
+    lac mvArc
+    add [arcTK]
+    dac maP
+    lac i maP
+    sub [NARC/2]
+    spa                 // skip if it swept half a turn or more
+    jmp maNone
+    law NARC
+    jmp maMet
+maNone,
+    cla
+maMet,
+    dac maK
+    jmp maSet
+maFind,
+    lio maSY
+    lac maSX
+    jda arcBegin
+    lac mvArc
+    add [arcTD]
+    dac maP
+    lac i maP
+    dac arcDir
+    lac maEX
+    dac arcQX
+    lac maEY
+    dac arcQY
+    jsp arcFindK
+    lac arcK
+    dac maK
+
+maSet,
+    lac mvArc
+    add [mvSX]
+    dac maP
+    lac maSX
+    dac i maP
+    lac mvArc
+    add [mvSY]
+    dac maP
+    lac maSY
+    dac i maP
+    lac mvArc
+    add [mvEX]
+    dac maP
+    lac maEX
+    dac i maP
+    lac mvArc
+    add [mvEY]
+    dac maP
+    lac maEY
+    dac i maP
+    lac mvArc
+    add [mvK]
+    dac maP
+    lac maK
+    dac i maP
+    lac mvArc
+    jda mvSet
+    jsp arcFits
+    sza i               // skip if it fits
+    jmp maNo
+    cla
+    jmp rtn
+maNo,
+    law 1
+rtn, jmp .
+maP, 0
+maC, 0
+maS, 0
+maE, 0
+maSX, 0
+maSY, 0
+maEX, 0
+maEY, 0
+maK, 0
+maR, 0
+maT, 0
+maU, 0
+    endloc
+
+// Set arc i up as the arc being written where its drag takes it. The center is its point, or the
+// dragged point's new place when that is the center; the start, end and whole steps come from
+// mvSX to mvK.
+// Entry: AC = i; dgP, dgX, dgY. AC and IO are clobbered. Called via jda.
+mvSet, 0
+    local rtn, msDrag, msHave, msP
+    dap rtn
+    lac mvSet
+    add [arcTC]
+    dac msP
+    lac i msP
+    sad dgP             // skip unless it is the dragged point
+    jmp msDrag
+    jda ptXY
+    dac arcCX
+    dio arcCY
+    jmp msHave
+msDrag,
+    lac dgX
+    dac arcCX
+    lac dgY
+    dac arcCY
+msHave,
+    lac mvSet
+    add [mvSY]
+    dac msP
+    lio i msP
+    lac mvSet
+    add [mvSX]
+    dac msP
+    lac i msP
+    jda arcBegin
+    lac mvSet
+    add [arcTD]
+    dac msP
+    lac i msP
+    dac arcDir
+    lac mvSet
+    add [mvK]
+    dac msP
+    lac i msP
+    dac arcK
+    lac mvSet
+    add [mvEX]
+    dac msP
+    lac i msP
+    dac arcEX
+    lac mvSet
+    add [mvEY]
+    dac msP
+    lac i msP
+    dac arcEY
+rtn, jmp .
+msP, 0
+    endloc
+
+// Write arc i's new start and end, as mvArc worked them out, into bank 3's point table (but not
+// the dragged point), and its whole steps into the arc table.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+mvPoints, 0
+    local rtn, mtP
+    dap rtn
+    lac mvPoints
+    add [mvSX]
+    dac mtP
+    lac i mtP
+    dac ppX
+    lac mvPoints
+    add [mvSY]
+    dac mtP
+    lac i mtP
+    dac ppY
+    lac mvPoints
+    add [arcTS]
+    dac mtP
+    lac i mtP
+    jda ptPut
+    lac mvPoints
+    add [mvEX]
+    dac mtP
+    lac i mtP
+    dac ppX
+    lac mvPoints
+    add [mvEY]
+    dac mtP
+    lac i mtP
+    dac ppY
+    lac mvPoints
+    add [arcTE]
+    dac mtP
+    lac i mtP
+    jda ptPut
+    lac mvPoints
+    add [mvK]
+    dac mtP
+    lac i mtP
+    dac ppX
+    lac mvPoints
+    add [arcTK]
+    dac mtP
+    lac ppX
+    dac i mtP
+rtn, jmp .
+mtP, 0
+    endloc
+
+// Whether a point of arc i moves with the drag (ptMark).
+// Entry: AC = i. Exit: AC = nonzero if one does, 0 if none. IO is clobbered. Called via jda.
+arcMoved, 0
+    local rtn, amP
+    dap rtn
+    lac arcMoved
+    add [arcTC]
+    dac amP
+    lac i amP
+    jda ptMarked
+    sza                 // skip unless the center moves
+    jmp rtn
+    lac arcMoved
+    add [arcTS]
+    dac amP
+    lac i amP
+    jda ptMarked
+    sza                 // skip unless the start moves
+    jmp rtn
+    lac arcMoved
+    add [arcTE]
+    dac amP
+    lac i amP
+    jda ptMarked
+rtn, jmp .
+amP, 0
+    endloc
+
+// The whole steps from the start round to (arcQX, arcQY) in arcDir's direction. It steps on
+// while the point is past the next vertex, or short of the vertex before too, or more than a
+// quarter turn from the next, and stops at the first vertex the point lies within a quarter
+// turn short of and the vertex before it past; at most NARC - 1. The vertex before matters. A
+// point within a quarter turn behind the start, the end of an arc of more than three quarters,
+// is short of vertex 1 and within a quarter turn of it too.
+// Entry: the arc begun (arcBegin) and arcDir; arcQX, arcQY. Exit: arcK. AC and IO are
+// clobbered. Called via jsp.
+arcFindK,
+    local rtn, fkLoop, fkShort, fkPastJ, fkStep, fkJ, fkPast
+    dap rtn
+    dzm arcK
+    jsp arcNorm
+    sza i               // skip unless the point is on the center
+    jmp rtn
+    cla
+    jda arcCross        // plus if the point is past the start
+    dac fkPast
+fkLoop,
+    lac arcK
+    sad [NARC-1]        // skip until the last vertex short of the full circle
+    jmp rtn
+    add [1]
+    dac fkJ
+    jda arcCross
+    sma                 // skip if the point is short of vertex j
+    jmp fkPastJ
+    lac fkPast
+    spa                 // skip if it is past the vertex before
+    jmp fkStep
+    lac arcDot
+    spa                 // skip if vertex j is within a quarter turn of the point, to stop
+    jmp fkShort
+    jmp rtn
+fkShort,
+    law i 1
+    dac fkPast          // short of vertex j
+    jmp fkStep
+fkPastJ,
+    dzm fkPast          // past vertex j
+fkStep,
+    lac fkJ
+    dac arcK
+    jmp fkLoop
+rtn, jmp .
+fkJ, 0
+fkPast, 0
+    endloc
+
+// Whether every vertex of the arc as it stands, up to vertex arcK, and its end are on the
+// canvas.
+// Exit: AC = 1 if so, 0 if not. IO is clobbered. Called via jsp.
+arcFits,
+    local rtn, fiLoop, fiEnd, fiK
+    dap rtn
+    dzm fiK
+fiLoop,
+    lac fiK
+    jda arcVertex
+    jsp arcOnCanvas
+    sza i               // skip if the vertex is on the canvas
+    jmp rtn
+    lac fiK
+    sad arcK            // skip until vertex arcK is tried
+    jmp fiEnd
+    add [1]
+    dac fiK
+    jmp fiLoop
+fiEnd,
+    lac arcEX
+    dac arcX
+    lac arcEY
+    dac arcY
+    jsp arcOnCanvas
+rtn, jmp .
+fiK, 0
+    endloc
+
+// The arcs on the points the constraint module's last publish moved, or its Undo put back (its
+// FMOV marks, which ptMarked reads in place of ptMark meanwhile). Each is worked out again from
+// its points, its whole steps from its start round to its end in its direction (arcFindK), a
+// full circle keeping its; refused, nothing written, if any would leave ARCRMIN to ARCRMAX or
+// the canvas, and the module then puts its points back. Otherwise each one's steps and slot are
+// written. arcCarry (AECARRY) is the same for the arcs on the points an instance's carry moved,
+// which ptMark marks (instPick); the main bank takes the step back (IEBACK) if one refuses.
+// Exit: AC = 0 written, 1 refused. IO is clobbered. Called via jsp at conArcs or arcCarry.
+arcCarry,
+    lio [ptMark:3]
+    jmp caGo
+conArcs,
+    lio [cFlag:011]
+caGo,
+    local rtn, caLoop, caFit, caNext, caPut0, caPut, caPutNext, caDone, caNo, caOut, caI, \
+        caP, caK
+    dap rtn
+    dio pmBase
+    dzm caI
+caLoop,
+    lac caI
+    sad arcCount        // skip while arcs remain
+    jmp caPut0
+    jda arcMoved
+    sza i               // skip if a point of it moved
+    jmp caNext
+    lac caI
+    jda arcLoad
+    lac arcR32
+    sub [ARCRMIN*0d32]
+    spa                 // skip unless the radius is under ARCRMIN
+    jmp caNo
+    sub [(ARCRMAX-ARCRMIN)*0d32+1]
+    sma                 // skip unless the radius is over ARCRMAX
+    jmp caNo
+    lac arcK
+    sad [NARC]          // skip unless a full circle
+    jmp caFit
+    lac arcEX
+    dac arcQX
+    lac arcEY
+    dac arcQY
+    jsp arcFindK
+caFit,
+    jsp arcFits
+    sza i               // skip if it fits
+    jmp caNo
+    lac caI
+    add [mvK]
+    dac caP
+    lac arcK
+    dac i caP
+caNext,
+    idx caI
+    jmp caLoop
+
+    // Their steps and slots.
+caPut0,
+    dzm caI
+caPut,
+    lac caI
+    sad arcCount        // skip while arcs remain
+    jmp caDone
+    jda arcMoved
+    sza i               // skip if a point of it moved
+    jmp caPutNext
+    lac caI
+    add [mvK]
+    dac caP
+    lac i caP
+    dac caK
+    lac caI
+    add [arcTK]
+    dac caP
+    lac caK
+    dac i caP
+    lac caI
+    jda arcRewrite
+caPutNext,
+    idx caI
+    jmp caPut
+caDone,
+    cla
+    jmp caOut
+caNo,
+    law 1
+caOut,
+    dac caK
+    lac [ptMark:3]
+    dac pmBase
+    lac caK
+rtn, jmp .
+caI, 0
+caP, 0
+caK, 0
+    endloc

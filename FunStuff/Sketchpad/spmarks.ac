@@ -1,0 +1,924 @@
+// spmarks.ac -- the constraints' marks. Show's marks written into bank 0's fixList (mkMarks),
+// the mark nearest the target with Show on (mkNear), and their helpers, the counts with Show off
+// (cFixN, cTyN), a roller's glyph's direction (cRlDir), a mark's place (cMkPos), beside its line
+// when it stands on one (mkLnOf), and its clamp to the screen (cFmPos).
+//
+// Bank 13, after the truss's data. Entered only from the constraint module in bank 8, at mkMarks
+// from its cMarks and at mkNear from its cNear, each by jsp i [X:015], each returning by jmp i.
+// Runs with the extend window open, as bank 8 does, so every indirect address is a 16-bit one.
+// Bank 8's words are reached as OP i [X:010], the constraint table and the per-type tables in
+// bank 9 as OP i [X:011], the point table and mkHid as OP i [X:3], the main bank's words as
+// OP i [X:4], the view's words as OP i [X:014], and bank 0's fixList through pointers made from
+// [X:0]. Calls nothing outside bank 13 but the view module's arBegin and arOne, which write the
+// marks' arms, by jsp i [X:014].
+// Part of sketchpad.am1, included where it stands.
+
+// How many entries the marks show with Show off, those of type cMkTy (the F entries, or the
+// attachers in Tie mode, or the rollers in Roller mode, or the designations in Designate mode).
+// cTyN counts those of the type in IO.
+// Exit: AC = the count. IO is preserved. Called via jsp.
+cFixN,
+    local rtn, fnGo, fnLoop, fnDone, fnP, fnN, fnT
+    dap rtn
+    lac i [cMkTy:010]
+    dac fnT
+    jmp fnGo
+cTyN,
+    dap rtn
+    dio fnT
+fnGo,
+    dzm fnN
+    lac [cEntries:011]
+    dac fnP
+fnLoop,
+    lac fnP
+    sad i [cEnd:010]    // skip while entries remain
+    jmp fnDone
+    lac i fnP
+    sad fnT             // skip unless of the type counted
+    idx fnN
+    lac fnP
+    add [CW]
+    dac fnP
+    jmp fnLoop
+fnDone,
+    lac fnN
+rtn, jmp .
+fnP, 0
+fnN, 0
+fnT, 0
+    endloc
+
+// Write the marks in bank 0 (fixList), the ranks of those on one line counted first if the table
+// changed (mkRanks). With Show on (showOn) slot j is for the table's j-th entry, with it off for
+// its j-th entry of type cMkTy (an F, an A in Tie mode, an O in Roller mode); then the slot
+// after the last is shut, unless every slot is used, when the list's end slot ends it. A slot
+// holds the mark's y word and x word where cMkPos puts it, kept inside the screen (cFmPos); its
+// gate, calling the type's glyph (cGlyph) or a designation's digit (cDgTab), or stepping to the
+// next word for a Beam or a Load while Forces is on, for a Beam in Stiff mode, and for a mark
+// the view hides (cMkOff), which bank 3's mkHid records for slot j; and a parameter word going
+// on to the next slot. The display may be running through the list meanwhile, so every word
+// written is whole in its mode, the shut slot is written first, and the others from the last to
+// the first, each gate opened only after the slots it leads to are written. Bank 8's cMarks has
+// purged the table and built the sets first if the table changed, so that every entry names
+// points that exist. The arms' list is written with the marks, shut after its last slot by bank
+// 12's arBegin first, and each mark's slot by its arOne as the walk reaches the mark.
+// Exit: AC = 0. IO is clobbered. Called via jsp i [mkMarks:015], from bank 8's cMarks.
+mkMarks,
+    local mkRtn, mkFix, mkCnt, mkWalk, mkLoop, mkThis, mkGlyph, mkCall, mkRoll, mkDes, \
+        mkTruss, mkForces, mkGive, \
+        mkKeep, mkDone, mkAll, mkP, mkJ, mkS, mkT, mkD
+    dac mkRtn
+    dzm i [cMkDirty:010]
+    lac mkRkOld
+    sza                 // skip unless the table changed since the ranks were counted
+    jsp mkRanks
+    jsp i [arBegin:014] // the arms' list shut after its last slot
+    lac i [showOn:4]
+    dac mkAll
+    sza i               // skip if Show is on, when every entry has a mark
+    jmp mkFix
+    lac i [cCount:011]
+    jmp mkCnt
+mkFix,
+    jsp cFixN
+mkCnt,
+    dac mkJ
+    sad [NCON]          // skip if a slot is left over
+    jmp mkWalk          // every slot used; the list's end slot is shut
+    sal 2s              // FIXWORDS, 4
+    add [fixList:0 + FSGATE]
+    dac mkS
+    lac [jump markGate:0 next(subroutine)]
+    dac i mkS
+    lac mkS
+    sub [FSGATE]
+    dac mkS
+    lac [y(0d512) next(point)]
+    dac i mkS
+    idx mkS
+    lac [x(0d512) next(subroutine)]
+    dac i mkS
+mkWalk,
+    lio [CTDES]
+    jsp cTyN
+    dac mkD             // the walk meets the designations last first, so counts their rank down
+    lac i [cEnd:010]
+    dac mkP
+mkLoop,
+    lac mkP
+    sad [cEntries:011]  // skip while entries remain before mkP
+    jmp mkDone
+    sub [CW]
+    dac mkP
+    lac mkAll
+    sza                 // skip unless every entry has a mark
+    jmp mkThis
+    lac i mkP
+    sas i [cMkTy:010]   // skip if of the marked type
+    jmp mkLoop
+mkThis,
+    lac mkJ
+    sub [1]
+    dac mkJ
+    sal 2s              // FIXWORDS, 4
+    add [fixList:0]
+    dac mkS
+    lac mkP
+    jda cMkPos
+    lac mkJ
+    add [mkHid:3]
+    dac mkT
+    lac cMkOff
+    dac i mkT
+    lio mkP
+    jsp i [arOne:014]   // an E's, a P's or an R's arms
+    lac i [vwTopF:014]  // y under the view's top
+    dac cFmTop
+    lac cMkY
+    jda cFmPos
+    ior [y(0) next(point)]
+    dac i mkS
+    idx mkS
+    lac [0d1023 - MKEDGE]
+    dac cFmTop
+    lac cMkX
+    jda cFmPos
+    ior [x(0) next(subroutine)]
+    dac i mkS
+    idx mkS
+    idx mkS
+    lac [lpoff next(point)]
+    dac i mkS
+    lac mkS
+    sub [1]
+    dac mkS
+    lac i mkP
+    sad [CTBEAM]        // skip unless a Beam
+    jmp mkTruss
+    sad [CTLOAD]        // skip unless a Load
+    jmp mkTruss
+mkGlyph,
+    sad [CTROLL]        // skip unless a roller
+    jmp mkRoll
+    sad [CTDES]         // skip unless a designation
+    jmp mkDes
+    and [CTMASK]
+    add [cGlyph:011]
+mkCall,
+    dac mkT
+    lac cMkOff
+    sza                 // skip unless the view hides the mark
+    jmp mkGive
+    lac i mkT
+    dac i mkS
+    jmp mkLoop
+
+    // A roller's mark is its O with ticks along its axis, the nearest of eight directions
+    // (cRlDir, cRlTab).
+mkRoll,
+    lac mkP
+    jda cRlDir
+    add [cRlTab:011]
+    jmp mkCall
+
+    // A designation's mark is its rank's circled digit (cDgTab), the first in the table 1.
+mkDes,
+    lac mkD
+    sub [1]
+    dac mkD
+    add [cDgTab:011]
+    jmp mkCall
+
+    // A beam's or a load's mark gives way to its readout while Forces is on. Its gate jumps to
+    // the slot's parameter word, the next, drawing nothing. In Stiff mode a beam's readout is
+    // its stiffness and a load has none, so a beam's gives way and a load's stays, Forces on or
+    // off, since the B and the number would overlap. AC holds the type here.
+mkTruss,
+    dac mkT
+    lac i [mode:4]
+    sas [MCONS]         // skip if the constraint mode
+    jmp mkForces
+    lac i [consType:4]
+    sas [CTSTIFF]       // skip if Stiff's
+    jmp mkForces
+    lac mkT
+    sad [CTBEAM]        // skip unless a Beam
+    jmp mkGive
+    jmp mkKeep
+mkForces,
+    lac i [forcesOn:4]
+    sza i               // skip if Forces is on
+    jmp mkKeep
+mkGive,
+    lac mkS
+    add [1]
+    ior [jump next(parameter)]
+    dac i mkS
+    jmp mkLoop
+mkKeep,
+    lac i mkP
+    jmp mkGlyph
+mkDone,
+    cla
+    jmp i mkRtn
+mkRtn, 0
+mkAll, 0
+mkP, 0
+mkJ, 0
+mkS, 0
+mkT, 0
+mkD, 0
+    endloc
+
+// A roller's glyph's direction. Its axis, the line its B and C words name (cAxis), from B to C
+// and turned to point right, or up when plumb, goes to the nearest of eight, k * 22.5 degrees
+// counterclockwise from level, k 0 to 7. |dy| / dx is compared with the tangents of 11.25,
+// 33.75, 56.25 and 78.75 degrees, 13, 43, 96 and 322 sixty-fourths, both cut below 128 first so
+// that no product passes 17 bits; mul leaves a product doubled in IO, so |dy| is put against it
+// as 128 |dy|. A level axis is 0, and so is a level roller's, B and C one point.
+// Entry: AC = the entry's address; only the words 2 and 3 on are read, so cMkPos passes any
+// line's two words less 2. Exit: AC = k. IO is clobbered. Called via jda.
+cRlDir, 0
+    local rtn, rdCut, rdGo, rdCmp, rcRtn, rdNeg, rdTurn, rdAbs, rdX, rdY, rdS, rdK, rdT, rdLB, \
+        rdLC
+    dap rtn
+    lac cRlDir
+    add [2]
+    dac rdT
+    lac i rdT
+    dac rdLB
+    idx rdT
+    lac i rdT
+    dac rdLC
+    add [pointX:3]
+    dac rdT
+    lac i rdT
+    dac rdX
+    lac rdLB
+    add [pointX:3]
+    dac rdT
+    lac rdX
+    sub i rdT
+    sad [0777777]       // skip unless -0
+    cla
+    dac rdX
+    lac rdLC
+    add [pointY:3]
+    dac rdT
+    lac i rdT
+    dac rdS
+    lac rdLB
+    add [pointY:3]
+    dac rdT
+    lac rdS
+    sub i rdT
+    sad [0777777]       // skip unless -0
+    cla
+    dac rdS
+    lac rdX
+    spa                 // skip unless dx is negative
+    jmp rdTurn
+    sza                 // skip if dx is 0
+    jmp rdAbs
+    lac rdS
+    sma                 // skip if dy is negative
+    jmp rdAbs
+rdTurn,
+    lac rdX
+    cma
+    sad [0777777]       // skip unless -0
+    cla
+    dac rdX
+    lac rdS
+    cma
+    dac rdS
+rdAbs,
+    lac rdS
+    spa                 // skip unless dy is negative
+    cma
+    dac rdY
+    sza i               // skip unless level
+    jmp rtn             // AC is 0
+rdCut,
+    lac rdX
+    ior rdY
+    and [0777600]
+    sza i               // skip while either is 128 or more
+    jmp rdGo
+    lac rdX
+    sar 1s
+    dac rdX
+    lac rdY
+    sar 1s
+    dac rdY
+    jmp rdCut
+rdGo,
+    dzm rdK
+    lac rdY
+    sal 7s
+    dac rdY
+    lac rdX
+    mul [0d13]
+    jsp rdCmp
+    lac rdX
+    mul [0d43]
+    jsp rdCmp
+    lac rdX
+    mul [0d96]
+    jsp rdCmp
+    lac rdX
+    mul [0d322]
+    jsp rdCmp
+    lac rdS
+    spa                 // skip unless dy is negative
+    jmp rdNeg
+    lac rdK
+    jmp rtn
+rdNeg,
+    law 0d8
+    sub rdK
+    and [7]
+rtn, jmp .
+
+// rdK counted up if 128 |dy| is past the doubled product in IO.
+// AC is clobbered, IO preserved. Called via jsp.
+rdCmp,
+    dap rcRtn
+    dio rdT
+    lac rdT
+    sub rdY
+    spa                 // skip unless |dy| is past the tangent's
+    idx rdK
+rcRtn, jmp .
+
+rdX, 0
+rdY, 0
+rdS, 0
+rdK, 0
+rdT, 0
+rdLB, 0
+rdLC, 0
+    endloc
+
+// Where an entry's mark stands on the screen, through the view. It is the average of the points
+// its type names, from the point table, the sum shifted by the view's scale before it is
+// divided, so that a magnified mark is not the x1 place magnified; a roller's is at its point A
+// alone, its axis's line apart. A mark whose place falls on one line (H, L, B, W, X or N, by
+// cLnTab) stands beside it, since centered on the line it is hard to read, its circle MKGAP
+// clear of the line, FIXR + MKGAP off at right angles, above a flat line and right of a steep one
+// (cOfX, cOfY, by cRlDir's direction), in screen units; the second mark on the same line goes on
+// the far side, each later pair a ring further out (its rank, mkRank). Its cMkOff is the line's
+// place's, so that it hides with what it marks. A number's mark (D, Y, O) stands off its digits'
+// upper left, clear of the lines, since at a line's middle it is unreadable. It goes left of the
+// room for SCALDIG digits and a sign and above the digits' top, at their scale plus the view's,
+// as their box is drawn magnified, each later mark on the same digits one ring further left
+// (mpNum). The rings and FIXR stay screen units, a mark keeping its size. cMkOff says whether the
+// place the mark marks is off the screen, the mark's or a number's anchor. At x1 the page is the
+// screen and nothing is off it.
+// Entry: AC = the entry's address. Exit: cMkX, cMkY, cMkOff. AC and IO are clobbered. Called via
+// jda.
+cMkPos, 0
+    local rtn, mpLoop, mpCnt, mpOne, mpNum, mpFind, mpHit, mpRank, mpRkLp, mpRkNx, mpShift, \
+        mpShLp, mpXY, mpOff, mpDir, mpAt, mpP, mpK, mpN, mpT, mpA, mpS, mpR, mpW, mpH, mpSh, \
+        mpL
+    dap rtn
+    dzm cMkOff
+    lac i [vwSal:014]
+    dac mpSh
+    lac i cMkPos
+    sad [CTROLL]        // skip unless a roller
+    jmp mpOne
+    and [020]
+    sza                 // skip unless a number's type, D, Y or O
+    jmp mpNum
+    lac i cMkPos
+    and [CTMASK]
+    add [cNPts:011]
+    dac mpT
+    lac i mpT
+mpCnt,
+    dac mpN
+    cma
+    dac mpK
+    dzm cMkX
+    dzm cMkY
+    lac cMkPos
+    add [1]
+    dac mpP
+mpLoop,
+    lac i mpP
+    add [pointX:3]
+    dac mpT
+    lac i mpT
+    add cMkX
+    dac cMkX
+    lac i mpP
+    add [pointY:3]
+    dac mpT
+    lac i mpT
+    add cMkY
+    dac cMkY
+    idx mpP
+    isp mpK             // skip once every point is summed
+    jmp mpLoop
+    lac cMkX
+    xct mpSh
+    mul [1]
+    div mpN
+    cla                 // runs only on overflow, which 4 coordinates' sum at x8 cannot make
+    sub i [vwOutX:014]
+    dac cMkX
+    lac cMkY
+    xct mpSh
+    mul [1]
+    div mpN
+    cla                 // runs only on overflow
+    sub i [vwOutY:014]
+    dac cMkY
+    dac mpW             // the place on the screen, y, which cMkOff judges
+    lac cMkX
+    dac mpA             // and x
+    lac cMkPos
+    jda mkLnOf
+    sza i               // skip if the mark stands on one line
+    jmp mpAt
+    dac mpL
+
+    // Its rank r on the line, bank 3's mkRank by its place in the table (mkRanks).
+    lac cMkPos
+    sub [cEntries:011]
+    mul [1]
+    div [CW]
+    cla                 // runs only on overflow, which NCON entries cannot make
+    add [mkRank:3]
+    dac mpT
+    lac i mpT
+    dac mpR
+
+    // The distance is FIXR + MKGAP, and a ring's width, 2 * FIXR + 2, for each pair before r,
+    // negated for an odd r on the far side. It is kept doubled (mpS), so that each offset,
+    // cOfX's and cOfY's for the line's direction in thousandths of the distance, is rounded
+    // half away from zero, as the doubled quotient, one more away from zero, halved toward zero.
+    lac mpR
+    sar 1s
+    mul [2 * (2 * FIXR + 2)]
+    div [1]
+    cla                 // runs only on overflow, which NCON entries cannot make
+    add [2 * (FIXR + MKGAP)]
+    dac mpS
+    lac mpR
+    and [1]
+    sza i               // skip if r is odd
+    jmp mpDir
+    lac mpS
+    cma
+    dac mpS
+mpDir,
+    lac mpL
+    sub [2]
+    jda cRlDir          // k, from the line's ends, which cRlDir reads 2 and 3 words on
+    dac mpK
+    add [cOfX:011]
+    dac mpT
+    lac i mpT
+    mul mpS
+    div [0d1000]
+    cla                 // runs only on overflow
+    spa                 // skip if AC >= 0
+    sub [2]
+    add [1]
+    sar 1s
+    add cMkX
+    dac cMkX
+    lac mpK
+    add [cOfY:011]
+    dac mpT
+    lac i mpT
+    mul mpS
+    div [0d1000]
+    cla                 // runs only on overflow
+    spa                 // skip if AC >= 0
+    sub [2]
+    add [1]
+    sar 1s
+    add cMkY
+    dac cMkY
+mpAt,
+    lac mpA
+    lio mpW
+
+    // cMkOff set if the place at AC, IO (x, y) is off the screen, or above the view's top.
+mpOff,
+    dio mpT
+    jda cMkIn
+    lac mpT
+    jda cMkIn
+    lac i [vwTop:014]
+    sub mpT
+    sma                 // skip if above the view's top
+    jmp rtn
+    law 1
+    dac cMkOff
+rtn, jmp .
+mpOne,
+    law 1
+    jmp mpCnt
+
+    // A number's scale is its digits', their text's, found by its anchor (TXSCALE if none),
+    // plus the view's.
+mpNum,
+    lac cMkPos
+    jda mkAnOf
+    dac mpA
+    law TXSCALE
+    add i [vwS:014]
+    dac mpS
+    lac [txAn:3]
+    dac mpP
+    law NTEXT
+    cma
+    dac mpK
+mpFind,
+    lac i mpP
+    sad mpA             // skip unless this text's anchor
+    jmp mpHit
+    idx mpP
+    isp mpK             // skip once every text is seen
+    jmp mpFind
+    jmp mpRank
+mpHit,
+    lac mpP
+    sub [txAn:3]
+    add [txSc:012]
+    dac mpT
+    lac i mpT
+    add i [vwS:014]
+    dac mpS
+
+    // Its rank is a ring's width, 2 * FIXR + 2, for each earlier number's entry on these digits.
+mpRank,
+    dzm mpR
+    lac [cEntries:011]
+    dac mpP
+mpRkLp,
+    lac mpP
+    sad cMkPos          // skip while entries remain before this one
+    jmp mpShift
+    lac i mpP
+    and [020]
+    sza i               // skip if a number's type
+    jmp mpRkNx
+    lac mpP
+    jda mkAnOf
+    sas mpA             // skip if the same digits
+    jmp mpRkNx
+    lac mpR
+    add [2 * FIXR + 2]
+    dac mpR
+mpRkNx,
+    lac mpP
+    add [CW]
+    dac mpP
+    jmp mpRkLp
+
+    // The half width of SCALDIG digits and a sign, and the digits' height, at their scale.
+mpShift,
+    lac [GAPHALF]
+    dac mpW
+    law TXADV
+    dac mpH
+mpShLp,
+    lac mpS
+    sza i               // skip while steps of scale remain
+    jmp mpXY
+    sub [1]
+    dac mpS
+    lac mpW
+    sal 1s
+    dac mpW
+    lac mpH
+    sal 1s
+    dac mpH
+    jmp mpShLp
+mpXY,
+    lac mpA
+    add [pointX:3]
+    dac mpT
+    lac i mpT
+    xct mpSh
+    sub i [vwOutX:014]
+    dac mpA             // the anchor's x on the screen; its index is not needed again
+    sub mpW
+    sub [FIXR + 2]
+    sub mpR
+    dac cMkX
+    lac mpH
+    sar 1s
+    add [FIXR + 2]
+    dac mpH
+    lac cMkPos
+    jda mkAnOf
+    add [pointY:3]
+    dac mpT
+    lac i mpT
+    xct mpSh
+    sub i [vwOutY:014]
+    dac mpW             // the anchor's y on the screen
+    add mpH
+    dac cMkY
+    lac mpA
+    lio mpW
+    jmp mpOff
+mpP, 0
+mpK, 0
+mpN, 0
+mpT, 0
+mpA, 0
+mpS, 0
+mpR, 0
+mpW, 0
+mpH, 0
+mpSh, 0
+mpL, 0
+    endloc
+
+// cMkOff set if the coordinate at AC is off the screen, below 0 or past 1023.
+// AC is clobbered, IO preserved. Called via jda.
+cMkIn, 0
+    local rtn, inOff
+    dap rtn
+    lac cMkIn
+    spa                 // skip unless below the screen's edge
+    jmp inOff
+    sub [0d1024]
+    spa                 // skip if past the screen's far edge
+    jmp rtn
+inOff,
+    law 1
+    dac cMkOff
+rtn, jmp .
+    endloc
+
+// The ranks of the marks on one line, counted again into bank 3's mkRank, entry j's at word j,
+// when the table has changed since they were (mkRkOld, set by bank 8's cBuild). Counting costs
+// each such entry a walk of those before it, too dear for every writing of the marks.
+// AC and IO are clobbered. Called via jsp, from mkMarks.
+mkRanks,
+    local rtn, rsLoop, rsP, rsQ
+    dap rtn
+    dzm mkRkOld
+    lac [cEntries:011]
+    dac rsP
+    lac [mkRank:3]
+    dac rsQ
+rsLoop,
+    lac rsP
+    sad i [cEnd:010]    // skip while entries remain
+    jmp rtn
+    jda mkRkOf
+    dac i rsQ
+    idx rsQ
+    lac rsP
+    add [CW]
+    dac rsP
+    jmp rsLoop
+rtn, jmp .
+rsP, 0
+rsQ, 0
+    endloc
+mkRkOld, 1
+
+// An entry's rank on its line, how many entries before it in the table stand on one line with
+// the same ends, in either order, whatever their types; 0 for a mark on no one line.
+// Entry: AC = the entry's address. Exit: AC = the rank. IO is clobbered. Called via jda.
+mkRkOf, 0
+    local rtn, rkLoop, rkB, rkNext, rkDone, rkP, rkT, rkH, rkR, rkE1, rkE2
+    dap rtn
+    dzm rkR
+    lac mkRkOf
+    jda mkLnOf
+    sza i               // skip if the mark stands on one line
+    jmp rkDone
+    dac rkT
+    lac i rkT
+    dac rkE1            // the line's first end
+    idx rkT
+    lac i rkT
+    dac rkE2            // and its second
+    lac [cEntries:011]
+    dac rkP
+rkLoop,
+    lac rkP
+    sad mkRkOf          // skip while entries remain before this one
+    jmp rkDone
+    jda mkLnOf
+    sza i               // skip if that entry's mark stands on one line
+    jmp rkNext
+    dac rkT
+    add [1]
+    dac rkH
+    lac i rkT
+    sas rkE1            // skip if its first end is this line's first
+    jmp rkB
+    lac i rkH
+    sad rkE2            // skip unless its second is this line's second
+    idx rkR
+    jmp rkNext
+rkB,
+    sas rkE2            // skip if its first end is this line's second
+    jmp rkNext
+    lac i rkH
+    sad rkE1            // skip unless its second is this line's first
+    idx rkR
+rkNext,
+    lac rkP
+    add [CW]
+    dac rkP
+    jmp rkLoop
+rkDone,
+    lac rkR
+rtn, jmp .
+rkP, 0
+rkT, 0
+rkH, 0
+rkR, 0
+rkE1, 0
+rkE2, 0
+    endloc
+
+// Where an entry names the line its mark stands on (cLnTab), as the address of the word holding
+// the line's first end, the second in the word after it.
+// Entry: AC = the entry's address. Exit: AC = that word's address, 0 when the mark stands on no
+// one line. IO is preserved. Called via jda.
+mkLnOf, 0
+    local rtn, loT
+    dap rtn
+    lac i mkLnOf
+    and [CTMASK]
+    add [cLnTab:011]
+    dac loT
+    lac i loT
+    sza                 // skip unless on one line
+    add mkLnOf
+rtn, jmp .
+loT, 0
+    endloc
+
+// A number's entry's anchor, its digits' point, an O's point B or a D's or a Y's point C.
+// Entry: AC = the entry's address. Exit: AC = the anchor's index. IO is preserved. Called via jda.
+mkAnOf, 0
+    local rtn, aoP
+    dap rtn
+    lac mkAnOf
+    add [2]
+    dac aoP
+    lac i mkAnOf
+    sas [CTGAP]         // skip if an O
+    idx aoP
+    lac i aoP
+rtn, jmp .
+aoP, 0
+    endloc
+
+// A mark's coordinate, kept MKEDGE inside the screen, so that no glyph crosses an edge. It runs
+// from MKEDGE to cFmTop, which the caller sets for the axis, 1023 - MKEDGE for x, and for y the
+// view's vwTopF, the same under the view's top.
+// Entry: AC = the point's coordinate; cFmTop. Exit: AC = the mark's. IO is preserved. Called via
+// jda.
+cFmPos, 0
+    local rtn, fpHi, fpIn
+    dap rtn
+    lac cFmPos
+    sub [MKEDGE]
+    sma                 // skip if under MKEDGE
+    jmp fpHi
+    lac [MKEDGE]
+    jmp rtn
+fpHi,
+    lac cFmTop
+    sub cFmPos
+    sma                 // skip if over cFmTop
+    jmp fpIn
+    lac cFmTop
+    jmp rtn
+fpIn,
+    lac cFmPos
+rtn, jmp .
+    endloc
+cFmTop, 0d1023-MKEDGE
+
+// Delete's lock with Show on, the mark nearest the target's center on the screen (the view
+// module's vwHX, vwHY), by the larger of its distances on the two axes, within FIXR, read from
+// the marks' slots, which with Show on hold every entry in the table's order, in screen units;
+// a slot the view hides (mkHid) is passed over. Bank 8's cNear has written stale marks first.
+// Exit: AC = the entry, NOPOINT if none or Show is off; bank 8's cNearX, cNearY its mark's place
+// taken back to the page through the view, rounded. IO is clobbered. Called via
+// jsp i [mkNear:015], from bank 8's cNear.
+mkNear,
+    local nrRtn, nrLoop, nrUseX, nrCmp, nrNext, nrSkip, nrDone, nrOut, nrJ, nrP, nrBest, nrD, \
+        nrE, nrT, nrX, nrY, nrBX, nrBY
+    dac nrRtn
+    lac [NOPOINT]
+    dac nrBest
+    law FIXR + 1
+    dac nrD
+    lac i [showOn:4]
+    sza i               // skip if Show is on
+    jmp nrDone
+    lac [fixList:0]
+    dac nrP
+    dzm nrJ
+nrLoop,
+    lac nrJ
+    sad i [cCount:011]  // skip while marks remain
+    jmp nrDone
+    add [mkHid:3]
+    dac nrT
+    lac i nrT
+    sza                 // skip unless the view hides this mark
+    jmp nrSkip
+    lac i nrP
+    and [01777]
+    dac nrY
+    sub i [vwHY:014]
+    spa                 // skip if plus
+    cma
+    dac nrE
+    idx nrP
+    lac i nrP
+    and [01777]
+    dac nrX
+    sub i [vwHX:014]
+    spa                 // skip if plus
+    cma
+    dac nrT
+    sub nrE
+    sma                 // skip if |dx| is below |dy|
+    jmp nrUseX
+    lac nrE
+    jmp nrCmp
+nrUseX,
+    lac nrT
+nrCmp,
+    sub nrD
+    sma                 // skip if nearer than the best so far
+    jmp nrNext
+    add nrD
+    dac nrD
+    lac nrJ
+    dac nrBest
+    lac nrX
+    dac nrBX
+    lac nrY
+    dac nrBY
+nrNext,
+    lac nrP
+    add [FIXWORDS - 1]
+    dac nrP
+    idx nrJ
+    jmp nrLoop
+nrSkip,
+    lac nrP
+    add [FIXWORDS]
+    dac nrP
+    idx nrJ
+    jmp nrLoop
+
+    // The mark's place goes back to the page as (screen + vwIn) >> vwS, as the view module's
+    // vwIn takes the target's; the identity at x1.
+nrDone,
+    lac nrBest
+    sad [NOPOINT]       // skip unless no mark is near
+    jmp nrOut
+    lac i [vwSar:014]
+    dac nrT
+    lac nrBX
+    add i [vwInX:014]
+    xct nrT
+    dac i [cNearX:010]
+    lac nrBY
+    add i [vwInY:014]
+    xct nrT
+    dac i [cNearY:010]
+    lac nrBest
+nrOut,
+    jmp i nrRtn
+nrRtn, 0
+nrJ, 0
+nrP, 0
+nrBest, 0
+nrD, 0
+nrE, 0
+nrT, 0
+nrX, 0
+nrY, 0
+nrBX, 0
+nrBY, 0
+    endloc
+
+// The module's words, mkMarks' and cMkPos' place on the screen, and whether the place it marks
+// is off the screen (cMkOff).
+cMkX, 0
+cMkY, 0
+cMkOff, 0

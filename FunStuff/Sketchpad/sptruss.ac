@@ -1,0 +1,3075 @@
+// sptruss.ac -- the truss's analysis (SketchpadTechnicalDesign.md, "The truss"): the force in
+// each member of the truss that the Beam, Load, Roller and Fix entries make, found a slice a pass
+// in the main loop.
+//
+// Bank 11, from its first word, alone. Its three entries run with the extend window open and are
+// entered by jsp i [X:013]: taInit from the main bank's start, taTick from its loop while the
+// constraint solver sleeps, and taRedo from the view module's vwEntry at a change of the
+// magnifier's view. They reach the constraint table (bank 9), the point table (bank 3), the
+// view's words (bank 12) and the main bank's words through 16-bit addresses, return by jmp i, and
+// call nothing outside bank 11.
+// Part of sketchpad.am1, included where it stands.
+//
+// The truss. Its members are the Beam entries' lines, in the table's order. Its joints are the
+// members' ends but the fixed points (Fix, pins held both ways), in the order the members first
+// name them; a joint that is a Roller's point slides along the roller's axis a, level unless
+// Axis set it, and is held across it. A Load entry's line pushes its point A, when that is a
+// joint, with ten times the line's length toward B. Every member is a spring of stiffness k, its
+// Beam's (tenths in the parameter word, 1.0 unless Stiff set it), so its force (tension
+// positive) is k times its stretch along it, and the joints' displacements u are those that
+// balance every load. K u = f, K the sum over the members of k c c^T placed at its free ends'
+// unknowns, c its coefficients on them, its direction e on a joint's two and e . a on a roller's
+// one. A member of 1.0 is not multiplied, so that a truss whose members are all 1.0 gets exactly
+// the numbers it would with no stiffnesses at all. The unknowns are each joint's horizontal
+// displacement and, but for a roller, its vertical one; a roller's one is its displacement along
+// its axis, numbered in the reverse of a breadth-first order of the joints (taPOrd), which keeps
+// each row of K short. K is held from each row's first coupled unknown to its diagonal (its
+// profile), factored K = L D L^T in place, and solved by substitution, in the floating point of
+// spfloat.ac. A pivot D_i not positive, or not over 2^-23 of K's diagonal, is a mechanism, the
+// truss's joints free to move with no member stretched; a joint whose members lie on one line is
+// one too, its pivot 0. The forces are k e . (u_B - u_A), rounded, a roller's u its unknown times
+// a. A level axis's e . a is e_x itself, not a product, so that a truss whose rollers are all
+// level gets exactly the numbers it would with no axes at all.
+// The profile, the unknowns' words and each member's e are in banks 14 and 15 (sketchpad.am1);
+// the map, the axes, the members' coefficients and stiffnesses in bank 13.
+//
+// The work is done in phases, each a routine reached by jmp i taPhase: the map of the points,
+// the joints, the loads, the members' directions, the rollers' axes, the order, the numbering,
+// the profile cleared, the assembly, the factorization, the three substitutions and the forces.
+// The long ones go a member, a joint or one term of a sum at a time and give up the pass once
+// TRUSSMS have passed since it began (taGo), resuming where they stopped. Every TRUSSCHK, and at
+// once after Forces was off, the solver awake or a point or instance held, the truss's entries
+// and their points are compared with a snapshot of them (taCheck); a change starts the phases
+// again from the map. Nothing is computed while Forces is off, the solver awake (the drawing
+// moving) or a point or an instance held.
+//
+// The readouts. The last phase writes a list, roList, in bank 13: each member's force at its
+// midpoint and each load's magnitude, ten times its length, at its line's, at the labels' size,
+// centered and kept inside the screen, placed through the magnifier's view and left out when the
+// midpoint is off the screen (a change of view writes the list again, taRedo); with no answer,
+// three dashes for each, and UNSTABLE under the bar's right, its first word a halt while the
+// tape's word is shown there (roGate). penISR starts the list at the frame's closing halt while
+// roOn is set and no list is open, and the list's halt ends the frame. roOn is cleared whenever
+// the readouts would be stale (taTick away, or the truss changed) and set again once the list
+// holds the truss as it is (roOK); the list is written only once a frame has ended since it was
+// cleared, so that the display is never in it while it is written. In Stiff mode, Forces on or
+// off, the same list shows each member's stiffness in place of its force and no load's
+// (TASTIFF), written as the forces' are when the truss's snapshot changes; no analysis runs
+// meanwhile, and a change of view starts the truss again (taView).
+
+// The results, which the readouts read: the state (TANONE, no Beam; TABUSY; TAOK; TABAD, no
+// answer), set once the readouts are written, why there is none (TAWMECH to
+// TAWMANY), a count of the analyses finished, the unknowns and the profile's entries of the
+// last (0 when it ended before numbering them), and the members' and joints' counts.
+taState, 0
+taWhy, 0
+taGen, 0
+taNU, 0
+taNP, 0
+taNM, 0
+taNJ, 0
+
+// Per member, in the table's order: its force, its points A and B, and the addresses of its
+// ends' taUX words (the zero slot's for a pin).
+taF,
+    table NCON, 0
+taMA,
+    table NCON, 0
+taMB,
+    table NCON, 0
+taJA,
+    table NCON, 0
+taJB,
+    table NCON, 0
+
+// Per joint: its loads in the load's units, horizontal (taFX) and, TANJ words after, vertical
+// (taFY), and whether it is a roller (taJR), 0 or its Roller entry's address complemented.
+taFX,
+    table TANJ, 0
+taFY,
+    table TANJ, 0
+taJR,
+    table TANJ, 0
+
+// Per joint, four tables of TANJ + 1 words, each TANJ + 1 after the one before, a joint's words
+// found from its taUX word's address; the last word of each, the zero slot, is a pin's. taUX
+// holds the joint's members' count, then its incidences' fill pointer, then (from taPNum) its
+// horizontal unknown, or a roller's along its axis; taUY marks it reached in taPOrd, then holds
+// its vertical unknown, or -1 for a roller; the zero slot's two hold -1. taJI holds the address
+// of its first incidence, and taJN minus its members' count.
+taUX,
+    table TANJ + 1, 0
+taUY,
+    table TANJ + 1, 0
+taJI,
+    table TANJ + 1, 0
+taJN,
+    table TANJ + 1, 0
+
+// The joints in breadth-first order (taPOrd), each by its taUX word's address.
+taOrd,
+    table TANJ, 0
+
+// The incidences and the map (taInc, taMap) are in bank 13 (sketchpad.am1), with each member's
+// coefficients (tdC). Each roller joint's axis (taAX), and the members' flags of an axis not
+// level (taMI) and stiffnesses (taMK), are in bank 3.
+
+// The snapshot taCheck compares, taSnap, is in bank 13 (sketchpad.am1). It holds for each Fix
+// and Roller its type and point, a Roller's axis after them
+// (taRlD), and for each Beam and Load its type, its points, its parameter word (a Beam's
+// stiffness) and its points' places. taSnapE is the full address of the first word past it, 0
+// when there is none.
+taSnapE, 0
+
+// Numbers of three words (spfloat.ac): zero, which a missing unknown's displacement reads; a
+// force's first term; a tenth, made once (taInit), and a member's stiffness (taKOf). The pivot
+// being formed and the quotient l of the factorization (taD, taL), 1/L's two inputs (drX, drY)
+// and a member's six products (asP1 to asP6, asPrT) are in bank 3.
+tdZ,
+    0
+    0
+    0
+foT,
+    table 3, 0
+taTenth,
+    table 3, 0
+taK,
+    table 3, 0
+
+// The phases' state: the main bank's return, the pass's start on the clock, the phase to go on
+// with, the last check's time, and nonzero when a check is due at once.
+taRtn, 0
+taT0, 0
+taPhase, 0
+taChkAt, 0
+taDue, 0
+
+// The analysis' start. No answer and no snapshot, so that the first check builds the truss; no
+// readouts, and their list a halt; the forces' view; and a tenth, for the stiffnesses.
+// AC and IO are clobbered. Called via jsp i [taInit:013].
+taInit,
+    dac taRtn
+    law TANONE
+    dac taState
+    dzm taWhy
+    dzm taGen
+    dzm taNU
+    dzm taNP
+    dzm taNM
+    dzm taNJ
+    dzm taSnapE
+    dzm i [roOn:0]
+    dzm roOK
+    dzm roUw
+    dzm roSt
+    lac i [frameTotal:4]
+    dac roHideF
+    lac [lpoff halt interrupt]
+    dac i [roList:015]
+    law 0d10
+    jda fInt
+    jsp fRcp
+    lac [taTenth:013]
+    jda faSt
+    law 1
+    dac taDue
+    lac [taIdle:013]
+    dac taPhase
+    jmp i taRtn
+
+// The main loop's pass. Nothing is done while Forces is off, unless in Stiff mode (taView), or
+// while the solver is awake or a point or an instance held. Then the readouts are hidden, and a
+// check is due at once. Otherwise UNSTABLE's gate
+// follows the tape's word, the truss is checked if one is due (taCheck), started again if it
+// changed, or in Stiff mode its stiffnesses written, the readouts shown again if it did not and
+// they hold it, and its phase goes on for at most TRUSSMS.
+// AC and IO are clobbered. Called via jsp i [taTick:013].
+taTick,
+    dac taRtn
+    rck
+    dio taT0
+    jsp taView
+    lac roSt
+    sza                 // skip unless Stiff mode's view
+    jmp taOn
+    lac i [forcesOn:4]
+    sza i               // skip if Forces is on
+    jmp taAway
+taOn,
+    lac i [conWake:4]
+    sza                 // skip unless the solver is awake
+    jmp taAway
+    lac i [dragIdx:4]
+    and i [dragInst:4]
+    sas [NOPOINT]       // skip unless a point or an instance is held
+    jmp taAway
+    jsp roGate
+    lac taDue
+    sza                 // skip unless a check is due at once
+    jmp taChk
+    lac taT0
+    sub taChkAt
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [TRUSSCHK]
+    spa                 // skip once TRUSSCHK have passed since the last check
+    jmp i taPhase
+taChk,
+    dzm taDue
+    lac taT0
+    dac taChkAt
+    jsp taCheck
+    sza i               // skip if the truss changed
+    jmp taSame
+    dzm roOK
+    jsp roHide
+    lac roSt
+    sza                 // skip unless Stiff mode's view
+    jmp taStf
+    law TABUSY
+    dac taState
+    dzm taWhy
+    jmp taPMap
+taStf,
+    law TASTIFF
+    jmp taFin
+taSame,
+    lac roOK
+    sza                 // skip unless the readouts hold the truss as it is
+    dac i [roOn:0]
+    jmp i taPhase
+taAway,
+    law 1
+    dac taDue
+    jsp roHide
+    jmp i taRtn
+
+// Whether the readouts show the stiffnesses (roSt), as in Stiff mode, the constraint mode for
+// CTSTIFF. A change either way hides the readouts and drops the snapshot, so that the check, due
+// at once, finds the truss changed. The stiffnesses are written, or the analysis that Stiff mode
+// cut short starts again. The constraints' marks are made stale too (cMkDirty), so that the main
+// loop writes them again (showStep), a Beam's B giving way to its stiffness in Stiff mode
+// (cMarks).
+// AC and IO are clobbered. Called via jsp.
+taView,
+    local rtn, vwNo, vwSet
+    dap rtn
+    lac i [mode:4]
+    sas [MCONS]         // skip if the constraint mode
+    jmp vwNo
+    lac i [consType:4]
+    sas [CTSTIFF]       // skip if Stiff's
+    jmp vwNo
+    law 1
+    jmp vwSet
+vwNo,
+    cla
+vwSet,
+    sad roSt            // skip if the view changed
+    jmp rtn
+    dac roSt
+    dzm taSnapE
+    dzm roOK
+    jsp roHide
+    law 1
+    dac taDue
+    dac i [cMkDirty:010]
+rtn, jmp .
+    endloc
+
+// The end of an analysis, its state and why, then the readouts written (taFin), then the count of
+// analyses, and nothing more to do. With no Beam there are no readouts.
+taOK,
+    dzm taWhy
+    law TAOK
+    jmp taFin
+taNone,
+    law TANONE
+    dac taState
+    dzm taWhy
+    jmp taEnd
+taMech,
+    law TAWMECH
+    jmp taBad
+taLarge,
+    law TAWLARGE
+    jmp taBad
+taZero,
+    law TAWZERO
+    jmp taBad
+taMany,
+    law TAWMANY
+taBad,
+    dac taWhy
+    law TABAD
+    jmp taFin
+taEnd,
+    idx taGen
+taStill,
+    lac [taIdle:013]
+    dac taPhase
+taIdle,
+    jmp i taRtn
+
+// Go on to the phase at AC, now while the pass's time lasts, else at the next pass.
+taGo,
+    dac taPhase
+taGoT,
+    jsp taTime
+    spa                 // skip once the pass's time is spent
+    jmp i taPhase
+    jmp i taRtn
+
+// The same for a factorization term (taPFk), the clock read only every eighth. A term is short,
+// so a pass may run up to seven terms past TRUSSMS.
+taGo8,
+    dac taPhase
+    isp taG8            // skip on the eighth term since the clock was read
+    jmp i taPhase
+    law i 0d8
+    dac taG8
+    jmp taGoT
+taG8, 0
+
+
+// The map, cleared, then each Roller's point marked with its entry's address complemented, which
+// is negative, and each Fix's point given the zero slot, so that a Fix wins over a Roller on one
+// point, and the first Roller over a second. The last analysis' counts of unknowns and
+// entries are cleared first, so that one which ends before the numbering reports none.
+taPMap,
+    local mpClr, mpLoop, mpRoll, mpPin, mpNext, mpDone, mpPt, mpRtn, mpE, mpN, mpW
+    dzm taNU
+    dzm taNP
+    lac [taMap:015]
+    dac mpW
+    law i MAXPTS
+    dac mpN
+mpClr,
+    dzm i mpW
+    idx mpW
+    isp mpN
+    jmp mpClr
+    lac [cEntries:011]
+    dac mpE
+    lac i [cCount:011]
+    sza i               // skip if the table holds entries
+    jmp mpDone
+    cma
+    dac mpN
+mpLoop,
+    lac i mpE
+    sad [CTROLL]        // skip unless a Roller
+    jmp mpRoll
+    sad [CTF]           // skip unless a Fix
+    jmp mpPin
+mpNext,
+    lac mpE
+    add [CW]
+    dac mpE
+    isp mpN
+    jmp mpLoop
+mpDone,
+    lac [taPJnt:013]
+    jmp taGo
+mpRoll,
+    jsp mpPt
+    lac i mpW
+    sza                 // skip unless the point is marked already
+    jmp mpNext
+    lac mpE
+    cma
+    dac i mpW
+    jmp mpNext
+mpPin,
+    jsp mpPt
+    lac [taUX:013+TANJ]
+    dac i mpW
+    jmp mpNext
+
+// mpW = the address of the map's word for the entry's point A.
+// AC is clobbered, IO preserved. Called via jsp.
+mpPt,
+    dap mpRtn
+    lac mpE
+    add [1]
+    dac mpW
+    lac i mpW
+    add [taMap:015]
+    dac mpW
+mpRtn, jmp .
+mpE, 0
+mpN, 0
+mpW, 0
+    endloc
+
+// The joints. Each Beam is a member, its points and its parameter word, the stiffness (taMK),
+// kept and its ends' addresses found (taJoin), which makes its points joints at their first
+// naming and counts each joint's members (in its taUX word). No Beam means no truss. Then each
+// joint's incidences are given their place, a word a member, their first's address in its taJI
+// word and its fill pointer (in its taUX word), minus their count in its taJN word, and its
+// members no more than TANI.
+taPJnt,
+    local jnLoop, jnNext, jnPlace, jnDone, jnE, jnN, jnW, jnA, jnI, jnR, jnF, jnC
+    dzm taNM
+    dzm taNJ
+    lac [cEntries:011]
+    dac jnE
+    lac i [cCount:011]
+    sza i               // skip if the table holds entries
+    jmp taNone
+    cma
+    dac jnN
+jnLoop,
+    lac i jnE
+    sas [CTBEAM]        // skip if a Beam
+    jmp jnNext
+    lac jnE
+    add [1]
+    dac jnW
+    lac i jnW
+    dac jnA
+    lac taNM
+    add [taMA:013]
+    dac jnI
+    lac jnA
+    dac i jnI
+    jda taJoin
+    lac taNM
+    add [taJA:013]
+    dac jnI
+    lac taJoin
+    dac i jnI
+    idx jnW
+    lac i jnW
+    dac jnA
+    lac taNM
+    add [taMB:013]
+    dac jnI
+    lac jnA
+    dac i jnI
+    jda taJoin
+    lac taNM
+    add [taJB:013]
+    dac jnI
+    lac taJoin
+    dac i jnI
+    lac jnE
+    add [5]
+    dac jnW
+    lac taNM
+    add [taMK:3]
+    dac jnI
+    lac i jnW
+    dac i jnI
+    idx taNM
+jnNext,
+    lac jnE
+    add [CW]
+    dac jnE
+    isp jnN
+    jmp jnLoop
+    lac taNM
+    sza i               // skip if a Beam was found
+    jmp taNone
+    lac [taInc:015]
+    dac jnI
+    lac [taUX:013]
+    dac jnF
+    dzm jnN
+jnPlace,
+    lac jnN
+    sad taNJ            // skip while joints remain
+    jmp jnDone
+    lac i jnF
+    dac jnC
+    sub [TANI+1]
+    sma                 // skip unless the joint's members are too many
+    jmp taMany
+    lac jnF
+    add [2*(TANJ+1)]
+    dac jnR
+    lac jnI
+    dac i jnR
+    dac i jnF
+    lac jnR
+    add [TANJ+1]
+    dac jnR
+    lac jnC
+    cma
+    dac i jnR
+    lac jnC
+    add jnI
+    dac jnI
+    idx jnF
+    idx jnN
+    jmp jnPlace
+jnDone,
+    lac [taPLoad:013]
+    jmp taGo
+jnE, 0
+jnN, 0
+jnW, 0
+jnA, 0
+jnI, 0
+jnR, 0
+jnF, 0
+jnC, 0
+    endloc
+
+// A member's end. A pin's is the zero slot; any other point is made a joint at its first
+// naming, a roller if the map marked it so, and counted one member more in its taUX word.
+// Entry AC = the point. Exit taJoin = the address of its horizontal displacement, or a roller's
+// along its axis. AC and IO are clobbered. Called via jda taJoin.
+taJoin, 0
+    local rtn, jwOld, jwW, jwV, jwX
+    dap rtn
+    lac taJoin
+    add [taMap:015]
+    dac jwW
+    lac i jwW
+    dac taJoin
+    sad [taUX:013+TANJ] // skip unless the point is a pin
+    jmp rtn
+    dac jwV
+    sub [2]
+    sma                 // skip if the point is no joint yet
+    jmp jwOld
+    lac taNJ
+    sad [TANJ]          // skip unless the joints are too many
+    jmp taMany
+    add [taJR:013]
+    dac jwX
+    lac jwV
+    dac i jwX
+    lac taNJ
+    add [taUX:013]
+    dac i jwW
+    dac taJoin
+    dzm i taJoin
+    idx taNJ
+jwOld,
+    idx i taJoin
+rtn, jmp .
+jwW, 0
+jwV, 0
+jwX, 0
+    endloc
+
+// The members' directions, a member at a time from taDM. A member of no length gives no answer
+// (taZero). Its e = (dx, dy) / L goes to tdE, six words a member (e_x, then e_y), from taUnit.
+// Each member is placed among its ends' incidences, but a pinned end's. Then the rollers' axes,
+// from the first joint.
+taPDir,
+    local drAdd, drRtn, drDone, drA, drB, drW, drJ, drQ, drP, drE
+    lac taDM
+    sad taNM            // skip while members remain
+    jmp drDone
+    add [taMB:013]
+    dac drW
+    lac i drW
+    dac drB
+    lac taDM
+    add [taMA:013]
+    dac drW
+    lac i drW
+    dac drA
+    add [pointX:3]
+    dac drW
+    lac drB
+    add [pointX:3]
+    dac drQ
+    lac i drQ
+    sub i drW
+    dac taDD
+    lac drA
+    add [pointY:3]
+    dac drW
+    lac drB
+    add [pointY:3]
+    dac drQ
+    lac i drQ
+    sub i drW
+    dac taDE
+    ior taDD
+    sza i               // skip if the member has a length
+    jmp taZero
+    lac taDM
+    add taDM
+    dac drE
+    add drE
+    add drE
+    add [tdE:016]
+    jda taUnit
+
+    lac taDM
+    add [taJA:013]
+    dac drW
+    lac i drW
+    dac drA
+    lac taDM
+    add [taJB:013]
+    dac drW
+    lac i drW
+    dac drB
+    lac drA
+    dac drJ
+    lac drB
+    jda drAdd
+    lac drB
+    dac drJ
+    lac drA
+    jda drAdd
+    idx taDM
+    lac [taPDir:013]
+    jmp taGo
+drDone,
+    dzm taAJ
+    lac [taPAxis:013]
+    jmp taGo
+
+// The member placed among the incidences of the end whose taUX word is at drJ, unless that is
+// a pin's, at the fill pointer that word holds, as the other end's address (AC).
+// AC and IO are clobbered. Called via jda drAdd.
+drAdd, 0
+    dap drRtn
+    lac drJ
+    sad [taUX:013+TANJ] // skip unless the end is a pin's
+    jmp drRtn
+    dac drQ
+    lac i drQ
+    dac drP
+    lac drAdd
+    dac i drP
+    idx drP
+    dac i drQ
+drRtn, jmp .
+drA, 0
+drB, 0
+drW, 0
+drJ, 0
+drQ, 0
+drP, 0
+drE, 0
+    endloc
+taDM, 0
+
+// The unit vector of (taDD, taDE), not both 0, to the two numbers at the full address in AC and
+// three words on. 1/L comes from a seed floor(2^31 / g) 2^-31 off taDir's root g of the vector
+// as taDir doubled it, then one Newton step y (3 - x y^2) / 2, x the doubled vector's length
+// squared, exact; the unit vector is the doubled vector times it. A member's direction (taPDir)
+// and a roller's axis (taPAxis).
+// AC and IO are clobbered; taDD and taDE are left doubled. Called via jda taUnit.
+taUnit, 0
+    local rtn, unE
+    dap rtn
+    lac taUnit
+    dac unE
+    jsp taDir
+
+    // The seed, 2^31 / g (the dividend 2^31 is 2^32 in AC:IO, its high part under g).
+    lac [040000]
+    cli
+    div taG
+    cla                 // no skip is overflow, which a root of 2^15 or more cannot make
+    jda fInt
+    law i 0d31
+    add faE
+    dac faE
+    lac [drY:3]
+    jda faSt
+
+    // x = dx^2 + dy^2.
+    lac taDD
+    jda fInt
+    jsp fbFa
+    jsp fMul
+    lac [drX:3]
+    jda faSt
+    lac taDE
+    jda fInt
+    jsp fbFa
+    jsp fMul
+    lac [drX:3]
+    jda fbLd
+    jsp fAdd
+    lac [drX:3]
+    jda faSt
+
+    // y (3 - x y y) / 2.
+    lac [drY:3]
+    jda faLd
+    jsp fbFa
+    jsp fMul
+    lac [drX:3]
+    jda fbLd
+    jsp fMul
+    jsp fNeg
+    lac [0140000]
+    lio [2]
+    jda fbSet
+    jsp fAdd
+    lac [drY:3]
+    jda fbLd
+    jsp fMul
+    law i 1
+    add faE
+    dac faE
+    lac [drY:3]
+    jda faSt
+
+    // The vector times y.
+    lac taDD
+    jda fInt
+    lac [drY:3]
+    jda fbLd
+    jsp fMul
+    lac unE
+    jda faSt
+    lac taDE
+    jda fInt
+    lac [drY:3]
+    jda fbLd
+    jsp fMul
+    lac unE
+    add [3]
+    jda faSt
+rtn, jmp .
+unE, 0
+    endloc
+
+// The rollers' axes, a joint a step from taAJ. Each roller joint's unit axis goes to its six
+// words of taAX (bank 3), from the direction of the line its Roller entry names (taRlD); a level
+// axis is (1, 0) exactly. Then the joints' order.
+taPAxis,
+    local axLevel, axNext, axDone, axP, axW
+    lac taAJ
+    sad taNJ            // skip while joints remain
+    jmp axDone
+    add [taJR:013]
+    dac axP
+    lac i axP
+    sza i               // skip if a roller
+    jmp axNext
+    cma
+    jda taRlD
+    lac taAJ
+    add taAJ
+    dac axW
+    add axW
+    add axW
+    add [taAX:3]
+    dac axW
+    lac rlX
+    dac taDD
+    lac rlY
+    dac taDE
+    sza i               // skip unless level
+    jmp axLevel
+    lac axW
+    jda taUnit
+    jmp axNext
+axLevel,
+    law 1
+    jda fInt
+    lac axW
+    jda faSt
+    lac axW
+    add [3]
+    dac axW
+    dzm i axW
+    idx axW
+    dzm i axW
+    idx axW
+    dzm i axW
+axNext,
+    idx taAJ
+    lac [taPAxis:013]
+    jmp taGo
+axDone,
+    lac [taPOrd:013]
+    jmp taGo
+
+axP, 0
+axW, 0
+    endloc
+taAJ, 0
+
+// A roller's axis from the line its entry names, its B and C points, as the constraint module's
+// cAxis finds it. (dx, dy) from B to C, turned to point right, or up when plumb, goes to rlX and
+// rlY; (0, 0) when level, and for a level roller, B and C one point.
+// Entry: AC = the entry's full address. AC and IO are clobbered. Called via jda taRlD.
+taRlD, 0
+    local rtn, rlTurn, rlNeg, rlB, rlC, rlT
+    dap rtn
+    lac taRlD
+    add [2]
+    dac rlT
+    lac i rlT
+    dac rlB
+    idx rlT
+    lac i rlT
+    dac rlC
+    add [pointX:3]
+    dac rlT
+    lac i rlT
+    dac rlX
+    lac rlB
+    add [pointX:3]
+    dac rlT
+    lac rlX
+    sub i rlT
+    sad [0777777]       // skip unless -0
+    cla
+    dac rlX
+    lac rlC
+    add [pointY:3]
+    dac rlT
+    lac i rlT
+    dac rlY
+    lac rlB
+    add [pointY:3]
+    dac rlT
+    lac rlY
+    sub i rlT
+    sad [0777777]       // skip unless -0
+    cla
+    dac rlY
+    sza                 // skip if level
+    jmp rlTurn
+    dzm rlX
+    jmp rtn
+rlTurn,
+    lac rlX
+    spa                 // skip unless dx is negative
+    jmp rlNeg
+    sza                 // skip if dx is 0
+    jmp rtn
+    lac rlY
+    sma                 // skip if dy is negative
+    jmp rtn
+rlNeg,
+    lac rlX
+    cma
+    sad [0777777]       // skip unless -0
+    cla
+    dac rlX
+    lac rlY
+    cma
+    dac rlY
+rtn, jmp .
+rlB, 0
+rlC, 0
+rlT, 0
+    endloc
+rlX, 0
+rlY, 0
+
+// Whether joint k is a roller on an axis not level, whose a_y is not zero. The result is the full
+// address of its a_x in taAX, or 0 if it is not.
+// Entry: AC = k. Exit: AC as said. IO is preserved. Called via jda taIncl.
+taIncl, 0
+    local rtn, tiNo, tiT
+    dap rtn
+    lac taIncl
+    add [taJR:013]
+    dac tiT
+    lac i tiT
+    sza i               // skip if a roller
+    jmp tiNo
+    lac taIncl
+    add taIncl
+    dac tiT
+    add tiT
+    add tiT
+    add [taAX:3+4]
+    dac tiT
+    lac i tiT
+    sza i               // skip if a_y is not 0; only zero has a high part of 0
+    jmp tiNo
+    lac tiT
+    sub [4]
+    jmp rtn
+tiNo,
+    cla
+rtn, jmp .
+tiT, 0
+    endloc
+
+// The root g (taG) of the vector (taDD, taDE), not both 0, which is left doubled until its
+// larger part is 2^15 or more. Newton's root from the larger part plus half the smaller, four
+// steps, kept no less than the larger. No division here can overflow (a square's high part is
+// under 2^15, and the root is not under the larger part), so the no-skip words only fill their
+// places.
+// AC and IO are clobbered. Called via jsp.
+taDir,
+    local rtn, dvShift, dvRoot, dvStep, dvM, dvN, dvQ, dvI
+    dap rtn
+    lac taDD
+    spa
+    cma
+    dac dvM
+    lac taDE
+    spa
+    cma
+    dac dvN
+    sub dvM
+    spa                 // skip if the vertical part is the larger
+    jmp dvShift
+    lac dvM
+    lio dvN
+    dac dvN
+    dio dvM
+dvShift,
+    lac dvM
+    sub [0100000]
+    sma                 // skip while the larger part is under 2^15
+    jmp dvRoot
+    lac taDD
+    sal 1s
+    dac taDD
+    lac taDE
+    sal 1s
+    dac taDE
+    lac dvM
+    sal 1s
+    dac dvM
+    lac dvN
+    sal 1s
+    dac dvN
+    jmp dvShift
+dvRoot,
+    lac dvN
+    sar 1s
+    add dvM
+    dac taG
+    law i 4
+    dac dvI
+dvStep,
+    lac taDD
+    mul taDD
+    div taG
+    jmp taZero
+    dac dvQ
+    lac taDE
+    mul taDE
+    div taG
+    jmp taZero
+    add dvQ
+    add taG             // under 2^18 as an unsigned number, and halved as one
+    sar 1s
+    and [0377777]
+    dac taG
+    isp dvI
+    jmp dvStep
+    lac taG
+    sub dvM
+    sma                 // skip if the root fell under the larger part
+    jmp rtn
+    lac dvM
+    dac taG
+rtn, jmp .
+dvM, 0
+dvN, 0
+dvQ, 0
+dvI, 0
+    endloc
+taDD, 0
+taDE, 0
+taG, 0
+
+// The loads. Each Load's ten times its line's vector is added to its point A's sums (taFX and,
+// TANJ after it, taFY) when A is a joint, an overflow too large (taLarge). Then the members'
+// directions, from the first.
+taPLoad,
+    local ldClr, ldScan, ldLoop, ldNext, ldDone, ldTen, ldTRtn, ldE, ldN, ldW, ldA, ldB, ldX, \
+        ldD
+    dzm ldN
+ldClr,
+    lac ldN
+    sad taNJ            // skip while joints remain
+    jmp ldScan
+    add [taFX:013]
+    dac ldW
+    dzm i ldW
+    add [TANJ]
+    dac ldW
+    dzm i ldW
+    idx ldN
+    jmp ldClr
+ldScan,
+    lac [cEntries:011]
+    dac ldE
+    lac i [cCount:011]
+    sza i               // skip if the table holds entries
+    jmp ldDone
+    cma
+    dac ldN
+    szo
+    nop                 // the overflow flag cleared, since each sum tests it
+ldLoop,
+    lac i ldE
+    sas [CTLOAD]        // skip if a Load
+    jmp ldNext
+    lac ldE
+    add [1]
+    dac ldW
+    lac i ldW
+    dac ldA
+    idx ldW
+    lac i ldW
+    dac ldB
+    lac ldA
+    add [taMap:015]
+    dac ldW
+    lac i ldW
+    sad [taUX:013+TANJ] // skip unless A is a pin
+    jmp ldNext
+    dac ldX
+    sub [2]
+    spa                 // skip if A is a joint
+    jmp ldNext
+    lac ldX
+    sub [taUX:013]
+    add [taFX:013]
+    dac ldX
+    lac ldA
+    add [pointX:3]
+    dac ldW
+    lac ldB
+    add [pointX:3]
+    dac ldD
+    lac i ldD
+    sub i ldW
+    jda ldTen
+    add i ldX
+    dac i ldX
+    szo                 // skip unless the sum overflowed
+    jmp taLarge
+    lac ldX
+    add [TANJ]
+    dac ldX
+    lac ldA
+    add [pointY:3]
+    dac ldW
+    lac ldB
+    add [pointY:3]
+    dac ldD
+    lac i ldD
+    sub i ldW
+    jda ldTen
+    add i ldX
+    dac i ldX
+    szo                 // skip unless the sum overflowed
+    jmp taLarge
+ldNext,
+    lac ldE
+    add [CW]
+    dac ldE
+    isp ldN
+    jmp ldLoop
+ldDone,
+    dzm taDM
+    lac [taPDir:013]
+    jmp taGo
+
+// AC = ten times AC, a coordinates' difference.
+// IO preserved. Called via jda ldTen.
+ldTen, 0
+    dap ldTRtn
+    lac ldTen
+    sal 2s
+    add ldTen
+    sal 1s
+ldTRtn, jmp .
+ldE, 0
+ldN, 0
+ldW, 0
+ldA, 0
+ldB, 0
+ldX, 0
+ldD, 0
+    endloc
+
+// The joints' order (taOrd), which numbers the unknowns (taPNum). It is breadth first from the
+// first joint not yet reached with the fewest neighbors that are joints, each joint's neighbors
+// in its incidences' order, then again from the next such joint until every joint is reached. A
+// joint's taUY word marks it reached. Each start (taPOrS) is a step, and each joint taken from
+// the queue (taPOrB).
+taPOrd,
+    local orClr, orGo, orScan, orDeg, orNext, orBest, orInc, orSkip, orDone, orAdd, oaRtn, orJ, \
+        orP, orI, orC, orD, orO, orBJ, orBD, orHead, orTail
+    dzm orJ
+orClr,
+    lac orJ
+    sad taNJ            // skip while joints remain
+    jmp orGo
+    add [taUY:013]
+    dac orP
+    dzm i orP
+    idx orJ
+    jmp orClr
+orGo,
+    dzm orHead
+    dzm orTail
+    lac [taPOrS:013]
+    jmp taGo
+taPOrS,
+    lac orTail
+    sad taNJ            // skip while a joint is not reached
+    jmp orDone
+    lac [0377777]
+    dac orBD
+    lac [taUX:013]
+    dac orJ
+orScan,
+    lac orJ
+    sub [taUX:013]
+    sad taNJ            // skip while joints remain
+    jmp orBest
+    lac orJ
+    add [TANJ+1]
+    dac orP
+    lac i orP
+    sza                 // skip unless reached
+    jmp orNext
+
+    // Its neighbors that are joints, its incidences whose other end is not a pin.
+    lac orJ
+    add [2*(TANJ+1)]
+    dac orP
+    lac i orP
+    dac orI
+    lac orP
+    add [TANJ+1]
+    dac orP
+    lac i orP
+    dac orC
+    dzm orD
+orDeg,
+    lac i orI
+    sas [taUX:013+TANJ] // skip if the other end is a pin
+    idx orD
+    idx orI
+    isp orC
+    jmp orDeg
+    lac orD
+    sub orBD
+    sma                 // skip if fewer than the fewest so far
+    jmp orNext
+    add orBD
+    dac orBD
+    lac orJ
+    dac orBJ
+orNext,
+    idx orJ
+    jmp orScan
+orBest,
+    lac orBJ
+    jda orAdd
+    lac [taPOrB:013]
+    jmp taGo
+taPOrB,
+    lac orHead
+    sad orTail          // skip while the queue holds joints
+    jmp taPOrS
+    add [taOrd:013]
+    dac orP
+    idx orHead
+    lac i orP
+    add [2*(TANJ+1)]
+    dac orP
+    lac i orP
+    dac orI
+    lac orP
+    add [TANJ+1]
+    dac orP
+    lac i orP
+    dac orC
+orInc,
+    lac i orI
+    sad [taUX:013+TANJ] // skip unless the other end is a pin
+    jmp orSkip
+    dac orO
+    add [TANJ+1]
+    dac orP
+    lac i orP
+    sza                 // skip unless reached
+    jmp orSkip
+    lac orO
+    jda orAdd
+orSkip,
+    idx orI
+    isp orC
+    jmp orInc
+    lac [taPOrB:013]
+    jmp taGo
+orDone,
+    lac [taPNum:013]
+    jmp taGo
+
+// The joint whose taUX word is at AC marked reached, and put at the queue's end.
+// AC is clobbered, IO preserved. Called via jda orAdd.
+orAdd, 0
+    dap oaRtn
+    lac orAdd
+    add [TANJ+1]
+    dac orP
+    law 1
+    dac i orP
+    lac orTail
+    add [taOrd:013]
+    dac orP
+    lac orAdd
+    dac i orP
+    idx orTail
+oaRtn, jmp .
+orJ, 0
+orP, 0
+orI, 0
+orC, 0
+orD, 0
+orO, 0
+orBJ, 0
+orBD, 0
+orHead, 0
+orTail, 0
+    endloc
+
+// The unknowns numbered in the reverse of taOrd. Each joint's horizontal displacement (a
+// roller's along its axis), then, but for a roller, its vertical one, in its taUX and taUY
+// words; a roller's taUY word, and the zero slot's two, -1. Then, a joint a step from taFJn
+// (taPFst), its unknowns' first coupled unknown, the lowest of the joint's and its neighbors'
+// (tdU's second word); then each row's base
+// address (tdU's first), that of its column 0 were the row whole, the rows packed from tdK
+// (taPBase). A profile past TAPROF entries is too many.
+taPNum,
+    local nuLoop, nuRoll, nuPin, nuQ, nuN, nuJ, nuP, nuR
+    dzm nuN
+    lac taNJ
+    dac nuQ
+nuLoop,
+    lac nuQ
+    sza i               // skip while joints remain
+    jmp nuPin
+    sub [1]
+    dac nuQ
+    add [taOrd:013]
+    dac nuP
+    lac i nuP
+    dac nuJ
+    lac nuN
+    dac i nuJ
+    idx nuN
+    lac nuJ
+    sub [taUX:013]
+    add [taJR:013]
+    dac nuP
+    lac i nuP
+    dac nuR
+    lac nuJ
+    add [TANJ+1]
+    dac nuP
+    lac nuR
+    sza                 // skip unless a roller
+    jmp nuRoll
+    lac nuN
+    dac i nuP
+    idx nuN
+    jmp nuLoop
+nuRoll,
+    law i 1
+    dac i nuP
+    jmp nuLoop
+nuPin,
+    law i 1
+    dac i [taUX:013+TANJ]
+    dac i [taUY:013+TANJ]
+    lac nuN
+    dac taNU
+    lac [taUX:013]
+    dac taFJn
+    lac [taPFst:013]
+    jmp taGo
+nuQ, 0
+nuN, 0
+nuJ, 0
+nuP, 0
+nuR, 0
+    endloc
+
+taPFst,
+    local fsInc, fsSkip, fsPut, fsRtn, fsLo, fsI, fsC, fsO, fsP, fsU
+    lac taFJn
+    sub [taUX:013]
+    sad taNJ            // skip while joints remain
+    jmp taPBase
+    lac i taFJn
+    dac fsLo
+    lac taFJn
+    add [2*(TANJ+1)]
+    dac fsP
+    lac i fsP
+    dac fsI
+    lac fsP
+    add [TANJ+1]
+    dac fsP
+    lac i fsP
+    dac fsC
+fsInc,
+    lac i fsI
+    sad [taUX:013+TANJ] // skip unless the other end is a pin
+    jmp fsSkip
+    dac fsO
+    lac i fsO
+    sub fsLo
+    sma                 // skip if the neighbor's unknown is the lower
+    jmp fsSkip
+    lac i fsO
+    dac fsLo
+fsSkip,
+    idx fsI
+    isp fsC
+    jmp fsInc
+    lac i taFJn
+    jda fsPut
+    lac taFJn
+    add [TANJ+1]
+    dac fsP
+    lac i fsP
+    sma                 // skip if the joint has no vertical unknown
+    jda fsPut
+    idx taFJn
+    lac [taPFst:013]
+    jmp taGo
+
+// tdU's second word for unknown AC = fsLo.
+// AC is clobbered, IO preserved. Called via jda fsPut.
+fsPut, 0
+    dap fsRtn
+    lac fsPut
+    add fsPut
+    add [tdU:016+1]
+    dac fsU
+    lac fsLo
+    dac i fsU
+fsRtn, jmp .
+fsLo, 0
+fsI, 0
+fsC, 0
+fsO, 0
+fsP, 0
+fsU, 0
+    endloc
+taFJn, 0
+
+taPBase,
+    local bsLoop, bsDone, bsI, bsP, bsB, bsT, bsF
+    dzm bsI
+    dzm bsB
+    lac [tdU:016]
+    dac bsP
+bsLoop,
+    lac bsI
+    sad taNU            // skip while rows remain
+    jmp bsDone
+    lac bsP
+    add [1]
+    dac bsT
+    lac i bsT
+    dac bsF
+    lac bsB
+    sub bsF
+    dac bsT
+    add bsT
+    add bsT
+    add [tdK:016]
+    dac i bsP
+    lac bsI
+    sub bsF
+    add [1]
+    add bsB
+    dac bsB
+    lac bsP
+    add [2]
+    dac bsP
+    idx bsI
+    jmp bsLoop
+bsDone,
+    lac bsB
+    dac taNP
+    sub [TAPROF+1]
+    sma                 // skip unless the profile is past its room
+    jmp taMany
+    lac [tdK:016]
+    dac taZP
+    lac bsB
+    add bsB
+    add bsB
+    cma
+    dac taZN
+    lac [taPZero:013]
+    jmp taGo
+bsI, 0
+bsP, 0
+bsB, 0
+bsT, 0
+bsF, 0
+    endloc
+
+// The profile cleared, 256 words a step from taZP (taZN of them left, negated); then the right
+// side (tdY), each joint's loads as numbers at its unknowns, a roller's on an axis not level
+// f . a at its one.
+taPZero,
+    local zrLoop, zrMore, zrSide, zrJ, zrRoll, zrNext, zrDone, zrAt, zaRtn, zrC, zrK, zrP, zrU, \
+        zrJp, zrA
+    law i 0d256
+    dac zrC
+zrLoop,
+    dzm i taZP
+    idx taZP
+    isp taZN            // skip once the profile is clear
+    jmp zrMore
+    jmp zrSide
+zrMore,
+    isp zrC             // skip once this step's words are clear
+    jmp zrLoop
+    lac [taPZero:013]
+    jmp taGo
+zrSide,
+    dzm zrK
+    lac [taUX:013]
+    dac zrJp
+zrJ,
+    lac zrK
+    sad taNJ            // skip while joints remain
+    jmp zrDone
+    add [taFX:013]
+    dac zrP
+    lac i zrP
+    jda fInt
+    lac zrK
+    jda taIncl
+    sza                 // skip unless a roller on an axis not level
+    jmp zrRoll
+    lac i zrJp
+    jda zrAt
+    jda faSt
+    lac zrJp
+    add [TANJ+1]
+    dac zrP
+    lac i zrP
+    spa                 // skip if the joint has a vertical unknown
+    jmp zrNext
+    dac zrU
+    lac zrK
+    add [taFX:013+TANJ]
+    dac zrP
+    lac i zrP
+    jda fInt
+    lac zrU
+    jda zrAt
+    jda faSt
+zrNext,
+    idx zrJp
+    idx zrK
+    jmp zrJ
+
+    // f_x a_x, FA holding f_x and AC a_x's address, then plus f_y a_y; a roller has no vertical
+    // unknown.
+zrRoll,
+    dac zrA
+    jda fbLd
+    jsp fMul
+    lac i zrJp
+    jda zrAt
+    dac zrU
+    jda faSt
+    lac zrK
+    add [taFX:013+TANJ]
+    dac zrP
+    lac i zrP
+    jda fInt
+    lac zrA
+    add [3]
+    jda fbLd
+    jsp fMul
+    lac zrU
+    jda fbLd
+    jsp fAdd
+    lac zrU
+    jda faSt
+    jmp zrNext
+zrDone,
+    dzm taAM
+    lac [taPAsm:013]
+    jmp taGo
+
+// AC = the address of unknown AC's word in tdY.
+// IO preserved. Called via jda zrAt.
+zrAt, 0
+    dap zaRtn
+    lac zrAt
+    add zrAt
+    add zrAt
+    add [tdY:016]
+zaRtn, jmp .
+zrC, 0
+zrK, 0
+zrP, 0
+zrU, 0
+zrJp, 0
+zrA, 0
+    endloc
+taZP, 0
+taZN, 0
+
+// The matrix, a member at a time from taAM. Its coefficients c_A and c_B on its ends' first
+// unknowns (asCo), kept in tdC for the forces, with taMI set when either is a roller's on an axis
+// not level; then the six products of c_A, c_B and e_y (asPrT), added to each free end's block
+// and taken from the coupling between its ends, at the ten places of asTab in its order. A member
+// with no end on such a roller has c_A = c_B = e_x, and its products are e e^T's. A member whose
+// stiffness k is not 1.0 has its six products multiplied by k (taKOf).
+taPAsm,
+    local asLoop, asPrL, asKL, asKDone, asDone, asPut, apGo, apRtn, asCo, acEx, acRtn, asE, asT, \
+        asQ, asN, asI, asJ, asV, asM, asP, asOut, asIn
+    lac taAM
+    sad taNM            // skip while members remain
+    jmp asDone
+    add taAM
+    dac asT
+    add asT
+    add asT
+    dac asCA
+    add [tdE:016]
+    dac asE
+    add [3]
+    dac asEY
+    lac asCA
+    add [tdC:015]
+    dac asCA
+    add [3]
+    dac asCB
+    dzm asIn
+    lac asCA
+    dac asOut
+    lac taAM
+    add [taJA:013]
+    dac asT
+    lac i asT
+    jda asCo
+    lac asCB
+    dac asOut
+    lac taAM
+    add [taJB:013]
+    dac asT
+    lac i asT
+    jda asCo
+    lac taAM
+    add [taMI:3]
+    dac asT
+    lac asIn
+    dac i asT
+
+    // The six products, each asPrT row the addresses of the words holding its factors'
+    // addresses, then the product's address.
+    lac [asPrT:013]
+    dac asQ
+    law i 6
+    dac asN
+asPrL,
+    lac i asQ
+    dac asP
+    lac i asP
+    jda faLd
+    idx asQ
+    lac i asQ
+    dac asP
+    lac i asP
+    jda fbLd
+    idx asQ
+    jsp fMul
+    lac i asQ
+    jda faSt
+    idx asQ
+    isp asN
+    jmp asPrL
+
+    // The member's stiffness, when not 1.0, on each product.
+    lac taAM
+    jda taKOf
+    sza i               // skip if a stiffness not 1.0
+    jmp asKDone
+    lac [asP1:3]
+    dac asQ
+    law i 6
+    dac asN
+asKL,
+    lac asQ
+    jda faLd
+    lac [taK:013]
+    jda fbLd
+    jsp fMul
+    lac asQ
+    jda faSt
+    lac asQ
+    add [3]
+    dac asQ
+    isp asN
+    jmp asKL
+asKDone,
+
+    // Each end's unknowns, -1 for none (a pin's, or a roller's vertical).
+    lac taAM
+    add [taJA:013]
+    dac asT
+    lac i asT
+    dac asT
+    lac i asT
+    dac asXA
+    lac asT
+    add [TANJ+1]
+    dac asT
+    lac i asT
+    dac asYA
+    lac taAM
+    add [taJB:013]
+    dac asT
+    lac i asT
+    dac asT
+    lac i asT
+    dac asXB
+    lac asT
+    add [TANJ+1]
+    dac asT
+    lac i asT
+    dac asYB
+
+    // The ten places, each asTab row the addresses of i's and j's words and of the number, then
+    // 1 to take it away.
+    lac [asTab:013]
+    dac asQ
+    law i 0d10
+    dac asN
+asLoop,
+    lac i asQ
+    dac asP
+    lac i asP
+    dac asI
+    idx asQ
+    lac i asQ
+    dac asP
+    lac i asP
+    dac asJ
+    idx asQ
+    lac i asQ
+    dac asV
+    idx asQ
+    lac i asQ
+    dac asM
+    idx asQ
+    jsp asPut
+    isp asN
+    jmp asLoop
+    idx taAM
+    lac [taPAsm:013]
+    jmp taGo
+asDone,
+    dzm taFI
+    lac [taPFac:013]
+    jmp taGo
+
+// K[i][j] (i and j the unknowns asI and asJ, the larger the row) plus the number at asV, or
+// less it when asM is 1; nothing when either is -1.
+// AC and IO are clobbered. Called via jsp.
+asPut,
+    dap apRtn
+    lac asI
+    spa                 // skip if there is an unknown i
+    jmp apRtn
+    lac asJ
+    spa                 // skip if there is an unknown j
+    jmp apRtn
+    lac asI
+    sub asJ
+    sma                 // skip if j is the larger
+    jmp apGo
+    lac asI
+    lio asJ
+    dac asJ
+    dio asI
+apGo,
+    lac asI
+    add asI
+    add [tdU:016]
+    dac asP
+    lac asJ
+    add asJ
+    add asJ
+    add i asP
+    dac asP
+    jda faLd
+    lac asV
+    jda fbLd
+    lac asM
+    sza                 // skip unless taken away
+    jsp fbNeg
+    jsp fAdd
+    lac asP
+    jda faSt
+apRtn, jmp .
+asE, 0
+asT, 0
+asQ, 0
+asN, 0
+asI, 0
+asJ, 0
+asV, 0
+asM, 0
+asP, 0
+asOut, 0
+asIn, 0
+
+// The coefficient c of the end whose taUX word's address is AC, to the number at asOut. It is
+// e . a at a roller on an axis not level (taIncl), asIn then set; otherwise e_x itself, copied,
+// which a pin's end has too, though no place uses it.
+// AC and IO are clobbered. Called via jda asCo.
+asCo, 0
+    dap acRtn
+    lac asCo
+    sad [taUX:013+TANJ] // skip unless a pin's end
+    jmp acEx
+    sub [taUX:013]
+    jda taIncl
+    sza i               // skip if a roller on an axis not level
+    jmp acEx
+    dac asT
+    lac asE
+    jda faLd
+    lac asT
+    jda fbLd
+    jsp fMul
+    lac asOut
+    jda faSt
+    lac asEY
+    jda faLd
+    lac asT
+    add [3]
+    jda fbLd
+    jsp fMul
+    lac asOut
+    jda fbLd
+    jsp fAdd
+    lac asOut
+    jda faSt
+    law 1
+    dac asIn
+    jmp acRtn
+acEx,
+    lac asE
+    jda faLd
+    lac asOut
+    jda faSt
+acRtn, jmp .
+
+// The six products, in this order: c_A c_A, c_A e_y, e_y e_y, c_B c_B, c_B e_y, c_A c_B.
+asPrT,
+    asCA:013
+    asCA:013
+    asP1:3
+    asCA:013
+    asEY:013
+    asP2:3
+    asEY:013
+    asEY:013
+    asP3:3
+    asCB:013
+    asCB:013
+    asP4:3
+    asCB:013
+    asEY:013
+    asP5:3
+    asCA:013
+    asCB:013
+    asP6:3
+
+// The ten places, in this order: each end's xx, yx and yy, then the coupling's xx, xy,
+// yx and yy taken away; xx is c c, a yx or an xy c e_y, and yy e_y e_y.
+asTab,
+    asXA:013
+    asXA:013
+    asP1:3
+    0
+    asYA:013
+    asXA:013
+    asP2:3
+    0
+    asYA:013
+    asYA:013
+    asP3:3
+    0
+    asXB:013
+    asXB:013
+    asP4:3
+    0
+    asYB:013
+    asXB:013
+    asP5:3
+    0
+    asYB:013
+    asYB:013
+    asP3:3
+    0
+    asXA:013
+    asXB:013
+    asP6:3
+    1
+    asXA:013
+    asYB:013
+    asP2:3
+    1
+    asYA:013
+    asXB:013
+    asP5:3
+    1
+    asYA:013
+    asYB:013
+    asP3:3
+    1
+    endloc
+taAM, 0
+asCA, 0
+asCB, 0
+asEY, 0
+asXA, 0
+asYA, 0
+asXB, 0
+asYB, 0
+
+// L D L^T a row at a time from taFI, in place. Each entry j from the row's first: K[i][j] less
+// K[i][k] K[j][k] for each k from the later of the two rows' firsts, a term a step (taPFk);
+// then the pivot. D = K[i][i], and for each j, l = K[i][j] / D_j (1/D_j from tdRD) put in
+// K[i][j]'s place and D less K[i][j] l, a j a step (taPFd). D not positive, or not over 2^-23
+// K[i][i], is a mechanism; otherwise 1/D goes to tdRD.
+taPFac,
+    local fcLoad, fcStore, fcDiag, fcPiv, fcDone, fcBi, fcFi, fcBj, fcE, fcEii, fcT, fcP
+    lac taFI
+    sad taNU            // skip while rows remain
+    jmp fcDone
+    add taFI
+    add [tdU:016]
+    dac fcP
+    lac i fcP
+    dac fcBi
+    idx fcP
+    lac i fcP
+    dac fcFi
+    dac taFJ
+taPFj,
+    lac taFJ
+    sad taFI            // skip unless the diagonal is reached
+    jmp fcDiag
+    add taFJ
+    add [tdU:016]
+    dac fcP
+    lac i fcP
+    dac fcBj
+    idx fcP
+    lac i fcP
+    dac taFK
+    sub fcFi
+    sma                 // skip if this row's first is the later
+    jmp fcLoad
+    lac fcFi
+    dac taFK
+fcLoad,
+    lac taFJ
+    add taFJ
+    add taFJ
+    add fcBi
+    dac fcE
+    jda faLd
+taPFk,
+    lac taFK
+    sad taFJ            // skip while terms remain
+    jmp fcStore
+    add taFK
+    add taFK
+    dac fcT
+    add fcBj
+    lia
+    lac fcT
+    add fcBi
+    jda fMS
+    idx taFK
+    lac [taPFk:013]
+    jmp taGo8
+fcStore,
+    lac fcE
+    jda faSt
+    idx taFJ
+    lac [taPFj:013]
+    jmp taGo
+
+fcDiag,
+    lac taFI
+    add taFI
+    add taFI
+    add fcBi
+    dac fcEii
+    jda faLd
+    lac [taD:3]
+    jda faSt
+    lac fcFi
+    dac taFJ
+taPFd,
+    lac taFJ
+    sad taFI            // skip while entries remain
+    jmp fcPiv
+    add taFJ
+    add taFJ
+    dac fcT
+    add fcBi
+    dac fcE
+    jda faLd
+    lac fcT
+    add [tdRD:016]
+    jda fbLd
+    jsp fMul
+    lac [taL:3]
+    jda faSt
+    lac [taD:3]
+    jda faLd
+    lio [taL:3]
+    lac fcE
+    jda fMS
+    lac [taD:3]
+    jda faSt
+    lac [taL:3]
+    jda faLd
+    lac fcE
+    jda faSt
+    idx taFJ
+    lac [taPFd:013]
+    jmp taGo
+
+    // The pivot's test, then 1/D.
+fcPiv,
+    lac [taD:3]
+    jda faLd
+    lac faH
+    sza i               // skip unless D is 0
+    jmp taMech
+    lac faS
+    sza                 // skip unless D is negative
+    jmp taMech
+    lac fcEii
+    jda fbLd
+    law i 0d23
+    add fbE
+    dac fbE
+    jsp fbNeg
+    jsp fAdd
+    lac faH
+    sza i               // skip unless D - 2^-23 K[i][i] is 0
+    jmp taMech
+    lac faS
+    sza                 // skip unless it is negative
+    jmp taMech
+    lac [taD:3]
+    jda faLd
+    jsp fRcp
+    lac taFI
+    add taFI
+    add taFI
+    add [tdRD:016]
+    jda faSt
+    idx taFI
+    lac [taPFac:013]
+    jmp taGo
+fcDone,
+    dzm taFI
+    lac [taPFw:013]
+    jmp taGo
+fcBi, 0
+fcFi, 0
+fcBj, 0
+fcE, 0
+fcEii, 0
+fcT, 0
+fcP, 0
+    endloc
+taFI, 0
+taFJ, 0
+taFK, 0
+
+// L y = f in place, a row at a time from taFI; y_i less K[i][k] y_k for each k from the row's
+// first, a term a step (taPFwk).
+taPFw,
+    local fwStore, fwDone, fwBi, fwY, fwT
+    lac taFI
+    sad taNU            // skip while rows remain
+    jmp fwDone
+    add taFI
+    add [tdU:016]
+    dac fwY
+    lac i fwY
+    dac fwBi
+    idx fwY
+    lac i fwY
+    dac taFK
+    lac taFI
+    add taFI
+    add taFI
+    add [tdY:016]
+    dac fwY
+    jda faLd
+taPFwk,
+    lac taFK
+    sad taFI            // skip while terms remain
+    jmp fwStore
+    add taFK
+    add taFK
+    dac fwT
+    add [tdY:016]
+    lia
+    lac fwT
+    add fwBi
+    jda fMS
+    idx taFK
+    lac [taPFwk:013]
+    jmp taGo
+fwStore,
+    lac fwY
+    jda faSt
+    idx taFI
+    lac [taPFw:013]
+    jmp taGo
+fwDone,
+    dzm taFI
+    lac [taPDg:013]
+    jmp taGo
+fwBi, 0
+fwY, 0
+fwT, 0
+    endloc
+
+// y times 1/D, a row a step.
+taPDg,
+    local dgDone, dgT, dgY
+    lac taFI
+    sad taNU            // skip while rows remain
+    jmp dgDone
+    add taFI
+    add taFI
+    dac dgT
+    add [tdY:016]
+    dac dgY
+    jda faLd
+    lac dgT
+    add [tdRD:016]
+    jda fbLd
+    jsp fMul
+    lac dgY
+    jda faSt
+    idx taFI
+    lac [taPDg:013]
+    jmp taGo
+dgDone,
+    lac taNU
+    dac taFI
+    lac [taPBk:013]
+    jmp taGo
+dgT, 0
+dgY, 0
+    endloc
+
+// L^T u = y in place, a row at a time from the last; y_k less K[i][k] y_i for each k from the
+// row's first, a term a step (taPBkk).
+taPBk,
+    local bkDone, bkBi, bkY, bkT, bkQ
+    lac taFI
+    sza i               // skip while rows remain
+    jmp bkDone
+    sub [1]
+    dac taFI
+    add taFI
+    add [tdU:016]
+    dac bkY
+    lac i bkY
+    dac bkBi
+    idx bkY
+    lac i bkY
+    dac taFK
+    lac taFI
+    add taFI
+    add taFI
+    add [tdY:016]
+    dac bkY
+taPBkk,
+    lac taFK
+    sad taFI            // skip while terms remain
+    jmp taPBk
+    add taFK
+    add taFK
+    dac bkT
+    add [tdY:016]
+    dac bkQ
+    jda faLd
+    lio bkY
+    lac bkT
+    add bkBi
+    jda fMS
+    lac bkQ
+    jda faSt
+    idx taFK
+    lac [taPBkk:013]
+    jmp taGo
+bkDone,
+    dzm taFM
+    lac [taPForce:013]
+    jmp taGo
+bkBi, 0
+bkY, 0
+bkT, 0
+bkQ, 0
+    endloc
+
+// The forces, a member at a time from taFM. Each is e . (u_B - u_A), times its stiffness when
+// that is not 1.0 (taKOf), its magnitude plus a half truncated (fRnd), the sign put back; past
+// 17 bits or TAMAXF, too large (taLarge). With an end
+// on a roller whose axis is not level (taMI), its first unknowns' part is c_B u_B - c_A u_A
+// (tdC's coefficients) in place of (u_B - u_A)_x e_x.
+taPForce,
+    local foTilt, foY, foRnd, foPlus, foStore, foU, fuZero, fuRtn, foA, foB, foE, foM, foP, foC, \
+        foK
+    lac taFM
+    sad taNM            // skip while members remain
+    jmp taOK
+    jda taKOf
+    dac foK
+    lac taFM
+    add [taJA:013]
+    dac foP
+    lac i foP
+    dac foA
+    lac taFM
+    add [taJB:013]
+    dac foP
+    lac i foP
+    dac foB
+    lac taFM
+    add taFM
+    dac foE
+    add foE
+    add foE
+    add [tdE:016]
+    dac foE
+    lac taFM
+    add [taMI:3]
+    dac foP
+    lac i foP
+    sza                 // skip unless an end is a roller on an axis not level
+    jmp foTilt
+
+    // (u_B - u_A)_x e_x, then plus (u_B - u_A)_y e_y.
+    lac i foB
+    jda foU
+    jda faLd
+    lac i foA
+    jda foU
+    jda fbLd
+    jsp fbNeg
+    jsp fAdd
+    lac foE
+    jda fbLd
+    jsp fMul
+    lac [foT:013]
+    jda faSt
+foY,
+    lac foB
+    add [TANJ+1]
+    dac foP
+    lac i foP
+    jda foU
+    jda faLd
+    lac foA
+    add [TANJ+1]
+    dac foP
+    lac i foP
+    jda foU
+    jda fbLd
+    jsp fbNeg
+    jsp fAdd
+    lac foE
+    add [3]
+    jda fbLd
+    jsp fMul
+    lac [foT:013]
+    jda fbLd
+    jsp fAdd
+    lac foK
+    sza i               // skip if a stiffness not 1.0
+    jmp foRnd
+    lac [taK:013]
+    jda fbLd
+    jsp fMul
+foRnd,
+    jsp fRnd
+    spa                 // skip unless past 17 bits
+    jmp taLarge
+    dac foM
+    sub [TAMAXF+1]
+    sma                 // skip unless past TAMAXF
+    jmp taLarge
+    lac fpSg
+    sza i               // skip if a compression
+    jmp foPlus
+    cla
+    sub foM
+    jmp foStore
+foPlus,
+    lac foM
+foStore,
+    dac foM
+    lac taFM
+    add [taF:013]
+    dac foP
+    lac foM
+    dac i foP
+    idx taFM
+    lac [taPForce:013]
+    jmp taGo
+
+    // c_B u_B - c_A u_A on the first unknowns, then on to the vertical ones' part.
+foTilt,
+    lac foE
+    sub [tdE:016]
+    add [tdC:015]
+    dac foC
+    lac i foB
+    jda foU
+    jda faLd
+    lac foC
+    add [3]
+    jda fbLd
+    jsp fMul
+    lac i foA
+    jda foU
+    dac foP
+    lio foP
+    lac foC
+    jda fMS
+    lac [foT:013]
+    jda faSt
+    jmp foY
+
+// AC = the address of unknown AC's displacement in tdY, or of zero (tdZ) when AC is -1.
+// IO preserved. Called via jda foU.
+foU, 0
+    dap fuRtn
+    lac foU
+    spa                 // skip if an unknown
+    jmp fuZero
+    add foU
+    add foU
+    add [tdY:016]
+    jmp fuRtn
+fuZero,
+    lac [tdZ:013]
+fuRtn, jmp .
+foA, 0
+foB, 0
+foE, 0
+foM, 0
+foP, 0
+foC, 0
+foK, 0
+    endloc
+taFM, 0
+
+// Member m's stiffness k, its Beam's tenths (taMK) times a tenth, to taK, when it is not 1.0,
+// which is never multiplied.
+// Entry: AC = m. Exit: AC = 0 for 1.0, else 1 with taK set. IO is clobbered; FA and FB too when
+// k is not 1.0. Called via jda taKOf.
+taKOf, 0
+    dap tkRtn
+    lac taKOf
+    add [taMK:3]
+    dac tkT
+    lac i tkT
+    and [0377777]
+    sza i               // skip unless 1.0, kept as CUNUSED alone
+    jmp tkRtn
+    jda fInt
+    lac [taTenth:013]
+    jda fbLd
+    jsp fMul
+    lac [taK:013]
+    jda faSt
+    law 1
+tkRtn, jmp .
+tkT, 0
+
+// Compare the truss's entries and their points with the snapshot, writing it anew (taSnap): each
+// Fix's and Roller's type and point, a Roller's axis (taRlD), and each Beam's and Load's type,
+// points, parameter word (a Beam's stiffness) and its points' places.
+// Exit: AC nonzero if a word, or the snapshot's length, differs. IO is clobbered. Called via jsp.
+taCheck,
+    local rtn, ckLoop, ckSup, ckLine, ckNext, ckEnd, ckPt, ckPRtn, ckNew, ckNRtn, ckE, ckN, \
+        ckW, ckS, ckDiff, ckA, ckB
+    dap rtn
+    dzm ckDiff
+    lac [taSnap:015]
+    dac ckS
+    lac [cEntries:011]
+    dac ckE
+    lac i [cCount:011]
+    sza i               // skip if the table holds entries
+    jmp ckEnd
+    cma
+    dac ckN
+ckLoop,
+    lac i ckE
+    sad [CTF]           // skip unless a Fix
+    jmp ckSup
+    sad [CTROLL]        // skip unless a Roller
+    jmp ckSup
+    sad [CTBEAM]        // skip unless a Beam
+    jmp ckLine
+    sad [CTLOAD]        // skip unless a Load
+    jmp ckLine
+ckNext,
+    lac ckE
+    add [CW]
+    dac ckE
+    isp ckN
+    jmp ckLoop
+ckEnd,
+    lac ckS
+    sas taSnapE         // skip if the snapshot's length is the same
+    dac ckDiff
+    dac taSnapE
+    lac ckDiff
+rtn, jmp .
+ckSup,
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac ckE
+    add [1]
+    dac ckW
+    lac i ckW
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac i ckE
+    sas [CTROLL]        // skip if a Roller, whose axis is its line's direction (taRlD)
+    jmp ckNext
+    lac ckE
+    jda taRlD
+    lac rlX
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac rlY
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    jmp ckNext
+ckLine,
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac ckE
+    add [1]
+    dac ckW
+    lac i ckW
+    dac ckA
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    idx ckW
+    lac i ckW
+    dac ckB
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac ckE
+    add [5]
+    dac ckW
+    lac i ckW
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac ckA
+    jda ckPt
+    lac ckB
+    jda ckPt
+    jmp ckNext
+
+// The place of point AC compared and written, x then y.
+// AC and IO are clobbered. Called via jda ckPt.
+ckPt, 0
+    dap ckPRtn
+    lac ckPt
+    add [pointX:3]
+    dac ckW
+    lac i ckW
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+    lac ckPt
+    add [pointY:3]
+    dac ckW
+    lac i ckW
+    sas i ckS           // skip if the snapshot has the word
+    jda ckNew
+    idx ckS
+ckPRtn, jmp .
+
+// The word AC, which the snapshot lacks, written to it at ckS, and the difference noted.
+// AC is clobbered, IO preserved. Called via jda ckNew.
+ckNew, 0
+    dap ckNRtn
+    lac ckNew
+    dac i ckS
+    law 1
+    dac ckDiff
+ckNRtn, jmp .
+ckE, 0
+ckN, 0
+ckW, 0
+ckS, 0
+ckDiff, 0
+ckA, 0
+ckB, 0
+    endloc
+
+// AC = the time the pass has had (since taT0) less TRUSSMS, negative while time is left.
+// IO is clobbered. Called via jsp.
+taTime,
+    dap ttRtn
+    rck
+    lai
+    sub taT0
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [TRUSSMS]
+ttRtn, jmp .
+
+
+// The readouts. taFin starts the list's writing for the analysis' state at AC (TAOK or
+// TABAD), or for Stiff mode's view (TASTIFF); taPShow waits until a frame has ended since the
+// readouts were hidden, then writes one readout a step, in the table's order: a Beam's force
+// (taF, the members in the same order) or a Load's magnitude, or three dashes for each with no
+// answer; in Stiff mode's view a Beam's stiffness, and nothing for a Load. Then UNSTABLE, with no
+// answer, and the list's halt; then the readouts are shown, and the state set, but for Stiff
+// mode's view, which is no analysis. A change of the magnifier's view writes the list again
+// from taFinGo (taRedo), not counted either.
+taFin,
+    dac roRes
+    dzm roRedo
+taFinGo,
+    dzm roOK
+    dzm roUw
+    dzm roK
+    lac [cEntries:011]
+    dac roE
+    lac i [cCount:011]
+    sza                 // skip if the table is empty, roN 0 and no entry seen
+    cma
+    dac roN
+    lac [roList:015]
+    dac roP
+    lac [taPShow:013]
+    dac taPhase
+taPShow,
+    local psNext, psBeam, psStf, psLoad, psPut, psMore, psDone, psCopy, psHalt, psT, psN
+    lac i [frameTotal:4]
+    sad roHideF         // skip unless no frame has ended since the readouts were hidden
+    jmp i taRtn
+    sub roHideF
+    sad [1]             // skip unless only one has, which may have begun before
+    jmp i taRtn
+    lac roN
+    sza i               // skip if the table holds entries
+    jmp psDone
+roLoop,
+    lac roE
+    dac roW
+    add [CW]
+    dac roE
+    lac i roW
+    sad [CTBEAM]        // skip unless a Beam
+    jmp psBeam
+    sad [CTLOAD]        // skip unless a Load
+    jmp psLoad
+psNext,
+    isp roN             // skip once every entry is seen
+    jmp roLoop
+    jmp psDone
+psBeam,
+    jsp roMid
+    lac roRes
+    sad [TASTIFF]       // skip unless Stiff mode's view
+    jmp psStf
+    lac roK
+    add [taF:013]
+    dac psT
+    idx roK
+    lac i psT
+    jmp psPut
+psStf,
+    lac roW
+    add [5]
+    dac psT
+    lac i psT
+    and [0377777]
+    sza i               // skip unless 1.0, kept as CUNUSED alone
+    law STIFFONE
+    jmp psPut
+psLoad,
+    lac roRes
+    sad [TASTIFF]       // skip unless Stiff mode's view, which shows no load
+    jmp psNext
+    jsp roMid
+    jsp roLen
+psPut,
+    dac roV
+    jsp roPut
+    isp roN             // skip once every entry is seen
+    jmp psMore
+    jmp psDone
+psMore,
+    lac [roLoop:013]
+    jmp taGo
+psDone,
+    lac roRes
+    sas [TABAD]         // skip if no answer; UNSTABLE follows the readouts
+    jmp psHalt
+    lac roP
+    dac roUw
+    lac [roUnst:013]
+    dac psT
+    law i 6
+    dac psN
+psCopy,
+    lac i psT
+    dac i roP
+    idx psT
+    idx roP
+    isp psN
+    jmp psCopy
+    jsp roGate
+psHalt,
+    lac [lpoff halt interrupt]
+    dac i roP
+    law 1
+    dac roOK
+    dac i [roOn:0]
+    lac roRedo
+    sza                 // skip unless written again for the view, no state, no analysis counted
+    jmp taStill
+    lac roRes
+    sad [TASTIFF]       // skip unless Stiff mode's view, no state, and no analysis counted
+    jmp taStill
+    dac taState
+    jmp taEnd
+psT, 0
+psN, 0
+    endloc
+
+// A change of the magnifier's view, from the view module's vwEntry. The readouts are written
+// again through it, from the state they show, with no new analysis. A list
+// written whole (roOK) is hidden and written again at the next pass that runs (taRw), counted as
+// no analysis (roRedo); a list being written starts again (taFinGo), counted or not as it was.
+// An analysis under way writes its list through the new view when it ends.
+// AC and IO are clobbered. Called via jsp i [taRedo:013].
+taRedo,
+    local rdRtn, rdAgain, rdGo
+    dac rdRtn
+    lac roOK
+    sza i               // skip if the list is written whole
+    jmp rdAgain
+    dzm roOK
+    jsp roHide
+    lac [taRw:013]
+    dac taPhase
+    jmp i rdRtn
+rdAgain,
+    lac taPhase
+    sad [taPShow:013]   // skip unless waiting to write the list
+    jmp rdGo
+    sas [roLoop:013]    // skip if writing it
+    jmp i rdRtn
+rdGo,
+    lac [taFinGo:013]
+    dac taPhase
+    jmp i rdRtn
+rdRtn, 0
+    endloc
+
+// taRedo's phase for a list written whole, the list again, not counted as an analysis.
+taRw,
+    law 1
+    dac roRedo
+    jmp taFinGo
+
+// The readouts hidden. penISR starts them no more, and taPShow will wait for a frame end, which
+// the main loop counts in frameTotal, after this pass's.
+// AC is clobbered, IO preserved. Called via jsp.
+roHide,
+    dap rhRtn
+    lac i [roOn:0]
+    sza i               // skip if the readouts are shown
+    jmp rhRtn
+    dzm i [roOn:0]
+    lac i [frameTotal:4]
+    dac roHideF
+rhRtn, jmp .
+
+// UNSTABLE's first word, when the list has it (roUw), a halt that ends the frame while the tape's
+// word is shown at the same place (msgOn), the word's parameter word otherwise. One word written
+// whole, so the display may be in the list.
+// AC is clobbered, IO preserved. Called via jsp.
+roGate,
+    local rtn, rgOn, rgSet
+    dap rtn
+    lac roUw
+    sza i               // skip if UNSTABLE is in the list
+    jmp rtn
+    lac i [msgOn:4]
+    sza i               // skip if the tape's word is shown
+    jmp rgOn
+    lac [lpoff halt interrupt]
+    jmp rgSet
+rgOn,
+    lac [STATPARAM]
+rgSet,
+    dac i roUw
+rtn, jmp .
+    endloc
+
+// The entry at roW's line, its midpoint (roMX, roMY), its ends' sums (roSX, roSY), from which
+// roPut places the readout through the view, and its vector from A to B (roDX, roDY).
+// AC and IO are clobbered. Called via jsp.
+roMid,
+    local rtn, rmA, rmB, rmT
+    dap rtn
+    lac roW
+    add [1]
+    dac rmT
+    lac i rmT
+    dac rmA
+    idx rmT
+    lac i rmT
+    dac rmB
+    lac rmA
+    add [pointX:3]
+    dac rmT
+    lac i rmT
+    dac roMX
+    lac rmB
+    add [pointX:3]
+    dac rmT
+    lac i rmT
+    dac roDX
+    add roMX
+    dac roSX
+    sar 1s
+    dac rmT
+    lac roDX
+    sub roMX
+    dac roDX
+    lac rmT
+    dac roMX
+    lac rmA
+    add [pointY:3]
+    dac rmT
+    lac i rmT
+    dac roMY
+    lac rmB
+    add [pointY:3]
+    dac rmT
+    lac i rmT
+    dac roDY
+    add roMY
+    dac roSY
+    sar 1s
+    dac rmT
+    lac roDY
+    sub roMY
+    dac roDY
+    lac rmT
+    dac roMY
+rtn, jmp .
+rmA, 0
+rmB, 0
+rmT, 0
+    endloc
+
+// AC = ten times the length of (roDX, roDY), the load's magnitude. It is the root of the sum of
+// the tenfold parts' squares by Newton's steps, five, from the larger part plus half the smaller,
+// which is no less than the root, so the steps come down to it. Each quotient is at most a part,
+// so no division overflows; a line of no length gives 0.
+// IO is clobbered. Called via jsp.
+roLen,
+    local rtn, rlV, rlG, rlStep, rlA, rlB, rlQ, rlI
+    dap rtn
+    lac roDX
+    spa
+    cma
+    dac rlA
+    sal 2s
+    add rlA
+    sal 1s
+    dac rlA
+    lac roDY
+    spa
+    cma
+    dac rlB
+    sal 2s
+    add rlB
+    sal 1s
+    dac rlB
+    lac rlA
+    sub rlB
+    spa                 // skip unless the vertical part is the larger
+    jmp rlV
+    lac rlB
+    sar 1s
+    add rlA
+    jmp rlG
+rlV,
+    lac rlA
+    sar 1s
+    add rlB
+rlG,
+    dac rlQ
+    sza i               // skip unless the line has no length
+    jmp rtn
+    law i 5
+    dac rlI
+rlStep,
+    lac rlA
+    mul rlA
+    div rlQ
+    cla                 // no skip is overflow, which no quotient here can make
+    dac roV
+    lac rlB
+    mul rlB
+    div rlQ
+    cla                 // no skip is overflow
+    add roV
+    add rlQ
+    sar 1s
+    dac rlQ
+    isp rlI
+    jmp rlStep
+    lac rlQ
+rtn, jmp .
+rlA, 0
+rlB, 0
+rlQ, 0
+rlI, 0
+    endloc
+
+// A readout at roP, beside its line's midpoint (roMX, roMY) and clear of the line (roDX, roDY).
+// It is its parameter, y and x words, then its characters three to a word, ending in the end
+// code. The characters are roV in decimal, a minus sign first when negative, leading zeros
+// suppressed, or with no answer (roRes) three dashes; in Stiff mode's view roV is tenths, written
+// as 2.5, or 2 when the tenths are 0. Characters at the labels' size step 14 units and stand 13
+// high, so n of them are 14n - 5 wide. Kept inside the screen.
+// AC and IO are clobbered. Called via jsp.
+roPut,
+    local rtn, rpDash, rpNum, rpTen, rpMag, rpDiv, rpOut, rpPos, rpSteep, rpFlatY, rpClamp, \
+        rpXOK, rpYOK, rpPack, rpNext, rpFlush, rpChar, rcRtn, rpD, rpE, rpC, rpN, rpT, rpX, rpY, \
+        rpW, rpJ, rpA, rpB, rpF
+    dap rtn
+    lac [roBuf:013]
+    dac rpE
+    dzm rpN
+    dzm rpF
+    lac roRes
+    sad [TAOK]          // skip unless the forces are known
+    jmp rpNum
+    sad [TASTIFF]       // skip unless Stiff mode's view
+    jmp rpTen
+rpDash,
+    law 055
+    jda rpChar
+    law 055
+    jda rpChar
+    law 055
+    jda rpChar
+    jmp rpPos
+rpNum,
+    lac roV
+    sma                 // skip if negative, for a minus sign first
+    jmp rpMag
+    law 055
+    jda rpChar
+    lac roV
+    cma
+    dac roV
+    jmp rpMag
+rpTen,
+    lac roV
+    mul [1]
+    div [0d10]
+    cla                 // no skip is overflow, which a division by 10 cannot make
+    dac roV
+    dio rpF
+rpMag,
+    lac [roDig:013]
+    dac rpD
+rpDiv,
+    lac roV
+    mul [1]
+    div [0d10]
+    cla                 // no skip is overflow, which a division by 10 cannot make
+    dac roV
+    dio i rpD
+    idx rpD
+    lac roV
+    sza                 // skip once the digits are all found
+    jmp rpDiv
+rpOut,
+    law i 1
+    add rpD
+    dac rpD
+    lac i rpD
+    add [060]
+    jda rpChar
+    lac rpD
+    sas [roDig:013]     // skip once the first digit is out
+    jmp rpOut
+    lac rpF
+    sza i               // skip if a tenths digit follows
+    jmp rpPos
+    law KCDOT
+    jda rpChar
+    lac rpF
+    add [060]
+    jda rpChar
+
+    // Where. The midpoint on the screen, through the view, is the ends' sum shifted by the
+    // scale, halved, less the offset; no readout when it is off the screen or above the view's
+    // top. The rest in screen units, a readout keeping its size; the slope's terms are ratios,
+    // the same at every scale. Over a flat line (|dx| >= |dy|), centered on x, its bottom ROGAP
+    // above the line's highest point under it, which is |dy| (7n - 2) / |dx| above the midpoint
+    // at the readout's left or right end; beside a steep line, its middle row at the midpoint's
+    // height and its left ROGAP right of the line's farthest point beside it, 7 |dx| / |dy| right
+    // of the midpoint. A line of no length (dashes only) has no rise. Each quotient is at most
+    // its multiplier, so no division overflows; truncation and the midpoint's halving lose under
+    // 2 units of ROGAP. Then kept inside the screen, under the view's top.
+rpPos,
+    lac i [vwSal:014]
+    dac rpT
+    lac roSX
+    xct rpT
+    sar 1s
+    sub i [vwOutX:014]
+    dac roMX
+    spa                 // skip unless left of the screen
+    jmp rtn
+    sub [0d1024]
+    sma                 // skip unless past its right edge
+    jmp rtn
+    lac roSY
+    xct rpT
+    sar 1s
+    sub i [vwOutY:014]
+    dac roMY
+    spa                 // skip unless below the screen
+    jmp rtn
+    sub i [vwTopP:014]
+    sma                 // skip unless past the view's top
+    jmp rtn
+    lac rpN
+    sal 3s
+    sub rpN
+    dac rpT             // 7n
+    lac roDX
+    spa
+    cma
+    dac rpA             // |dx|
+    lac roDY
+    spa
+    cma
+    dac rpB             // |dy|
+    lac rpA
+    sub rpB
+    spa                 // skip unless the line is steep (|dx| - |dy| negative; equals give +0)
+    jmp rpSteep
+    lac rpA
+    sza i               // skip unless the line has no length
+    jmp rpFlatY
+    lac rpT
+    sub [2]
+    mul rpB
+    div rpA
+    cla                 // no skip is overflow, which no quotient here can make
+rpFlatY,
+    add roMY
+    add [ROGAP]
+    dac rpY
+    lac roMX
+    sub rpT
+    add [2]
+    dac rpX
+    jmp rpClamp
+rpSteep,
+    law 7
+    mul rpA
+    div rpB
+    cla                 // no skip is overflow, which no quotient here can make
+    add roMX
+    add [ROGAP]
+    dac rpX
+    lac roMY
+    sub [6]
+    dac rpY
+rpClamp,
+    lac rpX
+    spa                 // skip unless past the left edge
+    cla
+    dac rpX
+    lac rpT
+    sal 1s
+    cma
+    add [0d1023]
+    dac rpT
+    sub rpX
+    sma                 // skip if past the right edge's limit
+    jmp rpXOK
+    lac rpT
+    dac rpX
+rpXOK,
+    lac rpY
+    spa                 // skip unless past the bottom edge
+    cla
+    dac rpY
+    lac i [vwTop:014]
+    sub [0d14]
+    dac rpT             // the top's limit, the readout's height under the view's top
+    sub rpY
+    sma                 // skip if past the top's limit
+    jmp rpYOK
+    lac rpT
+    dac rpY
+rpYOK,
+    lac [STATPARAM]
+    dac i roP
+    idx roP
+    lac rpY
+    ior [y(0) next(point)]
+    dac i roP
+    idx roP
+    lac rpX
+    ior [x(0) next(character)]
+    dac i roP
+    idx roP
+
+    // The characters and the end code, three to a word, the last word's unused places 0.
+    law 037
+    jda rpChar
+    lac [roBuf:013]
+    dac rpC
+    dzm rpW
+    dzm rpJ
+rpPack,
+    lac rpW
+    ral 6s              // rotated, since sal keeps the sign bit, a first code's 040
+    ior i rpC
+    dac rpW
+    idx rpC
+    idx rpJ
+    sas [3]             // skip once the word is full
+    jmp rpNext
+    lac rpW
+    dac i roP
+    idx roP
+    dzm rpW
+    dzm rpJ
+rpNext,
+    lac rpC
+    sas rpE             // skip once every character is packed
+    jmp rpPack
+    lac rpJ
+    sza i               // skip if a word is part filled
+    jmp rtn
+rpFlush,
+    lac rpW
+    ral 6s
+    dac rpW
+    idx rpJ
+    sas [3]             // skip once the word is full
+    jmp rpFlush
+    lac rpW
+    dac i roP
+    idx roP
+rtn, jmp .
+
+// Character AC added to the buffer, and counted.
+// AC is clobbered, IO preserved. Called via jda rpChar.
+rpChar, 0
+    dap rcRtn
+    lac rpChar
+    dac i rpE
+    idx rpE
+    idx rpN
+rcRtn, jmp .
+rpD, 0
+rpE, 0
+rpC, 0
+rpN, 0
+rpT, 0
+rpX, 0
+rpY, 0
+rpW, 0
+rpJ, 0
+rpA, 0
+rpB, 0
+rpF, 0
+    endloc
+
+// The readouts' state: nonzero while the list holds the truss as it is (roOK); frameTotal when
+// they were last hidden (roHideF); the state being written for (roRes); UNSTABLE's first word,
+// or 0 (roUw); the next entry, the entries left (negated, for isp) and the members passed
+// (roE, roN, roK); the next word written (roP); the entry being written, its value, midpoint,
+// ends' sums and vector (roW, roV, roMX, roMY, roSX, roSY, roDX, roDY); nonzero in Stiff mode's
+// view (roSt, taView); nonzero while the list is written again for a change of the magnifier's
+// view, not counted as an analysis (roRedo, taRedo).
+roOK, 0
+roHideF, 0
+roRes, 0
+roUw, 0
+roE, 0
+roN, 0
+roK, 0
+roP, 0
+roW, 0
+roV, 0
+roMX, 0
+roMY, 0
+roSX, 0
+roSY, 0
+roDX, 0
+roDY, 0
+roSt, 0
+roRedo, 0
+
+// A readout's characters, at most a sign, five digits and the end code; its digits, least
+// significant first.
+roBuf,
+    table 0d8, 0
+roDig,
+    table 6, 0
+
+// UNSTABLE under the bar's right, the status word's place, copied after the readouts with no
+// answer.
+roUnst, STATPARAM
+    y(STATY) next(point)
+    x(STATX) next(character)
+    type340 "UNSTABLE"

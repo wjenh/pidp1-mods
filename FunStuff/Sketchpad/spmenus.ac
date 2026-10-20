@@ -1,0 +1,868 @@
+// spmenus.ac -- the menus. A menu or list hit, the highlight and the Select box, opening,
+// painting and closing lists and sublists, a row's action, the bar's Stop and Locate, Misc's
+// Save, Load, Drive and Dir rows, and the pen keyboard's opening.
+//
+// Bank 4, after spmain.ac. Needs sketchpad.ah's defines and spdispatch.ac's descriptors.
+// Part of sketchpad.am1, included where it stands.
+
+// A hit in the menu region, the bar or, below it, the open list. A bar column comes from the raw
+// x. A column fires when the pen comes to it from another column, or when penISR saw REARM
+// frame ends with no menu hit before this one, so a pen resting on a label fires it once
+// however far behind the main loop runs. With a list open, another column closes it before
+// acting; the list's column is passed over on the way in, and a fresh press there cancels.
+// While the pen keyboard is open every hit is its (kbKey); when it closes, tracking comes back
+// if it was on, and the caller's resume runs, IO 1 for OK or 0 for Cancel. Otherwise listFresh
+// says whether the hit begins a press, KBGAPMS having passed with no menu hit, for the Select
+// box (onListHit).
+// Entry: sMenuX, sMenuY = raw position of the latest hit; sMenuArmed; now = the clock. AC and
+// IO are clobbered. Called via jsp.
+onMenuHit,
+    local rtn, fire, bar, fresh, own, mhCol, mhPtr, mhCall, mhKey
+    dap rtn
+    lac i [kbOn:0]
+    sza                 // skip unless the pen keyboard is open
+    jmp mhKey
+    lac lastMenuMs
+    jda elapsed
+    sub [KBGAPMS]
+    dac listFresh
+    lac now
+    dac lastMenuMs
+    lac i [sMenuY:0]
+    sub [BARYMIN]
+    sma                 // skip if below the bar (penISR's test), a hit in the open list
+    jmp bar
+    jsp onListHit
+    jmp rtn
+bar,
+    lac i [sMenuX:0]
+    sar 7s              // 0 to 7, since penISR's x is 0 to 01776
+    dac mhCol
+    lac i [listOpen:0]
+    sza i               // skip if a list is open
+    jmp fresh
+    lac mhCol
+    sad openCol         // skip unless it is the open list's column
+    jmp own
+fresh,
+    lac i [sMenuArmed:0]
+    sza                 // skip unless this is a fresh press
+    jmp fire
+    lac mhCol
+    sad lastMenuCol     // skip if the pen moved to another column
+    jmp rtn
+fire,
+    lac i [listOpen:0]
+    sza                 // skip unless a list is open
+    jsp closeNone
+    lac mhCol
+    dac lastMenuCol
+    dac lastAction
+    idx fireCount
+    lac mhCol
+    add [barTable:3]
+    dac mhPtr
+    lac i mhPtr
+    dap mhCall
+mhCall, jsp .
+    jmp rtn
+mhKey,
+    jsp i [kbKey:014]
+    sza i               // skip if the keyboard closed; AC is its caller's resume, IO the answer
+    jmp rtn
+    dac mhPtr
+    dio mhCol
+    lac kbTrk
+    sza                 // skip unless tracking was on when the keyboard opened
+    jsp trackOn
+    lio mhCol
+    jsp i mhPtr
+    jmp rtn
+own,
+    lac i [sMenuArmed:0]
+    sza i               // skip on a fresh press
+    jmp rtn
+    jsp closeNone
+rtn, jmp .
+mhCol, 0
+mhPtr, 0
+    endloc
+
+// A hit below the bar while a list is open, told apart by x. On the list's rows, highlight the
+// row found from y, which opens its sublist if it owns one; right of them with a sublist open,
+// on the sublist's rows, highlight the one found from y. A row that cannot act (sprows.ac's
+// rowCan) lights none, putting out any lit, so a row owning a sublist that cannot act opens
+// none. From the sublist's edge on (its descriptor's DESCEDGE word), or from the list's edge on
+// (its descriptor's, right of its rows) with no sublist open, the Select box acts on the
+// highlighted row, but only at a press's first hit, so a pen slid onto it from a row, or carried
+// there with the target, must lift first. A hit drawn just before the list closed is dropped.
+// Entry: sMenuX, sMenuY = raw hit position; listFresh. AC and IO are clobbered. Called via jsp.
+onListHit,
+    local rtn, lhBox, rows, lhSubs, lhCan, lcRtn, lhRow, lhPtr
+    dap rtn
+    lac i [listOpen:0]
+    sza i               // skip if a list is open
+    jmp rtn
+    lac openDesc
+    add [DESCEDGE]
+    dac lhPtr
+    lac i [sMenuX:0]
+    sub i lhPtr
+    spa                 // skip if at or past the list's edge, right of its rows
+    jmp rows
+    lac subDesc
+    sza i               // skip if a sublist is open
+    jmp lhBox
+    add [DESCEDGE]
+    dac lhPtr
+    lac i [sMenuX:0]
+    sub i lhPtr
+    spa                 // skip if at or past the sublist's edge (its Select box)
+    jmp lhSubs
+lhBox,
+    lac listFresh
+    spa                 // skip if the hit begins a press, the pen lifted before it
+    jmp rtn
+    jsp selectRow
+    jmp rtn
+rows,
+    dzm roFirst
+    lac openRows
+    dac roRows
+    lac i [sMenuY:0]
+    jda rowOf
+    dac lhRow
+    sub openRows
+    sma                 // skip if the hit is on a row
+    jmp rtn
+    lac openBase
+    jda lhCan
+    sad hiRow           // skip if the row is not the highlighted one already
+    jmp rtn
+    jda setHighlight
+    jmp rtn
+lhSubs,
+    lac subFirst
+    dac roFirst
+    lac subRows
+    dac roRows
+    lac i [sMenuY:0]
+    jda rowOf
+    dac lhRow
+    sub subRows
+    sma                 // skip if the hit is on a row of the sublist
+    jmp rtn
+    lac subBase
+    jda lhCan
+    sad subHi           // skip if the row is not the highlighted one already
+    jmp rtn
+    jda setSubHi
+rtn, jmp .
+
+// Row lhRow of the list whose first item is AC, or NOROW, written to lhRow, if it cannot act.
+// Entry: AC = the list's first item; lhRow. Exit: AC = lhRow. IO is clobbered. Called via jda.
+lhCan, 0
+    dap lcRtn
+    lac lhCan
+    add lhRow
+    dac i [rowItem:7]
+    jsp i [rowCan:7]
+    lio lhRow
+    spa                 // skip if the row can act
+    lio [NOROW]
+    dio lhRow
+    lac lhRow
+lcRtn, jmp .
+lhRow, 0
+lhPtr, 0
+    endloc
+
+// The row holding a y in a list of roRows rows whose first takes band roFirst of rowThr, the
+// first row whose band starts at or below it.
+// Entry: AC = y; roFirst, roRows. Exit: AC = the row, counted from the list's first, NOROW when
+// below every row. IO is preserved. Called via jda.
+rowOf, 0
+    local rtn, roLoop, roNext, roNone, roIdx, roPtr
+    dap rtn
+    dzm roIdx
+    lac [rowThr:3]
+    add roFirst
+    dac roPtr
+roLoop,
+    lac roIdx
+    sad roRows          // skip while rows remain
+    jmp roNone
+    lac rowOf
+    sub i roPtr
+    spa                 // skip if at or above this row's band start (this row)
+    jmp roNext
+    lac roIdx
+    jmp rtn
+roNext,
+    idx roIdx
+    idx roPtr
+    jmp roLoop
+roNone,
+    lac [NOROW]
+rtn, jmp .
+roIdx, 0
+roPtr, 0
+    endloc
+
+// Highlight a row of the open list, returning the one lit before to normal, open the row's
+// sublist, if it owns one, in place of any other, and only then place the list's Select box,
+// beside the row, or hidden for NOROW (as closeList leaves it) and for a row whose sublist
+// opened, which carries its box. Shown first, the box would stand where the sublist's first
+// row goes until subOpen moved the tail word past it, and a frame could draw it there.
+// Entry: AC = the row, or NOROW to light none. AC and IO are clobbered. Called via jda.
+setHighlight, 0
+    local rtn, shOld, shBox, shPlace
+    dap rtn
+    lac hiRow
+    dac shOld
+    lac setHighlight
+    dac hiRow
+    lac shOld
+    jda paintRow
+    lac hiRow
+    jda paintRow
+    jsp subClose
+    lac hiRow
+    jda subOpen
+    lac openDesc        // after subOpen and subClose, whose subBox sets these for the sublist
+    dac pbDesc
+    dzm pbFirst
+    lac hiRow
+    dac shBox
+    lac subDesc
+    sza i               // skip if the row's sublist opened
+    jmp shPlace
+    lac [NOROW]
+    dac shBox
+shPlace,
+    lac shBox
+    dac i [placeBox:014] // bank 12's
+    jsp i [placeBox:014+1]
+rtn, jmp .
+shOld, 0
+shBox, 0
+    endloc
+
+// Highlight a row of the open sublist, returning the one lit before to normal, and move its
+// Select box beside it (hidden for NOROW).
+// Entry: AC = the row, or NOROW to light none. AC and IO are clobbered. Called via jda.
+setSubHi, 0
+    local rtn, ssOld
+    dap rtn
+    lac subHi
+    dac ssOld
+    lac setSubHi
+    dac subHi
+    lac ssOld
+    jda paintSub
+    lac subHi
+    jda paintSub
+    jsp subBox
+rtn, jmp .
+ssOld, 0
+    endloc
+
+// The open sublist's Select box beside its highlighted row, or hidden beside its first when none
+// is. AC and IO are clobbered. Called via jsp.
+subBox,
+    local rtn
+    dap rtn
+    lac subDesc
+    dac pbDesc
+    lac subFirst
+    dac pbFirst
+    lac subHi
+    dac i [placeBox:014] // bank 12's
+    jsp i [placeBox:014+1]
+rtn, jmp .
+    endloc
+
+// Open a row's sublist, if the row owns one. Every row is painted normal, none highlighted, then
+// the list's tail word pointed at it, last, since only then can the display reach it.
+// Entry: AC = a row of the open list, or NOROW. AC and IO are clobbered. Called via jda.
+subOpen, 0
+    local rtn, soRows, soShow, soPtr, soIdx
+    dap rtn
+    lac subOpen
+    sub openRows
+    sma                 // skip if the list has the row
+    jmp rtn
+    lac openDesc
+    add [DESCSUBS]
+    dac soPtr
+    lac i soPtr
+    sza i               // skip if a row of the list owns a sublist
+    jmp rtn
+    add subOpen
+    dac soPtr
+    lac i soPtr
+    sza i               // skip if this row owns one
+    jmp rtn
+    dac subDesc
+    lac subOpen
+    dac subFirst
+    lac subDesc
+    add [1]
+    dac soPtr
+    lac i soPtr
+    dac subRows
+    idx soPtr
+    lac i soPtr
+    dac subBase
+    lac [NOROW]
+    dac subHi
+    dzm soIdx
+soRows,
+    lac soIdx
+    jda paintSub
+    idx soIdx
+    sad subRows         // skip while rows remain
+    jmp soShow
+    jmp soRows
+soShow,
+    jsp subBox
+    lac openDesc
+    add [DESCTAIL]
+    dac soPtr
+    lac i soPtr
+    dac soPtr
+    lac i subDesc
+    ior [jump next(parameter)]
+    dac i soPtr
+rtn, jmp .
+soPtr, 0
+soIdx, 0
+    endloc
+
+// Close the open sublist, if any. First the list's tail word goes back to the lists' Select box,
+// so the display no longer reaches the sublist; then the sublist's box is hidden beside its first
+// row. A closed list's box words are so as assembled. AC and IO are clobbered. Called via jsp.
+subClose,
+    local rtn, scPtr
+    dap rtn
+    lac subDesc
+    sza i               // skip if a sublist is open
+    jmp rtn
+    lac openDesc
+    add [DESCTAIL]
+    dac scPtr
+    lac i scPtr
+    dac scPtr
+    lac [jump listBox:0 next(parameter)]
+    dac i scPtr
+    lac [NOROW]
+    dac subHi
+    jsp subBox          // its box hidden beside its first row, as assembled
+    dzm subDesc
+rtn, jmp .
+scPtr, 0
+    endloc
+
+// Write a row's parameter word from the state, lit if it is the highlighted row, normal
+// otherwise; a row the list does not have (NOROW among them) is ignored. paintRow paints the
+// open list's rows, paintSub the open sublist's.
+// Entry: AC = the row. AC and IO are clobbered. Called via jda.
+paintRow, 0
+    local rtn
+    dap rtn
+    lac openDesc
+    dac pdDesc
+    lac openRows
+    dac pdRows
+    lac hiRow
+    dac pdHi
+    lac paintRow
+    jda paintAny
+rtn, jmp .
+    endloc
+
+paintSub, 0
+    local rtn
+    dap rtn
+    lac subDesc
+    dac pdDesc
+    lac subRows
+    dac pdRows
+    lac subHi
+    dac pdHi
+    lac paintSub
+    jda paintAny
+rtn, jmp .
+    endloc
+
+// paintRow's and paintSub's work, on the list pdDesc of pdRows rows, pdHi the lit one. A row
+// is dim, not normal, while it cannot act, and Define's row of an empty slot too, though it acts
+// (sprows.ac's rowCan); Constr's Show row is lit while Show is on, and Truss's Forces row while
+// Forces is.
+// Entry: AC = the row. AC and IO are clobbered. Called via jda.
+paintAny, 0
+    local rtn, prLit, prDim, prTruss, prTog, prPlain, prStore, prWord, prPtr
+    dap rtn
+    lac paintAny
+    sub pdRows
+    sma                 // skip if the list has the row
+    jmp rtn
+    lac paintAny
+    sad pdHi            // skip if not the highlighted row
+    jmp prLit
+    lac pdDesc
+    add [DESCITEM]
+    dac prPtr
+    lac i prPtr
+    add paintAny
+    dac i [rowItem:7]
+    jsp i [rowCan:7]
+    sma                 // skip if the row cannot act
+    sza i               // skip if it acts, drawn normal
+    jmp prDim
+    lac pdDesc
+    sad [descTruss:3]   // skip unless Truss's rows
+    jmp prTruss
+    sas [descConstr:3]  // skip if Constr's rows
+    jmp prPlain
+    lac paintAny
+    sas [SHOWROW]       // skip if the Show row
+    jmp prPlain
+    lac showOn
+    jmp prTog
+prTruss,
+    lac paintAny
+    sas [FORCESROW]     // skip if the Forces row
+    jmp prPlain
+    lac forcesOn
+prTog,
+    sza                 // skip unless the row's toggle is on
+    jmp prLit
+prPlain,
+    lac [LBLNORM]
+    jmp prStore
+prDim,
+    lac [LBLDIM]
+    jmp prStore
+prLit,
+    lac [LBLLIT]
+prStore,
+    dac prWord
+    lac pdDesc
+    add [DESCROWS]
+    add paintAny
+    dac prPtr
+    lac i prPtr
+    dac prPtr
+    lac prWord
+    dac i prPtr
+rtn, jmp .
+prWord, 0
+prPtr, 0
+    endloc
+
+// For Draw, Edit and Picture, open the column's list. Any other list was closed on the way here.
+// Tracking goes off while the list is open, so only the list is pen-sensitive below the bar,
+// and the frame ends after the menu. The light pen's aperture is set to LISTAPERTURE before
+// the display can reach the list, so its closer rows are never hit together.
+// Entry: lastAction = the column; now = the clock. AC and IO are clobbered. Called via jsp.
+actOpen,
+    local rtn, aoRows, aoShow, aoPtr, aoJump, aoIdx
+    dap rtn
+    lac lastAction
+    add [barList:3]
+    dac aoPtr
+    lac i aoPtr
+    dac openDesc
+    lac i openDesc
+    ior [jump next(parameter)]
+    dac aoJump
+    lac openDesc
+    add [1]
+    dac aoPtr
+    lac i aoPtr
+    dac openRows
+    idx aoPtr
+    lac i aoPtr
+    dac openBase
+    jsp i [rowCensus:6] // what the rows act on, for this list and its sublists
+
+    // Every row normal, or dim if it cannot act, since a list keeps its words from the last
+    // time it was open.
+    lac [NOROW]
+    dac hiRow
+    dzm aoIdx
+aoRows,
+    lac aoIdx
+    jda paintRow
+    idx aoIdx
+    sad openRows        // skip while rows remain
+    jmp aoShow
+    jmp aoRows
+aoShow,
+    lac openDesc
+    dac pbDesc
+    dzm pbFirst
+    lac [NOROW]
+    dac i [placeBox:014] // bank 12's
+    jsp i [placeBox:014+1]
+    lac i [tracking:0]
+    dac trkSaved
+    jsp trackOff
+    lac lastAction
+    dac openCol
+    law 1
+    dac i [listOpen:0]
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [drawJmp:0]
+    lio [LISTAPERTURE]
+    dpy-i LIGHTPEN
+    lac aoJump          // last, since only now can the display reach the list
+    dac i [menuJmp:0]
+    lac openCol
+    jda paintLabel
+rtn, jmp .
+aoPtr, 0
+aoJump, 0
+aoIdx, 0
+    endloc
+
+// The Select box. Count the highlighted row's item, flash the list's bar item, close the list,
+// then run the item's action, which so sees tracking as the closed list left it. The row is the
+// open sublist's when one is open, otherwise the list's; a row that owns a sublist has it open
+// while lit, so is never acted on itself. With no row highlighted it does nothing, and likewise
+// on a row that cannot act (sprows.ac's rowCan), the list staying open; that is a guard, since
+// onListHit lights no such row.
+// AC and IO are clobbered. Called via jsp.
+selectRow,
+    local rtn, srList, srItem, srCall, srPtr
+    dap rtn
+    lac subDesc
+    sza i               // skip if a sublist is open
+    jmp srList
+    lac subHi
+    sub subRows
+    sma                 // skip if a row of the sublist is highlighted
+    jmp rtn
+    lac subBase
+    add subHi
+    jmp srItem
+srList,
+    lac hiRow
+    sub openRows
+    sma                 // skip if a row is highlighted
+    jmp rtn
+    lac openBase
+    add hiRow
+srItem,
+    dac i [rowItem:7]
+    jsp i [rowCan:7]
+    spa                 // skip if the row can act
+    jmp rtn
+    lac i [rowItem:7]
+    dac lastItem
+    add [itemCount:3]
+    dac srPtr
+    idx i srPtr
+    idx selectCount
+    lac openCol
+    jda flashLabel
+    jsp closeList
+    lac lastItem
+    add [itemAct:3]
+    dac srPtr
+    lac i srPtr
+    dap srCall
+srCall, jsp .
+rtn, jmp .
+srPtr, 0
+    endloc
+
+// Close the open list with nothing acted on, at a cancel, another bar item, or LISTIDLEMS with
+// no menu hit. AC and IO are clobbered. Called via jsp.
+closeNone,
+    local rtn
+    dap rtn
+    idx closeCount
+    jsp closeList
+rtn, jmp .
+    endloc
+
+// Close the open list. The frame steps over it again and draws the drawing, its highlight and
+// any sublist go, its bar item is repainted, the aperture is APERTURE again, and tracking comes
+// back if the list turned it off.
+// AC and IO are clobbered. Called via jsp.
+closeList,
+    local rtn, clCol
+    dap rtn
+    lac [jump menuEnd:0 next(parameter)]
+    dac i [menuJmp:0]
+    lac [jump drawList:1 next(parameter)]
+    dac i [drawJmp:0]
+    dzm i [listOpen:0]
+    lio [APERTURE]
+    dpy-i LIGHTPEN
+    lac [NOROW]
+    jda setHighlight
+    lac openCol
+    dac clCol
+    lac [NBAR]
+    dac openCol
+    lac clCol
+    jda paintLabel
+    lac trkSaved
+    sza                 // skip unless tracking was on when the list opened
+    jsp trackOn
+rtn, jmp .
+clCol, 0
+    endloc
+
+// Stop. Flash the label, end the gesture in progress as Locate does (modeLocate), and leave the
+// mode for Locate's. Idle and Locate's mode stay as they are.
+// Entry: lastAction = the column. AC and IO are clobbered. Called via jsp.
+actStop,
+    local rtn, spCall, spPtr
+    dap rtn
+    lac lastAction
+    jda flashLabel
+    lac mode
+    add [modeLocate:3]
+    dac spPtr
+    lac i spPtr
+    dap spCall
+spCall, jsp .
+    lac mode
+    sad [MIDLE]         // skip unless idle
+    jmp rtn
+    sas [MLOCATE]       // skip if Locate's mode
+    jsp leaveDraw
+rtn, jmp .
+spPtr, 0
+    endloc
+
+// Locate. Idle or in Locate's mode, end any chain being drawn, bring the target to the middle of
+// the canvas and turn tracking on. In another mode, flash the label, bring the target to the
+// middle only if tracking is off, and end the gesture under way (modeLocate), the mode staying.
+// Entry: lastAction = the column. AC and IO are clobbered. Called via jsp.
+actLocate,
+    local rtn, alCall, alPtr, alHome
+    dap rtn
+    lac mode
+    sad [MIDLE]         // skip unless idle
+    jmp alHome
+    sad [MLOCATE]       // skip unless Locate's mode
+    jmp alHome
+    lac lastAction
+    jda flashLabel
+    lac i [tracking:0]
+    sza i               // skip if tracking is on
+    jsp placeTarget
+    lac mode
+    add [modeLocate:3]
+    dac alPtr
+    lac i alPtr
+    dap alCall
+alCall, jsp .
+    jmp rtn
+alHome,
+    jsp endChain
+    jsp placeTarget
+    lac [CLOCATE]
+    dac newCol
+    law MLOCATE
+    jda setMode
+rtn, jmp .
+alPtr, 0
+    endloc
+
+// Open the pen keyboard (spkbd.ac) on a caller's block, tracking off while it is open; onMenuHit
+// turns it back on, if it was, when the keyboard closes, before the caller's resume.
+// Entry: AC = the block's 16-bit address. AC and IO are clobbered. Called via jda.
+kbStart, 0
+    dap ksRtn
+    lac i [tracking:0]
+    dac kbTrk
+    jsp trackOff
+    lio kbStart
+    jsp i [kbOpen:014]
+ksRtn, jmp .
+kbTrk, 0
+
+// Misc's Save, Load and Dir rows. Read the tape's directory from the drive in use (TEDIR), then
+// open the directory's screen on the tape module's block for the row, Save's and Load's picker
+// (tpSvPick, tpLdPick), on which a line picks a picture, or Dir's (tpDirBlk), which only shows
+// them. Each opens nothing if the read fails, whose word tapeCall shows. AC and IO are
+// clobbered. Called via jsp.
+actSave,
+    local rtn, atOpen, atBlk
+    dap rtn
+    lio [tpSvPick:6]
+    jmp atOpen
+actLoad,
+    dap rtn
+    lio [tpLdPick:6]
+    jmp atOpen
+actDir,
+    dap rtn
+    lio [tpDirBlk:6]
+atOpen,
+    dio atBlk
+    law TEDIR
+    jda tapeCall
+    lac tapeResult
+    sas [TSOPEN]        // skip if the read succeeded
+    jmp rtn
+    lac atBlk
+    jda kbStart
+rtn, jmp .
+atBlk, 0
+    endloc
+
+// When Save's picker closes, a picture picked (the keyboard's kbPick) is the one saved; the tape
+// module writes its name from the directory into tpName as the keyboard's starting value
+// (tpPickName), and the keyboard opens on it (tpSvBlk), whose OK saves (svDone). Cancel does
+// nothing. When Load's picker closes, a picture picked is loaded (tapeCall); Cancel loads
+// nothing.
+// Entry: IO = 1 for a pick, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from
+// onMenuHit.
+svPick,
+    dap spRtn
+    lai
+    sza i               // skip if a picture was picked
+    jmp spRtn
+    lac i [kbPick:014]
+    dac tapePic
+    jsp i [tpPickName:6]
+    lac [tpSvBlk:6]
+    jda kbStart
+spRtn, jmp .
+ldPick,
+    dap lpRtn
+    lai
+    sza i               // skip if a picture was picked
+    jmp lpRtn
+    lac i [kbPick:014]
+    dac tapePic
+    law TELOAD
+    jda tapeCall
+lpRtn, jmp .
+
+// When Save's keyboard closes, OK saves the picture picked under the name typed, which the
+// keyboard wrote into the tape module's tpName; Cancel saves nothing.
+// Entry: IO = 1 for OK, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from onMenuHit.
+svDone,
+    dap sdRtn
+    lai
+    sza i               // skip if OK
+    jmp sdRtn
+    law TESAVE
+    jda tapeCall
+sdRtn, jmp .
+
+// Change's Dwell and Seq rows. Open the number keyboard on the block the instance module gives
+// for the row (instKbOpen), the mode staying. The keyboard's resume, ckDone, gives the instance
+// module the answer (instKbDone) and opens the keyboard again on the block it gives back,
+// Dwell's for the next master, or on none.
+// Entry: lastItem = the item; at ckDone, IO = 1 for OK, 0 for Cancel. AC and IO are clobbered.
+// actCyKb is called via jsp; ckDone via jsp i, from onMenuHit.
+actCyKb,
+    dap ckRtn
+    lac lastItem
+    lio [IEKBOPEN]
+    jmp ckCall
+ckDone,
+    dap ckRtn
+    lai
+    lio [IEKBDONE]
+ckCall,
+    jda instCall
+    sza                 // skip with no block
+    jda kbStart
+ckRtn, jmp .
+
+// When Stiff's keyboard closes, the instance module reads the text typed (instStDone), and a
+// stiffness it takes is the member's (the constraint module's cStSet), which clears Undo's
+// record, as Size does.
+// Entry: IO = 1 for OK, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from onMenuHit.
+stDone,
+    dap sdkRtn
+    lai
+    lio [IESTDONE]
+    jda instCall
+    sza i               // skip if a stiffness was typed; AC is its parameter word
+    jmp sdkRtn
+    lio [CESTSET]
+    jda conCall
+    jsp undoClear
+sdkRtn, jmp .
+
+// Run an entry of the tape module, TESAVE or TELOAD on picture tapePic (P1 to P16, set by the
+// picker) of the drive in use, or TEDIR. The gesture under way ends and the program is left idle
+// first, as Clear leaves it, so a copy being placed is taken apart before the tape sees it. The
+// module turns the break system off and sets the display to WAIT, off the frame; after a load
+// that replaced the tables the display is written again from them (tapeRebuild) while WAIT still
+// shows, since an instance slot would call a master the load changed. Then the frame starts
+// again, its dla cutting WAIT's list off, any end pair still posted written first, the breaks
+// the tape's flags asked for are dropped, and the result's word is shown on the bar for MSGMS
+// (onClock hides it), except after the directory's read (TSOPEN), whose caller opens its screen.
+// The pass's clock reading, the watchdog's and the word's start are taken afresh, since the
+// transfer took seconds.
+// Entry: AC = TESAVE to TEDIR. Exit: tapeResult. AC and IO are clobbered. Called via jda.
+tapeCall, 0
+    local rtn, tcCount
+    dap rtn
+    jsp endChain
+    lac [NBAR]
+    dac newCol
+    law MIDLE
+    jda setMode
+    lio tapeCall
+    jsp i [tapeEntry:6]
+    dac tapeResult
+    sad [TSLOADED]      // skip unless the load replaced the tables
+    jsp tapeRebuild
+    lac tapeResult
+    sad [TSWIPED]       // skip unless a failed load emptied them
+    jsp tapeRebuild
+    jsp i [commitFlip:014]
+    cbs
+    lio [frame:0]
+    dla
+    esm
+    rck
+    dio now
+    dio lastTick
+    lac tapeResult
+    sad [TSOPEN]        // skip unless the directory's read, for its screen
+    jmp tcCount
+    lac [jump msgWord:0 next(parameter)]
+    dac i [statGate:0]
+    lio now
+    dio msgStart
+    law 1
+    dac msgOn
+tcCount,
+    idx tapeCount
+rtn, jmp .
+    endloc
+
+// Drive's D1 to D8 rows set the drive the transfers use, shown in the Drive row's label.
+// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actDrive,
+    dap adRtn
+    lac lastItem
+    sub [IDRIVE]
+    dac tapeDrive
+    jsp drvLabel
+adRtn, jmp .
+
+// Write the drive in use, tapeDrive + 1, into the Drive row's label. It is one word, so a frame
+// draws the old digit or the new. AC and IO are clobbered. Called via jsp.
+drvLabel,
+    dap dlRtn
+    lac i [drvText:0+DRVWORD]
+    and [0777700]
+    add [DRVCODE1]
+    add tapeDrive
+    dac i [drvText:0+DRVWORD]
+dlRtn, jmp .

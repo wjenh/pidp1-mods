@@ -1,0 +1,159 @@
+// spcensus.ac -- the menu's census, what the drawing holds that a list's rows act on, as one
+// bit a test, for sprows.ac's rowCan.
+//
+// Bank 6, after spinit.ac. Entered from the main bank's actOpen at rowCensus, by jsp i
+// [rowCensus:6]; runs with the extend window open, reading the counts in banks 2, 3, 4, 9, 10
+// and 12 through their 16-bit addresses, and calls nothing.
+// Part of sketchpad.am1, included where it stands.
+
+// The census, a bit set for each test passed (ROWANY to ROWVIEW), read by rowCan.
+rowHave, 0
+
+// The constraint table's entries by type, in type order from CTATT: attachers, members, loads,
+// rollers, and designations with the fixes.
+rcA, 0
+rcB, 0
+rcW, 0
+rcO, 0
+rcD, 0
+
+// Take the census: rowHave gets one bit for each test of sketchpad.ah's ROWANY to ROWVIEW the
+// drawing passes. Nothing a row acts on can change while a list is open, so the main bank takes
+// it once as a list opens, before painting it, and every row of the list and its sublists is
+// judged from it. Each test n <= X is made as (n - 1) - X, negative just when it passes (a sub
+// of equal values gives +0), its sign rotated into IO by rcl, so the first test lands in the
+// sign bit. The constraint table is counted by type first: attachers, members, loads, rollers
+// and designations, a fix counted with the designations (Unfix's count wants only their sum).
+// AC and IO are clobbered. Called via jsp i [rowCensus:6].
+rowCensus,
+    local rcClr, rcScan, rcNext, rcMast, rcMLoop, rcRtn, rcN, rcP, rcT, rcM
+    dac rcRtn
+    lac [rcA:6]
+    dac rcP
+    law i 5
+    dac rcN
+rcClr,
+    dzm i rcP
+    idx rcP
+    isp rcN             // skip once the five counts are 0
+    jmp rcClr
+    lac i [cCount:011]
+    sza i               // skip if the table has entries
+    jmp rcMast
+    cma
+    dac rcN
+    lac [cEntries:011]
+    dac rcP
+rcScan,
+    lac i rcP
+    and [CTMASK]
+    sad [CTF & CTMASK]  // skip unless a fix
+    law CTDES & CTMASK  // counted as a designation
+    sub [CTATT & CTMASK]
+    spa                 // skip if an attacher or past it
+    jmp rcNext
+    sub [5]
+    sma                 // skip if an attacher to a designation
+    jmp rcNext
+    add [rcA:6 + 5]
+    dac rcT
+    idx i rcT
+rcNext,
+    lac rcP
+    add [CW]
+    dac rcP
+    isp rcN             // skip once every entry is counted
+    jmp rcScan
+
+    // The masters defined, from the arc module's directory.
+rcMast,
+    dzm rcM
+    lac [mLen:2]
+    dac rcP
+rcMLoop,
+    lac i rcP
+    sza                 // skip if the slot is empty
+    idx rcM
+    idx rcP
+    sas [mLen:2 + NMASTER]  // skip if past the last slot
+    jmp rcMLoop
+
+    // The conditions, ROWANY first. P, the points the dot can take, is pointCount less scN, since each
+    // number's digits own one anchor point, which the dot never takes.
+    cli
+    cla                 // ROWANY
+    sub i [pointCount:4]
+    sub i [txN:012]
+    sub i [instCount:012]
+    rcl 1s
+    cla                 // ROWL1
+    sub i [lineCount:4]
+    rcl 1s
+    lac [1]             // ROWL2
+    sub i [lineCount:4]
+    rcl 1s
+    cla                 // ROWP1
+    sub i [pointCount:4]
+    add i [scN:3]
+    rcl 1s
+    lac [1]             // ROWP2
+    sub i [pointCount:4]
+    add i [scN:3]
+    rcl 1s
+    lac [2]             // ROWP3
+    sub i [pointCount:4]
+    add i [scN:3]
+    rcl 1s
+    cla                 // ROWN
+    sub i [scN:3]
+    rcl 1s
+    cla                 // ROWI
+    sub i [instCount:012]
+    rcl 1s
+    cla                 // ROWIT
+    sub i [instCount:012]
+    sub i [txN:012]
+    rcl 1s
+    cla                 // ROWLAI
+    sub i [lineCount:4]
+    sub i [arcCount:2]
+    sub i [instCount:012]
+    rcl 1s
+    cla                 // ROWFREEL: each member and each load is one line
+    sub i [lineCount:4]
+    add rcB
+    add rcW
+    rcl 1s
+    cla                 // ROWB
+    sub rcB
+    rcl 1s
+    cla                 // ROWO
+    sub rcO
+    rcl 1s
+    cla                 // ROWM1
+    sub rcM
+    rcl 1s
+    lac [1]             // ROWM2
+    sub rcM
+    rcl 1s
+    cla                 // ROWDEL: Del cons keeps only members, loads and rollers
+    sub i [cCount:011]
+    add rcB
+    add rcW
+    add rcO
+    rcl 1s
+    cla                 // ROWUNF
+    sub rcA
+    sub rcD
+    rcl 1s
+    cla                 // ROWVIEW
+    sub i [vwS:014]
+    rcl 1s
+    dio rowHave
+    jmp i rcRtn
+rcRtn, 0
+rcN, 0
+rcP, 0
+rcT, 0
+rcM, 0
+    endloc

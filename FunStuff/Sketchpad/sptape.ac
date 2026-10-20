@@ -1,0 +1,1566 @@
+// sptape.ac -- the tape module: a picture's save to and load from the Type 550 Microtape on
+// the drive in use, the tape's directory, and the directory's screen, on which Save and Load
+// pick one of the sixteen pictures.
+//
+// Bank 6, from its first word, alone. Entered at tapeEntry, from the main bank's tapeCall, and
+// at tpPickName, from the main bank's svPick. It runs with the extend window open throughout, so
+// every indirect address is a 16-bit one, and calls nothing outside bank 6 but the view module's
+// vwInit (bank 12). The directory's screen, its blocks and its key tables are the keyboard
+// service's to show and to read (spkbd.ac, kbOpen and kbKey), through their 16-bit addresses.
+// Part of sketchpad.am1, included where it stands.
+//
+// The tape's layout, format 14. Picture p (0 to 15, P1 to P16) has a slot of TPSLOT blocks, P1
+// to P8 from block 1, P9 to P16 from TPDIRBLK + 1 (tpFirst); block TPDIRBLK between them is the
+// tape's directory, and block 0 is not used. The picture is one stream of words over the first
+// TPPBLOCKS blocks of its slot, its parts in tpSaveRuns' order: the header (tpHdr, holding the
+// magic, the format, TPSTREAM, and a generation word, new for each save from the clock), the
+// constraint table, the tie lists packed two to a word (tpPack), the name, the cycle's
+// settings packed (tpCyPk), the masters' constraints and their counts, the texts, the digits
+// and the picture's runs (TPPICTURE), then zeros, and the header again as the stream's last
+// words. A save writes the stream forward, so one cut short leaves the two headers unlike and
+// the picture reads as empty (the scheme of the Z-machine interpreter's zsave.ac). A
+// never-written block reads as zeros and passes its checksum, so the magic is what marks a
+// picture; a picture of any other format reads as empty too. The directory block holds the
+// magic, the format, TPDIRW and a zero, then the sixteen entries of tpDir, each the picture's
+// format word and its name's run. A save writes it after the picture, with the picture's
+// entry, so one cut short between the two leaves the directory naming the old picture. A load
+// judges a picture by its headers alone. A directory whose sum or header fails reads as
+// sixteen empty entries.
+//
+// The transfer. The tape gives or wants a word every 200 us and does not wait, so the break
+// system is off while it runs and the display shows WAIT from waitList, a list that loops on
+// itself (tapeCall turns the breaks and the frame back on). Every wait polls mrs, as zsave.ac's
+// loops do; a halt clears GO with no error, so a wait for a word also tests GO. A save reads the
+// directory again, writes the picture's blocks forward, then the directory. A load reads the
+// picture's blocks forward once, keeping only the two headers and checking every block's sum, so
+// a picture that fails leaves the drawing as it was; then turns and reads them in reverse, a
+// block's words last first (Docs/UsingType550Microtape.md), straight into the tables, walking
+// the runs backward (tpLoadRuns). A reverse pass that fails leaves the tables empty.
+
+// The module's constants, the picture's format, words and blocks, the directory's and the waits,
+// are in sketchpad.ah, the tape module's group.
+
+// A run list's entry, three words: the run's first word, its count complemented (the word loops
+// take the next run inline, so they do no cma), and its step. A run of
+// n words from first, forward; the same run from its last word back, step -1, for the reverse
+// pass; and n words to or from tpZero or tpSink, step 0.
+#define TPRUN(first, n) first; 0 - (n); 1
+#define TPREV(first, n) first + (n) - 1; 0 - (n); 0 - 1
+#define TPZEROS(n) tpZero:6; 0 - (n); 0
+#define TPSINK(n) tpSink:6; 0 - (n); 0
+
+// The runs of a picture's words, one stream, and the same runs backward for the reverse pass, in
+// the reverse order. lineCount and pointCount are a var pair, allocated downward. The master
+// directory, the instance table and the arc table are three runs, one after another in the
+// stream.
+#define TPPICTURE \
+    TPRUN(pointX:3, MAXPTS); \
+    TPRUN(pointY:3, MAXPTS); \
+    TPRUN(lineFrom:3, 2 * MAXLINES); \
+    TPRUN(iX:3, MAXINST); \
+    TPRUN(iY:3, MAXINST); \
+    TPRUN(iScale:3, MAXINST); \
+    TPRUN(mLen:2, TPMDIRWORDS); \
+    TPRUN(instCount:012, TPINSTWORDS); \
+    TPRUN(arcCount:2, TPARCWORDS); \
+    TPRUN(lineCount:4, 2); \
+    TPRUN(masters:0, 0d512); \
+    TPRUN(cpX:5, 0d3740)
+#define TPPICTREV \
+    TPREV(cpX:5, 0d3740); \
+    TPREV(masters:0, 0d512); \
+    TPREV(lineCount:4, 2); \
+    TPREV(arcCount:2, TPARCWORDS); \
+    TPREV(instCount:012, TPINSTWORDS); \
+    TPREV(mLen:2, TPMDIRWORDS); \
+    TPREV(iScale:3, MAXINST); \
+    TPREV(iY:3, MAXINST); \
+    TPREV(iX:3, MAXINST); \
+    TPREV(lineFrom:3, 2 * MAXLINES); \
+    TPREV(pointY:3, MAXPTS); \
+    TPREV(pointX:3, MAXPTS)
+
+// The run of the texts' words, the text module's in bank 10 from txN: the counts, each master's
+// texts' cost, the canvas's texts and the masters', TPTWORDS in all. One run, not a run a
+// table, since short runs in a row leave a word loop too little time.
+#define TPTEXTS \
+    TPRUN(txN:012, TPTWORDS)
+#define TPTEXTREV \
+    TPREV(txN:012, TPTWORDS)
+
+// The runs of the digits' words: bank 3's, each canvas text's anchor and scalar, the scalars'
+// count, values and fixes; then the text module's, each master's text's anchor, value and fix.
+// Two long runs.
+#define TPDIGITS \
+    TPRUN(txAn:3, TPSCAN); \
+    TPRUN(mtAn:012, TPSMAS)
+#define TPDIGREV \
+    TPREV(mtAn:012, TPSMAS); \
+    TPREV(txAn:3, TPSCAN)
+
+// A line of the directory's screen, the picture's at row r of column c. Its label's first word
+// l1 (KCP and the picture's digits, then a space for P1 to P9), its second DIRLBLX (a space, then
+// upper shifts), and its name's run, blank until tpGetDir writes it.
+#define DIRLBLX (KCSPACE * 010000 + KCUP * 0100 + KCUP)
+#define DIRLINE(r, c, l1) \
+    KBKEY; \
+    y(DIRY0 - (r) * DIRDY) next(point); \
+    x(DIRX0 + (c) * DIRCOLDX) next(character); \
+    l1; \
+    DIRLBLX; \
+    KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; \
+    KBBLANK
+
+// The hit record of the line at row r of column c, in kbFind's order: left, right, bottom, top.
+#define DIRREC(r, c) \
+    DIRX0 + (c) * DIRCOLDX - DIRRX; \
+    DIRX0 + (c) * DIRCOLDX + DIRCHARS * KBADV + DIRRX; \
+    DIRY0 - (r) * DIRDY - DIRRY; \
+    DIRY0 - (r) * DIRDY + KBH + DIRRY
+
+// Run entry n, TESAVE to TEDIR, on picture tapePic of drive tapeDrive. The break system is
+// turned off first and the display set to WAIT (waitList), off the frame; the tape is stopped
+// at the end, whatever happened.
+// Entry: IO = n; AC = the return address, which carries the main bank. Exit: AC = the result,
+// TSSAVED to TSOPEN, the window open, the display showing WAIT and the break system off. IO
+// is clobbered. Called via jsp i [tapeEntry:6].
+tapeEntry,
+    local teRtn, teSel, teRes, teJmp, teTab, teStop, teCopy, teNm1, teNm2, teNm3, tePtr, teTo, \
+        teN
+    dac teRtn
+    dio teSel
+    lsm
+    lio [waitList:0]
+    dla
+    jsp tpMount
+    sza                 // skip if the drive has a tape
+    jmp teStop
+    lac teSel
+    add [teTab]
+    dap teJmp
+teJmp, jsp .            // the entry's routine, by a jump table, returns here
+    jmp teStop
+teTab,
+    jmp tpSave          // TESAVE
+    jmp tpLoad          // TELOAD
+    jmp tpGetDir        // TEDIR
+teStop,
+    dac teRes
+    cli
+    mlc                 // stop, since a moving tape runs off its reel
+
+    // The status word's text for the result, while the display shows WAIT.
+    lac teRes
+    sal 2s
+    add [tpMsgs:6]
+    dac tePtr
+    lac [msgText:0]
+    dac teTo
+    lac [0-4]
+    dac teN
+teCopy,
+    lac i tePtr
+    dac i teTo
+    idx tePtr
+    idx teTo
+    isp teN
+    jmp teCopy
+
+    // And the name's line under it, the name saved or loaded, blank after any other result.
+    lac teRes
+    sas [TSSAVED]       // skip if saved
+    jmp teNm1
+    lac [tpName:6]
+    jmp teNm3
+teNm1,
+    sas [TSLOADED]      // skip if loaded
+    jmp teNm2
+    lac [tpNameR:6]
+    jmp teNm3
+teNm2,
+    lac [tpBlank:6]
+teNm3,
+    dac tpPtr
+    lac [msgName:0]
+    dac tpRun
+    law NAMEW
+    jda tpMove
+    lac teRes
+    jmp i teRtn
+teRtn, 0
+teSel, 0
+teRes, 0
+tePtr, 0
+teTo, 0
+teN, 0
+    endloc
+
+// The status word's texts, four words each, by the result, TSSAVED to TSOPEN. Nine characters
+// each, padded with spaces (spframe.ac, msgWord). A load that failed after it began replacing
+// the tables reads BAD BLOCK, as a bad block does. TSOPEN's is never shown (tapeCall).
+tpMsgs,
+    type340 "SAVED    "
+    type340 "LOADED   "
+    type340 "NO TAPE  "
+    type340 "LOCKED   "
+    type340 "EMPTY    "
+    type340 "BAD BLOCK"
+    type340 "NO FLAG  "
+    type340 "BAD BLOCK"
+    type340 "         "
+
+// Name runs (NAMEW words, sketchpad.ah). Blank, which the keyboard reads as an empty text; and "-"
+// for no picture, written as codes, an upper shift and "-", since a text's end code may stand
+// only in the run's last word.
+tpBlank,
+    table NAMEW - 1, KBPAD
+    KBBLANK
+tpDash,
+    KCUP * 010000 + 055 * 0100 + KCUP
+    table NAMEW - 2, KBPAD
+    KBBLANK
+
+// Select the drive in use, wait out the selection delay, and learn whether it has a tape. A
+// stop is refused, the error flag up, only when it has none (zsave.ac's test). A write-locked
+// tape passes; a save to it fails at its write (tpWrite).
+// Exit: AC = 0, or TSNOTAPE. IO is clobbered. Called via jsp.
+tpMount,
+    local rtn, tmWait, tmNone, tmT0
+    dap rtn
+    lac i [tapeDrive:4]
+    add [1]
+    sal 6s
+    sal 6s              // the unit, 1 to 8, in IO bits 2-5
+    lia
+    mse                 // clears any flag a previous operation left up
+    rck
+    dio tmT0
+tmWait,
+    rck
+    lai
+    sub tmT0
+    spa                 // skip unless the clock wrapped
+    add [0d60000]
+    sub [TPSELMS]
+    spa                 // skip once the delay has passed
+    jmp tmWait
+    cli
+    mlc                 // stop, refused, the error flag up, with no tape
+    mrs
+    ril 2s              // the error flag to bit 0
+    spi                 // skip if it is clear, a tape
+    jmp tmNone
+    cla
+    jmp rtn
+tmNone,
+    lac [TSNOTAPE]
+rtn, jmp .
+tmT0, 0
+    endloc
+
+// The first block of picture tapePic, from tpFirst.
+// Exit: AC = the block. IO is preserved. Called via jsp.
+tpBase,
+    local rtn, tbP
+    dap rtn
+    lac i [tapePic:4]
+    add [tpFirst:6]
+    dac tbP
+    lac i tbP
+rtn, jmp .
+tbP, 0
+    endloc
+
+// Picture tapePic's entry in the directory, from tpEntT.
+// Exit: AC = the entry's 16-bit address. IO is preserved. Called via jsp.
+tpEntry,
+    local rtn, tyP
+    dap rtn
+    lac i [tapePic:4]
+    add [tpEntT:6]
+    dac tyP
+    lac i tyP
+rtn, jmp .
+tyP, 0
+    endloc
+
+// Search to the flag of block tpWant, letting each flag steer (zsave.ac's zsvSeek). For a
+// forward find (tpRev 0) the block's forward flag, for a reverse find (tpRev 1) its reverse
+// flag. A forward flag past the block turns the tape back; one before it keeps it going, and so
+// does one at it in a reverse find, which must pass the block before it turns. A reverse flag
+// before the block turns it forward again; one past it keeps it reversing, and so does one at it
+// in a forward find. The end zone turns it; a MISS is passed over.
+// Entry: tpWant = the block and tpRev the direction, set by the caller, since jsp leaves its
+// return in AC. Exit: AC = 0 as the flag arrives (the caller has 400 us to issue its mlc); TSBAD
+// if the control refused (UNABLE), TSNOFLAG if no flag came in TPTMO polls, the tape still
+// moving. IO is clobbered. Called via jsp.
+tpSeek,
+    local rtn, tsArm, tsLoop, tsAt, tsRev, tsRAt, tsGoRev, tsGoFwd, tsNoDF, tsErr, tsIdle, \
+        tsFail, tsN
+    dap rtn
+    lio [mtgo mtsrch]
+    mlc
+tsArm,
+    lac [TPTMO]
+    cma
+    dac tpTmo
+tsLoop,
+    mrs
+    spi i               // skip if the data flag is up, a flag's word
+    jmp tsNoDF
+    mrd
+    dio tpWord
+    lac tpWord
+    and [mtblk]
+    sub tpWant
+    dac tsN             // n - want
+    lio tpWord
+    spi                 // skip if a forward flag
+    jmp tsRev
+    lac tsN
+    sma                 // skip if before the block, to keep going
+    jmp tsAt
+    jmp tsArm
+tsAt,
+    sza                 // skip if at the block
+    jmp tsGoRev         // past it, turn back
+    lac tpRev
+    sza i               // skip if a reverse find, to go on past the block, then turn
+    jmp rtn             // AC = 0, the block's forward flag
+    jmp tsArm
+tsRev,
+    lac tsN
+    spa                 // skip unless before the block, to turn forward
+    jmp tsGoFwd
+    sza                 // skip if at the block
+    jmp tsArm           // past it, keep reversing
+    lac tpRev
+    sza                 // skip if a forward find, to keep reversing past the block
+    jmp tsRAt
+    jmp tsArm
+tsRAt,
+    cla
+    jmp rtn             // AC = 0, the block's reverse flag
+tsGoFwd,
+    lio [mtgo mtsrch]
+    mlc
+    jmp tsArm
+tsGoRev,
+    lio [mtgo mtrev mtsrch]
+    mlc
+    jmp tsArm
+tsNoDF,
+    ril 2s              // the error flag to bit 0
+    spi i               // skip if it is up
+    jmp tsIdle
+    mrs
+    dio tpStat
+    lac tpStat
+    and [mtend]
+    sza i               // skip if the end zone
+    jmp tsErr
+    lac tpStat
+    and [mtrevs]
+    sza                 // skip if forward, at the far end zone
+    jmp tsGoFwd
+    jmp tsGoRev
+tsErr,
+    lac tpStat
+    and [mtmiss]
+    sza i               // skip if a MISS, to carry on
+    jmp tsFail          // UNABLE, no tape, or off the reel
+    lac tpStat
+    and [mtrevs]
+    sza                 // skip if forward; mlc clears the flag
+    jmp tsGoRev
+    jmp tsGoFwd
+tsIdle,
+    isp tpTmo
+    jmp tsLoop
+    lac [TSNOFLAG]
+    jmp rtn
+tsFail,
+    lac [TSBAD]
+rtn, jmp .
+tsN, 0
+    endloc
+
+// Step to the next run of the list tpRun points to: its first word, its count (stored
+// complemented) and its step. The word loops take the next run inline, as this does.
+// AC is clobbered, IO preserved. Called via jsp.
+tpNextRun,
+    dap tnRtn
+    lac i tpRun
+    dac tpPtr
+    idx tpRun
+    lac i tpRun
+    dac tpCnt
+    idx tpRun
+    lac i tpRun
+    dac tpStep
+    idx tpRun
+tnRtn, jmp .
+
+// A block's start, 256 words to go, its sum zero.
+// AC is clobbered, IO preserved. Called via jsp.
+tpBlock,
+    dap tkRtn
+    law i 0400
+    dac tpWc
+    dzm tpSum
+tkRtn, jmp .
+
+// Write -tpBlk blocks from the run list tpRun points to, the seek having just found the first
+// block's flag; each block's 256 words, then on its end the checksum, the complement of their
+// sum. The tape is stopped after the last.
+// Exit: AC = 0 (TSSAVED); TSLOCKED if the control refused the write (UNABLE, the drive
+// write-locked); TSBAD on any other error. IO is clobbered. Called via jsp.
+tpWrite,
+    local rtn, twData, tw1, twTail, twNoDF, twTNo, twBEF, twTmr, twNext, twErr, twWhy, twBad
+    dap rtn
+    jsp tpNextRun
+    jsp tpBlock
+    lio [mtgo mtwrit]
+    mlc                 // the control asks for the first word at once
+twData,
+    mrs
+    spi i               // skip if the data flag is up
+    jmp twNoDF
+    lio i tpPtr
+    mwr
+    lai
+    add tpSum
+    dac tpSum
+    lac tpPtr
+    add tpStep
+    dac tpPtr
+    isp tpCnt
+    jmp tw1
+    lac i tpRun         // the next run, inline (tpNextRun)
+    dac tpPtr
+    idx tpRun
+    lac i tpRun
+    dac tpCnt
+    idx tpRun
+    lac i tpRun
+    dac tpStep
+    idx tpRun
+tw1,
+    isp tpWc
+    jmp twData
+twTail,                 // the block's words all given, wait for its end
+    mrs
+    spi i
+    jmp twTNo
+    cli
+    mwr                 // a word past 256 is never asked for; zero if it is
+    jmp twTail
+twNoDF,
+    ril 1s              // the block end flag to bit 0, too soon here
+    spi
+    jmp twErr
+    ril 1s              // the error flag to bit 0
+    spi
+    jmp twErr
+    ril 4s              // GO (bit 6) to bit 0, clear after a halt, so no flag will come
+    spi
+    jmp twData
+    jmp twErr
+twTNo,
+    ril 1s
+    spi
+    jmp twBEF
+    ril 1s
+    spi
+    jmp twErr
+    ril 4s
+    spi
+    jmp twTail
+    jmp twErr
+twBEF,
+    lac tpSum
+    cma
+    lia
+    mwr                 // the trailing checksum
+    isp tpBlk
+    jmp twNext
+    law i 0d20          // about 300 us; the checksum reaches the tape 200 us after the flag
+    dac tpTmo
+twTmr,
+    isp tpTmo
+    jmp twTmr
+    mrs
+    dio tpStat
+    cli
+    mlc                 // stop
+    lac tpStat
+    and [mterf]
+    sza i               // skip if a tape error
+    jmp rtn             // AC = 0
+    jmp twWhy
+twNext,
+    jsp tpBlock
+    jmp twData
+twErr,
+    mrs
+    dio tpStat
+    cli
+    mlc                 // stop
+twWhy,
+    lac tpStat
+    and [mtunab]
+    sza i               // skip if UNABLE, the write refused
+    jmp twBad
+    lac [TSLOCKED]
+    jmp rtn
+twBad,
+    lac [TSBAD]
+rtn, jmp .
+    endloc
+
+// Read -tpBlk blocks into the run list tpRun points to, the seek having just found the first
+// block's flag. At tpRead going forward; at tpReadR in reverse, where a block gives its trailing
+// checksum first, its words last first and its leading checksum last, so the list's runs walk
+// backward (tpLoadRuns). Each block's two checksums and 256 words summed, and tpBad counting the
+// blocks whose sum is not zero. The tape is stopped after the last.
+// Exit: AC = 0, tpBad set; TSBAD on a tape error. IO is clobbered. Called via jsp.
+tpReadR,
+    local rtn, trGo, trLead, trData, tr1, trTail, trLdNo, trNoDF, trTNo, trBEF, trNext, trErr
+    dap rtn
+    lio [mtgo mtread mtrev]
+    jmp trGo
+tpRead,
+    dap rtn
+    lio [mtgo mtread]
+trGo,
+    dzm tpBad
+    jsp tpNextRun
+    jsp tpBlock
+    mlc
+trLead,
+    mrs
+    spi i               // skip if the data flag is up
+    jmp trLdNo
+    mrd                 // the leading checksum, or in reverse the trailing one
+    lai
+    add tpSum
+    dac tpSum
+trData,
+    mrs
+    spi i
+    jmp trNoDF
+    mrd
+    dio i tpPtr
+    lai
+    add tpSum
+    dac tpSum
+    lac tpPtr
+    add tpStep
+    dac tpPtr
+    isp tpCnt
+    jmp tr1
+    lac i tpRun         // the next run, inline (tpNextRun)
+    dac tpPtr
+    idx tpRun
+    lac i tpRun
+    dac tpCnt
+    idx tpRun
+    lac i tpRun
+    dac tpStep
+    idx tpRun
+tr1,
+    isp tpWc
+    jmp trData
+trTail,                 // the block's words all taken, wait for its end
+    mrs
+    spi i
+    jmp trTNo
+    mrd                 // a word past 256 is never given; summed if it is
+    lai
+    add tpSum
+    dac tpSum
+    jmp trTail
+trLdNo,
+    ril 1s              // the block end flag to bit 0, too soon here
+    spi
+    jmp trErr
+    ril 1s              // the error flag to bit 0
+    spi
+    jmp trErr
+    ril 4s              // GO (bit 6) to bit 0
+    spi
+    jmp trLead
+    jmp trErr
+trNoDF,
+    ril 1s
+    spi
+    jmp trErr
+    ril 1s
+    spi
+    jmp trErr
+    ril 4s
+    spi
+    jmp trData
+    jmp trErr
+trTNo,
+    ril 1s
+    spi
+    jmp trBEF
+    ril 1s
+    spi
+    jmp trErr
+    ril 4s
+    spi
+    jmp trTail
+    jmp trErr
+trBEF,
+    mrd                 // the trailing checksum, or in reverse the leading one
+    lai
+    add tpSum
+    sza                 // skip if the block totals zero
+    idx tpBad
+    isp tpBlk
+    jmp trNext
+    mrs
+    dio tpStat
+    cli
+    mlc                 // stop
+    lac tpStat
+    and [mterf]
+    sza i               // skip if a tape error
+    jmp rtn             // AC = 0
+    lac [TSBAD]
+    jmp rtn
+trNext,
+    jsp tpBlock
+    jmp trLead
+trErr,
+    cli
+    mlc                 // stop
+    lac [TSBAD]
+rtn, jmp .
+    endloc
+
+// Save the picture. A new generation in the header; the directory read again, since the tape
+// may have changed since the picker read it; the seek to the picture's first block and its
+// TPPBLOCKS blocks written; then the picture's entry in the directory, its format and the name
+// typed, and the directory written.
+// Exit: AC = the result, 0 (TSSAVED), or tpRdDir's, tpSeek's or tpWrite's failure. IO is
+// clobbered. Called via jsp.
+tpSave,
+    local rtn
+    dap rtn
+    lac [TPMAGIC]
+    dac tpHdr
+    lac [TPFORMAT]
+    dac tpHdr+1
+    lac [TPSTREAM]
+    dac tpHdr+2
+    rck
+    dio tpHdr+3         // the generation
+    jsp tpPack
+    jsp tpCyPk
+    jsp tpRdDir
+    sza                 // skip if the directory was read
+    jmp rtn
+    jsp tpBase
+    dac tpWant
+    dzm tpRev
+    jsp tpSeek
+    sza                 // skip if at the picture's first block
+    jmp rtn
+    lac [tpSaveRuns:6]
+    dac tpRun
+    law i TPPBLOCKS
+    dac tpBlk
+    jsp tpWrite
+    sza                 // skip if written
+    jmp rtn
+    jsp tpEntry
+    dac tpRun
+    lac [TPFORMAT]
+    dac i tpRun
+    idx tpRun
+    lac [tpName:6]
+    dac tpPtr
+    law NAMEW
+    jda tpMove
+    lac [TPDIRBLK]
+    dac tpWant
+    jsp tpSeek
+    sza                 // skip if at the directory's block
+    jmp rtn
+    lac [tpDirWRuns:6]
+    dac tpRun
+    law i 1
+    dac tpBlk
+    jsp tpWrite
+rtn, jmp .
+    endloc
+
+// Read the tape's directory block into tpDir. A block whose sum is not zero, or whose header is
+// not the directory's, reads as sixteen empty entries. That is not a failure, so that a save can
+// still be made, which writes it anew.
+// Exit: AC = 0, or tpSeek's or tpRead's failure. IO is clobbered. Called via jsp.
+tpRdDir,
+    local rtn, trdNone, trdLoop
+    dap rtn
+    lac [TPDIRBLK]
+    dac tpWant
+    dzm tpRev
+    jsp tpSeek
+    sza                 // skip if at the directory's block
+    jmp rtn
+    lac [tpDirRRuns:6]
+    dac tpRun
+    law i 1
+    dac tpBlk
+    jsp tpRead
+    sza                 // skip unless a tape error
+    jmp rtn
+    lac tpBad
+    sza                 // skip if the block's sum was zero
+    jmp trdNone
+    lac tpHdrB
+    sas [TPMAGIC]       // skip if the magic
+    jmp trdNone
+    lac tpHdrB+1
+    sas [TPFORMAT]      // skip if this format
+    jmp trdNone
+    lac tpHdrB+2
+    sas [TPDIRW]        // skip if a directory, not a picture
+    jmp trdNone
+    cla
+    jmp rtn
+trdNone,
+    lac [tpDir:6]
+    dac tpPtr
+    law i NPICT
+    dac tpCnt
+trdLoop,
+    dzm i tpPtr         // the entry's format word, no picture
+    lac tpPtr
+    add [TPDENT]
+    dac tpPtr
+    isp tpCnt           // skip once every entry is emptied
+    jmp trdLoop
+    cla
+rtn, jmp .
+    endloc
+
+// Load the picture. The check pass over its TPPBLOCKS blocks, keeping only the two headers; the
+// headers judged, then the blocks' sums; then the reverse search to its last block and the
+// reverse pass into the tables. A reverse pass that fails empties them.
+// Exit: AC = the result, TSLOADED, TSEMPTY, TSWIPED, or tpSeek's or tpRead's failure. IO is
+// clobbered. Called via jsp.
+tpLoad,
+    local rtn, tlFirst, tlEmpty, tlBad, tlWipe, tlZeroI, tlZero, tlNoTie, tlScale
+    dap rtn
+    jsp tpBase
+    dac tlFirst
+    dac tpWant
+    dzm tpRev
+    jsp tpSeek
+    sza                 // skip if at the picture's first block
+    jmp rtn
+    lac [tpCheckRuns:6]
+    dac tpRun
+    law i TPPBLOCKS
+    dac tpBlk
+    jsp tpRead
+    sza                 // skip unless a tape error
+    jmp rtn
+
+    // The headers must hold the magic, this format and its stream's size, and be alike, the
+    // generation included.
+    lac tpHdrA
+    sas [TPMAGIC]       // skip if a picture
+    jmp tlEmpty
+    lac tpHdrA+1
+    sas [TPFORMAT]      // skip if this format
+    jmp tlEmpty
+    lac tpHdrA+2
+    sas [TPSTREAM]      // skip if its size
+    jmp tlEmpty
+    lac tpHdrA
+    sas tpHdrB          // skip if the trailing header agrees
+    jmp tlEmpty
+    lac tpHdrA+1
+    sas tpHdrB+1
+    jmp tlEmpty
+    lac tpHdrA+2
+    sas tpHdrB+2
+    jmp tlEmpty
+    lac tpHdrA+3
+    sas tpHdrB+3
+    jmp tlEmpty
+    lac tpBad
+    sza                 // skip if every block's sum was zero
+    jmp tlBad
+
+    // The reverse pass, from the picture's last block. Nothing has been changed until now.
+    lac tlFirst
+    add [TPPBLOCKS - 1]
+    dac tpWant
+    law 1
+    dac tpRev
+    jsp tpSeek
+    sza                 // skip if at the picture's last block, going back
+    jmp rtn
+    lac [tpLoadRuns:6]
+    dac tpRun
+    law i TPPBLOCKS
+    dac tpBlk
+    jsp tpReadR
+    sza                 // skip unless a tape error
+    jmp tlWipe
+    lac tpBad
+    sza                 // skip if every block's sum was zero
+    jmp tlWipe
+
+    // Each instance's scale k alone, its multiplier code dropped (TPKMASK).
+    lac [iScale:3]
+    dac tpPtr
+    law i MAXINST
+    dac tpCnt
+tlScale,
+    lac i tpPtr
+    and [TPKMASK]
+    dac i tpPtr
+    idx tpPtr
+    isp tpCnt           // skip once every scale is masked
+    jmp tlScale
+    jsp tpCyUn
+    jsp tpUnpack
+    jsp tpFresh
+    lac [TSLOADED]
+    jmp rtn
+
+    // The tables partly replaced, so all are emptied: the master directory, the instances and arcs
+    // with their counts, the line and point counts, the constraint table's count, the ties,
+    // the masters' constraints, the texts and the digits. The instance table first, in bank 10;
+    // then the master directory and the arc table, one after the other in bank 2
+    // (sparcdata.ac), as one.
+tlWipe,
+    jsp tpNoX
+    jsp tpNoText
+    jsp tpNoDig
+    lac [instCount:012]
+    dac tpPtr
+    law i TPINSTWORDS
+    dac tpCnt
+tlZeroI,
+    dzm i tpPtr
+    idx tpPtr
+    isp tpCnt
+    jmp tlZeroI
+    lac [mLen:2]
+    dac tpPtr
+    lac [TPMDIRWORDS + TPARCWORDS]
+    cma
+    dac tpCnt
+tlZero,
+    dzm i tpPtr
+    idx tpPtr
+    isp tpCnt
+    jmp tlZero
+    dzm i [lineCount:4]
+    dzm i [pointCount:4]
+    dzm i [cCount:011]
+    lac [tpTies:6]
+    dac tpPtr
+    law i TPTIES
+    dac tpCnt
+tlNoTie,
+    dzm i tpPtr
+    idx tpPtr
+    isp tpCnt           // skip once every word is cleared
+    jmp tlNoTie
+    jsp tpUnpack        // no ties
+    jsp tpFresh
+    lac [TSWIPED]
+    jmp rtn
+tlEmpty,
+    lac [TSEMPTY]
+    jmp rtn
+tlBad,
+    lac [TSBAD]
+rtn, jmp .
+tlFirst, 0
+    endloc
+
+// Copy n words from tpPtr to tpRun, both left past them.
+// Entry: AC = n, at least 1. AC is clobbered, IO preserved. Called via jda.
+tpMove, 0
+    local rtn, tvLoop
+    dap rtn
+    lac tpMove
+    cma
+    dac tpCnt
+tvLoop,
+    lac i tpPtr
+    dac i tpRun
+    idx tpPtr
+    idx tpRun
+    isp tpCnt           // skip once every word is copied
+    jmp tvLoop
+rtn, jmp .
+    endloc
+
+// No masters' constraints, for a reverse pass that failed. Every master's count in cpNCon is
+// zeroed.
+// AC is clobbered, IO preserved. Called via jsp.
+tpNoX,
+    local rtn, txLoop
+    dap rtn
+    lac [cpNCon:011]
+    dac tpPtr
+    law i NMASTER
+    dac tpCnt
+txLoop,
+    dzm i tpPtr
+    idx tpPtr
+    isp tpCnt           // skip once every count is cleared
+    jmp txLoop
+rtn, jmp .
+    endloc
+
+// No texts, for a reverse pass that failed. The text module's counts and each master's texts'
+// cost are zeroed. The main bank's tapeRebuild has the module take them up.
+// AC is clobbered, IO preserved. Called via jsp.
+tpNoText,
+    local rtn, tnLoop
+    dap rtn
+    dzm i [txN:012]
+    dzm i [mtN:012]
+    lac [txMCost:012]
+    dac tpPtr
+    law i NMASTER
+    dac tpCnt
+tnLoop,
+    dzm i tpPtr
+    idx tpPtr
+    isp tpCnt           // skip once every cost is cleared
+    jmp tnLoop
+rtn, jmp .
+    endloc
+
+// No digits, for a reverse pass that failed. Bank 3's run from txAn and the text module's from
+// mtAn are filled with NOPOINT but for the scalars' count, 0, so every canvas text's and master's
+// text's anchor is NOPOINT, every text plain, and no scalar is left. The words past a count are
+// never read, so NOPOINT serves there too.
+// AC is clobbered, IO preserved. Called via jsp.
+tpNoDig,
+    local rtn, tdFill, tdLoop, tdRtn
+    dap rtn
+    lac [txAn:3]
+    dac tpPtr
+    law i TPSCAN
+    dac tpCnt
+    jsp tdFill
+    dzm i [txAn:3+(2 * NTEXT)] // scN's word
+    lac [mtAn:012]
+    dac tpPtr
+    law i TPSMAS
+    dac tpCnt
+    jsp tdFill
+rtn, jmp .
+
+// -tpCnt words from tpPtr filled with NOPOINT; tpCnt is set before the jsp, which leaves its
+// return in AC.
+tdFill,
+    dap tdRtn
+tdLoop,
+    lac [NOPOINT]
+    dac i tpPtr
+    idx tpPtr
+    isp tpCnt           // skip once every word is written
+    jmp tdLoop
+tdRtn, jmp .
+    endloc
+
+// Dir's, Save's and Load's read (TEDIR). It reads the tape's directory (tpRdDir), then writes
+// each picture's line of the directory's screen, its name, or "-" with no picture, and the
+// drive in use into the screen's title.
+// Exit: AC = TSOPEN, or tpRdDir's failure. IO is clobbered. Called via jsp.
+tpGetDir,
+    local rtn, tdLoop, tdDash, tdCopy, tdE, tdL, tdN
+    dap rtn
+    jsp tpRdDir
+    sza                 // skip if read
+    jmp rtn
+    lac [tpDir:6]
+    dac tdE
+    lac [dirL:6 + DLNAME]
+    dac tdL
+    law i NPICT
+    dac tdN
+tdLoop,
+    lac i tdE
+    sas [TPFORMAT]      // skip if a picture
+    jmp tdDash
+    lac tdE
+    add [1]             // its name
+    jmp tdCopy
+tdDash,
+    lac [tpDash:6]
+tdCopy,
+    dac tpPtr
+    lac tdL
+    dac tpRun
+    law NAMEW
+    jda tpMove
+    lac tdE
+    add [TPDENT]
+    dac tdE
+    lac tdL
+    add [DLWORDS]
+    dac tdL
+    isp tdN             // skip once every line is written
+    jmp tdLoop
+    lac i [tapeDrive:4]
+    sal 6s
+    add [KCUP * 010000 + DRVCODE1 * 0100 + KCEND]
+    dac dirDrv
+    lac [TSOPEN]
+rtn, jmp .
+tdE, 0
+tdL, 0
+tdN, 0
+    endloc
+
+// Save's name for the picture picked (tapePic, set by the main bank's svPick). It sets the
+// directory's entry's name, if it holds a picture, as the keyboard's starting value in tpName,
+// blank otherwise; and the keyboard's prompt for the picture, in tpSvBlk. No tape is read, since
+// the picker has just read the directory.
+// Entry: AC = the return address, which carries the main bank. AC and IO are clobbered. Called
+// via jsp i [tpPickName:6].
+tpPickName,
+    local tpkRtn, tpkBlank, tpkCopy
+    dac tpkRtn
+    jsp tpEntry
+    dac tpPtr
+    lac i tpPtr
+    sas [TPFORMAT]      // skip if a picture
+    jmp tpkBlank
+    idx tpPtr           // its name
+    jmp tpkCopy
+tpkBlank,
+    lac [tpBlank:6]
+    dac tpPtr
+tpkCopy,
+    lac [tpName:6]
+    dac tpRun
+    law NAMEW
+    jda tpMove
+    lac i [tapePic:4]
+    add [tpPrmT:6]
+    dac tpPtr
+    lac i tpPtr
+    dac tpSvBlk+2
+    jmp i tpkRtn
+tpkRtn, 0
+    endloc
+
+// The tie lists packed into tpTies for the stream, two ties to a word, the first in the high 9
+// bits, each 0 for none (NOPOINT) and otherwise its point plus 1.
+// AC and IO are clobbered. Called via jsp.
+tpPack,
+    local rtn, tkLoop, tkT, tkP
+    dap rtn
+    lac [iTie:3]
+    dac tkT
+    lac [tpTies:6]
+    dac tkP
+    law i TPTIES
+    dac tpCnt
+tkLoop,
+    lac i tkT
+    and [0777]
+    add [1]
+    and [0777]          // NOPOINT's 0777 plus 1 leaves 0
+    ral 9s              // not sal, since point 255's 0400 would go into the sign bit
+    dac i tkP
+    idx tkT
+    lac i tkT
+    and [0777]
+    add [1]
+    and [0777]
+    ior i tkP
+    dac i tkP
+    idx tkT
+    idx tkP
+    isp tpCnt           // skip once every word is packed
+    jmp tkLoop
+rtn, jmp .
+tkT, 0
+tkP, 0
+    endloc
+
+// The tie lists unpacked from tpTies (tpPack's packing).
+// AC and IO are clobbered. Called via jsp.
+tpUnpack,
+    local rtn, tuLoop, tuT, tuP
+    dap rtn
+    lac [iTie:3]
+    dac tuT
+    lac [tpTies:6]
+    dac tuP
+    law i TPTIES
+    dac tpCnt
+tuLoop,
+    lac i tuP
+    sar 9s
+    jda tpUnF
+    dac i tuT
+    idx tuT
+    lac i tuP
+    jda tpUnF
+    dac i tuT
+    idx tuT
+    idx tuP
+    isp tpCnt           // skip once every word is unpacked
+    jmp tuLoop
+rtn, jmp .
+tuT, 0
+tuP, 0
+    endloc
+
+// A tie from the low 9 bits of a, 0 for none (NOPOINT), otherwise the point plus 1.
+// Entry: AC = a. Exit: AC = the tie. IO is preserved. Called via jda.
+tpUnF, 0
+    dap tufRtn
+    lac tpUnF
+    and [0777]
+    add [0777]
+    and [0777]          // the point, or 0777 for none
+    sad [0777]          // skip unless none
+    lac [NOPOINT]
+tufRtn, jmp .
+
+// The cycle's settings packed into tpCyc for the stream. The instance module's dwells and the
+// sequence's length as they are, then its NSEQ masters, 0 to 3, eight to a word, the first in the
+// high bits of the word's low 16.
+// AC and IO are clobbered. Called via jsp.
+tpCyPk,
+    local rtn, cpRun, cpWord, cpEnt, cpP, cpQ, cpN, cpE
+    dap rtn
+    lac [cyDw:7]
+    dac cpP
+    lac [tpCyc:6]
+    dac cpQ
+    law i NMASTER+1
+    dac cpN
+cpRun,
+    lac i cpP
+    dac i cpQ
+    idx cpP
+    idx cpQ
+    isp cpN             // skip once the dwells and the length are copied
+    jmp cpRun
+    lac [cySq:7]
+    dac cpP
+    law i TPSEQW
+    dac cpN
+cpWord,
+    dzm i cpQ
+    law i 0d8
+    dac cpE
+cpEnt,
+    lac i cpQ
+    ral 2s
+    dac i cpQ
+    lac i cpP
+    and [3]
+    ior i cpQ
+    dac i cpQ
+    idx cpP
+    isp cpE             // skip once the word holds eight
+    jmp cpEnt
+    idx cpQ
+    isp cpN             // skip once every word is packed
+    jmp cpWord
+rtn, jmp .
+cpP, 0
+cpQ, 0
+cpN, 0
+cpE, 0
+    endloc
+
+// The cycle's settings from tpCyc (tpCyPk's packing), after a load.
+// AC and IO are clobbered. Called via jsp.
+tpCyUn,
+    local rtn, cuRun, cuWord, cuEnt, cuP, cuQ, cuN, cuE, cuW
+    dap rtn
+    lac [cyDw:7]
+    dac cuQ
+    lac [tpCyc:6]
+    dac cuP
+    law i NMASTER+1
+    dac cuN
+cuRun,
+    lac i cuP
+    dac i cuQ
+    idx cuP
+    idx cuQ
+    isp cuN             // skip once the dwells and the length are copied
+    jmp cuRun
+
+    // Each word's eight masters, the last in its low two bits, written from the word's last
+    // entry back.
+    lac [cySq:7+7]
+    dac cuQ
+    law i TPSEQW
+    dac cuN
+cuWord,
+    lac i cuP
+    dac cuW
+    law i 0d8
+    dac cuE
+cuEnt,
+    lac cuW
+    and [3]
+    dac i cuQ
+    lac cuW
+    rar 2s
+    dac cuW
+    law i 1
+    add cuQ
+    dac cuQ
+    isp cuE             // skip once the word's eight are written
+    jmp cuEnt
+    idx cuP
+    lac cuQ
+    add [0d16]          // the next word's last entry
+    dac cuQ
+    isp cuN             // skip once every word is unpacked
+    jmp cuWord
+rtn, jmp .
+cuP, 0
+cuQ, 0
+cuN, 0
+cuE, 0
+cuW, 0
+    endloc
+
+// Ready the main bank's rebuild after the tables changed (tapeRebuild). Every point is marked as
+// moving and no point dragged, so that the arc module's drag entry rewrites every arc; and an
+// empty drawing list shown, its end pair written into slot 0 directly, the display being off
+// the frame (on WAIT), with dirty set, so the main loop's rebuildDisplay writes every slot, as
+// init does; and the view is at x1, as at start.
+// AC is clobbered, IO preserved. Called via jsp.
+tpFresh,
+    local rtn, tfLoop
+    dap rtn
+    lac [ptMark:3]
+    dac tpPtr
+    lac [MAXPTS]
+    cma
+    dac tpCnt
+tfLoop,
+    law 1
+    dac i tpPtr
+    idx tpPtr
+    isp tpCnt
+    jmp tfLoop
+    lac [NOPOINT]
+    dac i [dragIdx:4]
+    dzm i [shownCount:4]
+    dzm i [staleN:4]
+    dzm i [flipAt:0]
+    lac [next(subroutine)]
+    dac i [drawList:1]
+    lac [jump arcList:0 next(parameter)]
+    dac i [drawList:1+1]
+    jsp i [vwInit:014]  // the view at x1
+    law 1
+    dac i [dirty:4]
+rtn, jmp .
+    endloc
+
+// The run lists, each ended by a run never reached. A save's stream; the check pass's, the two
+// headers kept and every other word to tpSink; the reverse pass's, the stream's runs backward in
+// the reverse order, the headers to tpSink; and the directory block's, read and written.
+tpSaveRuns,
+    TPRUN(tpHdr:6, TPHDRWORDS)
+    TPRUN(conTab:011, CONWORDS)
+    TPRUN(tpTies:6, TPTIES)
+    TPRUN(tpName:6, NAMEW)
+    TPRUN(tpCyc:6, TPCYC)
+    TPRUN(cpCon:011, TPXCON)
+    TPRUN(cpNCon:011, NMASTER)
+    TPTEXTS
+    TPDIGITS
+    TPPICTURE
+    TPZEROS(TPPAD)
+    TPRUN(tpHdr:6, TPHDRWORDS)
+    TPZEROS(1)
+tpCheckRuns,
+    TPRUN(tpHdrA:6, TPHDRWORDS)
+    TPSINK(TPPBLOCKS * 0d256 - 2 * TPHDRWORDS)
+    TPRUN(tpHdrB:6, TPHDRWORDS)
+    TPSINK(1)
+tpLoadRuns,
+    TPSINK(TPHDRWORDS)
+    TPSINK(TPPAD)
+    TPPICTREV
+    TPDIGREV
+    TPTEXTREV
+    TPREV(cpNCon:011, NMASTER)
+    TPREV(cpCon:011, TPXCON)
+    TPREV(tpCyc:6, TPCYC)
+    TPREV(tpNameR:6, NAMEW)
+    TPREV(tpTies:6, TPTIES)
+    TPREV(conTab:011, CONWORDS)
+    TPSINK(TPHDRWORDS)
+    TPSINK(1)
+tpDirRRuns,
+    TPRUN(tpHdrB:6, TPHDRWORDS)
+    TPRUN(tpDir:6, TPDIRW)
+    TPSINK(0d256 - TPHDRWORDS - TPDIRW)
+    TPSINK(1)
+tpDirWRuns,
+    TPRUN(tpDHdr:6, TPHDRWORDS)
+    TPRUN(tpDir:6, TPDIRW)
+    TPZEROS(0d256 - TPHDRWORDS - TPDIRW)
+    TPZEROS(1)
+
+// The module's words.
+tpWant, 0               // the block a seek wants
+tpRev, 0                // 0 for a seek's forward find, 1 for a reverse find
+tpWord, 0               // a flag's word
+tpStat, 0               // the status at an error or a stop
+tpTmo, 0                // a wait's count
+tpRun, 0                // the run list's next entry, a 16-bit pointer
+tpPtr, 0                // the run's next word, a 16-bit pointer
+tpCnt, 0                // the run's words to go, negative
+tpStep, 0               // 1, -1 in the reverse pass, or 0 for a run of one word over and over
+tpWc, 0                 // the block's words to go, negative
+tpSum, 0                // the block's sum
+tpBlk, 0                // the blocks to go, negative
+tpBad, 0                // the blocks whose sum was not zero
+tpCyc,                  // the cycle's settings packed, as a save writes them and a load reads them
+    table TPCYC, 0
+tpZero, 0               // the word a save's padding repeats
+tpSink, 0               // where a load's unkept words go
+tpHdr,                  // a save's header
+    table TPHDRWORDS, 0
+tpHdrA,                 // a load's leading header
+    table TPHDRWORDS, 0
+tpHdrB,                 // and its trailing one, or the directory's
+    table TPHDRWORDS, 0
+tpDHdr,                 // the directory's header, as a save writes it
+    TPMAGIC
+    TPFORMAT
+    TPDIRW
+    0
+tpTies,                 // the tie lists packed, as a save writes them and a load reads them
+    table TPTIES, 0
+tpName,                 // the name a save writes, typed on the keyboard (tpSvBlk)
+    table NAMEW - 1, KBPAD
+    KBBLANK
+tpNameR,                // the name a load finds
+    table NAMEW - 1, KBPAD
+    KBBLANK
+tpDir,                  // the tape's directory, each picture's entry its format word and name
+    table TPDIRW, 0
+
+// Each picture's first block, P1 to P16, P9's after the directory's block.
+tpFirst,
+    1 + 0 * TPSLOT
+    1 + 1 * TPSLOT
+    1 + 2 * TPSLOT
+    1 + 3 * TPSLOT
+    1 + 4 * TPSLOT
+    1 + 5 * TPSLOT
+    1 + 6 * TPSLOT
+    1 + 7 * TPSLOT
+    TPDIRBLK + 1 + 0 * TPSLOT
+    TPDIRBLK + 1 + 1 * TPSLOT
+    TPDIRBLK + 1 + 2 * TPSLOT
+    TPDIRBLK + 1 + 3 * TPSLOT
+    TPDIRBLK + 1 + 4 * TPSLOT
+    TPDIRBLK + 1 + 5 * TPSLOT
+    TPDIRBLK + 1 + 6 * TPSLOT
+    TPDIRBLK + 1 + 7 * TPSLOT
+
+// Each picture's entry in tpDir, P1 to P16.
+tpEntT,
+    tpDir:6 + 0 * TPDENT
+    tpDir:6 + 1 * TPDENT
+    tpDir:6 + 2 * TPDENT
+    tpDir:6 + 3 * TPDENT
+    tpDir:6 + 4 * TPDENT
+    tpDir:6 + 5 * TPDENT
+    tpDir:6 + 6 * TPDENT
+    tpDir:6 + 7 * TPDENT
+    tpDir:6 + 0d8 * TPDENT
+    tpDir:6 + 0d9 * TPDENT
+    tpDir:6 + 0d10 * TPDENT
+    tpDir:6 + 0d11 * TPDENT
+    tpDir:6 + 0d12 * TPDENT
+    tpDir:6 + 0d13 * TPDENT
+    tpDir:6 + 0d14 * TPDENT
+    tpDir:6 + 0d15 * TPDENT
+
+// Save's keyboard block (spkbd.ac, kbOpen). It holds the text keyboard, NAMELEN characters,
+// the prompt tpPickName sets from tpPrmT, the name's run as the buffer, the main bank's
+// resume, and the run's codes.
+tpSvBlk, KBTEXT
+    NAMELEN
+    0
+    tpName:6
+    svDone:4
+    NAMEWC
+tpPrmT,
+    tpPrm1:6
+    tpPrm2:6
+    tpPrm3:6
+    tpPrm4:6
+    tpPrm5:6
+    tpPrm6:6
+    tpPrm7:6
+    tpPrm8:6
+    tpPrm9:6
+    tpPrm10:6
+    tpPrm11:6
+    tpPrm12:6
+    tpPrm13:6
+    tpPrm14:6
+    tpPrm15:6
+    tpPrm16:6
+tpPrm1, type340 "P1 name"
+tpPrm2, type340 "P2 name"
+tpPrm3, type340 "P3 name"
+tpPrm4, type340 "P4 name"
+tpPrm5, type340 "P5 name"
+tpPrm6, type340 "P6 name"
+tpPrm7, type340 "P7 name"
+tpPrm8, type340 "P8 name"
+tpPrm9, type340 "P9 name"
+tpPrm10, type340 "P10 name"
+tpPrm11, type340 "P11 name"
+tpPrm12, type340 "P12 name"
+tpPrm13, type340 "P13 name"
+tpPrm14, type340 "P14 name"
+tpPrm15, type340 "P15 name"
+tpPrm16, type340 "P16 name"
+
+// The directory's screen's blocks, Dir's, Save's and Load's, which the main bank's actDir,
+// actSave and actLoad pass to kbStart. Each holds the kind, KBDIR; the keys
+// the screen acts on, its key alone for Dir, and for the picker its key, Cancel, and the sixteen
+// lines; the key's text, three words, which kbOpen copies into dirKTxt; no buffer; the resume;
+// and no run.
+tpDirBlk, KBDIR
+    1
+    tpOKTxt:6
+    0
+    nothing:4
+    0
+tpSvPick, KBDIR
+    DIRKEYS
+    tpCanTxt:6
+    0
+    svPick:4
+    0
+tpLdPick, KBDIR
+    DIRKEYS
+    tpCanTxt:6
+    0
+    ldPick:4
+    0
+tpOKTxt,
+    017 * 010000 + 013 * 0100 + KCUP
+    KBPAD
+    KBBLANK
+tpCanTxt,
+    003 * 010000 + KCLOW * 0100 + 001
+    016 * 010000 + 003 * 0100 + 005
+    014 * 010000 + KCUP * 0100 + KCEND
+
+// The screen's keys, as the keyboard's tables give them (kbOpen, kbFind, kbKey). Each key's
+// parameter word, its code and its hit record, the screen's key first, then the lines, P1 to
+// P16, each a pick (KAPICK) of the picture one less than its key.
+dirBlkT,
+    dirKey:6
+    dirL:6 + 0 * DLWORDS
+    dirL:6 + 1 * DLWORDS
+    dirL:6 + 2 * DLWORDS
+    dirL:6 + 3 * DLWORDS
+    dirL:6 + 4 * DLWORDS
+    dirL:6 + 5 * DLWORDS
+    dirL:6 + 6 * DLWORDS
+    dirL:6 + 7 * DLWORDS
+    dirL:6 + 0d8 * DLWORDS
+    dirL:6 + 0d9 * DLWORDS
+    dirL:6 + 0d10 * DLWORDS
+    dirL:6 + 0d11 * DLWORDS
+    dirL:6 + 0d12 * DLWORDS
+    dirL:6 + 0d13 * DLWORDS
+    dirL:6 + 0d14 * DLWORDS
+    dirL:6 + 0d15 * DLWORDS
+dirCode,
+    KSPEC | KNUM | KACANCEL
+    table NPICT, KSPEC | KNUM | KAPICK
+dirRec,
+    KBXOK - KBR
+    KBXOK + 0d6 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    DIRREC(0, 0)
+    DIRREC(1, 0)
+    DIRREC(2, 0)
+    DIRREC(3, 0)
+    DIRREC(4, 0)
+    DIRREC(5, 0)
+    DIRREC(6, 0)
+    DIRREC(7, 0)
+    DIRREC(0, 1)
+    DIRREC(1, 1)
+    DIRREC(2, 1)
+    DIRREC(3, 1)
+    DIRREC(4, 1)
+    DIRREC(5, 1)
+    DIRREC(6, 1)
+    DIRREC(7, 1)
+
+// The directory's screen. It shows the drive in use; each picture's line, P1 to P8 down the
+// left and P9 to P16 down the right, its label and its name, taking the pen so that the
+// picker's taps find them; and the key, OK or Cancel, where the keyboard's OK is; then its
+// halt. tpGetDir writes the drive's digit and the sixteen names, kbOpen the key's text and its
+// parameter word, before frameGo points here. It holds no jump or save, as the keyboard's list
+// does not.
+dirList,
+    KBTXT
+    y(KBPY) next(point)
+    x(KBX0) next(character)
+    type340 "Drive"
+    KBTXT
+    y(KBPY) next(point)
+    x(KBX0 + 0d6 * KBADV) next(character)
+dirDrv, KCUP * 010000 + DRVCODE1 * 0100 + KCEND
+dirL,
+    DIRLINE(0, 0, KCP * 010000 + (KCZERO + 1) * 0100 + KCSPACE)
+    DIRLINE(1, 0, KCP * 010000 + (KCZERO + 2) * 0100 + KCSPACE)
+    DIRLINE(2, 0, KCP * 010000 + (KCZERO + 3) * 0100 + KCSPACE)
+    DIRLINE(3, 0, KCP * 010000 + (KCZERO + 4) * 0100 + KCSPACE)
+    DIRLINE(4, 0, KCP * 010000 + (KCZERO + 5) * 0100 + KCSPACE)
+    DIRLINE(5, 0, KCP * 010000 + (KCZERO + 6) * 0100 + KCSPACE)
+    DIRLINE(6, 0, KCP * 010000 + (KCZERO + 7) * 0100 + KCSPACE)
+    DIRLINE(7, 0, KCP * 010000 + (KCZERO + 0d8) * 0100 + KCSPACE)
+    DIRLINE(0, 1, KCP * 010000 + (KCZERO + 0d9) * 0100 + KCSPACE)
+    DIRLINE(1, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO)
+    DIRLINE(2, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 1)
+    DIRLINE(3, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 2)
+    DIRLINE(4, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 3)
+    DIRLINE(5, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 4)
+    DIRLINE(6, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 5)
+    DIRLINE(7, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 6)
+dirKey, KBKEY
+    y(KBYB) next(point)
+    x(KBXOK) next(character)
+dirKTxt,
+    017 * 010000 + 013 * 0100 + KCUP
+    KBPAD
+    KBBLANK
+dirHalt, lpoff halt interrupt

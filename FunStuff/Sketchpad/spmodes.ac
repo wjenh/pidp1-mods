@@ -1,0 +1,2292 @@
+// spmodes.ac -- the modes: each one's action from its row, and its target hit, lift and
+// Locate handlers (modeTarget, modeLost and modeLocate in spdispatch.ac): Line, Circle, Move,
+// Delete, Horv, Fix, Size, Clear, Define, Inst and Copy, and the truss's Beam, Load, Roller and
+// Forces.
+//
+// Bank 4, after spundo.ac. Calls bank 2's arc module through arcCall, and bank 7's instance
+// module through instCall.
+// Part of sketchpad.am1, included where it stands.
+
+// Bring the target to the middle of the canvas, restart its miss count, and turn tracking on.
+// AC and IO are clobbered. Called via jsp.
+placeTarget,
+    local rtn
+    dap rtn
+    lsm                 // penISR writes the target's position words
+    lac [y(INITIALY) next(point)]
+    dac i [trackY:0]
+    lac [x(INITIALX) next(parameter)]
+    dac i [trackX:0]
+    dzm i [tgtPend:0]   // a posted move would take it back; the middle fits any arms
+    dzm i [tgtLX:0]     // the next hit runs clipTarget, which restores whole arms here
+    esm
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    jsp trackOn
+rtn, jmp .
+    endloc
+
+// Draw's Line row enters draw mode, waiting for the lift that places the chain's start.
+// AC and IO are clobbered. Called via jsp.
+actLine,
+    local rtn
+    dap rtn
+    law MDRAW
+    jda drawEnter
+rtn, jmp .
+    endloc
+
+// Draw's Circle row enters circle mode, waiting for the lift that places the center.
+// AC and IO are clobbered. Called via jsp.
+actCircle,
+    local rtn
+    dap rtn
+    law MCIRCLE
+    jda drawEnter
+rtn, jmp .
+    endloc
+
+// Draw's Text row enters Text mode, waiting for the lift that places a text or opens one to edit
+// (textLost). AC and IO are clobbered. Called via jsp.
+actText,
+    local rtn
+    dap rtn
+    law MTEXT
+    jda drawEnter
+rtn, jmp .
+    endloc
+
+// Dim's Number row enters Number mode, waiting for the lift that places a set of digits or opens
+// one to type its value (textLost). AC and IO are clobbered. Called via jsp.
+actNumber,
+    local rtn
+    dap rtn
+    law MNUMBER
+    jda drawEnter
+rtn, jmp .
+    endloc
+
+// Enter draw or circle mode, its first step taken at the pseudo pen location at once, as a lift
+// there would take it, the line's start or the arc's center. With
+// tracking off, the target goes to the middle and the mode waits for the first lift instead.
+// Selected again during a chain or an arc, it commits nothing and starts again. Text and Number
+// modes are entered the same way but always wait for a lift.
+// Entry: AC = MDRAW, MCIRCLE, MTEXT or MNUMBER. AC and IO are clobbered. Called via jda.
+drawEnter, 0
+    local rtn, deGo, deWas, deCirc
+    dap rtn
+    lac i [tracking:0]
+    dac deWas
+    sza                 // skip if tracking is off
+    jmp deGo
+    jsp placeTarget
+deGo,
+    jsp undoEndChain
+    dzm strokeLive
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac [CDRAW]
+    dac newCol
+    lac drawEnter
+    jda setMode
+    jsp waitStart
+    lac mode
+    sad [MTEXT]         // skip unless Text mode, which waits for a lift
+    jmp rtn
+    sad [MNUMBER]       // skip unless Number mode, which waits likewise
+    jmp rtn
+    lac deWas
+    sza i               // skip if tracking was on, for the first step now
+    jmp rtn
+    law 1
+    dac strokeLive
+    lac mode
+    sas [MDRAW]         // skip if draw mode
+    jmp deCirc
+    jsp drawLost
+    jmp rtn
+deCirc,
+    jsp circleLost
+rtn, jmp .
+deWas, 0
+    endloc
+
+// Draw and circle modes. Wait for the first lift, a line's start or an arc's center, the band
+// off and the dot following the target, locking onto any point.
+// AC and IO are clobbered. Called via jsp.
+waitStart,
+    local rtn
+    dap rtn
+    dzm circPhase
+    lac [NOPOINT]
+    dac bandIdx
+    jsp placePen
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+    endloc
+
+// Draw mode, a target hit. The stroke is live; move the pseudo pen location, and the band once
+// the chain has its start. AC and IO are clobbered. Called via jsp.
+drawTarget,
+    local rtn, dtDot
+    dap rtn
+    law 1
+    dac strokeLive
+    lac circPhase
+    sza i               // skip once the start is placed
+    jmp dtDot
+    jsp updatePen
+    jmp rtn
+dtDot,
+    jsp placePen
+rtn, jmp .
+    endloc
+
+// Draw mode, tracking lost (a lifted pen). The first lift places the chain's start at the
+// pseudo pen location, a point there if it locks onto one, and the band shows from it; from
+// then on the lock passes over the start vertex, so a short line can be drawn from it. Each
+// lift after commits the stroke to the pseudo pen location. A loss with no target hit since the
+// last lift, such as the one after a trip to the menu, does nothing. The start's lift is Undo's
+// record as circle mode's center's is, and Undo takes it back the same way. A lift searches for
+// lines and arcs however fast the pen moved (atLift), and what the start locks onto is kept
+// until its point is made (the constraint module's cKeep).
+// AC and IO are clobbered. Called via jsp.
+drawLost,
+    local rtn, dlLine
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the last lift
+    jmp rtn
+    dzm strokeLive
+    law 1
+    dac atLift
+    lac circPhase
+    sza                 // skip if this lift places the start
+    jmp dlLine
+    jsp placePen
+    law KEEPSTART
+    lio [CEKEEP]
+    jda conCall
+    lac penX
+    dac startX
+    lac penY
+    dac startY
+    lac penIdx
+    dac startPointIdx
+    dac bandIdx
+    jsp writeBand
+    lac [jump bandStart:0 next(parameter)]
+    dac i [bandGate:0]
+    law 1
+    dac circPhase
+    jsp undoSnap
+    law UCENTER
+    jda undoKeep
+    jmp rtn
+dlLine,
+    jsp updatePen
+    jsp commitStroke
+rtn, jmp .
+    endloc
+
+// Draw and circle modes, Locate (modeLocate). End the chain or the arc under way, dropping the
+// band, and wait for a new start or center. AC and IO are clobbered. Called via jsp.
+chainEnd,
+    local rtn
+    dap rtn
+    jsp endChain
+    jsp waitStart
+rtn, jmp .
+    endloc
+
+// Delete, Horv, Size and Fix modes, Locate (modeLocate). No gesture spans lifts, so only a lift
+// not yet declared is dropped; a press on the bar before the loss cancels it.
+// Pan mode's (panLocate) also notes the start of its next stroke again (the view module's
+// VWMARK), since with tracking off Locate has brought the target to the middle.
+// AC and IO are clobbered. Called via jsp.
+panLocate,
+    dap dsRtn
+    lio [VWMARK]
+    jsp i [vwEntry:014]
+    jmp dsGo
+disarm,
+    dap dsRtn
+dsGo,
+    dzm strokeLive
+dsRtn, jmp .
+
+// End the chain, Move's wait for a point, delete mode or Horv mode, and return to Locate's
+// mode, tracking left as it is. AC and IO are clobbered. Called via jsp.
+leaveDraw,
+    local rtn
+    dap rtn
+    jsp endChain
+    lac [CLOCATE]
+    dac newCol
+    law MLOCATE
+    jda setMode
+rtn, jmp .
+    endloc
+
+// Hide the band and the pseudo pen location, and let go of any instance or text locked or
+// dragged, which is dimmed again, a text Move carries dropped where it stands; Undo then steps
+// back no chain. AC and IO are clobbered. Called via jsp.
+endChain,
+    local rtn
+    dap rtn
+    lac [jump frameHalt:0 next(parameter)]
+    dac i [bandGate:0]
+    dzm strokeLive
+    jsp undoEndChain
+    lio [TXDROP]
+    jda txCall
+    lac [NOPOINT]
+    dac penInst
+    dac dragInst
+    lio [IESHINE]
+    jda instCall
+rtn, jmp .
+    endloc
+
+// Circle mode, a target hit. The stroke is live; move the pseudo pen location and the band.
+// AC and IO are clobbered. Called via jsp.
+circleTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp circleBand
+rtn, jmp .
+    endloc
+
+// Place the pseudo pen location, and move the band, none while circle mode waits for the
+// center, the radius from the center, dotted, while it waits for the start, then the arc too,
+// whose band runs on into the radius's.
+// AC and IO are clobbered. Called via jsp.
+circleBand,
+    local rtn, cbRad
+    dap rtn
+    jsp placePen
+    lac circPhase
+    sza i               // skip once the center is placed
+    jmp rtn
+    sas [2]             // skip if the start is placed too
+    jmp cbRad
+    law AEBAND
+    jda arcCall
+cbRad,
+    law AERADIUS
+    jda arcCall
+    jsp writeSeg
+rtn, jmp .
+    endloc
+
+// Circle mode, tracking lost (a lifted pen). The first lift places the center, and the band
+// shows the radius from it. The second places the start, unless the radius is under ARCRMIN or
+// over ARCRMAX, and the band shows the arc. The third commits the arc, unless it is too short
+// (arcCommit), and circle mode waits for a new center; with no room for it, it leaves circle
+// mode. The pseudo pen location never locks onto the center. A loss with no target hit since
+// the last lift, such as the one after a trip to the menu, does nothing. Each lift that places
+// or commits is Undo's record. A lift searches for lines and arcs however fast the pen moved
+// (atLift); what the center and the start lock onto is kept (the constraint module's cKeep), and
+// the arc's new points get their N's and C's when it is committed (cMake).
+// AC and IO are clobbered. Called via jsp.
+circleLost,
+    local rtn, clStart, clArc, clNew
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the last lift
+    jmp rtn
+    dzm strokeLive
+    law 1
+    dac atLift
+    jsp circleBand
+    lac circPhase
+    sza                 // skip if this lift places the center
+    jmp clStart
+    law KEEPSTART
+    lio [CEKEEP]
+    jda conCall
+    lac penX
+    dac cenX
+    dac startX
+    lac penY
+    dac cenY
+    dac startY
+    lac penIdx
+    dac cenIdx
+    dac bandIdx
+    jsp writeBand
+    lac [jump bandStart:0 next(parameter)]
+    dac i [bandGate:0]
+    law 1
+    dac circPhase
+    jsp undoSnap
+    law UCENTER
+    jda undoKeep
+    jmp rtn
+clStart,
+    sad [2]             // skip unless this lift ends the arc
+    jmp clArc
+    law AEBEGIN
+    jda arcCall
+    sza                 // skip if the radius is in range
+    jmp rtn
+    law KEEPRIM
+    lio [CEKEEP]
+    jda conCall
+    lac penX
+    dac startX
+    lac penY
+    dac startY
+    lac penIdx
+    dac startPointIdx
+    lac [jump arcBand:0 next(parameter)]
+    dac i [bandGate:0]
+    law 2
+    dac circPhase
+    jsp undoSnap
+    law USTART
+    jda undoKeep
+    jmp rtn
+clArc,
+    jsp undoSnap
+    law AECOMMIT
+    jda arcCall
+    sza i               // skip unless the arc is committed
+    jmp clNew
+    sma                 // skip if a table has no room
+    jmp rtn
+    idx fullCount
+    jsp leaveDraw
+    jmp rtn
+clNew,
+    law UPARTS
+    jda undoKeep
+    law 1               // the arc's new points' N's and C's
+    lio [CEMAKE]
+    jda conCall
+    dzm circPhase
+    lac [NOPOINT]
+    dac bandIdx
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+    endloc
+
+// Call entry n of the arc module in bank 2. The window is open, so the jsp reaches bank 2 and
+// arcEntry's return reaches back. Breaks are not masked across the crossing, since a break at a
+// jump between banks returns where it should. Every change to the arcs comes through here, so
+// the target calls are spread again afterward if the arcs changed.
+// Entry: AC = n. Exit: AC as the entry leaves it. IO is clobbered. Called via jda.
+arcCall, 0
+    dap acRtn
+    lio arcCall
+    jsp i [arcEntry:2]
+    dac acAC
+    jsp respread
+    lac acAC
+acRtn, jmp .
+acAC, 0
+
+// Call entry n of the instance module in bank 7 with the argument in AC; instEntry reads the
+// argument from this word, where the jda left it. The window is open, so the jsp reaches bank 7
+// and instEntry's return reaches back; breaks are not masked across the crossing, as in
+// arcCall. Unlike arcCall it does not respread; the callers do.
+// Entry: AC = the argument, IO = n. Exit: AC as the entry leaves it. IO is clobbered. Called
+// via jda.
+instCall, 0
+    dap icRtn
+    jsp i [instEntry:7]
+icRtn, jmp .
+
+// Call entry n of the text module in bank 10 with the argument in AC, as instCall calls the
+// instance module's.
+// Entry: AC = the argument, IO = n. Exit: AC as the entry leaves it. IO is clobbered. Called via
+// jda.
+txCall, 0
+    dap txcRtn
+    jsp i [txEntry:012]
+txcRtn, jmp .
+
+// The distance an instance's origin must be nearer than to win the lock (the instance
+// module's instLock), which placeLock and lockInst set and the arc module's arcLock leaves.
+lockD, 0
+
+// Edit's Move row enters move mode and picks up what the pseudo pen location locks onto at
+// once, as a lift there would, its lines searched whole (atLift); with nothing
+// locked, the dot dimmed follows the target and a lift picks up. With tracking off, the target
+// goes to the middle and nothing is picked up. Selected again while a point or a line is
+// dragged, it drops it and starts over.
+// AC and IO are clobbered. Called via jsp.
+actMove,
+    local rtn, amGo, amWas
+    dap rtn
+    lac i [tracking:0]
+    dac amWas
+    sza                 // skip if tracking is off
+    jmp amGo
+    jsp placeTarget
+amGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac [CEDIT]
+    dac newCol
+    law MMOVE
+    jda setMode
+    law 1
+    dac atLift
+    jsp lockInst
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+    lac amWas
+    sza                 // skip if tracking was off
+    jsp pickUp
+rtn, jmp .
+amWas, 0
+    endloc
+
+// Move mode, a target hit. Drag the instance being moved, by a tie point or not, or the point
+// or the line being moved (dragTo), or, with neither, move the pseudo pen location. AC and IO
+// are clobbered. Called via jsp.
+moveTarget,
+    local rtn, mtPt, mtHunt
+    dap rtn
+    law 1
+    dac strokeLive
+    lac dragInst
+    sad [NOPOINT]       // skip if an instance is dragged
+    jmp mtPt
+    jsp instDrag
+    jmp rtn
+mtPt,
+    lac dragIdx
+    sad [NOPOINT]       // skip if a point is dragged
+    jmp mtHunt
+    jsp dragTo
+    jmp rtn
+mtHunt,
+    jsp lockInst
+rtn, jmp .
+    endloc
+
+// Move mode, tracking lost (a lifted pen). Drop the instance, the point or the line being
+// dragged, or, with none, pick up what the pseudo pen location locks onto. A loss with no
+// target hit since the last pick-up or drop, such as the one after a trip to the menu, does
+// nothing. A drop, a tie point's among them, and a pick-up search for lines and arcs however
+// fast the pen moved (atLift). AC and IO are clobbered. Called via jsp.
+moveLost,
+    local rtn, mlPt, mlPick
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the last pick-up or drop
+    jmp rtn
+    dzm strokeLive
+    lac dragInst
+    sad [NOPOINT]       // skip if an instance is dragged
+    jmp mlPt
+    law 1
+    dac atLift
+    jsp instDrag
+    jsp instDrop
+    jmp rtn
+mlPt,
+    lac dragIdx
+    sad [NOPOINT]       // skip if a point is dragged
+    jmp mlPick
+    law 1
+    dac atLift
+    jsp dragTo
+    jsp dropPoint
+    jmp rtn
+mlPick,
+    law 1
+    dac atLift
+    jsp lockInst
+    jsp pickUp
+rtn, jmp .
+    endloc
+
+// Move mode, Locate (modeLocate). Drop the instance, the point, the line or the text picked up,
+// a point or a line that has moved merging as a loss would, and stay in move mode.
+// AC and IO are clobbered. Called via jsp.
+moveEnd,
+    local rtn, msPt
+    dap rtn
+    dzm strokeLive
+    lio [TXDROP]
+    jda txCall
+    lac dragInst
+    sad [NOPOINT]       // skip if an instance is picked up
+    jmp msPt
+    jsp instDrop
+    jmp rtn
+msPt,
+    lac dragIdx
+    sad [NOPOINT]       // skip if a point is picked up
+    jmp rtn
+    lac dragMoved
+    sza                 // skip if it has not moved
+    jsp dragTo
+    jsp dropPoint
+rtn, jmp .
+    endloc
+
+// Pick up the point the pseudo pen location locks onto, if any. The arc module lists the lines
+// to rewrite as it moves, the point's and those on the points its arcs carry (arcPick), and the
+// dot brightens. A tie point picks up its instance instead, carried by it, the point still
+// dragIdx. Or pick up the instance it locks onto, which stays lit while it is dragged. An
+// instance carries its tie points and every instance fastened to it, the instance module
+// listing the lines to rewrite as they move (instPick). Or pick up the line it locks onto,
+// whole. Its ends become dragIdx and bandIdx (bank 12's linePick), and the arc module lists the
+// lines on them and on the points their arcs carry (arcPick); a tie point at an end moves alone,
+// its instance brought after by the solver. Or pick up the text it locks onto, or drop the text
+// carried (the text module's txPick). A text is carried by the lock itself (txLock), never by
+// dragInst, so the hunt goes on under it and the lift that follows comes back here to drop it.
+// With none, move mode waits, the dot dimmed.
+// Entry: penIdx, penLine, penInst. AC and IO are clobbered. Called via jsp.
+pickUp,
+    local rtn, puLine, puInst, puText, puShow, puNone, puDot
+    dap rtn
+    dzm dragMoved
+    lac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp puLine
+    dac dragIdx
+    lio [IEPICK]
+    jda instCall
+    sas [NOPOINT]       // skip unless a tie point, which carries its instance
+    jmp puShow
+    law AEPICK
+    jda arcCall
+    idx pickCount
+    jmp puShow
+puLine,
+    lac penLine
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp puInst
+    dac dragLine
+    jsp i [linePick:014]
+    law AEPICK
+    jda arcCall
+    jmp puShow
+puInst,
+    lac penInst
+    sad [NOPOINT]       // skip if it locks onto an instance or a text
+    jmp puNone
+    sad [TXINST]        // skip unless a text, which the text module carries, never dragInst
+    jmp puText
+    dac dragInst
+    lac [NOPOINT]
+    lio [IEPICK]
+    jda instCall
+    jmp puShow
+puText,
+    lio [TXPICK]        // picked up, or dropped if carried; the lock moves it (txLock)
+    jda txCall
+puShow,
+    lac [DOTPARAM]
+    jmp puDot
+puNone,
+    lac [HUNTPARAM]
+puDot,
+    dac i [dotBlock:0]
+rtn, jmp .
+    endloc
+
+// Move the instance being dragged to the pseudo pen location, or its tie point dragIdx there,
+// carrying its tie points and the instances fastened to it, the step held where any of their
+// figures would leave the screen (instMove); the arcs on the points carried are worked out again
+// (the arc module's arcCarry), the step taken back if one cannot follow (IEBACK); then the lines
+// carried are redrawn, and the constraint solver takes up the move (cDrag on the origin).
+// AC and IO are clobbered. Called via jsp.
+instDrag,
+    local rtn, idMoved
+    dap rtn
+    jsp placePen
+    lio [IEMOVE]
+    jda instCall
+    sza                 // skip if it moved
+    jmp rtn
+    law AECARRY
+    jda arcCall
+    sza i               // skip if an arc could not follow
+    jmp idMoved
+    lio [IEBACK]
+    jda instCall
+    jmp rtn
+idMoved,
+    law 1
+    dac dragMoved
+    jsp redrawDrag
+    lac dragInst
+    add [MAXPTS]
+    lio [CEDRAG]
+    jda conCall
+    jsp undoClear
+rtn, jmp .
+    endloc
+
+// Drop the instance being dragged where it is. One carried by a tie point that has moved
+// merges that point into the point the pseudo pen location locks onto, or holds it on the line
+// or arc locked, as a point's drop does (dropPoint). It stays lit until the next lock moves off
+// it. Move mode then waits for the next point or instance.
+// AC and IO are clobbered. Called via jsp.
+instDrop,
+    local rtn
+    dap rtn
+    lac dragIdx
+    sas [NOPOINT]       // skip unless carried by a tie point
+    jsp dropPoint
+    lac [NOPOINT]
+    dac dragInst
+    dzm dragMoved
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+rtn, jmp .
+    endloc
+
+// Place the pseudo pen location for Move's hunt and for Size, Change and Dismember, onto an
+// instance whose figure's box holds the target's center, which is lit, if it wins (instLock).
+// Move's hunt is placeLock's, onto a point, a line or an instance, the instance winning over a
+// point when its origin is nearer than the point less LOCKBIAS, as placeLock weighs a point
+// against a line, and over a line when nearer than the line. The others act only on instances,
+// with placePen, then any instance that wins. With an instance the dot is at the
+// target's center.
+// Exit: penX, penY, penIdx, penInst; in Move's hunt penLine too. AC and IO are clobbered.
+// Called via jsp.
+lockInst,
+    local rtn, liInst
+    dap rtn
+    lac mode
+    sas [MMOVE]         // skip if move mode
+    jmp liInst
+    jsp placeLock
+    jmp rtn
+liInst,
+    jsp placePen
+    lac [0377777]
+    dac lockD
+    lio [IELOCK]
+    jda instCall
+    sas [NOPOINT]       // skip if no instance locks
+    jsp showDot
+rtn, jmp .
+    endloc
+
+// Move the dragged point to the pseudo pen location, which penISR keeps inside the target's
+// bounds, and redraw its lines, which swing whole whatever their length. The arcs on it follow
+// it first (arcDrag); if one cannot, the point stays where it is. A fixed point that moves is
+// unfixed, and the constraint solver takes up the move (the constraint module's cDrag). A line
+// dragged whole moves instead (lineDragTo).
+// AC and IO are clobbered. Called via jsp.
+dragTo,
+    local rtn, dtPoint, dtSameX, dtMove, dtX, dtY, dtPx, dtPy
+    dap rtn
+    lac dragLine
+    sad [NOPOINT]       // skip if a line is dragged
+    jmp dtPoint
+    jsp lineDragTo
+    jmp rtn
+dtPoint,
+    jsp placePen
+    lac penX
+    dac dtX
+    lac penY
+    dac dtY
+    lac dragIdx
+    add [pointX:3]
+    dac dtPx
+    lac dragIdx
+    add [pointY:3]
+    dac dtPy
+    lac i dtPx
+    sad dtX             // skip if x changes
+    jmp dtSameX
+    jmp dtMove
+dtSameX,
+    lac i dtPy
+    sad dtY             // skip if y changes
+    jmp rtn
+dtMove,
+    law AEDRAG
+    jda arcCall
+    sza                 // skip unless an arc holds the point
+    jmp rtn
+    lac dtX
+    dac i dtPx
+    lac dtY
+    dac i dtPy
+    law 1
+    dac dragMoved
+    jsp redrawDrag
+    jsp undoClear       // a move is no commit, so nothing before it is undone after it
+    lac dragIdx
+    lio [CEDRAG]
+    jda conCall
+rtn, jmp .
+dtX, 0
+dtY, 0
+dtPx, 0
+dtPy, 0
+    endloc
+
+// Redraw the lines pick-up listed, the dragged point's and those on the points its arcs carry,
+// in place, a slot each, while the display list matches the tables (no rebuild asked for, no
+// slot marked, the length shown, no end pair waiting); otherwise their slots are marked for the
+// next rebuild. More lines than dragLines holds asks for the whole list.
+// AC and IO are clobbered. Called via jsp.
+redrawDrag,
+    local rtn, rgLoop, rgMark, rgNext, rgAll, rgK, rgHow
+    dap rtn
+    lac dragFull
+    sza                 // skip unless the point has too many lines
+    jmp rgAll
+    lac lineCount
+    xor shownCount
+    ior dirty
+    ior staleN
+    ior i [flipAt:0]
+    dac rgHow
+    dzm slotHold
+    dzm rgK
+rgLoop,
+    lac rgK
+    sad dragN           // skip while lines remain
+    jmp rtn
+    add [dragLines:3]
+    dac tptr
+    lac rgHow
+    sza                 // skip if the list matches the tables, to write in place
+    jmp rgMark
+    lac i tptr
+    jda writeSlot
+    jmp rgNext
+rgMark,
+    lac i tptr
+    jda markSlot
+rgNext,
+    idx rgK
+    jmp rgLoop
+rgAll,
+    law 1
+    dac dirty
+rtn, jmp .
+rgK, 0
+rgHow, 0
+    endloc
+
+// Drop the dragged point where it is. If it has moved and sits on the point the pseudo pen
+// location locks onto, it merges into that point (the arc module's dropMerge); if it sits on a
+// line or an arc it locks onto, it gets its N or C (the constraint module's cDrop). A line
+// dragged whole is dropped instead (lineDrop). Move mode then waits for the next point.
+// Entry: penIdx, penLine, pen2Line, penArc, as dragTo left them. AC and IO are clobbered. Called
+// via jsp.
+dropPoint,
+    local rtn, dpPoint, dpDone
+    dap rtn
+    lac dragLine
+    sad [NOPOINT]       // skip if a line is dragged
+    jmp dpPoint
+    jsp lineDrop
+    jmp rtn
+dpPoint,
+    lac dragMoved
+    sza i               // skip if it has moved
+    jmp dpDone
+    law AEDROP
+    jda arcCall
+    lac dragIdx         // no merge with a line or an arc locked, so still its index
+    lio [CEDROP]
+    jda conCall
+dpDone,
+    lac [NOPOINT]
+    dac dragIdx
+    dzm dragMoved
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+    idx dropCount
+rtn, jmp .
+    endloc
+
+// Move the line dragged whole with the pseudo pen location, by the pen's move from the grip,
+// held where an end, or the center of a chord on them, would leave the target's bounds (bank
+// 12's lineStep). The arcs on its ends follow first (the arc module's arcDrag, which bank 12's
+// lineArc steers); if one cannot, the line stays where it is. Then its ends move, with the
+// centers of the chords on them (lineApply), its lines and arcs are redrawn, and the constraint
+// solver takes up the move holding both ends, its to end by cDrag2, its from end by cDrag, as a
+// point's drag holds it. The solver is woken even with no entry, since a tie point on an end
+// moves apart from its instance, which only the solver brings back, and placing an instance
+// asks for its sets (cTopo) without waking it, so cDrag, which wakes it only for entries or ties
+// already in its sets, would leave it asleep.
+// AC and IO are clobbered. Called via jsp.
+lineDragTo,
+    local rtn
+    dap rtn
+    jsp placePen
+    jsp i [lineStep:014]
+    sza i               // skip if the line moves
+    jmp rtn
+    law AEDRAG
+    jda arcCall
+    sza                 // skip unless an arc holds the line
+    jmp rtn
+    jsp i [lineApply:014]
+    law 1
+    dac dragMoved
+    jsp redrawDrag
+    jsp undoClear       // a move is no commit, so nothing before it is undone after it
+    lac bandIdx
+    lio [CEDRAG2]
+    jda conCall
+    lac dragIdx
+    lio [CEDRAG]
+    jda conCall
+    law 1
+    dac conWake
+rtn, jmp .
+    endloc
+
+// Drop the line dragged whole where it is. If it has moved and the pseudo pen location locks
+// onto a line, each of its ends merges into the nearer end of that line, by the pairing whose
+// two distances sum the less (bank 12's linePair), both or neither. The from end goes onto its
+// partner as a point's drag takes it, its arcs following (lineEnd), then the to end; if the to
+// end cannot go, the from end goes back, and nothing merges. Each then merges as a point's drop
+// merges it (the arc module's dropMerge), the second found by its place (lineMerge2), since the
+// first merge may renumber the points. No line whose ends an arc joins is merged, and no N or C
+// is made. Both ends stay held while the figure settles, where the drag or the merge left them.
+// Move mode then waits for the next point.
+// Entry: penLine, as dragTo left it. AC and IO are clobbered. Called via jsp.
+lineDrop,
+    local rtn, ldBack, ldHold, ldDone
+    dap rtn
+    lac dragMoved
+    sza i               // skip if it has moved
+    jmp ldDone
+    lac penLine
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp ldDone
+    jsp i [linePair:014]
+    sza                 // skip if the two lines can merge
+    jmp ldDone
+    lio [CEDRAG]
+    jsp lineEnd
+    sza                 // skip if the from end went
+    jmp ldHold
+    jsp i [lineSecond:014]
+    lio [CEDRAG2]
+    jsp lineEnd
+    sza                 // skip if the to end went
+    jmp ldBack
+    jsp i [lineMerge1:014]
+    law AEDROP
+    jda arcCall
+    jsp i [lineMerge2:014]
+    law AEDROP
+    jda arcCall
+    jmp ldDone
+ldBack,
+    jsp i [lineBack:014]
+    lio [CEDRAG]
+    jsp lineEnd
+ldHold,
+    lac i [lineEndB:014]
+    lio [CEDRAG2]
+    jda conCall
+    lac i [lineEndA:014]
+    lio [CEDRAG]
+    jda conCall
+ldDone,
+    lac [NOPOINT]
+    dac dragIdx
+    dac bandIdx
+    dac dragLine
+    dac penIdx          // the merges' setup may name a point since renumbered
+    dzm dragMoved
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+    idx dropCount
+rtn, jmp .
+    endloc
+
+// For a line's drop (lineDrop), move point dragIdx to the pseudo pen location as a point's drag
+// moves it (dragTo), the arcs on it following (the arc module's arcPick and arcDrag); then the
+// constraint solver takes up the move by the entry in IO, CEDRAG or CEDRAG2, which holds it.
+// Entry: IO = the entry; dragIdx, penX, penY. Exit: AC = 0 moved, 1 refused, nothing moved. IO
+// is clobbered. Called via jsp.
+lineEnd,
+    local rtn, leE
+    dap rtn
+    dio leE
+    law AEPICK
+    jda arcCall
+    law AEDRAG
+    jda arcCall
+    sza                 // skip unless an arc holds the point
+    jmp rtn
+    jsp i [linePenPut:014]
+    jsp redrawDrag
+    lac dragIdx
+    lio leE
+    jda conCall
+    cla
+rtn, jmp .
+leE, 0
+    endloc
+
+// Edit's Scale row and Scale mode, the scale module's routines in bank 6
+// (spscale.ac), each reached by its gate here, a jump there, and returning across the banks by
+// the address its jsp left. Entry and exit as each routine's. Called via jsp.
+actScale, jmp i [scAct:6]
+scaleTarget, jmp i [scTarget:6]
+scaleLost, jmp i [scLost:6]
+scaleEnd, jmp i [scEnd:6]
+
+// Edit's Delete row enters delete mode, the pseudo pen location locking onto points, lines and
+// arcs.
+// Selecting deletes nothing. A loss deletes only after a target hit since the selection or the
+// last deletion (strokeLive), so the loss after the trip to the menu does nothing. With
+// tracking off, the target first goes to the middle, as Locate does.
+// AC and IO are clobbered. Called via jsp.
+actDelete,
+    local rtn, adGo
+    dap rtn
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp adGo
+    jsp placeTarget
+adGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac [CEDIT]
+    dac newCol
+    law MDELETE
+    jda setMode
+    jsp placeLock
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+    endloc
+
+// Delete mode, a target hit. Arm the next loss and move the pseudo pen location.
+// AC and IO are clobbered. Called via jsp.
+deleteTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp placeLock
+rtn, jmp .
+    endloc
+
+// Delete mode, tracking lost (a lifted pen). Delete what the pseudo pen location locks onto, a
+// point with every line and arc on it, a line or an arc, and any point that leaves with nothing
+// on it (the arc module's deleteLocked); or an instance (instRemove), with each of its tie
+// points that nothing else is on (the arc module's arcOrphans); or, with Show on, a
+// constraint, by its mark (the constraint module's cDel). A loss with no target hit since the
+// selection or the last deletion does nothing, and so does one with nothing locked. The program
+// stays in delete mode. A deletion of parts wakes the constraint module while it has entries,
+// so that its next pass drops those the deletion spoiled, the N's and C's of a line or an arc
+// deleted among them (cGone).
+// AC and IO are clobbered. Called via jsp.
+deleteLost,
+    local rtn, dlParts, dlInst, dlDone
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last deletion
+    jmp rtn
+    dzm strokeLive
+    jsp placeLock
+    lac penCons
+    sad [NOPOINT]       // skip if it locks onto a constraint's mark
+    jmp dlInst
+    lio [CEDEL]
+    jda conCall
+    jmp dlDone
+dlInst,
+    lac penInst
+    sad [NOPOINT]       // skip if it locks onto an instance
+    jmp dlParts
+    lio [IEREMOVE]
+    jda instCall
+    law AEORPHAN        // its tie points that nothing else is on go; arcCall respreads
+    jda arcCall
+    jmp dlDone
+dlParts,
+    law AEDELETE
+    jda arcCall
+    sza i               // skip if something was deleted
+    jmp rtn
+    lac i [cCount:011]
+    sza i               // skip if there are entries
+    jmp dlDone
+    dac conWake         // the count as the flag, since both flags are only tested by sza
+    dac i [cGone:010]
+dlDone,
+    idx deleteCount
+    jsp undoClear
+    jsp placeLock       // what it locked onto is gone
+rtn, jmp .
+    endloc
+
+// Constr's Horv row enters Horv mode, the pseudo pen location locking onto lines as in delete
+// mode. Selecting changes nothing. A loss constrains a line only after a target hit since the
+// selection or the last lift (strokeLive), so the loss after the trip to the menu does nothing.
+// With tracking off, the target first goes to the middle, as Locate does.
+// AC and IO are clobbered. Called via jsp.
+actHorv,
+    local rtn, ahGo
+    dap rtn
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp ahGo
+    jsp placeTarget
+ahGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac [CEDIT]
+    dac newCol
+    law MHORV
+    jda setMode
+    jsp horvLock
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+    endloc
+
+// Horv mode, a target hit. Arm the next loss and move the pseudo pen location.
+// AC and IO are clobbered. Called via jsp.
+horvTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp horvLock
+rtn, jmp .
+    endloc
+
+// Horv mode, tracking lost (a lifted pen). Constrain the line the pseudo pen location locks onto
+// to be level, or plumb if it is nearer plumb, an H constraint the solver then keeps whatever
+// moves its points (the constraint module's cHorv); refused for a line an H already holds or a
+// full table. Adding it is a commit Undo takes back, with whatever the solver moved for it. A
+// loss with no target hit since the selection or the last lift does nothing, and so does one
+// with no line locked. The program stays in Horv mode.
+// AC and IO are clobbered. Called via jsp.
+horvLost,
+    local rtn
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+    jsp horvLock
+    lac penLine
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp rtn
+    lio [CEHORV]
+    jda conCall
+    sza                 // skip if the H was added
+    jmp rtn
+    law UCONS
+    jda undoKeep
+    idx horvCount
+rtn, jmp .
+    endloc
+
+// Place the pseudo pen location for Horv mode and the constraint mode's line picks, as
+// placeLock, but onto a line alone (lineOnly), the one thing a lift acts on here, so that at a
+// corner the nearer line locks; the dot is bright only on a line.
+// Exit: penX, penY, penIdx, penLine. AC and IO are clobbered. Called via jsp.
+horvLock,
+    local rtn
+    dap rtn
+    law 1
+    dac lineOnly
+    jsp placeLock
+    dzm lineOnly
+    lac penLine
+    sas [NOPOINT]       // skip if no line is locked
+    jmp rtn
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+rtn, jmp .
+    endloc
+
+// Constr's Fix row enters Fix mode, the pseudo pen location locking onto points. A lift fixes
+// the point it locks onto, so that the solver does not move it, or unfixes it if it is fixed;
+// moving a point with the pen unfixes it too (the thesis's Fix). Selecting changes nothing. A
+// lift acts only after a target hit since the selection or the last lift (strokeLive), so the
+// loss after the trip to the menu does nothing. With tracking off, the target first goes to the
+// middle, as Locate does. Stop leaves it (leaveDraw). Each fixed point shows a circled F while
+// in it; the marks are written before setMode opens their gate, since nothing keeps them
+// current outside Fix mode.
+// Picture's Tie row enters Tie mode the same way, where a lift designates the point an
+// attacher, or undesignates it, each attacher showing a circled A while in it. Truss's Roller
+// row enters Roller mode, where a lift makes the point a roller, or frees it, each roller
+// showing a circled O while in it. Picture's Desig row enters Designate mode, where a lift
+// designates the point for Copy, next in order, or undesignates it, each designated point
+// showing a circled digit, its place in the order, while in it. The constraint module's cMkTy
+// says which marks the list holds with Show off, an F's, an A's, an O's or the digits, and the
+// bar column lit is the row's list's (afTab). View's Pan row enters Pan mode the same way, with
+// no marks; the dot locks onto points, and a lift drags the drawing by the target's move
+// (panLost). Its Center row enters Center mode, whose lift centers the view on the dot
+// (centerLost). Every entry notes where the target rests, the start of Pan's first stroke (the
+// view module's VWMARK).
+// AC and IO are clobbered. Called via jsp.
+actCenter,
+    lio [MCENTER]
+    jmp afMode
+actPan,
+    lio [MPAN]
+    jmp afMode
+actDes,
+    lio [MDES]
+    jmp afMode
+actRoller,
+    lio [MROLL]
+    jmp afMode
+actTie,
+    lio [MTIE]
+    jmp afMode
+actFix,
+    lio [MFIX]
+afMode,
+    local rtn, afGo, afM, afP
+    dap rtn
+    dio afM
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp afGo
+    jsp placeTarget
+afGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac afM
+    sub [MFIX]
+    add [afTab:3]
+    dac afP
+    lac i afP
+    dac i [cMkTy:010]
+    lio [CEFMARK]
+    jda conCall
+    lac afP
+    add [AFCOLS]        // the column, AFCOLS words on
+    dac afP
+    lac i afP
+    dac newCol
+    lac afM
+    jda setMode
+    jsp placePen
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+    lio [VWMARK]
+    jsp i [vwEntry:014]
+rtn, jmp .
+afM, 0
+afP, 0
+    endloc
+
+// Fix mode, a target hit. Arm the next lift and move the pseudo pen location.
+// AC and IO are clobbered. Called via jsp.
+fixTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp placePen
+rtn, jmp .
+    endloc
+
+// Fix mode, tracking lost (a lifted pen). Fix the point the pseudo pen location locks onto, or
+// unfix it if it is fixed (the constraint module's cFix). Fixing is a commit Undo takes back;
+// unfixing clears the record. A full table refuses, changing nothing; the module writes the
+// marks again after a fix or an unfix. A lift with no target hit since the selection or the
+// last lift does nothing, and so does one with no point locked. The program stays in Fix mode.
+// Tie mode, tracking lost, likewise designates the point an attacher, or undesignates it (the
+// constraint module's cAtt), refused past NATT attachers or with the table full; designating is
+// a commit Undo takes back, as fixing is. Roller mode likewise makes the point a roller, or
+// frees it (cRoll), refused on a fixed point or with the table full, as a fix is refused on a
+// roller. Designate mode likewise designates the point next for Copy, or undesignates it
+// (cDes), refused past NATT designations or with the table full.
+// AC and IO are clobbered. Called via jsp.
+desLost,
+    lio [CEDES]
+    jmp fxGo
+rollLost,
+    lio [CEROLL]
+    jmp fxGo
+tieLost,
+    lio [CEATT]
+    jmp fxGo
+fixLost,
+    lio [CEFIX]
+fxGo,
+    local rtn, fxOff, fxE
+    dap rtn
+    dio fxE
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+    jsp placePen
+    lac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp rtn
+    lio fxE
+    jda conCall
+    sza                 // skip if the point was fixed or designated
+    jmp fxOff
+    law UCONS
+    jda undoKeep
+    idx fixCount
+    jmp rtn
+fxOff,
+    sad [1]             // skip unless it was unfixed or undesignated
+    jsp undoClear
+rtn, jmp .
+fxE, 0
+    endloc
+
+// Fix mode after an Undo (modeDot). Write the fixed points' marks again, an undone fix's gone,
+// and place the pseudo pen location. AC and IO are clobbered. Called via jsp.
+fixDot,
+    local rtn
+    dap rtn
+    lio [CEFMARK]
+    jda conCall
+    jsp placePen
+rtn, jmp .
+    endloc
+
+// View's x1 to x8 rows. The view module sets the scale, keeping the view on the page, and asks
+// for a whole rebuild; the arc module writes every arc again through it at once (AEVIEW); the
+// mode and any gesture under way stay, as Locate's do, but for Pan's and Center's stroke, which
+// the view module drops (a pen carried to the bar moved the target).
+// Pan mode, tracking lost (a lifted pen), likewise. The view module moves the view's center
+// against the target's move since the stroke's start, so the drawing moves with the target.
+// Center mode's lift centers the view on the pseudo pen location. A lift with no target hit
+// since the selection or the last lift does nothing. The program stays in the mode.
+// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actView,
+    local rtn, vwGo, vwLost
+    dap rtn
+    cli                 // VWSCALE, the row's scale
+    jmp vwGo
+centerLost,
+    lio [VWCENTER]
+    jmp vwLost
+panLost,
+    lio [VWPAN]
+vwLost,
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+vwGo,
+    jsp i [vwEntry:014]
+    law AEVIEW          // every arc through the new view
+    jda arcCall
+    jsp i [pmAgain:0d11] // and a number's picked points' marks
+    lac i [bandGate:0]
+    sas [jump bandStart:0 next(parameter)] // skip if the band shows
+    jmp rtn
+    lac i [bandStart:0]
+    sad [PICKPARAM]     // skip unless it is a pick, drawn once, to draw it through the new view
+    jsp pickShow
+rtn, jmp .
+    endloc
+
+// Constr's Equal, Paral, Perp, Length and Mid rows enter the constraint mode for the row's type
+// (rowCons), the pseudo pen location locking onto lines as in Horv mode (consLock). Selecting
+// changes nothing. A lift acts only after a target hit since the selection or the last lift
+// (strokeLive), so the loss after the trip to the menu does nothing. Equal, Paral and Perp take
+// two lifts on two lines, the first line drawn bright until the second; Length one lift on a
+// line; Mid one on a point, then one on a line, a dotted band running from the point to the dot
+// between (midBand). With tracking off, the target first goes to the middle, as Locate does.
+// Stop leaves it (leaveDraw).
+// Truss's Beam and Load rows enter it too, each one lift on a line, as Length's, with Draw's
+// column lit, not Edit's; and its Axis row, as Mid's, a lift on a roller's point, then one on a
+// line, whose direction the roller's axis then keeps. In Axis mode each roller shows its circled
+// O with Show off, as in Roller mode, the marks written before setMode opens their gate. Its
+// Stiff row enters it as Beam's does, one lift on a member, which opens the number keyboard on
+// its stiffness; in Stiff mode the truss's readouts show the stiffnesses (sptruss.ac). Dim's
+// Dist, Change and Gap rows enter it too, with Draw's column lit, for a D, a Y or an O
+// (consLost).
+// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actCons,
+    local rtn, acGo, acMode, acT
+    dap rtn
+    lac lastItem
+    sub [ICONS1]
+    add [rowCons:3]
+    dac acT
+    lac i acT
+    dac consType
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp acGo
+    jsp placeTarget
+acGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    dzm consPick
+    lio [CEDIT]
+    lac consType
+    sub [CTBEAM]
+    sma                 // skip if below CTBEAM, Constr's types
+    lio [CDRAW]
+    dio newCol
+    lac consType
+    sas [CTROLL]        // skip if Axis
+    jmp acMode
+    dac i [cMkTy:010]
+    lio [CEFMARK]
+    jda conCall
+acMode,
+    law MCONS
+    jda setMode
+    jsp consLock
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+acT, 0
+    endloc
+
+// Constraint mode, a target hit. Arm the next lift and move the pseudo pen location, and Mid's
+// or Axis's band once its point is picked.
+// AC and IO are clobbered. Called via jsp.
+consTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp consLock
+    lac consPick
+    sza i               // skip if the first pick is made
+    jmp rtn
+    lac consType
+    sad [CTMID]         // skip unless Mid, whose band follows the dot
+    jsp midBand
+    lac consType
+    sad [CTROLL]        // skip unless Axis, likewise
+    jsp midBand
+rtn, jmp .
+    endloc
+
+// Constraint mode, tracking lost (a lifted pen). Mid's first lift picks the point the pseudo pen
+// location locks onto, a band then running from it to the dot, and so does Axis's, on a roller
+// only (the constraint module's cAxis); Equal's, Paral's and Perp's picks the line it locks
+// onto, drawn bright (pickShow); a second lift on that line does nothing, the pick kept. The
+// last lift, on a line, adds the constraint (the constraint module's cAdd), a commit Undo takes
+// back with whatever the solver moved for it; refused, changing nothing, for one already held,
+// one whose points run together (a midpoint on its line's end, two lines that are one), a full
+// table, or, for Beam and Load, the truss's rules (the module's cAdd). Axis's last lift gives
+// the roller the line's direction (cAxis), refused for a line of no length; it clears Undo's
+// record, which cannot put an axis back. Stiff's lift, on a member, opens the number keyboard
+// on its stiffness (the constraint module's cStiff, the instance module's instStOpen), whose OK
+// sets it (stDone); on a line that is no member it does nothing. Either way the pick is dropped
+// (consEnd). Dist's and Change's lifts pick two points and then digits, Gap's one point and
+// then digits, the last adding the entry as above. A lift with no target hit since the
+// selection or the last lift does nothing, and so does one locked onto nothing it can take. The
+// program stays in the mode.
+// AC and IO are clobbered. Called via jsp.
+consLost,
+    local rtn, lsPt, lsMid, lsLine, lsTwo, lsAdd, lsAxis, lsStiff, lsDrop, lsNum, lsNPt, lsDg
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+    jsp consLock
+    lac consType
+    and [CTNUM]
+    sza                 // skip unless a number's type
+    jmp lsNum
+    lac consType
+    sad [CTROLL]        // skip unless Axis
+    jmp lsPt
+    sas [CTMID]         // skip if Mid
+    jmp lsLine
+lsPt,
+    lac consPick
+    sza                 // skip if its point is still to pick
+    jmp lsLine
+    lac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp rtn
+    dac consPt
+    lac consType
+    sas [CTROLL]        // skip if Axis, whose point must be a roller's
+    jmp lsMid
+    lac consPt
+    lio [CEAXIS]
+    jda conCall
+    sza                 // skip if a roller
+    jmp rtn
+lsMid,
+    lac penX
+    dac startX
+    lac penY
+    dac startY
+    law 1
+    dac consPick
+    jsp midBand
+    lac [jump bandStart:0 next(parameter)]
+    dac i [bandGate:0]
+    jmp rtn
+lsLine,
+    lac penLine
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp rtn
+    dac consL2
+    lac consType
+    sad [CTMID]         // skip unless Mid, which has its point
+    jmp lsAdd
+    sad [CTROLL]        // skip unless Axis, likewise
+    jmp lsAxis
+    sad [CTLEN]         // skip unless Length, which takes one line
+    jmp lsAdd
+    sad [CTBEAM]        // skip unless Beam, likewise
+    jmp lsAdd
+    sad [CTLOAD]        // skip unless Load, likewise
+    jmp lsAdd
+    sad [CTSTIFF]       // skip unless Stiff, likewise
+    jmp lsStiff
+    lac consPick
+    sza                 // skip if the first line is still to pick
+    jmp lsTwo
+    lac consL2
+    dac consL1
+    law 1
+    dac consPick
+    jsp pickShow
+    jmp rtn
+lsTwo,
+    lac consL2
+    sad consL1          // skip unless the first line again, which does nothing
+    jmp rtn
+lsAdd,
+    lio [CEADD]
+    jda conCall
+    sza                 // skip if the constraint was added
+    jmp lsDrop
+    law UCONS
+    jda undoKeep
+    idx consCount
+    jmp lsDrop
+lsAxis,
+    lac consPt
+    lio [CEAXIS]
+    jda conCall
+    sza i               // skip unless the axis was set
+    jsp undoClear
+    jmp lsDrop
+lsStiff,
+    lac consL2
+    lio [CESTIFF]
+    jda conCall
+    sza i               // skip if a member, AC its parameter word
+    jmp lsDrop
+    lio [IESTOPEN]
+    jda instCall
+    jda kbStart
+    jmp lsDrop
+
+    // Dist, Change and Gap. Each point picked moves the one before to consPt, the last picked
+    // in consL1, and the digits' anchor goes to consL2.
+lsNum,
+    lac consPick
+    sad [2]             // skip unless Dist's or Change's two points are picked
+    jmp lsDg
+    sza i               // skip if a point is picked
+    jmp lsNPt
+    lac consType
+    sas [CTGAP]         // skip if Gap, which has its one point
+    jmp lsNPt
+lsDg,
+    lac penInst
+    sas [TXINST]        // skip if it locks onto digits
+    jmp rtn
+    lac i [txPen:012]
+    add [txAn:3]
+    dac consL2
+    lac i consL2
+    dac consL2
+    jmp lsAdd
+lsNPt,
+    lac penIdx
+    sad [NOPOINT]       // skip if it locks onto a point
+    jmp rtn
+    dac bandIdx         // passed over by the lock now, so it is not picked twice
+    lio consL1
+    dio consPt
+    dac consL1
+    idx consPick
+    jsp i [pmShow:0d11] // its cross, and the first's
+    jmp rtn
+lsDrop,
+    jsp consEnd
+rtn, jmp .
+    endloc
+
+// Draw the first line picked, consL1, bright in the band's slot (PICKPARAM), over its slot.
+// AC and IO are clobbered. Called via jsp.
+pickShow,
+    local rtn, psP, psT
+    dap rtn
+    lac [PICKPARAM]
+    dac i [bandStart:0]
+    lac consL1
+    add [lineFrom:3]
+    dac psT
+    lac i psT
+    dac psP
+    add [pointX:3]
+    dac psT
+    lac i psT
+    dac fx
+    lac psP
+    add [pointY:3]
+    dac psT
+    lac i psT
+    dac fy
+    lac consL1
+    add [lineTo:3]
+    dac psT
+    lac i psT
+    dac psP
+    add [pointX:3]
+    dac psT
+    lac i psT
+    dac tx
+    lac psP
+    add [pointY:3]
+    dac psT
+    lac i psT
+    dac ty
+    jsp writeSeg
+    lac [jump bandStart:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+psP, 0
+psT, 0
+    endloc
+
+// Write Mid's band, dotted as Circle's radius is (arcRadius), from its point (startX, startY)
+// to the pseudo pen location, word 0 dotted, which writeSeg's vwSeg sees and cuts the offset by
+// RADSHIFT to draw it that much longer, so it ends within 2^RADSCALE-1 units of the dot.
+// AC is clobbered, IO preserved. Called via jsp.
+midBand,
+    local rtn
+    dap rtn
+    lac startX
+    dac fx
+    lac penX
+    dac tx
+    lac startY
+    dac fy
+    lac penY
+    dac ty
+    lac [RADPARAM]
+    dac i [bandStart:0]
+    jsp writeSeg
+rtn, jmp .
+    endloc
+
+// Constraint mode, Locate (modeLocate), and after each last lift. Drop the pick, the bright line
+// or Mid's band with it, a number's picked points' marks, which the lock passed over, and any
+// lift not yet declared.
+// AC is clobbered, IO preserved. Called via jsp.
+consEnd,
+    local rtn
+    dap rtn
+    dzm strokeLive
+    dzm consPick
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+    lac [NOPOINT]
+    dac bandIdx
+    jsp i [pmOff:0d11]
+rtn, jmp .
+    endloc
+
+// Place the pseudo pen location for the constraint mode, onto a point for Mid's and Axis's
+// first lift (placePen), onto a line for every other (horvLock, the dot bright only on a line);
+// for Dist and Change onto a point for the first two lifts and Gap for the first, then onto
+// digits by their box (lockInst). Also the mode's dot after an Undo (modeDot).
+// Exit: penX, penY, penIdx, penLine; for digits penInst. AC and IO are clobbered. Called via
+// jsp.
+consLock,
+    local rtn, ckPt, ckPen, ckLine, ckNum, ckDg
+    dap rtn
+    lac consType
+    and [CTNUM]
+    sza                 // skip unless a number's type
+    jmp ckNum
+    lac consType
+    sad [CTROLL]        // skip unless Axis
+    jmp ckPt
+    sas [CTMID]         // skip if Mid
+    jmp ckLine
+ckPt,
+    lac consPick
+    sza                 // skip if its point is still to pick
+    jmp ckLine
+ckPen,
+    law 1
+    dac ptCross         // a lift takes the point locked, so the lock mark shows on it
+    jsp placePen
+    jmp rtn
+ckLine,
+    jsp horvLock
+    jmp rtn
+ckNum,
+    lac consPick
+    sad [2]             // skip unless Dist's or Change's two points are picked
+    jmp ckDg
+    sza i               // skip if a point is picked
+    jmp ckPen
+    lac consType
+    sas [CTGAP]         // skip if Gap, which has its one point
+    jmp ckPen
+ckDg,
+    jsp lockInst
+rtn, jmp .
+    endloc
+
+// Constr's Show row shows every constraint's mark, or hides them again, in every mode; Fix mode
+// shows the fixes' F's with Show off. It acts within the menu, the mode and any gesture staying
+// as they are. The marks are written before showGate opens (setShow).
+// AC and IO are clobbered. Called via jsp.
+actShow,
+    local rtn, asOn, asSet
+    dap rtn
+    lac showOn
+    sza i               // skip if Show is on, to turn it off
+    jmp asOn
+    dzm showOn
+    jmp asSet
+asOn,
+    law 1
+    dac showOn
+asSet,
+    lio [CEFMARK]
+    jda conCall
+    lac now
+    dac marksAt
+    jsp setShow
+rtn, jmp .
+    endloc
+
+// Truss's Forces row shows the members' forces, or hides them again, acting within the menu as
+// Show does; the row is lit while they show (paintAny). The constraints' marks are
+// written again, a beam's and a load's giving way to its readout while Forces is on (cMarks).
+// AC and IO are clobbered. Called via jsp.
+actForces,
+    local rtn
+    dap rtn
+    lac forcesOn
+    xor [1]
+    dac forcesOn
+    lio [CEFMARK]
+    jda conCall
+    lac now
+    dac marksAt
+rtn, jmp .
+    endloc
+
+// Size's x1 to x8 rows enter Size mode, in which a lift sets the instance the pseudo pen
+// location locks onto to the row's scale, sizeArg (0 to 3), as Horv mode straightens a line; the
+// dot stays dim, the instance lit showing the lock. Selecting changes nothing. A lift acts only
+// after a target hit since the selection or the last lift (strokeLive), so the loss after the
+// trip to the menu does nothing. With tracking off, the target first goes to the middle, as
+// Locate does. Stop leaves it (leaveDraw).
+// Change's M1 to M4 and Cycle rows enter Change mode the same way (actChange), where a lift
+// gives the locked instance master sizeArg, or starts or stops its cycle (changeLost); and Edit's
+// Dismem row enters Dismember mode (actDism), where a lift takes the locked instance apart
+// (dismLost).
+// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actSize,
+    local rtn, asGo, asJoin, asMode, asBase
+    dap rtn
+    law MSIZE
+    dac asMode
+    law ISIZE
+    jmp asJoin
+actDism,
+    dap rtn
+    law MDISM
+    dac asMode
+    law IDISM
+    jmp asJoin
+actChange,
+    dap rtn
+    law MCHANGE
+    dac asMode
+    law ICHANGE
+asJoin,
+    dac asBase
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp asGo
+    jsp placeTarget
+asGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac [CEDIT]
+    dac newCol
+    lac asMode
+    jda setMode
+    lac lastItem
+    sub asBase
+    dac sizeArg
+    lac [HUNTPARAM]
+    dac i [dotBlock:0]
+    jsp lockInst
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+asMode, 0
+asBase, 0
+    endloc
+
+// Size mode, a target hit. Arm the next lift and move the pseudo pen location.
+// AC and IO are clobbered. Called via jsp.
+sizeTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp lockInst
+rtn, jmp .
+    endloc
+
+// Size mode, tracking lost (a lifted pen). Set the scale of the instance the pseudo pen location
+// locks onto, refused where its figure would leave the screen (instSize). The arcs on the tie
+// points it moved are worked out again (the arc module's arcCarry), the change taken back if one
+// cannot follow (IESZBACK). A lift with no target hit since the selection or the last lift does
+// nothing. The program stays in Size mode. Change mode's lift (changeLost) is the same, its
+// instance given master sizeArg or its cycle started or stopped (the instance module's
+// instChange). A change to a master whose attachers lie elsewhere moves the tie points and
+// answers 3 like Size; IESZBACK then takes the change back too.
+// AC and IO are clobbered. Called via jsp.
+sizeLost,
+    local rtn, slGo, slSet, slE
+    dap rtn
+    lio [IESIZE]
+    jmp slGo
+changeLost,
+    dap rtn
+    lio [IECHANGE]
+slGo,
+    dio slE
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+    jsp lockInst
+    lio slE
+    jda instCall
+    sas [3]             // skip if its tie points moved
+    jmp slSet
+    law AECARRY
+    jda arcCall
+    sza i               // skip if an arc could not follow
+    jmp slSet
+    lio [IESZBACK]
+    jda instCall
+slSet,
+    dac sizeResult
+    sza                 // skip if the scale is set
+    jmp rtn
+    idx sizeCount
+    jsp undoClear
+rtn, jmp .
+slE, 0
+    endloc
+
+// Text mode, tracking lost (a lifted pen). Open the text keyboard on the text the pseudo pen
+// location locks onto, to edit it, or on an empty text to be placed there (the text module's
+// txOpen, which may refuse); the mode stays. A lift with no target hit since the selection or
+// the last lift does nothing. The keyboard's answer comes to txKbDone. Number mode likewise
+// opens the number keyboard on the digits locked onto, or, with none, places a set of digits at
+// once, a commit of parts for Undo, the counts taken first.
+// AC and IO are clobbered. Called via jsp.
+textLost,
+    local rtn, tlKeep
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+    jsp lockInst
+    jsp undoSnap
+    lio [TXOPEN]
+    jda txCall
+    sad [1]             // skip unless digits were placed
+    jmp tlKeep
+    sza                 // skip if refused, with no block
+    jda kbStart
+    jmp rtn
+tlKeep,
+    law UPARTS
+    jda undoKeep
+rtn, jmp .
+    endloc
+
+// The text keyboard closed. The text module places the text typed, or edits or
+// deletes the text it opened on (txDone). A text placed is a commit of parts for Undo, the counts
+// taken first (undoSnap); an edit or a deletion clears the record, as Size does.
+// Entry: IO = 1 for OK, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from onMenuHit.
+txKbDone,
+    local rtn, tkEdit
+    dap rtn
+    jsp undoSnap
+    lai
+    lio [TXDONE]
+    jda txCall
+    sad [1]             // skip unless edited or deleted
+    jmp tkEdit
+    sza                 // skip if placed
+    jmp rtn
+    law UPARTS
+    jda undoKeep
+    jmp rtn
+tkEdit,
+    jsp undoClear
+rtn, jmp .
+    endloc
+
+// Picture's Clear row, guarded by the row and the Select box alone. It ends any chain or drag
+// and empties the drawing. The list shrinks to its end pair at slot 0, which the rebuild posts
+// as any shrink; no line slot is written. The arc module empties the arc table and writes every arc
+// slot unused, each gate first, with the band already off the display (endChain), and the
+// instance list is emptied likewise; the masters stay. The constraint table is emptied, and the
+// canvas's texts go (the text module's txClear). Leaves the program idle.
+// AC and IO are clobbered. Called via jsp.
+actClear,
+    local rtn
+    dap rtn
+    jsp endChain
+    jsp undoClear
+    lac [NBAR]
+    dac newCol
+    law MIDLE
+    jda setMode
+    dzm pointCount
+    dzm lineCount
+    dzm staleN          // every mark lies past the new length
+    lio [IECLEAR]       // every instance, the masters kept
+    jda instCall
+    lio [CECLEAR]
+    jda conCall
+    lio [TXCLEAR]       // the canvas's texts, the masters' kept
+    jda txCall
+    // arcCall's respread covers the instances too.
+    law AEINIT
+    jda arcCall
+    idx clearCount
+rtn, jmp .
+    endloc
+
+// Misc's Del cons row, guarded by the row and the Select box alone, as Clear is. It ends any
+// chain or drag, leaves the program idle, and removes every constraint but the truss's beams,
+// loads and rollers (the constraint module's cDelAll), the points left where they are. Undo's
+// record is cleared, since a deletion is not undone.
+// AC and IO are clobbered. Called via jsp.
+actDelCons,
+    local rtn
+    dap rtn
+    jsp endChain
+    jsp undoClear
+    lac [NBAR]
+    dac newCol
+    law MIDLE
+    jda setMode
+    lio [CEDELALL]
+    jda conCall
+    idx delConsCount
+rtn, jmp .
+    endloc
+
+// Misc's Unfix row, guarded as Del cons is. It ends any chain or drag, leaves the program idle,
+// and removes every fix and every attacher (the constraint module's cUnfixAll), the solver woken
+// to settle what the fixes held. Undo's record is cleared, since a deletion is not undone.
+// AC and IO are clobbered. Called via jsp.
+actUnfix,
+    local rtn
+    dap rtn
+    jsp endChain
+    jsp undoClear
+    lac [NBAR]
+    dac newCol
+    law MIDLE
+    jda setMode
+    lio [CEUNFIX]
+    jda conCall
+    idx unfixCount
+rtn, jmp .
+    endloc
+
+// Define's M1 to M4 rows make the drawing master k, and clear it from the canvas as Clear does.
+// Every instance on the canvas is part of the drawing. Each is taken apart first as Dismember
+// takes one apart (instNestAt, then takeParts), at its origin and scale, its attachers merged
+// into its tie points, and the instances themselves stay until the master is defined, when the
+// list is emptied. The parts are kept as one commit of parts for Undo's record, so that a
+// refusal after them takes them back (undoTake). Refused, nothing changed, with nothing drawn,
+// for a master over MWORDS words or MTIME of drawing (the arc module's defineMaster), with more
+// than NCPCON constraints among its points (instMap), or with the instances unable to be taken
+// apart, as for one cycling, the tables short of room, a part off the canvas, an arc too large
+// (instNest). Either way any chain or drag ends, the program is left idle, as Clear leaves it,
+// and Undo has nothing to undo. The points a line or an arc is on are the master's, and its
+// attachers those of them designated, mapped first (instMap), so that defineMaster draws their
+// crosses; once it is defined, the instance module keeps the parts in Copy's store, with the
+// constraints among them (instDef). The constraint table is emptied with the canvas.
+// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actDefine,
+    local rtn, dfNest, dfMap, dfNo, dfBack, dfDone, dfJ
+    dap rtn
+    jsp endChain
+    lac [NBAR]
+    dac newCol
+    law MIDLE
+    jda setMode
+    jsp undoClear       // after a copy's drop, which setMode makes
+    lac lastItem
+    sub [IDEFINE]
+    dac masterArg
+    lio [IENEST]
+    jda instCall
+    sza                 // skip unless the instances cannot be taken apart
+    jmp dfNo
+    lac i [instCount:012]
+    sza i               // skip if there are instances
+    jmp dfMap
+    jsp undoSnap
+    law UPARTS
+    jda undoKeep
+    dzm dfJ
+dfNest,
+    lac dfJ
+    lio [IENESTI]
+    jda instCall
+    jsp takeParts
+    idx dfJ
+    sas i [instCount:012] // skip once every instance is taken apart
+    jmp dfNest
+dfMap,
+    lio [IEMAP]
+    jda instCall
+    sza                 // skip unless too many constraints
+    jmp dfNo
+    law AEDEFINE
+    jda arcCall
+dfNo,
+    dac defineResult
+    sza                 // skip if the master is defined
+    jmp dfBack
+    lio [IECLEAR]       // every instance is in the master now
+    jda instCall
+    lio [IEDEF]
+    jda instCall
+    dac pointCount      // none left, with no tie points
+    dzm lineCount
+    dzm staleN          // every mark lies past the new length
+    law AEINIT
+    jda arcCall
+    lio [CECLEAR]
+    jda conCall
+    idx defineCount
+    jmp dfDone
+dfBack,
+    lac undoKind
+    sza                 // skip unless instances were taken apart
+    jsp undoTake
+dfDone,
+    jsp undoClear
+rtn, jmp .
+dfJ, 0
+    endloc
+
+// Inst's M1 to M4 rows, reached only for a master that is defined, place an instance of master
+// k (placeInst). Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actInst,
+    dap aiRtn
+    lac lastItem
+    sub [IINST]
+    dac masterArg
+    jsp placeInst
+aiRtn, jmp .
+
+// Copy's M1 to M4 rows, reached only for a master that is defined, place master k's figure as
+// Inst places an instance, carried as one, so there is one drag mechanism; at the drop it is
+// taken apart into ordinary points, lines and arcs (copyDrop), always at x1. Refused, the
+// program returning to Locate's mode, when the tables have no room for the master's parts
+// (COPYROOM) or the instance list none for the figure (COPYINST), so a copy is never cut short
+// at its drop. A copy still being placed goes down first, so the room
+// is counted with it.
+// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+actCopy,
+    local rtn, cyRoom, cyNo, cyGo
+    dap rtn
+    jsp copyDrop
+    lac lastItem
+    sub [ICOPY]
+    dac masterArg
+    dac copyArg
+    lio [IECROOM]
+    jda instCall
+    sza i               // skip unless the tables have room for the parts
+    jmp cyRoom
+    law COPYROOM
+    jmp cyNo
+cyRoom,
+    lac i [instCount:012]
+    sas [MAXINST]       // skip if the instance list is full
+    jmp cyGo
+    law COPYINST
+cyNo,
+    dac copyResult
+    jsp leaveDraw
+    jmp rtn
+cyGo,
+    jsp placeInst
+    lac i [instCount:012]
+    sub [1]
+    dac copyInst
+    // Placed again as the copy. Its origin is held by the parts' box, on the canvas, not by the
+    // figure's on the screen (instAt).
+    lio [IEPLACE]
+    jda instCall
+rtn, jmp .
+    endloc
+
+// Add an instance of master masterArg, its origin at the pseudo pen location, and enter place
+// mode, in which it follows the pen until a lift or Stop drops it. With tracking off, the target
+// first goes to the middle, as Locate does. With the instance list full, nothing is added and
+// the program returns to Locate's mode.
+// AC and IO are clobbered. Called via jsp.
+placeInst,
+    local rtn, aiGo, aiShow
+    dap rtn
+    lac i [tracking:0]
+    sza                 // skip if tracking is off
+    jmp aiGo
+    jsp placeTarget
+aiGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+    lac [CPICTURE]
+    dac newCol
+    law MPLACE
+    jda setMode
+    jsp placePen
+    jsp undoSnap
+    lio [IEADD]
+    jda instCall
+    dac acAC            // arcCall's word, free here, holds instAdd's answer across respread
+    jsp respread
+    lac acAC
+    sza i               // skip if the instance list is full
+    jmp aiShow
+    idx fullCount
+    jsp leaveDraw
+    jmp rtn
+aiShow,
+    law UPARTS          // the placement, or the copy's parts once it is taken apart
+    jda undoKeep
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [bandGate:0]
+rtn, jmp .
+    endloc
+
+// Place mode, a target hit. The instance follows the pseudo pen location.
+// AC and IO are clobbered. Called via jsp.
+instTarget,
+    local rtn
+    dap rtn
+    law 1
+    dac strokeLive
+    jsp instFollow
+rtn, jmp .
+    endloc
+
+// Place mode, tracking lost (a lifted pen). Drop the instance at the pseudo pen location and
+// return to Locate's mode, one placement per selection. A loss with no
+// target hit since the selection, such as the one after the trip to the menu, does nothing.
+// Stop drops it where it is (leaveDraw). A copy carried by an attacher searches for lines and
+// arcs however fast the pen moved (atLift), as a point's drop does.
+// AC and IO are clobbered. Called via jsp.
+instLost,
+    local rtn, ilGo
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection
+    jmp rtn
+    lac copyAtt
+    sad [NOPOINT]       // skip if a copy carried by an attacher
+    jmp ilGo
+    law 1
+    dac atLift
+ilGo,
+    jsp instFollow
+    jsp leaveDraw
+rtn, jmp .
+    endloc
+
+// Move the instance being placed to the pseudo pen location, its origin held on each axis where
+// its figure would leave the screen (instPlace). AC and IO are clobbered.
+// Called via jsp.
+instFollow,
+    local rtn
+    dap rtn
+    jsp placePen
+    lio [IEPLACE]
+    jda instCall
+    jsp respread
+rtn, jmp .
+    endloc
+
+// Take the copy being placed apart where it stands, the thesis's Dismember done at once. Its
+// master's points and lines are added at its origin (the instance module's copyParts), its arcs
+// by the arc module (copyArcs) and its constraints by the constraint module (cCopy); its
+// attachers merge into the points they land on, the carried one as a point Move drops does,
+// held on a line or an arc it lands on (the arc module's copyMerge, then cDrop), the others
+// each into its designated point instead where Designate named one, attacher i into
+// designation i (the constraint module's cDesTake, which drops the designations first); then
+// the instance that carried it is removed. The tables are checked for room again first
+// (copyRoom), and with none the copy is only removed. The new lines' slots are written by the
+// main loop's next rebuild, as a commit's are, so the lines show a pass after the figure goes.
+// Undo of the drop takes back the parts, the constraints, the merges and whatever the solver
+// moved (uLk, which cCopy sets). setMode runs this, so a lift, Stop, or a menu action that
+// leaves place mode drops the copy where it is, as an instance is left where it is.
+// AC and IO are clobbered. Called via jsp.
+copyDrop,
+    local rtn, cdI, cdP, cdOn
+    dap rtn
+    lac copyInst
+    sad [NOPOINT]       // skip if a copy is being placed
+    jmp rtn
+    dac cdI
+    lac [NOPOINT]
+    dac copyInst        // first, so the copy is taken apart once
+    dac copyAtt
+    lac cdI
+    add [iMaster:012]
+    dac cdP
+    lac i cdP
+    dac copyArg
+    lac cdI
+    add [iX:3]
+    dac cdP
+    lac i cdP
+    dac copyX
+    lac cdI
+    add [iY:3]
+    dac cdP
+    lac i cdP
+    dac copyY
+    lac cdI             // its texts' copies are replaced, not added
+    dac i [crInst:7]
+    lio [IECROOM]
+    jda instCall
+    sza                 // skip if the parts fit
+    jmp cdNo
+    lio [CEDTAKE]
+    jda conCall
+cdParts,
+    jsp takeParts
+    sad [NOPOINT]       // skip if the carried attacher lies at the pseudo pen location
+    jmp cdOn
+    lio [CEDROP]
+    jda conCall
+cdOn,
+    idx copyCount
+    cla
+cdNo,
+    dac copyResult
+    lac cdI
+    lio [IEREMOVE]
+    jda instCall
+    jsp respread
+    lac copyResult
+    sza                 // skip if the copy was taken apart
+    jsp undoClear       // only removed, so nothing is left to undo
+rtn, jmp .
+
+// A copy's parts added at its drop, Copy's words set and the room checked: the points and lines,
+// the arcs, the constraints and the attachers' merges, for Copy's drop, a dismember and each of
+// Define's instances.
+// Exit: AC = copyMerge's result. IO is clobbered. Called via jsp.
+takeParts,
+    dap tpRtn
+    lio [IECPARTS]
+    jda instCall
+    law AECOPY
+    jda arcCall
+    lio [CECOPY]
+    jda conCall
+    law AECMERGE
+    jda arcCall
+tpRtn, jmp .
+
+// Dismember mode, tracking lost (a lifted pen). Take apart the instance the pseudo pen location
+// locks onto, at its origin and scale, as copyDrop takes a copy apart, its body shared from the
+// parts on (cdParts). The instance module's instDism sets Copy's words and checks the room, the
+// canvas and the arcs' radii first, a refusal changing nothing (sizeResult). The
+// drop counts in sizeCount, and in copyCount as Copy's does. Undo takes the parts back and puts
+// the instance back (UDISM; undoParts). A lift with no target hit since the selection or the last
+// lift does nothing. The program stays in Dismember mode. It stands inside copyDrop's local
+// block on purpose, sharing its rtn, cdI and cdParts, so the block is not to be split.
+// AC and IO are clobbered. Called via jsp.
+dismLost,
+    dap rtn
+    lac strokeLive
+    sza i               // skip if the target was hit since the selection or last lift
+    jmp rtn
+    dzm strokeLive
+    jsp lockInst
+    jsp undoSnap
+    lio [IEDISM]
+    jda instCall
+    dac sizeResult
+    sza                 // skip unless refused
+    jmp rtn
+    law UDISM
+    jda undoKeep        // before cCopy, which sets uLk
+    idx sizeCount
+    lac penInst
+    dac cdI
+    jmp cdParts
+cdI, 0
+cdP, 0
+    endloc

@@ -1,0 +1,1431 @@
+// spkbd.ac -- the pen keyboard: a service that replaces the frame with keys the light pen types
+// on, and gives the text typed back to its caller; and its display list. The same service shows
+// the directory's screen, the tape module's list in bank 6, on which Save and Load pick a
+// picture.
+//
+// Bank 12, after spaux.ac. Every entry runs with the extend window open and is entered by
+// jsp i [X:014] from the main bank, kbInit at the start, kbOpen from the main bank's kbStart,
+// kbKey for the menu hits while the keyboard is open, and kbTick each pass while it is. Each
+// reaches bank 0's, the main bank's and the tape module's words through their 16-bit addresses,
+// returns by jmp i, and calls nothing outside bank 12. The lists, kbList here and the tape
+// module's dirList, are started by penISR's dla through frameGo; they hold no jump or save, and
+// each ends in a halt of its own.
+//
+// The text is kept a character a word in kbCh, its 340 code with KLOWER for a lower-case letter.
+// It is written as 340 text, three codes to a word, an upper shift first and a shift before each
+// change of case, into the field with the cursor after it, and into the caller's buffer at OK.
+// The list's prompt and field are fixed runs of words, padded with shift codes, which neither
+// draw nor move the beam, and their end code is always in the run's last word, so a frame that
+// reads them while they are written draws parts of two texts, and stops where it should.
+// A key acts at the first hit of a press (kbKey), and a press ends after KBGAPMS with no hit
+// (kbTick), so the pen must be lifted before another key acts.
+// Part of sketchpad.am1, included where it stands.
+
+// Where the key in column c and row r has its character drawn, its x and its y.
+#define KBCX(c) (KBX0 + (c) * KBDX)
+#define KBRY(r) (KBY0 - (r) * KBDY)
+
+// The keyboard closed, at the program's start. The frame restarts at frame, no press is under
+// way and no key is lit. AC is clobbered, IO preserved. Called via jsp i [kbInit:014].
+kbInit,
+    dac kiRtn
+    lac [frame:0]
+    dac i [frameGo:0]
+    dzm i [kbOn:0]
+    dzm kbPress
+    law NOKEY
+    dac kbLit
+    jmp i kiRtn
+kiRtn, 0
+
+// Open the keyboard on a caller's block of six words. They are the kind (KBTEXT, KBNUM, or KBDEC
+// for a number keyboard that has the point too), the limit in characters (at most KBMAX), and
+// the 16-bit addresses of the prompt (340 text, at most KBPW * 3 - 1 codes shown), of the buffer
+// (340 text, the starting value and the text typed at OK) and of the resume, which onMenuHit
+// calls when the keyboard closes; then the buffer's run in codes, which OK pads the text to as
+// the field is padded, or 0 for a text ended at its end in KBBUFW words. A block of kind KBDIR
+// opens the directory's screen instead (the tape module's dirList, its lines and title written
+// by the tape module's directory read). Its limit is the number of the screen's keys it acts
+// on, 1 for Dir's OK alone, DIRKEYS for the picker's Cancel and lines, and its prompt the key's
+// text, three words.
+// The list is written whole before frameGo points the display at it; kbOn, set last, sends
+// penISR's hits here, once the display has reached the list (at most KBWAIT polls), the hits
+// the frame posted before it dropped, as kbClose drops the keyboard's. The open starts a press,
+// its gap counted from the moment the list shows, since the pen may still rest where it touched,
+// on Save's Select box, or on OK where a resume opens the keyboard again at once, as Change's
+// Dwell does for each master, and nothing acts until it has been lifted. The open
+// also starts penISR's count of quiet frame ends again (the frames shown since the close are no
+// lift).
+// Entry: IO = the block's 16-bit address. AC and IO are clobbered. Called via
+// jsp i [kbOpen:014], from the main bank's kbStart, which turns tracking off first.
+kbOpen,
+    local koRtn, koLimOk, koRd, koLet, koSym, koPut, koNext, koDone, koPrm, koPrEnd, koShift, koP, \
+        koCh, koSt, koC, koDir, koDW, koGo, koQ, koN, koWait, koIn
+    dac koRtn
+    dio koP
+    lac i koP
+    dac kbKind
+    idx koP
+    lac i koP
+    dac kbLim
+    sub [KBMAX]
+    spa                 // skip if at or past KBMAX
+    jmp koLimOk
+    law KBMAX
+    dac kbLim
+koLimOk,
+    idx koP
+    lac i koP
+    dac kbPrP
+    idx koP
+    lac i koP
+    dac kbBuf
+    idx koP
+    lac i koP
+    dac kbGo
+    idx koP
+    lac i koP
+    dac kbRun
+    dzm kbShift
+    law NOKEY
+    dac kbLit
+    lac kbKind
+    sad [KBDIR]         // skip unless the directory
+    jmp koDir
+    and [KNUM]          // KBDEC's bit, as the point is a number key only on Stiff's keyboard
+    ior [KCDOT]
+    dac kbDot
+    lac [kbRec:014]
+    dac kbRecP
+    law KBKEYS
+    dac kbNK
+    lac [kbBlkT:014]
+    dac kbBlkP
+    lac [kbCode:014]
+    dac kbCodeP
+
+    // The starting value: the buffer's codes up to its end, each shift changing the case, a
+    // letter kept with its case, a set 1 character as it is, a space in either set; set 2's
+    // other characters, which no key types, and the controls are passed over.
+    dzm kbN
+    lac kbBuf
+    jda kbUnp
+    law KCUP
+    dac koSt
+    law i KBBUFC
+    dac koC
+koRd,
+    jsp kbGet
+    dac koCh
+    sad [KCEND]         // skip unless the end
+    jmp koDone
+    sad [KCUP]          // skip unless an upper shift
+    jmp koShift
+    sad [KCLOW]         // skip unless a lower shift
+    jmp koShift
+    sad [KCSPACE]       // skip unless a space
+    jmp koPut
+    sza i               // skip unless the blob
+    jmp koNext
+    sub [033]
+    sma                 // skip if a letter, 01 to 032
+    jmp koSym
+    lac koSt
+    sas [KCLOW]         // skip if lower case
+    jmp koLet
+    lac koCh
+    ior [KLOWER]
+    jmp koPut
+koLet,
+    lac koCh
+    jmp koPut
+koSym,
+    lac koCh
+    sub [040]
+    spa                 // skip unless a control, 033 to 037
+    jmp koNext
+    lac koSt
+    sas [KCUP]          // skip if upper case, set 1
+    jmp koNext
+    lac koCh
+koPut,
+    jda kbAdd
+    jmp koNext
+koShift,
+    dac koSt
+koNext,
+    isp koC
+    jmp koRd
+koDone,
+
+    // The prompt, its codes up to its end or the run's last place, padded.
+    lac [kbPrm:014]
+    jda kbPack
+    lac kbPrP
+    jda kbUnp
+koPrm,
+    lac kpC
+    sad [KBPWC - 1]     // skip unless the run is full but for its end
+    jmp koPrEnd
+    jsp kbGet
+    sad [KCEND]         // skip unless the prompt's end
+    jmp koPrEnd
+    jda kbEmit
+    jmp koPrm
+koPrEnd,
+    law KBPWC
+    jda kbFill
+
+    jsp kbShow
+    jsp kbKeys
+    lac [kbList:014]
+    jmp koGo
+
+    // The directory's screen, its keys' tables from the tape module, as many keys as the limit
+    // says, the key's text from the block, its key unlit.
+koDir,
+    lac [dirRec:6]
+    dac kbRecP
+    lac kbLim
+    dac kbNK
+    lac [dirBlkT:6]
+    dac kbBlkP
+    lac [dirCode:6]
+    dac kbCodeP
+    lac kbPrP
+    dac koP
+    lac [dirKTxt:6]
+    dac koQ
+    law i 3
+    dac koN
+koDW,
+    lac i koP
+    dac i koQ
+    idx koP
+    idx koQ
+    isp koN
+    jmp koDW
+    lac [KBKEY]
+    dac i [dirKey:6]
+    lac [dirList:6]
+koGo,
+    dac i [frameGo:0]
+    and [0170000]
+    dac kbBank          // the list's bank, 12 or the directory's 6
+    lac [0-KBWAIT]
+    dac koN
+koWait,
+    dra
+    lai
+    and [0170000]
+    sad kbBank          // skip until the display is in the list's bank
+    jmp koIn
+    isp koN
+    jmp koWait
+koIn,
+    lsm
+    dzm i [menuHits:0]  // the frame's hits, posted before the keyboard showed, are not its
+    dzm i [menuGap:0]   // nor are the frames since the close a lift, no fresh press yet
+    dzm i [menuArmed:0]
+    esm
+    rck
+    dio kbHitAt         // the open's press counts its gap from here
+    law 1
+    dac kbPress
+    dac i [kbOn:0]
+    jmp i koRtn
+koRtn, 0
+koP, 0
+koCh, 0
+koSt, 0
+koC, 0
+koQ, 0
+koN, 0
+    endloc
+
+// A menu hit while the keyboard is open. The first hit of a press acts on the key under it at
+// once, and no other hit of that press acts, so a pen held on a key types once and a pen
+// dragged over the keys types nothing past the key it came down on. A press runs
+// until KBGAPMS with no hit (kbTick), the program's only sign of a lift; a press that begins off
+// the keys, or on a key this keyboard does not have, does nothing. A character key types its
+// character, in lower case for a letter while Shift is on, unless the text is at its limit;
+// Shift toggles the case; Back takes the last character off and Clear all of them; OK writes the
+// text into the caller's buffer and closes, Cancel closes. A key that acts flashes. On the
+// directory's screen OK is a Cancel, and a line closes it as an OK, its picture in kbPick
+// (KAPICK).
+// Entry: sMenuX, sMenuY (bank 0). Exit: AC = 0 while the keyboard is open; once it has closed,
+// AC = the caller's resume and IO = 1 for OK or a pick, 0 for Cancel. Called via jsp i
+// [kbKey:014], from onMenuHit.
+kbKey,
+    local kyRtn, kyNone, kyPress, kyGo, kyChar, kySpec, kySpJ, kySpT, kyShift, \
+        kyBack, kyClear, kyShow, kyOK, kyFlu, kyAns, kyCancel, kyPick, kyClose, kyBk, kyFl, kyK, \
+        kyP, kyCode
+    dac kyRtn
+    lac i [sMenuX:0]
+    dac kbHX
+    lac i [sMenuY:0]
+    dac kbHY
+    // Every hit keeps the press going; only a press's first acts.
+    rck
+    dio kbHitAt
+    lac kbPress
+    sza                 // skip unless a press is under way
+    jmp kyNone
+    law 1
+    dac kbPress
+    jsp kbFind
+    dac kyK
+    sad [NOKEY]         // skip unless no key is under the hit
+    jmp kyNone
+    add kbCodeP
+    dac kyP
+    lac i kyP
+    dac kyCode
+    lac kbKind
+    sza i               // skip unless the text keyboard
+    jmp kyGo
+    lac kyCode
+    and [KNUM]
+    sza i               // skip if the number keyboard, or the directory, has the key
+    jmp kyNone
+
+kyGo,
+    lac kyCode
+    and [KSPEC]
+    sza                 // skip unless an action key
+    jmp kySpec
+
+    // A character, a letter in the case Shift gives.
+kyChar,
+    lac kbN
+    sad kbLim           // skip unless the text is at its limit
+    jmp kyNone
+    lac kyCode
+    and [KLET]
+    sza i               // skip if a letter
+    jmp kyBk
+    lac kbShift
+    sza i               // skip if Shift is on
+    jmp kyBk
+    lac kyCode
+    and [077]
+    ior [KLOWER]
+    jmp kyFl
+kyBk,
+    lac kyCode
+    and [077]
+kyFl,
+    jda kbAdd
+    jmp kyShow
+
+    // An action key, by its number, through a jump table, no skip choosing the handler.
+kySpec,
+    lac kyCode
+    and [07]
+    add [kySpT]
+    dap kySpJ
+kySpJ, jmp .
+kySpT,
+    jmp kyShift         // KASHIFT
+    jmp kyBack          // KABACK
+    jmp kyClear         // KACLEAR
+    jmp kyOK            // KAOK
+    jmp kyCancel        // KACANCEL
+    jmp kyPick          // KAPICK
+
+kyShift,
+    lac kbShift
+    xor [1]
+    dac kbShift
+    jsp kbKeys
+    jmp kyNone
+kyBack,
+    lac kbN
+    sza i               // skip unless the text is empty
+    jmp kyNone
+    law i 1
+    add kbN
+    dac kbN
+    jmp kyShow
+kyClear,
+    dzm kbN
+kyShow,
+    jsp kbShow
+    lac kyK
+    jda kbFlash
+    jmp kyNone
+kyOK,
+    lac kbBuf
+    jda kbPack
+    jsp kbText
+    lac kbRun
+    sza i               // skip if the buffer is a fixed run
+    jmp kyFlu
+    jda kbFill
+    jmp kyAns
+kyFlu,
+    jsp kbFlush
+kyAns,
+    law 1
+    dac kbAns
+    jmp kyClose
+kyCancel,
+    dzm kbAns
+    jmp kyClose
+kyPick,
+    law i 1
+    add kyK
+    dac kbPick          // the picture, the directory's lines being its keys 1 to NPICT
+    jmp kyAns
+kyClose,
+    jsp kbClose
+    lio kbAns
+    lac kbGo
+    jmp i kyRtn
+kyNone,
+    cla
+    jmp i kyRtn
+kyRtn, 0
+kyK, 0
+kyP, 0
+kyCode, 0
+    endloc
+
+// The keyboard's tick, each pass of the main loop while it is open. A press with no hit for
+// KBGAPMS ends, the pen lifted or gone, so the next hit acts; a flash that has run KBFLASHMS
+// ends. AC and IO are clobbered. Called via jsp i [kbTick:014].
+kbTick,
+    local ktRtn, ktFl, ktOut, ktNow
+    dac ktRtn
+    rck
+    dio ktNow
+    lac kbPress
+    sza i               // skip if a press is under way
+    jmp ktFl
+    lac ktNow
+    sub kbHitAt
+    spa                 // skip unless the clock wrapped since the last hit
+    add [CLOCKWRAP]
+    sub [KBGAPMS]
+    spa                 // skip once no hit has come for KBGAPMS
+    jmp ktFl
+    dzm kbPress
+ktFl,
+    lac kbLit
+    sad [NOKEY]         // skip if a key is lit
+    jmp ktOut
+    lac ktNow
+    sub kbLitAt
+    spa                 // skip unless the clock wrapped since the flash began
+    add [CLOCKWRAP]
+    sub [KBFLASHMS]
+    spa                 // skip once the flash has run its time
+    jmp ktOut
+    jsp kbDark
+ktOut,
+    jmp i ktRtn
+ktRtn, 0
+ktNow, 0
+    endloc
+
+// Close the keyboard. The display goes back to the frame, and once it has left the keyboard's
+// list or the directory's (at its next frame end; at most KBWAIT polls), penISR's hits go back
+// to the menu and the canvas, and the hits it posted for the keyboard meanwhile are dropped, so
+// that none is taken for a press on the bar or a list. The caller's resume follows
+// (onMenuHit), after tracking comes back.
+// AC and IO are clobbered. Called via jsp.
+kbClose,
+    local kcRtn, kcLoop, kcOff, kcN
+    dap kcRtn
+    lac [frame:0]
+    dac i [frameGo:0]
+    lac [0-KBWAIT]
+    dac kcN
+kcLoop,
+    dra
+    lai
+    and [0170000]
+    sas kbBank          // skip while the display is in the list's bank
+    jmp kcOff
+    isp kcN
+    jmp kcLoop
+kcOff,
+    dzm i [kbOn:0]
+    lsm
+    dzm i [menuHits:0]
+    dzm i [menuArmed:0]
+    esm
+    jsp kbDark
+kcRtn, jmp .
+kcN, 0
+    endloc
+
+// The key under the hit at kbHX, kbHY, the first of the kbNK whose record, from kbRecP, holds
+// it.
+// Exit: AC = the key, or NOKEY. IO is preserved. Called via jsp.
+kbFind,
+    local kdRtn, kdLoop, kdN1, kdN2, kdN3, kdN4, kdP, kdK
+    dap kdRtn
+    lac kbRecP
+    dac kdP
+    dzm kdK
+kdLoop,
+    lac kbHX
+    sub i kdP
+    spa                 // skip unless left of the key
+    jmp kdN4
+    idx kdP
+    lac kbHX
+    sub i kdP
+    sma                 // skip if short of the key's right
+    jmp kdN3
+    idx kdP
+    lac kbHY
+    sub i kdP
+    spa                 // skip unless below the key
+    jmp kdN2
+    idx kdP
+    lac kbHY
+    sub i kdP
+    sma                 // skip if short of the key's top
+    jmp kdN1
+    lac kdK
+    jmp kdRtn
+kdN4,
+    idx kdP
+kdN3,
+    idx kdP
+kdN2,
+    idx kdP
+kdN1,
+    idx kdP
+    idx kdK
+    sas kbNK            // skip once every key is tried
+    jmp kdLoop
+    law NOKEY
+kdRtn, jmp .
+kdP, 0
+kdK, 0
+    endloc
+
+// Write each key's text for the keyboard's kind and Shift's case, every key unlit, Shift lit
+// while on. A character key's word is a shift, its character and the end, or blank when the
+// number keyboard does not have it; Shift's and Space's three words are their text, or blank
+// on the number keyboard; the other action keys' text never changes.
+// AC and IO are clobbered. Called via jsp.
+kbKeys,
+    local kkRtn, kkLoop, kkShow, kkUp, kkWord, kkBlank, kkPut, kkHide, kkTpl, kkNext, kkB, kkC, \
+        kkK, kkN, kkP, kkT, kkW, kkCode
+    dap kkRtn
+    lac [kbBlkT:014]
+    dac kkB
+    lac [kbCode:014]
+    dac kkC
+    dzm kkK
+    law NOKEY
+    dac kbLit
+kkLoop,
+    lac i kkB
+    dac kkP
+    add [3]
+    dac kkT
+    lac [KBKEY]
+    dac i kkP
+    lac i kkC
+    dac kkCode
+    and [KSPEC|KHIDE]
+    sza                 // skip if a character key
+    jmp kkHide
+    lac kbKind
+    sza i               // skip if the number keyboard
+    jmp kkShow
+    lac kkCode
+    and [KNUM]
+    sza i               // skip if the number keyboard has the key
+    jmp kkBlank
+kkShow,
+    lac kkCode
+    and [KLET]
+    sza i               // skip if a letter
+    jmp kkUp
+    lac kbShift
+    sza i               // skip if Shift is on
+    jmp kkUp
+    lac [KCLOW * 010000 + KCEND]
+    jmp kkWord
+kkUp,
+    lac [KCUP * 010000 + KCEND]
+kkWord,
+    dac kkW
+    lac kkCode
+    and [077]
+    ral 6s
+    ior kkW
+    jmp kkPut
+kkBlank,
+    lac [KBBLANK]
+kkPut,
+    dac i kkT
+    jmp kkNext
+
+    // Shift and Space take three words from the template, or blank on the number keyboard.
+kkHide,
+    lac kkCode
+    and [KHIDE]
+    sza i               // skip if Shift or Space
+    jmp kkNext
+    lac kkK
+    sub [KSHIFTKEY]
+    sza                 // skip if Shift
+    lac [kbSpT:014]
+    sza i               // skip if Space
+    lac [kbShT:014]
+    dac kkW
+    lac kbKind
+    sza                 // skip unless the number keyboard
+    lac [kbBlT:014]
+    sza i               // skip if the blank was chosen
+    lac kkW
+    dac kkW
+    law i 3
+    dac kkN
+kkTpl,
+    lac i kkW
+    dac i kkT
+    idx kkW
+    idx kkT
+    isp kkN
+    jmp kkTpl
+kkNext,
+    idx kkB
+    idx kkC
+    idx kkK
+    sas [NOKEY]         // skip once every key is written
+    jmp kkLoop
+    lac kbShift
+    sza i               // skip if Shift is on
+    jmp kkRtn
+    lac [KBLIT]
+    dac i [kbK44:014]
+kkRtn, jmp .
+kkB, 0
+kkC, 0
+kkK, 0
+kkN, 0
+kkP, 0
+kkT, 0
+kkW, 0
+kkCode, 0
+    endloc
+
+// Write the field, the text with the cursor after it, padded.
+// AC and IO are clobbered. Called via jsp.
+kbShow,
+    local ksRtn
+    dap ksRtn
+    lac [kbFld:014]
+    jda kbPack
+    jsp kbText
+    law KCLOW
+    sas kbCase          // skip if already lower case, set 2's
+    jda kbEmit
+    law KCURSOR
+    jda kbEmit
+    law KBFWC
+    jda kbFill
+ksRtn, jmp .
+    endloc
+
+// Emit the text, an upper shift and then each character, a shift before each change of case.
+// Exit: kbCase = the case the text ends in. AC and IO are clobbered. Called via jsp.
+kbText,
+    local ktxRtn, ktxLoop, ktxCh, ktxDone, ktxP, ktxC
+    dap ktxRtn
+    law KCUP
+    dac kbCase
+    jda kbEmit
+    lac kbN
+    sza i               // skip unless the text is empty
+    jmp ktxDone
+    cma
+    dac ktxC
+    lac [kbCh:014]
+    dac ktxP
+ktxLoop,
+    lac i ktxP
+    and [KLOWER]
+    sza                 // skip if upper case
+    law KCLOW
+    sza i               // skip if lower case, AC being KCLOW
+    law KCUP
+    sad kbCase          // skip if the case changes
+    jmp ktxCh
+    dac kbCase
+    jda kbEmit
+ktxCh,
+    lac i ktxP
+    and [077]
+    jda kbEmit
+    idx ktxP
+    isp ktxC
+    jmp ktxLoop
+ktxDone,
+ktxRtn, jmp .
+ktxP, 0
+ktxC, 0
+    endloc
+
+// Add a character to the text, unless it is at its limit.
+// Entry: AC = the character. AC is clobbered, IO preserved. Called via jda.
+kbAdd, 0
+    local kaRtn, kaP
+    dap kaRtn
+    lac kbN
+    sad kbLim           // skip unless the text is at its limit
+    jmp kaRtn
+    add [kbCh:014]
+    dac kaP
+    lac kbAdd
+    dac i kaP
+    idx kbN
+kaRtn, jmp .
+kaP, 0
+    endloc
+
+// Light a key for KBFLASHMS (kbTick puts it out), putting out the one lit before.
+// Entry: AC = the key. AC and IO are clobbered. Called via jda.
+kbFlash, 0
+    local kfRtn, kfP
+    dap kfRtn
+    jsp kbDark
+    lac kbFlash
+    dac kbLit
+    add kbBlkP
+    dac kfP
+    lac i kfP
+    dac kfP
+    lac [KBLIT]
+    dac i kfP
+    rck
+    dio kbLitAt
+kfRtn, jmp .
+kfP, 0
+    endloc
+
+// Put out the key a flash lit, if any, back to its resting word.
+// AC is clobbered, IO preserved. Called via jsp.
+kbDark,
+    local kdkRtn
+    dap kdkRtn
+    lac kbLit
+    sad [NOKEY]         // skip if a key is lit
+    jmp kdkRtn
+    jda kbRest
+    law NOKEY
+    dac kbLit
+kdkRtn, jmp .
+    endloc
+
+// Write a key's resting parameter word, KBLIT for Shift while Shift is on, the plain key's
+// otherwise.
+// Entry: AC = the key. AC is clobbered, IO preserved. Called via jda.
+kbRest, 0
+    local krRtn, krPlain, krPut, krP
+    dap krRtn
+    lac kbRest
+    add kbBlkP
+    dac krP
+    lac i krP
+    dac krP
+    lac kbRest
+    sas [KSHIFTKEY]     // skip if Shift
+    jmp krPlain
+    lac kbShift
+    sza i               // skip if Shift is on
+    jmp krPlain
+    lac [KBLIT]
+    jmp krPut
+krPlain,
+    lac [KBKEY]
+krPut,
+    dac i krP
+krRtn, jmp .
+krP, 0
+    endloc
+
+// Start packing codes three to a word at a 16-bit address.
+// Entry: AC = the address. AC is clobbered, IO preserved. Called via jda.
+kbPack, 0
+    dap kpkRtn
+    lac kbPack
+    dac kpP
+    dzm kpW
+    dzm kpN
+    dzm kpC
+kpkRtn, jmp .
+
+// Pack a code; a word is written once it holds three.
+// Entry: AC = the code. AC is clobbered, IO preserved. Called via jda.
+kbEmit, 0
+    local keRtn
+    dap keRtn
+    idx kpC
+    lac kpW
+    ral 6s
+    ior kbEmit
+    dac kpW
+    idx kpN
+    sas [3]             // skip once the word holds three codes
+    jmp keRtn
+    lac kpW
+    dac i kpP
+    idx kpP
+    dzm kpW
+    dzm kpN
+keRtn, jmp .
+    endloc
+
+// End a run of a fixed number of codes with upper shifts up to its last place, then the end code.
+// Entry: AC = the run's codes, three times its words. AC and IO are clobbered. Called via jda.
+kbFill, 0
+    local kflRtn, kflLoop, kflEnd, kflE
+    dap kflRtn
+    law i 1
+    add kbFill
+    dac kflE
+kflLoop,
+    lac kpC
+    sub kflE
+    sma                 // skip while short of the end's place
+    jmp kflEnd
+    law KCUP
+    jda kbEmit
+    jmp kflLoop
+kflEnd,
+    law KCEND
+    jda kbEmit
+kflRtn, jmp .
+kflE, 0
+    endloc
+
+// End a text with the end code, repeated to the end of its word.
+// AC and IO are clobbered. Called via jsp.
+kbFlush,
+    local kfuRtn, kfuLoop
+    dap kfuRtn
+kfuLoop,
+    law KCEND
+    jda kbEmit
+    lac kpN
+    sza                 // skip once the word is written
+    jmp kfuLoop
+kfuRtn, jmp .
+    endloc
+
+// Start unpacking codes three to a word from a 16-bit address.
+// Entry: AC = the address. AC is clobbered, IO preserved. Called via jda.
+kbUnp, 0
+    dap kuRtn
+    lac kbUnp
+    dac kuP
+    dzm kuN
+kuRtn, jmp .
+
+// The next code unpacked.
+// Exit: AC = the code. IO is preserved. Called via jsp.
+kbGet,
+    local kgRtn, kgNext
+    dap kgRtn
+    lac kuN
+    sza                 // skip if the word is used up
+    jmp kgNext
+    lac i kuP
+    dac kuW
+    idx kuP
+    law 3
+    dac kuN
+kgNext,
+    law i 1
+    add kuN
+    dac kuN
+    lac kuW
+    ral 6s
+    dac kuW
+    and [077]
+kgRtn, jmp .
+    endloc
+
+// The keyboard's state while it is open, the caller's block's words, the tables of the keys in
+// use (the keyboard's or the directory's) and their count, the text and its length, Shift,
+// whether a press is under way and its latest hit, and the key lit, with the flash's start, the
+// hit, the answer, and the packer's and the unpacker's words.
+kbKind, 0
+kbLim, 0
+kbPrP, 0
+kbBuf, 0
+kbGo, 0
+kbRun, 0
+kbRecP, 0
+kbNK, 0
+kbBlkP, 0
+kbCodeP, 0
+kbN, 0
+kbShift, 0
+kbPress, 0
+kbHitAt, 0
+kbLit, 0
+kbLitAt, 0
+kbHX, 0
+kbHY, 0
+kbAns, 0
+kbPick, 0               // the picture a directory's line picked (KAPICK), 0 to NPICT - 1
+kbBank, 0               // the bank of the list shown, bank 12's or the directory's (kbOpen)
+kbCase, 0
+kpP, 0
+kpW, 0
+kpN, 0
+kpC, 0
+kuP, 0
+kuW, 0
+kuN, 0
+kbCh,
+    table KBMAX, 0
+
+// Shift's and Space's texts, and the blank that hides them on the number keyboard; three words
+// each, as in the list.
+kbShT, type340 "Shift"
+kbSpT, type340 "Space"
+kbBlT, KBPAD
+    KBPAD
+    KBBLANK
+
+// Each key's block in the list, by key number, as its parameter word's 16-bit address.
+kbBlkT,
+    kbK0:014
+    kbK1:014
+    kbK2:014
+    kbK3:014
+    kbK4:014
+    kbK5:014
+    kbK6:014
+    kbK7:014
+    kbK8:014
+    kbK9:014
+    kbK10:014
+    kbK11:014
+    kbK12:014
+    kbK13:014
+    kbK14:014
+    kbK15:014
+    kbK16:014
+    kbK17:014
+    kbK18:014
+    kbK19:014
+    kbK20:014
+    kbK21:014
+    kbK22:014
+    kbK23:014
+    kbK24:014
+    kbK25:014
+    kbK26:014
+    kbK27:014
+    kbK28:014
+    kbK29:014
+    kbK30:014
+    kbK31:014
+    kbK32:014
+    kbK33:014
+    kbK34:014
+    kbK35:014
+    kbK36:014
+    kbK37:014
+    kbK38:014
+    kbK39:014
+    kbK40:014
+    kbK41:014
+    kbK42:014
+    kbK43:014
+    kbK44:014
+    kbK45:014
+    kbK46:014
+    kbK47:014
+    kbK48:014
+    kbK49:014
+
+// Each key's code, the 340 code it types, with KLET for a letter and KNUM for a key of the
+// number keyboard; or KSPEC and its action (KASHIFT to KACANCEL). KHIDE marks the keys whose
+// text, three words, is blanked on the number keyboard.
+kbCode,
+    KNUM | 061                   // 1
+    KNUM | 062                   // 2
+    KNUM | 063                   // 3
+    KNUM | 064                   // 4
+    KNUM | 065                   // 5
+    KNUM | 066                   // 6
+    KNUM | 067                   // 7
+    KNUM | 070                   // 8
+    KNUM | 071                   // 9
+    KNUM | 060                   // 0
+    KLET | 021                   // Q
+    KLET | 027                   // W
+    KLET | 05                    // E
+    KLET | 022                   // R
+    KLET | 024                   // T
+    KLET | 031                   // Y
+    KLET | 025                   // U
+    KLET | 011                   // I
+    KLET | 017                   // O
+    KLET | 020                   // P
+    KLET | 01                    // A
+    KLET | 023                   // S
+    KLET | 04                    // D
+    KLET | 06                    // F
+    KLET | 07                    // G
+    KLET | 010                   // H
+    KLET | 012                   // J
+    KLET | 013                   // K
+    KLET | 014                   // L
+    KNUM | 055                   // -
+    KLET | 032                   // Z
+    KLET | 030                   // X
+    KLET | 03                    // C
+    KLET | 026                   // V
+    KLET | 02                    // B
+    KLET | 016                   // N
+    KLET | 015                   // M
+kbDot, 056                   // . (kbOpen sets KNUM for KBDEC)
+    054                          // ,
+    057                          // /
+    050                          // (
+    051                          // )
+    072                          // :
+    075                          // =
+    KSPEC | KHIDE | KASHIFT      // Shift
+    KHIDE | KCSPACE              // Space
+    KSPEC | KNUM | KABACK        // Back
+    KSPEC | KNUM | KACLEAR       // Clear
+    KSPEC | KNUM | KAOK          // OK
+    KSPEC | KNUM | KACANCEL      // Cancel
+
+// Each key's hit record, the x and the y it answers from, inclusive, and up to, exclusive.
+// A key's text is n characters from its point, KBADV apart, KBH high; the pen's reach adds
+// KBR before it and below it, KBRX after it and KBR above it.
+kbRec,
+    KBCX(0d0) - KBR             // 1
+    KBCX(0d0) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d1) - KBR             // 2
+    KBCX(0d1) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d2) - KBR             // 3
+    KBCX(0d2) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d3) - KBR             // 4
+    KBCX(0d3) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d4) - KBR             // 5
+    KBCX(0d4) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d5) - KBR             // 6
+    KBCX(0d5) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d6) - KBR             // 7
+    KBCX(0d6) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d7) - KBR             // 8
+    KBCX(0d7) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d8) - KBR             // 9
+    KBCX(0d8) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d9) - KBR             // 0
+    KBCX(0d9) + 0d1 * KBADV + KBRX
+    KBRY(0d0) - KBR
+    KBRY(0d0) + KBH + KBR
+    KBCX(0d0) - KBR             // Q
+    KBCX(0d0) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d1) - KBR             // W
+    KBCX(0d1) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d2) - KBR             // E
+    KBCX(0d2) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d3) - KBR             // R
+    KBCX(0d3) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d4) - KBR             // T
+    KBCX(0d4) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d5) - KBR             // Y
+    KBCX(0d5) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d6) - KBR             // U
+    KBCX(0d6) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d7) - KBR             // I
+    KBCX(0d7) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d8) - KBR             // O
+    KBCX(0d8) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d9) - KBR             // P
+    KBCX(0d9) + 0d1 * KBADV + KBRX
+    KBRY(0d1) - KBR
+    KBRY(0d1) + KBH + KBR
+    KBCX(0d0) - KBR             // A
+    KBCX(0d0) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d1) - KBR             // S
+    KBCX(0d1) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d2) - KBR             // D
+    KBCX(0d2) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d3) - KBR             // F
+    KBCX(0d3) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d4) - KBR             // G
+    KBCX(0d4) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d5) - KBR             // H
+    KBCX(0d5) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d6) - KBR             // J
+    KBCX(0d6) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d7) - KBR             // K
+    KBCX(0d7) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d8) - KBR             // L
+    KBCX(0d8) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d9) - KBR             // -
+    KBCX(0d9) + 0d1 * KBADV + KBRX
+    KBRY(0d2) - KBR
+    KBRY(0d2) + KBH + KBR
+    KBCX(0d0) - KBR             // Z
+    KBCX(0d0) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d1) - KBR             // X
+    KBCX(0d1) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d2) - KBR             // C
+    KBCX(0d2) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d3) - KBR             // V
+    KBCX(0d3) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d4) - KBR             // B
+    KBCX(0d4) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d5) - KBR             // N
+    KBCX(0d5) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d6) - KBR             // M
+    KBCX(0d6) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d7) - KBR             // .
+    KBCX(0d7) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d8) - KBR             // ,
+    KBCX(0d8) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d9) - KBR             // /
+    KBCX(0d9) + 0d1 * KBADV + KBRX
+    KBRY(0d3) - KBR
+    KBRY(0d3) + KBH + KBR
+    KBCX(0d0) - KBR             // (
+    KBCX(0d0) + 0d1 * KBADV + KBRX
+    KBRY(0d4) - KBR
+    KBRY(0d4) + KBH + KBR
+    KBCX(0d1) - KBR             // )
+    KBCX(0d1) + 0d1 * KBADV + KBRX
+    KBRY(0d4) - KBR
+    KBRY(0d4) + KBH + KBR
+    KBCX(0d2) - KBR             // :
+    KBCX(0d2) + 0d1 * KBADV + KBRX
+    KBRY(0d4) - KBR
+    KBRY(0d4) + KBH + KBR
+    KBCX(0d3) - KBR             // =
+    KBCX(0d3) + 0d1 * KBADV + KBRX
+    KBRY(0d4) - KBR
+    KBRY(0d4) + KBH + KBR
+    KBXSHIFT - KBR              // Shift
+    KBXSHIFT + 0d5 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    KBXSPACE - KBR              // Space
+    KBXSPACE + 0d5 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    KBXBACK - KBR               // Back
+    KBXBACK + 0d4 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    KBXCLEAR - KBR              // Clear
+    KBXCLEAR + 0d5 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    KBXOK - KBR                 // OK
+    KBXOK + 0d2 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    KBXCANCEL - KBR             // Cancel
+    KBXCANCEL + 0d6 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+
+// The list. The prompt and the field are written at kbOpen; then the keys, each a parameter
+// word, its y and x and its text, the number keyboard's blanks and Shift's case written over
+// the text at run time; then the halt that ends the keyboard's frame.
+kbList,
+kbPrmB, KBTXT
+    y(KBPY) next(point)
+    x(KBX0) next(character)
+kbPrm,
+    table KBPW - 1, KBPAD
+    KBBLANK
+kbFldB, KBTXT
+    y(KBFY) next(point)
+    x(KBX0) next(character)
+kbFld,
+    table KBFW - 1, KBPAD
+    KBBLANK
+kbK0, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d0)) next(character)
+    type340 "1"
+kbK1, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d1)) next(character)
+    type340 "2"
+kbK2, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d2)) next(character)
+    type340 "3"
+kbK3, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d3)) next(character)
+    type340 "4"
+kbK4, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d4)) next(character)
+    type340 "5"
+kbK5, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d5)) next(character)
+    type340 "6"
+kbK6, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d6)) next(character)
+    type340 "7"
+kbK7, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d7)) next(character)
+    type340 "8"
+kbK8, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d8)) next(character)
+    type340 "9"
+kbK9, KBKEY
+    y(KBRY(0d0)) next(point)
+    x(KBCX(0d9)) next(character)
+    type340 "0"
+kbK10, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d0)) next(character)
+    type340 "Q"
+kbK11, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d1)) next(character)
+    type340 "W"
+kbK12, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d2)) next(character)
+    type340 "E"
+kbK13, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d3)) next(character)
+    type340 "R"
+kbK14, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d4)) next(character)
+    type340 "T"
+kbK15, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d5)) next(character)
+    type340 "Y"
+kbK16, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d6)) next(character)
+    type340 "U"
+kbK17, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d7)) next(character)
+    type340 "I"
+kbK18, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d8)) next(character)
+    type340 "O"
+kbK19, KBKEY
+    y(KBRY(0d1)) next(point)
+    x(KBCX(0d9)) next(character)
+    type340 "P"
+kbK20, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d0)) next(character)
+    type340 "A"
+kbK21, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d1)) next(character)
+    type340 "S"
+kbK22, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d2)) next(character)
+    type340 "D"
+kbK23, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d3)) next(character)
+    type340 "F"
+kbK24, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d4)) next(character)
+    type340 "G"
+kbK25, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d5)) next(character)
+    type340 "H"
+kbK26, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d6)) next(character)
+    type340 "J"
+kbK27, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d7)) next(character)
+    type340 "K"
+kbK28, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d8)) next(character)
+    type340 "L"
+kbK29, KBKEY
+    y(KBRY(0d2)) next(point)
+    x(KBCX(0d9)) next(character)
+    type340 "-"
+kbK30, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d0)) next(character)
+    type340 "Z"
+kbK31, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d1)) next(character)
+    type340 "X"
+kbK32, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d2)) next(character)
+    type340 "C"
+kbK33, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d3)) next(character)
+    type340 "V"
+kbK34, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d4)) next(character)
+    type340 "B"
+kbK35, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d5)) next(character)
+    type340 "N"
+kbK36, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d6)) next(character)
+    type340 "M"
+kbK37, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d7)) next(character)
+    type340 "."
+kbK38, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d8)) next(character)
+    type340 ","
+kbK39, KBKEY
+    y(KBRY(0d3)) next(point)
+    x(KBCX(0d9)) next(character)
+    type340 "/"
+kbK40, KBKEY
+    y(KBRY(0d4)) next(point)
+    x(KBCX(0d0)) next(character)
+    type340 "("
+kbK41, KBKEY
+    y(KBRY(0d4)) next(point)
+    x(KBCX(0d1)) next(character)
+    type340 ")"
+kbK42, KBKEY
+    y(KBRY(0d4)) next(point)
+    x(KBCX(0d2)) next(character)
+    type340 ":"
+kbK43, KBKEY
+    y(KBRY(0d4)) next(point)
+    x(KBCX(0d3)) next(character)
+    type340 "="
+kbK44, KBKEY
+    y(KBYB) next(point)
+    x(KBXSHIFT) next(character)
+    type340 "Shift"
+kbK45, KBKEY
+    y(KBYB) next(point)
+    x(KBXSPACE) next(character)
+    type340 "Space"
+kbK46, KBKEY
+    y(KBYB) next(point)
+    x(KBXBACK) next(character)
+    type340 "Back"
+kbK47, KBKEY
+    y(KBYB) next(point)
+    x(KBXCLEAR) next(character)
+    type340 "Clear"
+kbK48, KBKEY
+    y(KBYB) next(point)
+    x(KBXOK) next(character)
+    type340 "OK"
+kbK49, KBKEY
+    y(KBYB) next(point)
+    x(KBXCANCEL) next(character)
+    type340 "Cancel"
+kbHalt, lpoff halt interrupt

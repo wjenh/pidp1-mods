@@ -1,0 +1,1604 @@
+// sparcs.ac -- the arc module: its entry table, the arc table's upkeep, the band, a commit,
+// the geometry (sine and cosine, the vertices, the sweep), an arc's slot, and the marks'
+// writer.
+//
+// Bank 2, from its first word. Entered only at arcEntry, from the main bank's arcCall; runs
+// with the extend window closed, opening it only to reach other banks' words.
+// Part of sketchpad.am1, included where it stands.
+
+// Run entry n, with copies of the pseudo pen location and the target's center from the main
+// bank.
+// Entry: IO = n; AC = the return address, which carries the main bank. Exit: AC as the entry
+// leaves it, the window open, as arcCall expects. IO is clobbered.
+arcEntry,
+    local aeGo, aeRtn, aeSel, aeP
+    dac aeRtn
+    lem
+    dio aeSel
+    eem
+    lac i [penX:4]
+    dac mPenX
+    lac i [penY:4]
+    dac mPenY
+    lac i [hitX:4]
+    dac mHitX
+    lac i [hitY:4]
+    dac mHitY
+    lem
+    lac aeSel
+    add [arcEntries]
+    dac aeP
+    lac i aeP
+    dap aeGo
+aeGo, jsp .
+    eem
+    jmp i aeRtn
+aeRtn, 0
+aeSel, 0
+aeP, 0
+    endloc
+
+// Entry n -> its routine, called via jsp.
+arcEntries,
+    arcInit             // AEINIT
+    arcStart            // AEBEGIN
+    arcBandPass         // AEBAND
+    arcCommit           // AECOMMIT
+    arcRadius           // AERADIUS
+    dropMerge           // AEDROP
+    arcPick             // AEPICK
+    arcDrag             // AEDRAG
+    deleteLocked        // AEDELETE
+    arcLock             // AELOCK
+    conArcs             // AECONS
+    defineMaster        // AEDEFINE
+    copyArcs            // AECOPY
+    arcUndo             // AEUNDO
+    arcCarry            // AECARRY
+    arcOrphans          // AEORPHAN
+    copyMerge           // AECMERGE
+    arcView             // AEVIEW
+
+// Undo's arcs. Those past the record's count are removed, the last first, each slot left unused
+// (arcRemove). AC and IO are clobbered. Called via jsp.
+arcUndo,
+    local rtn, auLoop
+    dap rtn
+auLoop,
+    eem
+    lac i [uArcs:4]
+    lem
+    sub arcCount
+    sma                 // skip if arcs lie past the count
+    jmp rtn
+    lac arcCount
+    sub [1]
+    jda arcRemove
+    jmp auLoop
+rtn, jmp .
+    endloc
+
+// A change of view (AEVIEW, from actView). Every arc's slot is written again through the new
+// view, the band's words kept round it (arcKeep), and the band's vectors are left for its next
+// pass to write again (arcRebase).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+arcView,
+    local rtn, avLoop, avDone, avI
+    dap rtn
+    cla
+    jda arcKeep
+    dzm avI
+avLoop,
+    lac avI
+    sad arcCount        // skip while arcs remain
+    jmp avDone
+    jda arcRewrite
+    idx avI
+    jmp avLoop
+avDone,
+    law 1
+    dac arcRebase
+    jda arcKeep
+    cla
+rtn, jmp .
+avI, 0
+    endloc
+
+// Empty the arc table and write every arc slot unused, then the arc list's end, and the band
+// drawing nothing, its tail jumping to bank 0's band for the radius. At init the display has not
+// started; after a load it runs the tape's WAIT list; at Clear and Define it runs through these
+// words, so each is written whole, and an unused slot's gate is written first.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+arcInit,
+    local rtn, aiLoop, aiEnd, aiI, aiP
+    dap rtn
+    dzm arcCount
+    dzm aiI
+aiLoop,
+    lac aiI
+    jda arcUnused
+    idx aiI
+    sad [MAXARCS]       // skip until every slot is written
+    jmp aiEnd
+    jmp aiLoop
+aiEnd,
+    lac [arcList:0+MAXARCS*ARCGROUP]
+    dac aiP
+    lac [next(subroutine)]
+    eem
+    dac i aiP
+    lem
+    idx aiP
+    lac [jump drawEnd:0 next(parameter)]
+    eem
+    dac i aiP
+    lem
+    lac [next(subroutine)]
+    eem
+    dac i [arcBand:0+ARCWORDS]
+    lac [jump bandStart:0 next(parameter)]
+    dac i [arcBand:0+ARCWORDS+1]
+    lac [jump arcBand:0+ARCWORDS next(parameter)]
+    dac i [arcBand:0+ARCVEC-1]
+    lac [DRAWPARAM]
+    dac i [arcBand:0]
+    lac [y(0) next(point)]
+    dac i [arcBand:0+1]
+    lac [x(0) next(subroutine)]
+    dac i [arcBand:0+2]
+    dzm i [bandPost:0]
+    lem
+    dzm arcPart
+    dzm arcPosting
+    cla
+rtn, jmp .
+aiI, 0
+aiP, 0
+    endloc
+
+// Write arc slot i unused. The gate goes first, passing on to drawEnd, so the display never
+// enters the slot's vectors from here on; then the head's other words, and the call stepping
+// over.
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+arcUnused, 0
+    local rtn, auP, auG
+    dap rtn
+    lac arcUnused
+    jda arcSlot
+    dac auP
+    add [ARCVEC-1]
+    dac auG
+    lac [jump drawEnd:0 next(parameter)]
+    eem
+    dac i auG
+    lac [DRAWPARAM]
+    dac i auP
+    idx auP
+    lac [y(0) next(point)]
+    dac i auP
+    idx auP
+    lac [x(0) next(subroutine)]
+    dac i auP
+    lac auP
+    add [ARCWORDS-2]
+    dac auP
+    lac [next(subroutine)]
+    dac i auP
+    idx auP
+    lac auP
+    add [1]
+    ior [jump next(parameter)]
+    dac i auP
+    lem
+    lac arcUnused
+    jda markUnused
+rtn, jmp .
+auP, 0
+auG, 0
+    endloc
+
+// Full address of arc slot i in bank 0.
+// Entry: AC = i, 0 to MAXARCS. Exit: AC = the address. IO is clobbered. Called via jda.
+arcSlot, 0
+    local rtn
+    dap rtn
+    lac arcSlot
+    mul [ARCGROUP]
+    scr 1s              // i * ARCGROUP is inside a bank, so mul's low part, realigned
+    lai
+    add [arcList:0]
+rtn, jmp .
+    endloc
+
+// Begin an arc at the center (cenX, cenY) with its start at the pseudo pen location. It is
+// refused unless the radius is ARCRMIN to ARCRMAX. Begun, it has no direction, the band draws
+// nothing until the pen moves along the circle, and arcAllOn says whether every vertex of the
+// full circle is on the canvas. The band is not on the display here, so its head is written at
+// once, and words the last arc's band posted and penISR has not yet written are dropped.
+// Exit: AC = 0 begun, 1 refused. IO is clobbered. Called via jsp.
+arcStart,
+    local rtn, bgLoop, bgHead, bgNo, bgA, bgK
+    dap rtn
+    eem
+    dzm i [bandPost:0]
+    lac i [cenX:4]
+    dac arcCX
+    lac i [cenY:4]
+    dac arcCY
+    lem
+    lac mPenX
+    sub arcCX
+    dac bgA
+    lac mPenY
+    sub arcCY
+    dac bgK
+    lio bgK
+    lac bgA
+    jda arcHypot
+    sub [ARCRMIN*0d32]
+    spa                 // skip unless the radius is under ARCRMIN
+    jmp bgNo
+    sub [(ARCRMAX-ARCRMIN)*0d32+1]
+    sma                 // skip unless the radius is over ARCRMAX
+    jmp bgNo
+    lio mPenY
+    lac mPenX
+    jda arcBegin
+    dzm arcRebase
+    law 1
+    dac arcAllOn
+    dzm bgK
+bgLoop,
+    lac bgK
+    jda arcVertex
+    jsp arcOnCanvas
+    sza i               // skip if the vertex is on the canvas
+    dzm arcAllOn
+    idx bgK
+    sad [NARC]          // skip until every vertex is tried
+    jmp bgHead
+    jmp bgLoop
+bgHead,
+    lac [arcBand:0]
+    jda arcHead
+    cla
+    jmp rtn
+bgNo,
+    law 1
+rtn, jmp .
+bgA, 0
+bgK, 0
+    endloc
+
+// One pass of the arc band. It follows the pen round the circle, finds the end, closes the
+// circle when the pen locks onto the start, then points the band's head at the arc. When a
+// direction is chosen the full circle's vectors are written its way; the band draws nothing
+// while it is unchosen, so the display never reaches them half written. Otherwise the full
+// circle's word goes back where the last part step was.
+// The display may be partway through the band. Its head (the end's y and x, the part step and
+// the gate) and the restored word only draw the arc if they change together, and a mix draws
+// the band shifted by up to a chord, off the screen near an edge. So they are posted for
+// penISR to write with the display halted between frames, and a pass does nothing until the
+// last pass's words are written. Magnified, or at the first pass after a change of view, the
+// view module points the band and posts its words instead (vaBand).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+arcBandPass,
+    local rtn, bsGo, bsHead, bsRestore, bsPost, bsView, bsOld, bsDir
+    dap rtn
+    eem
+    lac i [bandPost:0]
+    lem
+    sza i               // skip if the last pass's words are still waiting
+    jmp bsGo
+    cla
+    jmp rtn
+bsGo,
+    lac mPenX
+    dac arcQX
+    lac mPenY
+    dac arcQY
+    jsp arcNorm
+    sza i               // skip unless the pen is on the center
+    jmp rtn
+    lac arcPart
+    dac bsOld
+    lac arcDir
+    dac bsDir
+    jsp arcSweep
+    jsp arcEnd
+    jsp arcSnap
+    lac arcRebase
+    eem
+    ior i [vwS:014]
+    lem
+    sza                 // skip at x1 with the view unchanged since the last pass
+    jmp bsView
+    lac arcDir
+    sad bsDir           // skip if the direction changed
+    jmp bsRestore
+    sza i               // skip if a direction was chosen
+    jmp bsHead
+    lac [arcBand:0+ARCVEC]
+    jda arcFill
+    jmp bsHead
+bsRestore,
+    lac bsOld
+    sza i               // skip if a part step was written
+    jmp bsHead
+    dzm arcPostN
+    law 1
+    dac arcPosting
+    lac bsOld
+    sub [arcBand:0+ARCVEC]
+    cma
+    add [NARC-1]        // j = NARC-1 - its index, the word from vertex j+1 to j
+    jda arcStep
+    lio bsOld
+    jda arcPut
+    jmp bsPost
+bsHead,
+    dzm arcPostN
+    law 1
+    dac arcPosting
+bsPost,
+    lac [arcBand:0]
+    jda arcHead
+    dzm arcPosting
+    lac arcPostN
+    eem
+    dac i [bandPost:0]
+    lem
+    cla
+    jmp rtn
+
+    // Magnified, or with the view changed, the view module points the band at its run on the
+    // screen.
+bsView,
+    eem
+    jsp i [vaBand:015]
+    lem
+rtn, jmp .
+bsOld, 0
+bsDir, 0
+    endloc
+
+// Store a word at a full address, at once or, while arcPosting is set, posted for penISR to
+// store with the display halted between frames (commitFlip), the arcPostN'th of up to APOSTS.
+// Entry: AC = the word, IO = the address. AC and IO are clobbered. Called via jda.
+arcPut, 0
+    local rtn, ptNow, ptA, ptP
+    dap rtn
+    dio ptA
+    lac arcPosting
+    sza i               // skip if posting
+    jmp ptNow
+    lac arcPostN
+    add [arcPostA]
+    dac ptP
+    lac ptA
+    dac i ptP
+    lac arcPostN
+    add [arcPostW]
+    dac ptP
+    lac arcPut
+    dac i ptP
+    idx arcPostN
+    jmp rtn
+ptNow,
+    lac arcPut
+    eem
+    dac i ptA
+    lem
+rtn, jmp .
+ptA, 0
+ptP, 0
+    endloc
+
+// A full circle when the pen locks onto the start, the target's center within SNAP_BOX of it on
+// both axes (the view module's vwSnap, in page units at the view's scale), after sweeping half
+// the circle or more, and every vertex is on the canvas. arcK is then NARC and the end the
+// start.
+// AC and IO are clobbered. Called via jsp.
+arcSnap,
+    local rtn, snX, snY, snR
+    dap rtn
+    lac arcAllOn
+    sza i               // skip if the whole circle is on the canvas
+    jmp rtn
+    lac arcK
+    sub [NARC/2]
+    spa                 // skip once half the circle is swept
+    jmp rtn
+    eem
+    lac i [vwSnap:014]  // SNAP_BOX+1 in page units at the view's scale
+    lem
+    dac snR
+    lac arcU
+    sar 5s
+    add arcCX
+    dac snX
+    sub mHitX
+    jda arcAbs
+    sub snR
+    sma                 // skip if the x are within SNAP_BOX
+    jmp rtn
+    lac arcV
+    sar 5s
+    add arcCY
+    dac snY
+    sub mHitY
+    jda arcAbs
+    sub snR
+    sma                 // skip if the y are within SNAP_BOX
+    jmp rtn
+    lac [NARC]
+    dac arcK
+    lac snX
+    dac arcEX
+    lac snY
+    dac arcEY
+rtn, jmp .
+snX, 0
+snY, 0
+snR, 0
+    endloc
+
+// Set up the band for the radius, for writeSeg, from the center (fx, fy) to the pseudo pen
+// location (tx, ty), and word 0 dotted, which writeSeg's vwSeg sees and cuts the offset by
+// RADSHIFT to draw it that much longer. It ends within 2^RADSCALE-1 units of the pseudo pen
+// location.
+// Exit: fx, fy, tx, ty in the main bank and bandStart in bank 0. AC and IO are clobbered.
+// Called via jsp.
+arcRadius,
+    local rtn
+    dap rtn
+    eem
+    lac i [cenX:4]
+    dac i [fx:4]
+    lac mPenX
+    dac i [tx:4]
+    lac i [cenY:4]
+    dac i [fy:4]
+    lac mPenY
+    dac i [ty:4]
+    lac [RADPARAM]
+    dac i [bandStart:0]
+    lem
+rtn, jmp .
+    endloc
+
+// Commit the band's arc as the next in the table. The center, the start and, unless the arc is
+// a full circle, the end are added as points unless they are in the table already; then the
+// entry; and its slot is written whole. Refused, the arc going on, while no direction is chosen
+// or, short of a full circle, while the end is under MINLINE from the start on both axes.
+// Refused for good when the point table or the arc table has no room.
+// Exit: AC = 0 committed, 1 refused, -1 no room. IO is clobbered. Called via jsp.
+arcCommit,
+    local rtn, cmRoom, cmHaveC, cmHaveS, cmTable, cmShort, cmFull, \
+        cmSX, cmSY, cmC, cmS, cmE, cmN, cmNeed, cmP
+    dap rtn
+    lac arcDir
+    sza i               // skip once a direction is chosen
+    jmp cmShort
+    lac arcU
+    sar 5s
+    add arcCX
+    dac cmSX
+    lac arcV
+    sar 5s
+    add arcCY
+    dac cmSY
+    lac arcK
+    sad [NARC]          // skip unless a full circle
+    jmp cmRoom
+    lac arcEX
+    sub cmSX
+    jda arcAbs
+    sub [MINLINE]
+    sma                 // skip if the x differ by less than MINLINE
+    jmp cmRoom
+    lac arcEY
+    sub cmSY
+    jda arcAbs
+    sub [MINLINE]
+    spa                 // skip if the y differ by MINLINE or more
+    jmp cmShort
+
+    // Room for each point not yet in the table, and one arc.
+cmRoom,
+    eem
+    lac i [cenIdx:4]
+    dac cmC
+    lac i [startPointIdx:4]
+    dac cmS
+    lac i [pointCount:4]
+    dac cmN
+    lem
+    dzm cmNeed
+    lac cmC
+    sad [NOPOINT]       // skip if the center is in the table
+    idx cmNeed
+    lac cmS
+    sad [NOPOINT]       // skip if the start is in the table
+    idx cmNeed
+    lac arcK
+    sas [NARC]          // skip if a full circle, its end being its start
+    idx cmNeed
+    lac cmN
+    add cmNeed
+    sub [MAXPTS+1]
+    sma                 // skip if the points fit
+    jmp cmFull
+    lac arcCount
+    sad [MAXARCS]       // skip if the arc fits
+    jmp cmFull
+
+    lac cmC
+    sas [NOPOINT]       // skip if the center is new
+    jmp cmHaveC
+    eem
+    lac i [cenX:4]
+    lio i [cenY:4]
+    lem
+    jda arcAddPoint
+    dac cmC
+cmHaveC,
+    lac cmS
+    sas [NOPOINT]       // skip if the start is new
+    jmp cmHaveS
+    lio cmSY
+    lac cmSX
+    jda arcAddPoint
+    dac cmS
+cmHaveS,
+    lac cmS
+    dac cmE
+    lac arcK
+    sad [NARC]          // skip unless a full circle
+    jmp cmTable
+    lio arcEY
+    lac arcEX
+    jda arcAddPoint
+    dac cmE
+cmTable,
+    lac arcCount
+    add [arcTC]
+    dac cmP
+    lac cmC
+    dac i cmP
+    lac arcCount
+    add [arcTS]
+    dac cmP
+    lac cmS
+    dac i cmP
+    lac arcCount
+    add [arcTE]
+    dac cmP
+    lac cmE
+    dac i cmP
+    lac arcCount
+    add [arcTD]
+    dac cmP
+    lac arcDir
+    dac i cmP
+    lac arcCount
+    add [arcTK]
+    dac cmP
+    lac arcK
+    dac i cmP
+    lac arcCount
+    jda arcWriteI
+    idx arcCount
+    cla
+    jmp rtn
+cmShort,
+    law 1
+    jmp rtn
+cmFull,
+    law i 1
+rtn, jmp .
+cmSX, 0
+cmSY, 0
+cmC, 0
+cmS, 0
+cmE, 0
+cmN, 0
+cmNeed, 0
+cmP, 0
+    endloc
+
+// Add a point to bank 3's point table; the caller has checked for room.
+// Entry: AC = x, IO = y. Exit: AC = its index. IO is clobbered. Called via jda.
+arcAddPoint, 0
+    local rtn, apY, apN, apP
+    dap rtn
+    dio apY
+    eem
+    lac i [pointCount:4]
+    dac apN
+    add [pointX:3]
+    dac apP
+    lac arcAddPoint
+    dac i apP
+    lac apN
+    add [pointY:3]
+    dac apP
+    lac apY
+    dac i apP
+    lac apN
+    add [1]
+    dac i [pointCount:4]
+    lem
+    lac apN
+rtn, jmp .
+apY, 0
+apN, 0
+apP, 0
+    endloc
+
+// The sine and cosine of k steps in arcDir's direction, counterclockwise unless arcDir is
+// negative. k mod NQ steps into quadrant k / NQ, by a mask and a shift, NQ being 16 (sinTab's NARC 64).
+// NARC's quadrant, 4, acts as 0, as only its low two bits are read.
+// Entry: AC = k, 0 to NARC. Exit: arcS, arcC. AC is clobbered, IO preserved. Called via jda.
+arcSinCos, 0
+    local rtn, scEven, scHalf, scQ, scJ, scP, scA
+    dap rtn
+    lac arcSinCos
+    sar 4s
+    dac scQ
+    lac arcSinCos
+    and [NQ-1]
+    dac scJ
+    add [sinTab]
+    dac scP
+    lac i scP
+    dac scA             // sin j
+    dac arcS
+    lac [sinTab+NQ]
+    sub scJ
+    dac scP
+    lac i scP           // sin(NQ - j), cos j
+    dac arcC
+    lac scQ
+    and [1]
+    sza i               // skip in quadrants 1 and 3, where the two trade places, cosine negated
+    jmp scEven
+    lac arcC
+    dac arcS
+    lac scA
+    cma
+    dac arcC
+scEven,
+    lac scQ
+    and [2]
+    sza i               // skip in quadrants 2 and 3, where both negate
+    jmp scHalf
+    lac arcS
+    cma
+    dac arcS
+    lac arcC
+    cma
+    dac arcC
+scHalf,
+    lac arcDir
+    sma                 // skip if clockwise, when the sine negates
+    jmp rtn
+    lac arcS
+    cma
+    dac arcS
+rtn, jmp .
+scQ, 0
+scJ, 0
+scP, 0
+scA, 0
+    endloc
+
+// Vertex k of the arc, the start's offset rotated k steps. mul leaves the product's high word
+// in AC, which is the product of 32nds and a fraction, in 32nds, truncated toward 0.
+// Entry: AC = k, 0 to NARC. Exit: arcUk, arcVk, arcX, arcY. AC and IO are clobbered. Called via
+// jda.
+arcVertex, 0
+    local rtn, avT
+    dap rtn
+    lac arcVertex
+    jda arcSinCos
+    lac arcU
+    mul arcC
+    dac avT
+    lac arcV
+    mul arcS
+    cma
+    add avT
+    dac arcUk           // U cos - V sin
+    add arcX32
+    sar 5s
+    dac arcX
+    lac arcU
+    mul arcS
+    dac avT
+    lac arcV
+    mul arcC
+    add avT
+    dac arcVk           // U sin + V cos
+    add arcY32
+    sar 5s
+    dac arcY
+rtn, jmp .
+avT, 0
+    endloc
+
+// 32 times the length of (a, b), |a| and |b| at most 1023, by Newton's root from 32(m + n/2), m
+// and n the larger and smaller magnitudes, which is never below the root; three steps. mul
+// leaves the square in the form div wants, and the quotient is at most 32m, so no divide
+// overflows.
+// Entry: AC = a, IO = b. Exit: AC = the length in 32nds, 0 for (0, 0). IO is clobbered. Called
+// via jda.
+arcHypot, 0
+    local rtn, hyGo, hyLoop, hyM, hyN, hyH, hyQ, hyI
+    dap rtn
+    dio hyN
+    lac arcHypot
+    jda arcAbs
+    dac hyM
+    lac hyN
+    jda arcAbs
+    dac hyN
+    sub hyM
+    spa                 // skip if |b| is the larger, to swap
+    jmp hyGo
+    lac hyN
+    lio hyM
+    dac hyM
+    dio hyN
+hyGo,
+    lac hyM
+    sza i               // skip unless both are 0
+    jmp rtn
+    sal 5s
+    dac hyM
+    lac hyN
+    sal 5s
+    dac hyN
+    sar 1s
+    add hyM
+    dac hyH
+    law i 3
+    dac hyI
+hyLoop,
+    lac hyM
+    mul hyM
+    div hyH
+    cla                 // runs only on overflow
+    dac hyQ
+    lac hyN
+    mul hyN
+    div hyH
+    cla                 // runs only on overflow
+    add hyQ
+    add hyH
+    sar 1s
+    dac hyH
+    isp hyI
+    jmp hyLoop
+    lac hyH
+rtn, jmp .
+hyM, 0
+hyN, 0
+hyH, 0
+hyQ, 0
+hyI, 0
+    endloc
+
+// Magnitude of a signed word; -0 gives +0. The main bank's absVal, which this bank cannot call.
+// Entry: AC = the word. Exit: AC = its magnitude. IO is preserved. Called via jda.
+arcAbs, 0
+    dap aaRtn
+    lac arcAbs
+    sma                 // skip if negative
+    jmp aaRtn
+    cma
+aaRtn, jmp .
+
+// Begin an arc at a start, setting its offset from the center and the radius, with no direction
+// and no steps.
+// Entry: arcCX, arcCY; AC = the start's x, IO = its y. AC and IO are clobbered. Called via jda.
+arcBegin, 0
+    local rtn, abU, abV
+    dap rtn
+    dio abV
+    lac arcBegin
+    sub arcCX
+    dac abU
+    sal 5s
+    dac arcU
+    lac abV
+    sub arcCY
+    dac abV
+    sal 5s
+    dac arcV
+    lac arcCX
+    sal 5s
+    add [0d16]
+    dac arcX32
+    lac arcCY
+    sal 5s
+    add [0d16]
+    dac arcY32
+    lio abV
+    lac abU
+    jda arcHypot
+    dac arcR32
+    dzm arcDir
+    dzm arcK
+rtn, jmp .
+abU, 0
+abV, 0
+    endloc
+
+// The direction of (arcQX, arcQY), the pen for the band, from the center, as (arcPX, arcPY) of
+// length 65536, and its distance.
+// Entry: arcQX, arcQY. Exit: AC = arcPH, the distance in 32nds, 0 on the center (and arcPX,
+// arcPY unchanged). IO is clobbered. Called via jsp.
+arcNorm,
+    local rtn, anA, anB
+    dap rtn
+    lac arcQX
+    sub arcCX
+    dac anA
+    lac arcQY
+    sub arcCY
+    dac anB
+    lio anB
+    lac anA
+    jda arcHypot
+    dac arcPH
+    sza i               // skip unless the pen is on the center
+    jmp rtn
+    lac anA
+    sal 5s
+    mul [0200000]       // 32a * 65536, in the form div wants
+    div arcPH
+    cla                 // runs only on overflow
+    dac arcPX
+    lac anB
+    sal 5s
+    mul [0200000]
+    div arcPH
+    cla                 // runs only on overflow
+    dac arcPY
+    lac arcPH
+rtn, jmp .
+anA, 0
+anB, 0
+    endloc
+
+// The cross product of vertex k's offset and the pen's direction, signed so that plus means
+// the pen lies past vertex k in the arc's direction; about 16 times the distance along the
+// circle while it is small. Also their dot product, plus while vertex k is on the pen's side
+// of the center.
+// Entry: AC = k. Exit: AC = the cross product; arcDot; arcVertex's results for k. IO is
+// clobbered. Called via jda.
+arcCross, 0
+    local rtn
+    dap rtn
+    lac arcCross
+    jda arcVertex
+    jsp arcCrossUV
+rtn, jmp .
+    endloc
+
+// arcCross for the offset (arcUk, arcVk) in 32nds, whatever point it is.
+// Exit: AC = the cross product; arcDot. IO is clobbered. Called via jsp.
+arcCrossUV,
+    local rtn, acNeg, acT
+    dap rtn
+    lac arcUk
+    mul arcPX
+    dac acT
+    lac arcVk
+    mul arcPY
+    add acT
+    dac arcDot
+    lac arcVk
+    mul arcPX
+    dac acT
+    lac arcUk
+    mul arcPY
+    sub acT
+    dac acT
+    lac arcDir
+    spa                 // skip unless clockwise
+    jmp acNeg
+    lac acT
+    jmp rtn
+acNeg,
+    lac acT
+    cma
+rtn, jmp .
+acT, 0
+    endloc
+
+// 1 if (arcX, arcY) is on the canvas, where the target's center can reach; else 0.
+// AC is the result, IO preserved. Called via jsp.
+arcOnCanvas,
+    local rtn, ocNo
+    dap rtn
+    lac arcX
+    sub [TRKXMIN]
+    spa                 // skip unless left of the canvas
+    jmp ocNo
+    lac [TRKXMAX]
+    sub arcX
+    spa                 // skip unless right of it
+    jmp ocNo
+    lac arcY
+    sub [TRKYMIN]
+    spa                 // skip unless below it
+    jmp ocNo
+    lac [TRKYMAX]
+    sub arcY
+    spa                 // skip unless above it
+    jmp ocNo
+    law 1
+    jmp rtn
+ocNo,
+    cla
+rtn, jmp .
+    endloc
+
+// Follow the pen round the circle (arcNorm first). While the direction is unchosen, it is
+// chosen once the pen is MINLINE along the circle from the start on either side. Then arcK
+// steps forward while the pen is past the next vertex and that vertex is on the canvas, and
+// back while the pen is behind vertex arcK; back at the start with the pen behind it, the
+// direction is unchosen again. A full circle stops at NARC.
+// AC and IO are clobbered. Called via jsp.
+arcSweep,
+    local rtn, swSide, swCw, swCcw, swFwd, swBack, swZero, swC, swJ
+    dap rtn
+    lac arcDir
+    sza                 // skip if the direction is still to choose
+    jmp swFwd
+    cla
+    jda arcCross
+    dac swC
+    lac arcDot
+    sma                 // skip if the pen is on the far side of the center
+    jmp swSide
+    jmp rtn
+swSide,
+    lac swC
+    sub [0d16*MINLINE]
+    sma                 // skip unless MINLINE or more along counterclockwise
+    jmp swCcw
+    lac swC
+    add [0d16*MINLINE]
+    spa                 // skip unless MINLINE or more along clockwise
+    jmp swCw
+    jmp rtn
+swCw,
+    law i 1
+    dac arcDir
+    jmp swFwd
+swCcw,
+    law 1
+    dac arcDir
+swFwd,
+    lac arcK
+    sad [NARC]          // skip unless a full circle
+    jmp swBack
+    add [1]
+    dac swJ
+    jda arcCross
+    spa                 // skip if the pen is at or past vertex k+1
+    jmp swBack
+    lac arcDot
+    spa                 // skip if vertex k+1 is on the pen's side of the center
+    jmp swBack
+    jsp arcOnCanvas
+    sza i               // skip if vertex k+1 is on the canvas
+    jmp swBack
+    lac swJ
+    dac arcK
+    jmp swFwd
+swBack,
+    lac arcK
+    sza i               // skip unless at the start
+    jmp swZero
+    jda arcCross
+    sma                 // skip if the pen is behind vertex k
+    jmp rtn
+    lac arcDot
+    spa                 // skip if vertex k is on the pen's side of the center
+    jmp rtn
+    lac arcK
+    sub [1]
+    dac arcK
+    jmp swBack
+swZero,
+    cla
+    jda arcCross
+    sma                 // skip if the pen is behind the start, when the direction is chosen again
+    jmp rtn
+    lac arcDot
+    spa                 // skip if the start is on the pen's side of the center
+    jmp rtn
+    dzm arcDir
+rtn, jmp .
+swC, 0
+swJ, 0
+    endloc
+
+// The arc's end, where the circle crosses the ray from the center through the pen (arcRay),
+// while the pen is between vertex arcK and the next and that crossing is on the canvas;
+// otherwise vertex arcK. The start with no direction chosen, and for a full circle.
+// Entry: arcNorm's and arcSweep's results. Exit: arcEX, arcEY. AC and IO are clobbered. Called
+// via jsp.
+arcEnd,
+    local rtn, aeStart, aeVk
+    dap rtn
+    lac arcDir
+    sza i               // skip once the direction is chosen
+    jmp aeStart
+    lac arcK
+    sad [NARC]          // skip unless a full circle
+    jmp aeStart
+    jda arcCross
+    spa                 // skip if the pen is at or past vertex k
+    jmp aeVk
+    lac arcK
+    add [1]
+    jda arcCross
+    sma                 // skip if the pen is short of vertex k+1
+    jmp aeVk
+    jsp arcRay
+    lac arcX
+    dac arcEX
+    lac arcY
+    dac arcEY
+    jsp arcOnCanvas
+    sza i               // skip if the crossing is on the canvas
+    jmp aeVk
+    jmp rtn
+aeVk,
+    lac arcK
+    jda arcVertex
+    lac arcX
+    dac arcEX
+    lac arcY
+    dac arcEY
+    jmp rtn
+aeStart,
+    lac arcU
+    sar 5s
+    add arcCX
+    dac arcEX
+    lac arcV
+    sar 5s
+    add arcCY
+    dac arcEY
+rtn, jmp .
+    endloc
+
+// A visible vector word from its deltas, each at most 127.
+// Entry: AC = dx, IO = dy. Exit: AC = the word, without end. IO is preserved. Called via jda.
+arcPack, 0
+    local rtn, apXPos, apYPos, apYOr, apW, apY
+    dap rtn
+    dio apY
+    lac arcPack
+    sma                 // skip if dx is minus
+    jmp apXPos
+    cma
+    ior [0200]
+apXPos,
+    ior [visible]
+    dac apW
+    lac apY
+    sma                 // skip if dy is minus
+    jmp apYPos
+    cma
+    sal 8s
+    ior [0100000]
+    jmp apYOr
+apYPos,
+    sal 8s
+apYOr,
+    ior apW
+rtn, jmp .
+apW, 0
+apY, 0
+    endloc
+
+// The vector word from vertex j+1 to vertex j, the last one (j = 0) with end.
+// Entry: AC = j, 0 to NARC-1. Exit: AC = the word. IO is clobbered. Called via jda.
+arcStep, 0
+    local rtn, asDone, asX, asY, asDY, asW
+    dap rtn
+    lac arcStep
+    add [1]
+    jda arcVertex
+    lac arcX
+    dac asX
+    lac arcY
+    dac asY
+    lac arcStep
+    jda arcVertex
+    lac arcY
+    sub asY
+    dac asDY
+    lac arcX
+    sub asX
+    lio asDY
+    jda arcPack
+    dac asW
+    lac arcStep
+    sza                 // skip on vertex 1 to 0, which carries end
+    jmp asDone
+    lac asW
+    ior [end]
+    dac asW
+asDone,
+    lac asW
+rtn, jmp .
+asX, 0
+asY, 0
+asDY, 0
+asW, 0
+    endloc
+
+// Write the full circle's NARC vector words backward, vertex NARC down to vertex 0, the last
+// with end, one vertex a word where arcStep takes two. Only vertices 0 to NQ-1 are computed
+// (arcVertex), their offsets kept in bank 7's arcOff; vertex k is the offset of vertex k mod NQ
+// turned k / NQ quarter turns (afVert). That is arcVertex's offset bit for bit but a zero's
+// sign, since the table's sine of k + NQ is the cosine of k and its cosine the negated sine, mul
+// is symmetric in sign, and adding the center's 32nds (at least 16) clears a -0. Each store goes
+// through an extend window, so the area may be in either bank.
+// Entry: AC = the area's full address. Exit: arcUk, arcVk, arcX, arcY, vertex 0's. AC and IO are
+// clobbered. Called via jda.
+arcFill, 0
+    local rtn, afTab, afLoop, afStore, afVert, afGo, afNone, afVr, afPtr, \
+        afK, afX, afY, afDY, afW, afP, afFlip, afBase
+    dap rtn
+    lac arcFill
+    dac afPtr
+    lac arcDir          // afFlip -0 and afBase NARC+NQ-1 counterclockwise, both 0 clockwise
+    sar 9s
+    sar 9s
+    cma
+    dac afFlip
+    and [NARC+NQ-1]
+    dac afBase
+    lac [arcOff:7]
+    dac afP
+    dzm afK
+afTab,
+    lac afK
+    jda arcVertex
+    lac arcVk
+    eem
+    dac i afP
+    idx afP
+    lac arcUk
+    dac i afP
+    lem
+    idx afP
+    idx afK
+    sas [NQ]            // skip once vertices 0 to NQ-1 are kept
+    jmp afTab
+    law NARC
+    dac afK
+    jsp afVert
+    lac arcX
+    dac afX
+    lac arcY
+    dac afY
+afLoop,
+    lac afK
+    sub [1]
+    dac afK
+    jsp afVert
+    lac arcY
+    sub afY
+    dac afDY
+    lac arcX
+    sub afX
+    lio afDY
+    jda arcPack         // vertex k+1 to vertex k
+    dac afW
+    lac arcX
+    dac afX
+    lac arcY
+    dac afY
+    lac afK
+    sza                 // skip on the last word, vertex 1 to 0, which carries end
+    jmp afStore
+    lac afW
+    ior [end]
+    dac afW
+afStore,
+    lac afW
+    eem
+    dac i afPtr
+    lem
+    idx afPtr
+    lac afK
+    sza                 // skip once vertex 0 is reached
+    jmp afLoop
+rtn, jmp .
+
+// Vertex afK from the kept offsets, arcUk and arcVk, arcX and arcY, as arcVertex gives them.
+// Every turn is clockwise, (u, v) to (v, -u), k / NQ of them clockwise, (NARC+NQ-1 - k) / NQ
+// (4 - k / NQ, mod 4) counterclockwise. The jump lands that many turns mod 4 before afNone. A
+// cmi would serve counterclockwise, but on the emulator an add after cmi swp loses its
+// end-around carry.
+afVert,
+    dap afVr
+    lac afK
+    xor afFlip
+    add afBase
+    sar 4s
+    and [3]
+    cma
+    add [afNone]
+    dap afGo
+    lac afK
+    and [NQ-1]
+    sal 1s
+    add [arcOff:7]
+    dac afP
+    eem
+    lio i afP           // v
+    idx afP
+    lac i afP           // u
+    lem
+afGo, jmp .
+    cma swp
+    cma swp
+    cma swp
+afNone,
+    dac arcUk
+    dio arcVk
+    add arcX32
+    sar 5s
+    dac arcX
+    lac arcVk
+    add arcY32
+    sar 5s
+    dac arcY
+afVr, jmp .
+afPtr, 0
+afK, 0
+afX, 0
+afY, 0
+afDY, 0
+afW, 0
+afP, 0
+afFlip, 0
+afBase, 0
+    endloc
+
+// Point an arc slot's head at the arc as it stands. It writes the y and x words of the end, the
+// part step from the end to vertex arcK in the word before the whole steps (with end when it is
+// the last word), and the gate. The part step's word is left in arcPart, 0 for none, so a band
+// can put the full circle's word back there. An arc with nothing to draw, or no direction yet,
+// has its gate jump past the slot. Each word goes through arcPut.
+// Entry: AC = the slot's full address; arcK, arcEX, arcEY, arcDir; the vectors filled. AC and IO
+// are clobbered. Called via jda.
+arcHead, 0
+    local rtn, ahWhole, ahNone, ahEnter, ahStore, ahNoEnd, ahPtr, ahT, ahDX, ahDY
+    dap rtn
+    lac arcHead
+    add [1]
+    dac ahPtr
+    lac arcEY
+    and [01777]
+    ior [y(0) next(point)]
+    lio ahPtr
+    jda arcPut
+    idx ahPtr
+    lac arcEX
+    and [01777]
+    ior [x(0) next(subroutine)]
+    lio ahPtr
+    jda arcPut
+    dzm arcPart
+    lac arcDir
+    sza i               // skip once a direction is chosen
+    jmp ahNone
+
+    // The first whole step's word, NARC - k into the vectors.
+    lac arcHead
+    add [ARCWORDS]
+    sub arcK
+    dac ahT
+    lac arcK
+    jda arcVertex
+    lac arcY
+    sub arcEY
+    dac ahDY
+    lac arcX
+    sub arcEX
+    dac ahDX
+    ior ahDY
+    sza i               // skip if there is a part step
+    jmp ahWhole
+    lac ahT
+    sub [1]
+    dac ahT
+    dac arcPart
+    lio ahDY
+    lac ahDX
+    jda arcPack
+    dac ahDX
+    lac arcK
+    sza                 // skip if the part step is the last word, which carries end
+    jmp ahNoEnd
+    lac ahDX
+    ior [end]
+    dac ahDX
+ahNoEnd,
+    lac ahDX
+    lio ahT
+    jda arcPut
+    jmp ahEnter
+ahWhole,
+    lac arcK
+    sza                 // skip if there is nothing to draw
+    jmp ahEnter
+ahNone,
+    lac arcHead
+    add [ARCWORDS]
+    ior [jump next(parameter)]
+    jmp ahStore
+ahEnter,
+    lac ahT
+    ior [jump next(vector)]
+ahStore,
+    dac ahDX
+    lac arcHead
+    add [ARCVEC-1]
+    dac ahPtr
+    lac ahDX
+    lio ahPtr
+    jda arcPut
+rtn, jmp .
+ahPtr, 0
+ahT, 0
+ahDX, 0
+ahDY, 0
+    endloc
+
+// Write a whole arc slot, first blank, so the display steps over it, then the parameter word,
+// the full circle's vectors and the head. Magnified, the view module writes the vectors and the
+// head instead (vaSlot), for the arc's run on the screen. The parameter word is LITPARAM for the
+// arc lit, whose slot bank 11's lkShine keeps in litArcP, DRAWPARAM for any other.
+// Entry: AC = the slot's full address; the arc as for arcHead. AC and IO are clobbered. Called
+// via jda.
+arcWriteSlot, 0
+    local rtn, awGate, awDraw, awPrm
+    dap rtn
+    lac arcWriteSlot
+    add [ARCVEC-1]
+    dac awGate
+    lac arcWriteSlot
+    add [ARCWORDS]
+    ior [jump next(parameter)]
+    eem
+    dac i awGate
+    lac arcWriteSlot
+    sas i [litArcP:0d11] // skip if the arc lit
+    jmp awDraw
+    lac [LITPARAM]
+    jmp awPrm
+awDraw,
+    lac [DRAWPARAM]
+awPrm,
+    dac i arcWriteSlot
+    lio arcWriteSlot
+    jsp i [vaSlot:015]
+    lem
+    sza                 // skip at x1, where the slot is written here
+    jmp rtn
+    lac arcWriteSlot
+    add [ARCVEC]
+    jda arcFill
+    lac arcWriteSlot
+    jda arcHead
+rtn, jmp .
+awGate, 0
+    endloc
+
+// Where the circle crosses the ray from the center along (arcPX, arcPY), its offset worked out
+// in 16ths, 65536 * 32 over 2^17.
+// Entry: arcCX, arcCY, arcR32; arcNorm's direction. Exit: arcX, arcY. AC and IO are clobbered.
+// Called via jsp.
+arcRay,
+    local rtn, ayT
+    dap rtn
+    lac arcPX
+    mul arcR32
+    dac ayT
+    lac arcCX
+    sal 4s
+    add [0d8]
+    add ayT
+    sar 4s
+    dac arcX
+    lac arcPY
+    mul arcR32
+    dac ayT
+    lac arcCY
+    sal 4s
+    add [0d8]
+    add ayT
+    sar 4s
+    dac arcY
+rtn, jmp .
+ayT, 0
+    endloc
+
+// Write arc i's slot from the arc as it stands, and keep its radius for delete mode's lock.
+// Entry: AC = i; the arc begun, as for arcHead. AC and IO are clobbered. Called via jda.
+arcWriteI, 0
+    local rtn, wiP
+    dap rtn
+    lac arcWriteI
+    add [arcTR]
+    dac wiP
+    lac arcR32
+    dac i wiP
+    lac arcWriteI
+    jda arcSlot
+    jda arcWriteSlot
+    lac arcWriteI
+    jda markWrite
+rtn, jmp .
+wiP, 0
+    endloc
+
+// Write arc i's mark block from the arc as it stands. It writes the center's cross, the start's,
+// and the end's unless the end is the start (a full circle), then the second gate, then the
+// first, so a block that was unused is entered only once its words are in place. A frame that
+// runs through a rewrite can draw a cross with one coordinate old and one new; it stays on the
+// screen, since markAt keeps every cross MARKARM inside it.
+// Entry: AC = i; the arc begun, as for arcHead. AC and IO are clobbered. Called via jda.
+markWrite, 0
+    local rtn, mwEnd, mwFull, mwGate, mwP, mwT, mwSX, mwSY
+    dap rtn
+    lac markWrite
+    jda markBlock
+    dac mwP
+    add [MKCEN]
+    dac markPtr
+    lio arcCY
+    lac arcCX
+    jda markAt
+    lac arcU
+    sar 5s
+    add arcCX
+    dac mwSX
+    lac arcV
+    sar 5s
+    add arcCY
+    dac mwSY
+    lac mwP
+    add [MKSTART]
+    dac markPtr
+    lio mwSY
+    lac mwSX
+    jda markAt
+    lac arcEX
+    sas mwSX            // skip if the end's x is the start's
+    jmp mwEnd
+    lac arcEY
+    sad mwSY            // skip unless the end's y is the start's too
+    jmp mwFull
+mwEnd,
+    lac mwP
+    add [MKEND]
+    dac markPtr
+    lio arcEY
+    lac arcEX
+    jda markAt
+    lac mwP
+    add [MKEND]
+    ior [jump next(point)]
+    jmp mwGate
+mwFull,
+    lac mwP
+    add [MARKWORDS]
+    ior [jump next(parameter)]
+mwGate,
+    dac mwT
+    lac mwP
+    add [MKGATE2]
+    dac markPtr
+    lac mwT
+    eem
+    dac i markPtr
+    lem
+    lac mwP
+    add [MKCEN]
+    ior [jump next(point)]
+    dac mwT
+    lac mwP
+    add [MKGATE1]
+    dac markPtr
+    lac mwT
+    eem
+    dac i markPtr
+    lem
+rtn, jmp .
+mwP, 0
+mwT, 0
+mwSX, 0
+mwSY, 0
+    endloc
+
+// Write arc i's mark block unused. The first gate goes first, jumping to markEnd, so the display
+// never enters the block from here on; then every word from markTpl (bank 3).
+// Entry: AC = i. AC and IO are clobbered. Called via jda.
+markUnused, 0
+    local rtn, muLoop, muP, muT, muN
+    dap rtn
+    lac markUnused
+    jda markBlock
+    dac muP
+    add [MKGATE1]
+    dac muT
+    lac [jump markEnd:0 next(parameter)]
+    eem
+    dac i muT
+    lac [markTpl:3]
+    dac muT
+    law i MARKWORDS
+    dac muN
+muLoop,
+    lac i muT
+    dac i muP
+    idx muP
+    idx muT
+    isp muN             // skip once every word is written
+    jmp muLoop
+    lem
+rtn, jmp .
+muP, 0
+muT, 0
+muN, 0
+    endloc
+
+// Full address of arc i's mark block in bank 0, markList + MARKWORDS * i, 20 being 16 + 4.
+// Entry: AC = i, 0 to MAXARCS. Exit: AC = the address. IO is preserved. Called via jda.
+markBlock, 0
+    local rtn, mbT
+    dap rtn
+    lac markBlock
+    sal 2s
+    dac mbT
+    sal 2s
+    add mbT
+    add [markList:0]
+rtn, jmp .
+mbT, 0
+    endloc
+
+// Write a cross's position into a mark block through the view. The view module's vwCross writes
+// its y word, its x word MARKARM to the left and its two drawn vectors, the cross hidden when it
+// is not wholly on the screen.
+// Entry: AC = x, IO = y; markPtr = the full address of the y word. AC is clobbered, IO
+// preserved. Called via jda.
+markAt, 0
+    local rtn
+    dap rtn
+    lac markAt
+    eem
+    dac i [vxX:014]
+    lac markPtr
+    dac i [vxP:014]
+    jsp i [vwCross:014]
+    lem
+rtn, jmp .
+    endloc
+
+// The word markAt writes to, or a gate's address.
+markPtr, 0

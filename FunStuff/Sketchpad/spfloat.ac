@@ -1,0 +1,841 @@
+// spfloat.ac -- the floating point of the truss's direct solve: loads, stores and constants;
+// the registers' copies, exchange and negations (fbFa, faFb, fpSwap, fNeg, fbNeg); multiply,
+// add, a multiply-subtract in place (fMS, through fMulM), a reciprocal, conversion from an
+// integer and rounding to one; and the normalizing and the right shift they share (fpNorm,
+// fpShR).
+//
+// Included in bank 11 after sptruss.ac, whose phases are its only callers. It reaches nothing
+// outside itself but the numbers whose full addresses it is given, so the extend window must
+// be open while it runs. Part of sketchpad.am1, included where it stands.
+//
+// A number in core is three words: its exponent e; its high part, the top 16 bits of its
+// magnitude M, carrying the number's sign (a negative number's complemented); its low part, M's
+// next 17 bits. M is 0 or in [2^32, 2^33), and the number is M 2^(e - 33); zero is three words
+// of 0. With 16 bits in the high part no sum of two high parts reaches the sign bit, so no
+// carry can make 0777777 into +0. Two registers, FA and FB, hold a number unpacked: its sign
+// (0, or 1 for negative), its exponent, and its two parts, each positive. The arithmetic:
+// - fMul, FA times FB: the high parts' product exact, plus each high-times-low product shifted
+//   right 16 places, plus 1; the low parts' product dropped; one left shift when that leaves
+//   the top bit clear.
+// - fAdd, FA plus FB: the smaller exponent's magnitude shifted right by the difference, plus
+//   the last bit shifted out; with the same signs the sum, shifted right one on a carry; with
+//   signs differing the larger less the smaller, normalized left exactly.
+// - fRcp, 1 over FA: floor(2^31 / H) 2^(-15 - e) from one div, then two Newton steps
+//   r (2 - x r).
+// - fInt, FA from an integer, exactly; fRnd, |FA| + 1/2 truncated to an integer.
+// The working form in AC:IO is the high part in AC and the low part shifted left one in IO, so
+// that scl and scr shift all 33 bits as one; after a right shift, IO's last bit is the last bit
+// shifted out.
+
+// The registers FA and FB, and fpSg, FA's sign before fRnd took it.
+faS, 0
+faE, 0
+faH, 0
+faL, 0
+fbS, 0
+fbE, 0
+fbH, 0
+fbL, 0
+fpSg, 0
+
+// The places fpShR shifts, and a word of scratch.
+fpD, 0
+fpT, 0
+
+// FA = the number at the full address in AC.
+// AC and IO are clobbered. Called via jda faLd.
+faLd, 0
+    local rtn, flNeg, flLow, flP
+    dap rtn
+    lac faLd
+    dac flP
+    lac i flP
+    dac faE
+    idx flP
+    dzm faS
+    lac i flP
+    spa                 // skip unless negative
+    jmp flNeg
+    dac faH
+flLow,
+    idx flP
+    lac i flP
+    dac faL
+rtn, jmp .
+flNeg,
+    cma
+    dac faH
+    law 1
+    dac faS
+    jmp flLow
+flP, 0
+    endloc
+
+// FB = the number at the full address in AC.
+// AC and IO are clobbered. Called via jda fbLd.
+fbLd, 0
+    local rtn, blNeg, blLow, blP
+    dap rtn
+    lac fbLd
+    dac blP
+    lac i blP
+    dac fbE
+    idx blP
+    dzm fbS
+    lac i blP
+    spa                 // skip unless negative
+    jmp blNeg
+    dac fbH
+blLow,
+    idx blP
+    lac i blP
+    dac fbL
+rtn, jmp .
+blNeg,
+    cma
+    dac fbH
+    law 1
+    dac fbS
+    jmp blLow
+blP, 0
+    endloc
+
+// The number at the full address in AC = FA.
+// AC and IO are clobbered. Called via jda faSt.
+faSt, 0
+    local rtn, stPos, stHigh, stP
+    dap rtn
+    lac faSt
+    dac stP
+    lac faE
+    dac i stP
+    idx stP
+    lac faS
+    sza i               // skip if FA is negative
+    jmp stPos
+    lac faH
+    cma
+    jmp stHigh
+stPos,
+    lac faH
+stHigh,
+    dac i stP
+    idx stP
+    lac faL
+    dac i stP
+rtn, jmp .
+stP, 0
+    endloc
+
+// FB = a positive constant, AC its high part, IO its exponent, its low part 0.
+// AC is clobbered, IO preserved. Called via jda fbSet.
+fbSet, 0
+    local rtn
+    dap rtn
+    lac fbSet
+    dac fbH
+    dio fbE
+    dzm fbS
+    dzm fbL
+rtn, jmp .
+    endloc
+
+// FB = FA.
+// AC is clobbered, IO preserved. Called via jsp.
+fbFa,
+    local rtn
+    dap rtn
+    lac faS
+    dac fbS
+    lac faE
+    dac fbE
+    lac faH
+    dac fbH
+    lac faL
+    dac fbL
+rtn, jmp .
+    endloc
+
+// FA = FB.
+// AC is clobbered, IO preserved. Called via jsp.
+faFb,
+    local rtn
+    dap rtn
+    lac fbS
+    dac faS
+    lac fbE
+    dac faE
+    lac fbH
+    dac faH
+    lac fbL
+    dac faL
+rtn, jmp .
+    endloc
+
+// FA and FB exchanged.
+// AC and IO are clobbered. Called via jsp.
+fpSwap,
+    local rtn
+    dap rtn
+    lac faS
+    lio fbS
+    dac fbS
+    dio faS
+    lac faE
+    lio fbE
+    dac fbE
+    dio faE
+    lac faH
+    lio fbH
+    dac fbH
+    dio faH
+    lac faL
+    lio fbL
+    dac fbL
+    dio faL
+rtn, jmp .
+    endloc
+
+// FA = -FA, and FB = -FB; zero keeps its plus sign.
+// AC is clobbered, IO preserved. Called via jsp.
+fNeg,
+    local rtn
+    dap rtn
+    lac faH
+    sza i               // skip if FA is nonzero
+    jmp rtn
+    lac faS
+    xor [1]
+    dac faS
+rtn, jmp .
+    endloc
+fbNeg,
+    local rtn
+    dap rtn
+    lac fbH
+    sza i               // skip if FB is nonzero
+    jmp rtn
+    lac fbS
+    xor [1]
+    dac fbS
+rtn, jmp .
+    endloc
+
+// FA = FA FB.
+// AC and IO are clobbered. Called via jsp.
+fMul,
+    local rtn, fmZero, fmLow, fmHigh, fmX, fmY
+    dap rtn
+    lac faH
+    sza i               // skip if FA is nonzero; zero times anything is FA as it is
+    jmp rtn
+    lac fbH
+    sza i               // skip if FB is nonzero
+    jmp fmZero
+    lac faS
+    xor fbS
+    dac faS
+    lac faE
+    add fbE
+    dac faE
+
+    // The cross products, each the high 17 bits of 33 (mul's product, shifted left one more).
+    lac faH
+    mul fbL
+    scl 1s
+    dac fmX
+    lac faL
+    mul fbH
+    scl 1s
+    dac fmY
+
+    // Twice the high parts' product, split into its high part and its low 17 bits, which are
+    // even; then the bias and the cross products added to the low part, each carry into the
+    // high. No sum reaches 0777777.
+    lac faH
+    mul fbH
+    scl 1s
+    dac faH
+    rir 1s
+    dio faL
+    lac faL
+    add [1]
+    add fmX
+    sma                 // skip if the low part carried
+    jmp fmLow
+    and [0377777]
+    dac faL
+    idx faH
+    lac faL
+fmLow,
+    add fmY
+    sma                 // skip if the low part carried
+    jmp fmHigh
+    and [0377777]
+    dac faL
+    idx faH
+    lac faL
+fmHigh,
+    dac faL
+
+    // The product is 2^31 or more, so one left shift at most.
+    lac faH
+    sub [0100000]
+    sma                 // skip if the top bit is clear
+    jmp rtn
+    lio faL
+    ril 1s
+    lac faH
+    scl 1s
+    dac faH
+    rir 1s
+    dio faL
+    law i 1
+    add faE
+    dac faE
+rtn, jmp .
+fmZero,
+    dzm faS
+    dzm faE
+    dzm faH
+    dzm faL
+    jmp rtn
+fmX, 0
+fmY, 0
+    endloc
+
+// FA = FA + FB. FB is clobbered.
+// AC and IO are clobbered. Called via jsp.
+fAdd,
+    local rtn, adGo, adLow, adNoC, adHigh, adDiff, adHi, adB, adA, adNoB, adPut, adCopy
+    dap rtn
+    lac fbH
+    sza i               // skip if FB is nonzero
+    jmp rtn
+    lac faH
+    sza i               // skip if FA is nonzero
+    jmp adCopy
+
+    // FA the larger exponent, d places more than FB's; past 33, FB counts for nothing.
+    lac faE
+    sub fbE
+    sma                 // skip if FB's exponent is the larger
+    jmp adGo
+    jsp fpSwap
+    lac faE
+    sub fbE
+adGo,
+    dac fpD
+    sub [0d34]
+    sma                 // skip if FB is within 33 places
+    jmp rtn
+
+    // FB aligned, the last bit shifted out added back, which may carry into its high part.
+    lio fbL
+    ril 1s
+    lac fbH
+    jda fpShR
+    dac fbH
+    dio fpT
+    lac fpT
+    rar 1s
+    sma                 // skip if the last bit shifted out is 1
+    jmp adLow
+    and [0377777]
+    add [1]
+    sas [0400000]       // skip if the low part carried
+    jmp adLow
+    idx fbH
+    cla
+adLow,
+    dac fbL
+    lac faS
+    sas fbS             // skip if the signs are the same
+    jmp adDiff
+
+    // With the same signs, the sum, shifted right one (the bit dropped) when it reaches 2^33.
+    lac faL
+    add fbL
+    sma                 // skip if the low part carried
+    jmp adNoC
+    and [0377777]
+    dac faL
+    idx faH
+    jmp adHigh
+adNoC,
+    dac faL
+adHigh,
+    lac faH
+    add fbH
+    dac faH
+    sub [0200000]
+    spa                 // skip if the sum reached 2^33
+    jmp rtn
+    lio faL
+    ril 1s
+    lac faH
+    scr 1s
+    dac faH
+    dio fpT
+    lac fpT
+    rar 1s
+    and [0377777]
+    dac faL
+    idx faE
+    jmp rtn
+
+    // With signs differing, the larger magnitude in FA, with its sign, less the smaller.
+adDiff,
+    lac faH
+    sub fbH
+    sma                 // skip if FB's high part is the larger
+    jmp adHi
+    jmp adB
+adHi,
+    sza                 // skip if the high parts are equal
+    jmp adA
+    lac faL
+    sub fbL
+    sma                 // skip if FB's low part is the larger
+    jmp adA
+adB,
+    lac faH
+    lio fbH
+    dac fbH
+    dio faH
+    lac faL
+    lio fbL
+    dac fbL
+    dio faL
+    lac fbS
+    dac faS
+adA,
+    lac faL
+    sub fbL
+    sma                 // skip if the low parts borrow
+    jmp adNoB
+    and [0377777]       // -k is 0777777 - k; masked 2^17 - 1 - k, then 2^17 - k
+    add [1]
+    dac faL
+    lac faH
+    sub fbH
+    sub [1]
+    jmp adPut
+adNoB,
+    dac faL
+    lac faH
+    sub fbH
+adPut,
+    dac faH
+    jsp fpNorm
+    jmp rtn
+adCopy,
+    jsp faFb
+rtn, jmp .
+    endloc
+
+// FA normalized by left shifts, its exponent down by each; FA's high part under 2^16. A zero
+// magnitude makes FA zero.
+// AC and IO are clobbered. Called via jsp.
+fpNorm,
+    local rtn, nmTop, nm4, nm2, nm1, nmDone, nm16, nmZero, nmT
+    dap rtn
+    lac faH
+    ior faL
+    sza i               // skip if FA is nonzero
+    jmp nmZero
+
+    // A high part of 2^15 or more is normalized already. The shifts below would leave every
+    // word as it is.
+    lac faH
+    sub [0100000]
+    sma                 // skip if the high part is under 2^15
+    jmp rtn
+    lio faL
+    ril 1s
+    lac faH
+
+    // A high part of 0 takes 16 places at once; then 8, 4, 2 and 1 as each is needed.
+nmTop,
+    sza i               // skip if the high part is nonzero
+    jmp nm16
+    dac nmT
+    sub [0400]
+    sma                 // skip if the high part is under 2^8
+    jmp nm4
+    lac nmT
+    scl 8s
+    dac nmT
+    law i 0d8
+    add faE
+    dac faE
+nm4,
+    lac nmT
+    sub [010000]
+    sma                 // skip if the high part is under 2^12
+    jmp nm2
+    lac nmT
+    scl 4s
+    dac nmT
+    law i 4
+    add faE
+    dac faE
+nm2,
+    lac nmT
+    sub [040000]
+    sma                 // skip if the high part is under 2^14
+    jmp nm1
+    lac nmT
+    scl 2s
+    dac nmT
+    law i 2
+    add faE
+    dac faE
+nm1,
+    lac nmT
+    sub [0100000]
+    sma                 // skip if the high part is under 2^15
+    jmp nmDone
+    lac nmT
+    scl 1s
+    dac nmT
+    law i 1
+    add faE
+    dac faE
+nmDone,
+    lac nmT
+    dac faH
+    rir 1s
+    dio faL
+rtn, jmp .
+nm16,
+    scl 9s
+    scl 7s
+    dac nmT
+    law i 0d16
+    add faE
+    dac faE
+    lac nmT
+    jmp nmTop
+nmZero,
+    dzm faS
+    dzm faE
+    dzm faH
+    dzm faL
+    jmp rtn
+nmT, 0
+    endloc
+
+// AC:IO, both parts positive, shifted right fpD places (0 to 35) as one.
+// Entry AC = the high part, IO = the low. Exit AC:IO shifted. Called via jda fpShR.
+fpShR, 0
+    local rtn, shNine, shRest, shX, shN
+    dap rtn
+    lac fpD
+    dac shN
+shNine,
+    lac shN
+    sub [0d9]
+    spa                 // skip if nine places or more remain
+    jmp shRest
+    dac shN
+    lac fpShR
+    scr 9s
+    dac fpShR
+    jmp shNine
+shRest,
+    lac shN
+    add [fpScr]
+    dap shX
+    lac fpShR
+shX, xct .
+rtn, jmp .
+shN, 0
+    endloc
+
+// The shifts of 0 to 8 places right, which fpShR runs by xct.
+fpScr,
+    nop
+    scr 1s
+    scr 2s
+    scr 3s
+    scr 4s
+    scr 5s
+    scr 6s
+    scr 7s
+    scr 8s
+
+// FA = AC, an integer (never -0), exactly.
+// AC and IO are clobbered. Called via jda fInt.
+fInt, 0
+    local rtn, fiPos, fiNorm
+    dap rtn
+    dzm faS
+    lac fInt
+    sma                 // skip if negative
+    jmp fiPos
+    cma
+    dac fInt
+    law 1
+    dac faS
+    lac fInt
+fiPos,
+    dac faH
+    dzm faL
+    law 0d16
+    dac faE
+    lac faH
+    sub [0200000]
+    spa                 // skip if 17 bits, which take one right shift
+    jmp fiNorm
+    cli
+    lac faH
+    scr 1s
+    dac faH
+    rir 1s
+    dio faL
+    idx faE
+    jmp rtn
+fiNorm,
+    jsp fpNorm
+rtn, jmp .
+    endloc
+
+// FA = 1 / FA, FA not zero. FB is clobbered.
+// AC and IO are clobbered. Called via jsp.
+fRcp,
+    local rtn, rcStep, rcN, rcXS, rcXE, rcXH, rcXL, rcRS, rcRE, rcRH, rcRL
+    dap rtn
+    lac faS
+    dac rcXS
+    lac faE
+    dac rcXE
+    lac faH
+    dac rcXH
+    lac faL
+    dac rcXL
+
+    // The seed is 2^31 / H (the dividend 2^31 is 2^32 in AC:IO, its high part under H).
+    lac [040000]
+    cli
+    div faH
+    cla                 // no skip is overflow, which a divisor of 2^15 or more cannot make
+    jda fInt
+    lac faE
+    sub [0d15]
+    sub rcXE
+    dac faE
+    lac rcXS
+    dac faS
+
+    // Newton's step r (2 - x r), twice.
+    law i 2
+    dac rcN
+rcStep,
+    lac faS
+    dac rcRS
+    lac faE
+    dac rcRE
+    lac faH
+    dac rcRH
+    lac faL
+    dac rcRL
+    lac rcXS
+    dac fbS
+    lac rcXE
+    dac fbE
+    lac rcXH
+    dac fbH
+    lac rcXL
+    dac fbL
+    jsp fMul
+    jsp fNeg
+    lac [0100000]
+    lio [2]
+    jda fbSet
+    jsp fAdd
+    lac rcRS
+    dac fbS
+    lac rcRE
+    dac fbE
+    lac rcRH
+    dac fbH
+    lac rcRL
+    dac fbL
+    jsp fMul
+    isp rcN
+    jmp rcStep
+rtn, jmp .
+rcN, 0
+rcXS, 0
+rcXE, 0
+rcXH, 0
+rcXL, 0
+rcRS, 0
+rcRE, 0
+rcRH, 0
+rcRL, 0
+    endloc
+
+// AC = the integer part of |FA| + 1/2, with FA's sign in fpSg (1 for negative); -1 when that
+// takes more than 17 bits (an exponent past 17). FA and FB are clobbered.
+// IO is clobbered. Called via jsp.
+fRnd,
+    local rtn, rdLow, rdZero, rdBig
+    dap rtn
+    lac faS
+    dac fpSg
+    dzm faS
+    lac [0100000]
+    lio [0]
+    jda fbSet
+    jsp fAdd
+    lac faE
+    sub [0d18]
+    sma                 // skip if the exponent is 17 or less
+    jmp rdBig
+    add [0d17]
+    spa                 // skip if the exponent is 1 or more
+    jmp rdZero
+    sub [0d16]
+    sza                 // skip if the exponent is 17; the low part's top bit is the last
+    jmp rdLow
+    lio faL
+    ril 1s
+    lac faH
+    scl 1s
+    jmp rtn
+rdLow,
+    law 0d16
+    sub faE
+    dac fpD
+    lac faH
+    jda fpShR
+    jmp rtn
+rdZero,
+    cla
+    jmp rtn
+rdBig,
+    law i 1
+rtn, jmp .
+    endloc
+
+// FA = FA - (the number at AC)(the number at IO), each a full address. FB is clobbered.
+// FB is the first number, fMulM makes it minus the product, reading the second in place, and
+// fAdd adds it to FA, so that FA is never saved. fAdd treats its two
+// numbers alike, whichever is in FA, so the words are those of FA = -(the product), FB = FA
+// before, FA + FB.
+// AC and IO are clobbered. Called via jda fMS.
+fMS, 0
+    local rtn
+    dap rtn
+    dio mmP
+    lac fMS
+    jda fbLd
+    jsp fMulM
+    jsp fAdd
+rtn, jmp .
+    endloc
+
+// The full address of fMulM's number.
+mmP, 0
+
+// FB = -(FB times the number at the full address in mmP), zero keeping its plus sign. It is
+// fMul's arithmetic, word for word, with FB in FA's place and the number, read in place, in FB's.
+// mmP is clobbered. AC and IO are clobbered. Called via jsp.
+fMulM,
+    local rtn, mmNeg, mmSign, mmZero, mmLow, mmHigh, mmX, mmY, mmH
+    dap rtn
+    lac fbH
+    sza i               // skip if FB is nonzero; zero times anything is FB as it is
+    jmp rtn
+    lac i mmP
+    dac mmX             // the number's exponent, until the cross products
+    idx mmP
+    lac i mmP
+    spa                 // skip unless the number is negative
+    jmp mmNeg
+    sza i               // skip if the number is nonzero
+    jmp mmZero
+    dac mmH
+    law 1               // plus, so the product's sign is FB's, flipped for the minus
+    jmp mmSign
+mmNeg,
+    cma
+    sza i               // skip if the number is nonzero
+    jmp mmZero
+    dac mmH
+    cla                 // minus, so the product's sign is FB's flipped, flipped again
+mmSign,
+    xor fbS
+    dac fbS
+    lac fbE
+    add mmX
+    dac fbE
+    idx mmP             // the number's low part
+
+    // The cross products, each the high 17 bits of 33 (mul's product, shifted left one more).
+    lac fbH
+    mul i mmP
+    scl 1s
+    dac mmX
+    lac fbL
+    mul mmH
+    scl 1s
+    dac mmY
+
+    // Twice the high parts' product, split into its high part and its low 17 bits, which are
+    // even; then the bias and the cross products added to the low part, each carry into the
+    // high. No sum reaches 0777777.
+    lac fbH
+    mul mmH
+    scl 1s
+    dac fbH
+    rir 1s
+    dio fbL
+    lac fbL
+    add [1]
+    add mmX
+    sma                 // skip if the low part carried
+    jmp mmLow
+    and [0377777]
+    dac fbL
+    idx fbH
+    lac fbL
+mmLow,
+    add mmY
+    sma                 // skip if the low part carried
+    jmp mmHigh
+    and [0377777]
+    dac fbL
+    idx fbH
+    lac fbL
+mmHigh,
+    dac fbL
+
+    // The product is 2^31 or more, so one left shift at most.
+    lac fbH
+    sub [0100000]
+    sma                 // skip if the top bit is clear
+    jmp rtn
+    lio fbL
+    ril 1s
+    lac fbH
+    scl 1s
+    dac fbH
+    rir 1s
+    dio fbL
+    law i 1
+    add fbE
+    dac fbE
+rtn, jmp .
+mmZero,
+    dzm fbS
+    dzm fbE
+    dzm fbH
+    dzm fbL
+    jmp rtn
+mmX, 0
+mmY, 0
+mmH, 0
+    endloc

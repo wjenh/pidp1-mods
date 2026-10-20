@@ -1,0 +1,5011 @@
+// spcons.ac -- the constraint module: its tables, its entry, the solver (relaxation by
+// projection, time-boxed), the sets it builds from the table, the entries that add and remove
+// constraints, the positions kept for Undo, and the words they share.
+//
+// Bank 8, from its first word, alone. Entered only at conEntry, from the main bank's conCall;
+// runs with the extend window open throughout, so every indirect address is a 16-bit one: the
+// point and line tables are reached as OP i [X:3], the main bank's variables as OP i [X:4], the
+// arc table as OP i [X:2], this bank's tables through pointers made from [X:010], and its table,
+// its point tables, its line list, the places kept for Undo and the masters' constraints, in
+// bank 9, as OP i [X:011] or through pointers made from [X:011]. It has the marks written into
+// bank 0's fixList by the marks module in bank 13 (spmarks.ac), its only call outside bank 8, at
+// mkMarks and mkNear by jsp i [X:015]. Bank 2's renames (conRen) and removals, the main bank's
+// conRedraw and undoParts, and the tape module reach its words through their 16-bit addresses.
+// Part of sketchpad.am1, included where it stands.
+//
+// The table, conTab, is bank 9's (sketchpad.am1), cCount, then NCON entries of CW words, the
+// first cCount in use and dense.
+// An entry is its type word (CTHL to CTLAST), the point indices A to D, and a parameter word; an
+// index or a parameter a type does not use holds CUNUSED. The type words, CUNUSED and a Length's
+// parameter (its length in 32nds with CUNUSED's sign bit set) are negative, so no word of an
+// entry but a point index can equal a point's index (conRen). Every entry is kept in one order
+// (cBad), so that a repeat has the same words. cEnd is the first
+// word past the entries in use. The tape module saves and loads the table whole,
+// CONWORDS words.
+//
+// The solver. Each entry, and each arc whose three points are the solver's, is a projection: its
+// points moved the least way that satisfies it, a fixed point and the point held (cHeld, the one
+// dragged last, until the figure settles) not at all, the others sharing the move; with CSOR
+// set, each move half as far again (over-relaxation). A sweep projects every entry and then
+// every such arc in turn, on working values in 32nds of a unit (wX, wY), and settles when no point
+// moved more than CSETTLE. The solver's points are those of the entries and of every arc that
+// shares one with them (cIn); only they have working values, which are taken up from the point
+// table after a drag (cReload) and written to it, rounded, at most every PUBMS and when the
+// solver stops (cPublish). Nothing is swept while a point is held; the drop wakes the solver. A
+// pass costs what its sweeps touched, not what the sets hold. Only a drag's pass reloads, and the
+// publish walks only the points the sweeps touched since the last (cPub), so that a pass that
+// moves little costs little.
+// The ties. Each holds an instance's tie point where its
+// attacher lies in the instance, a projection swept after the arcs (cProjT). An instance's origin
+// is a variable of the solver's like a point's, MAXPTS plus the instance's index, its place in
+// the point table being the instance's (bank 3 keeps iX after pointX, iY after pointY).
+// The numbers. A D, Y or O names a set of digits by its anchor, a point, and the
+// digits' scalar is found when the sets are built (cScBind) and kept by the entry's place in bank
+// 3's cScOf. D and Y write the scalars, bank 3's scVal, in their projections, in thousandths of
+// an inch (cToMils), and an O is a Length whose parameter cScBind writes from the digits' scale.
+// A scalar written, a publish or an Undo sets cScChg, so that the text module writes the digits
+// again (its txSync).
+// The point tables, cFlag to cIn, are bank 9's (sketchpad.am1). The rest stand ahead of the
+// code, so that every reference the code makes to them is a backward one.
+
+// The arcs the solver keeps, cArcs, and the lines on its points, cLines, are bank 9's.
+
+// The words other banks reach: the end of the entries in use, the topology's flag (nonzero when
+// an entry, a point's index, a line or an arc changed since the last build; bank 2 and undoParts
+// set it), the merge's flag (nonzero when a merge may have made one entry repeat another), and
+// how many lines cLines holds. The marks' flag is nonzero when a point of an entry may have moved
+// since the marks were written (cMarks); the main bank reads it, and the topology's flag, to
+// write them again while Show is on. The deletion's flag is nonzero when a line or an arc may have
+// gone since the last purge (delete mode and cLoad set it), so that the purge looks for an N's
+// line and a C's arc (cBad). The scalars' flag is nonzero when a scalar or an anchor may have
+// changed since the text module last wrote the digits (cScChg), which it clears.
+cEnd, 0
+cTopo, 0
+cDup, 0
+cLnN, 0
+cMkDirty, 0
+cGone, 0
+cScChg, 0
+
+// Per type, indexed by the type word's low bits (CTMASK), the projection a sweep runs on it.
+// How many points it names, cNPts, and the mark's call of its glyph, cGlyph, are bank 9's.
+cPjTab,
+    nop
+    jsp cProjH
+    jsp cProjH
+    nop                 // a fix is nothing to project
+    jsp cProjM
+    jsp cProjM
+    jsp cProjP
+    jsp cProjP
+    jsp cProjX
+    jsp cProjN
+    jsp cProjK
+    nop                 // an attacher is nothing to project
+    nop                 // nor is a beam, a load or a roller: the truss's analysis reads them
+    nop
+    nop
+    nop                 // nor a designation
+    jsp cProjD
+    jsp cProjY
+    jsp cProjM          // an O, as a Length
+
+// An O's parameter by its digits' scale, x1 to x8 (cScBind), the gap in 32nds,
+// with CUNUSED's sign bit set, as a Length's is.
+cGapTab,
+    CUNUSED + (GAPHALF + GAPMARGIN) * 0d32
+    CUNUSED + (0d2 * GAPHALF + GAPMARGIN) * 0d32
+    CUNUSED + (0d4 * GAPHALF + GAPMARGIN) * 0d32
+    CUNUSED + (0d8 * GAPHALF + GAPMARGIN) * 0d32
+
+// The module's entry, from the main bank's conCall. Run entry n with the argument in AC, and
+// return across the banks with AC as the routine leaves it. Each table word is the routine's
+// call, a jsp or a jda, so each keeps its calling form and returns here inside bank 8.
+// Entry: IO = n; AC = the return address, which carries the main bank; conCall (bank 4) = the
+// argument. Exit: AC as the entry leaves it, the window open. IO is clobbered. Called via
+// jsp i [conEntry:010].
+conEntry,
+    dac ceRtn
+    dio cePtr
+    lac cePtr
+    add [ceTable:010]
+    dac cePtr
+    lac i [conCall:4]
+    xct i cePtr
+    jmp i ceRtn
+ceRtn, 0
+cePtr, 0
+
+// Entry n -> its call.
+ceTable,
+    jsp cInit           // CEINIT
+    jsp cClear          // CECLEAR
+    jsp cTick           // CETICK
+    jsp cRevert         // CEREVERT
+    jda cHorv           // CEHORV
+    jda cFix            // CEFIX
+    jda cDrag           // CEDRAG
+    jsp cUndo           // CEUNDO
+    jsp cLoad           // CELOAD
+    jsp cMarks          // CEFMARK
+    jsp cAdd            // CEADD
+    jda cDel            // CEDEL
+    jsp cNear           // CENEAR
+    jda cKeep           // CEKEEP
+    jda cMake           // CEMAKE
+    jda cDrop           // CEDROP
+    jda cAtt            // CEATT
+    jsp cCopy           // CECOPY
+    jda cRoll           // CEROLL
+    jsp cDelAll         // CEDELALL
+    jsp cUnfixAll       // CEUNFIX
+    jda cDrag2          // CEDRAG2
+    jda cDes            // CEDES
+    jsp cDesTake        // CEDTAKE
+    jda cAxis           // CEAXIS
+    jda cStiff          // CESTIFF
+    jda cStSet          // CESTSET
+    jsp cSnap           // CESNAP
+
+// Start-up. No point held, the diagnostic counters cleared, then the table emptied (cClear).
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cInit,
+    local rtn
+    dap rtn
+    lac [NOPOINT]
+    dac cHeld
+    dac cHeld2
+    dac cPen
+    dzm cTickTot
+    dzm cSweepTot
+    dzm cGiveUps
+    dzm cRefused
+    jsp cClear
+rtn, jmp .
+    endloc
+
+// Clear and Define. The table emptied, the solver asleep, the sets built again from nothing, so
+// every flag is clear, and the marks written, none.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cClear,
+    local rtn
+    dap rtn
+    dzm i [cCount:011]
+    jsp cEndSet
+    dzm cRun
+    dzm cDup
+    jsp cBuild
+    jsp cMarks
+    dzm i [conWake:4]
+    cla
+rtn, jmp .
+    endloc
+
+// After a load, the table the tape module wrote taken up, each entry checked and put in order as
+// after a merge (cPurge); the sets built again (cBuild), the solver woken, and the marks
+// written. A designation past the NATT-th,
+// which only a tape made by hand could hold, is dropped, as the lift would have refused it.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cLoad,
+    local rtn, ldLoop, ldNext, ldGo, ldP, ldN
+    dap rtn
+    jsp cEndSet
+    law i NATT + 1
+    dac ldN
+    lac [cEntries:011]
+    dac ldP
+ldLoop,
+    lac ldP
+    sad cEnd            // skip while entries remain
+    jmp ldGo
+    lac i ldP
+    sas [CTDES]         // skip if a designation
+    jmp ldNext
+    isp ldN             // skip from the designation after the NATT-th on
+    jmp ldNext
+    idx ldP
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i ldP
+    lac ldP
+    sub [1]
+    dac ldP
+ldNext,
+    lac ldP
+    add [CW]
+    dac ldP
+    jmp ldLoop
+ldGo,
+    law 1
+    dac cDup
+    dac cGone
+    jsp cPurge
+    jsp cBuild
+    jsp cWake
+    jsp cMarks
+    cla
+rtn, jmp .
+ldP, 0
+ldN, 0
+    endloc
+
+// cEnd from cCount.
+// AC is clobbered, IO preserved. Called via jsp.
+cEndSet,
+    dap cesRtn
+    lac i [cCount:011]
+    sal 1s
+    add i [cCount:011]
+    sal 1s              // cCount * CW, 6
+    add [cEntries:011]
+    dac cEnd
+cesRtn, jmp .
+
+// Wake the solver. A sweep from the first entry, its count and the give-ups since the wake from 0
+// (cGaveUp), the clock at the wake kept for the give-up (cW0), and the main loop's call asked for.
+// AC is clobbered, IO preserved. Called via jsp.
+cWake,
+    dap cwRtn
+    dio cwIO
+    law 1
+    dac cRun
+    dac i [conWake:4]
+    dzm cSweeps
+    dzm cNext
+    lac [cEntries:011-CW]
+    dac cE
+    dzm cMax
+    dzm cGaveUp
+    rck
+    dio cW0
+    lio cwIO
+cwRtn, jmp .
+cwIO, 0
+
+// Put the solver to sleep. The points dropped last are let go (cHeld, cHeld2), and the main
+// loop's call stops (conWake), unless the pen holds a point (cPen), whose drop the next pass
+// must see (cTick).
+// AC is clobbered, IO preserved. Called via jsp.
+cDoze,
+    local rtn
+    dap rtn
+    lac cPen
+    sas [NOPOINT]       // skip unless the pen holds a point
+    jmp rtn
+    dac cHeld
+    dac cHeld2
+    dzm i [conWake:4]
+rtn, jmp .
+    endloc
+
+// The main loop's pass while conWake is set. The last pass's FMOV marks are cleared (cUnmark).
+// The sets are built again if the topology changed, or a line or an arc was added (their
+// counts); otherwise, after a drag (cRld), the point table's values for the solver's points are
+// taken up (cReload), which wakes the solver if the drag moved one. While the pen holds a point
+// (cPen) nothing is swept, and what the sweeps moved before is written (cPublish); a change of
+// the pen's point, the drop above all, wakes the solver. The point picked up is held (cHeld), and
+// stays held after its drop until the figure has settled about it, or given up, where it was
+// put, as it would have under the pen; then it is let go and the figure settles again, as it did
+// after a drop under the pen (what a fixed point leaves unsatisfied comes back to it), the two
+// within one SOLVEGIVE from the drop. A change of the topology, a merge at the drop among
+// them, builds the sets again, the point dropped still held under its new index (cRefind). A
+// pick-up lets the second point held go (cHeld2, a line's to end, which cDrag2 holds). Digits
+// Move carries are held by their anchor, as a point is. Awake with the pen holding nothing, it
+// sweeps an entry or an arc at a time until a sweep settles, SOLVEGIVE have
+// passed on the clock since it woke (a give-up), or SOLVEMS have passed since the pass began.
+// What moved is written to the point table (cPublish) when the solver stops, and otherwise once
+// PUBMS have passed since the last write, so that a settling figure is redrawn about 20 times a
+// second however long its sweeps take. Asleep, it clears conWake (cDoze).
+// Exit: AC = the points written, their FMOV marks set. IO is clobbered. Called via jsp.
+cTick,
+    local rtn, ctPt, ctDrag, ctPen, ctDrop, ctSame, ctTopo, ctLoad, ctAwake, ctRun, ctItem, \
+        ctArc, ctTie, ctNext, ctTime, ctSwept, ctStop, ctPace, ctPub, ctNone, ctT, ctN4
+    dap rtn
+    idx cTickTot
+    jsp cUnmark
+    lac i [dragInst:4]  // the pen's point: the carried instance's origin, else the carried
+    sad [NOPOINT]       // skip if an instance is carried, by its tie point or its origin
+    jmp ctPt            // digits' anchor, else the point
+    add [MAXPTS]
+    jmp ctPen
+ctPt,
+    lac i [txCarry:012]
+    sad [NOPOINT]       // skip if Move carries a text
+    jmp ctDrag
+    add [txAn:3]
+    dac ctT
+    lac i ctT
+    sas [NOPOINT]       // skip if a plain text
+    jmp ctPen
+ctDrag,
+    lac i [dragIdx:4]
+ctPen,
+    sad cPen            // skip if the pen's point changed
+    jmp ctSame
+    dac cPen
+    sad [NOPOINT]       // skip unless a drop: the points dropped stay held
+    jmp ctDrop
+    dac cHeld
+    lac [NOPOINT]
+    dac cHeld2
+ctDrop,
+    jsp cWake
+ctSame,
+    lac i [lineCount:4]
+    sas cLnSeen         // skip if the lines' count is as built
+    jmp ctTopo
+    lac i [arcCount:2]
+    sas cArcSeen        // skip if the arcs' count is as built
+    jmp ctTopo
+    lac cTopo
+    sza i               // skip if the topology changed
+    jmp ctLoad
+ctTopo,
+    lac cPen
+    sas [NOPOINT]       // skip if the pen holds nothing: a point dropped stays held
+    dac cHeld
+    jsp cPurge
+    jsp cBuild          // which takes up every point, finds the one held again, clears cRld
+    jsp cWake
+ctLoad,
+    lac cRld
+    sza i               // skip if a drag asked for the reload
+    jmp ctAwake
+    dzm cRld
+    jsp cReload
+ctAwake,
+    lac cRun
+    sza                 // skip if asleep
+    jmp ctRun
+    jsp cDoze
+    cla
+    jmp rtn
+ctRun,
+    lac cPen
+    sas [NOPOINT]       // skip unless the pen holds a point
+    jmp ctPub
+    rck
+    dio cT0
+ctItem,
+    lac cNext
+    sub i [cCount:011]
+    sma                 // skip if an entry is next
+    jmp ctArc
+    lac cE              // the entry after the last one swept: cE runs with cNext, from one
+    add [CW]            // before the table at cWake's and ctSwept's start
+    dac cE
+    lac i cE
+    and [CTMASK]
+    add [cPjTab:010]
+    dac ctT
+    xct i ctT           // the type's projection
+    jmp ctNext
+ctArc,
+    sub cArcN
+    sma                 // skip if an arc is next
+    jmp ctTie
+    add cArcN
+    add [cArcs:011]
+    dac ctT
+    lac i ctT
+    jda cProjC
+    jmp ctNext
+ctTie,
+    sub cTieN
+    sma                 // skip if a tie is next
+    jmp ctSwept
+    add cTieN
+    add [cTies:011]
+    dac ctT
+    lac i ctT
+    jda cProjT
+ctNext,
+    idx cNext
+    isp ctN4            // skip on the fourth item since the clock was read
+    jmp ctItem
+    law i 4
+    dac ctN4
+ctTime,
+    rck
+    lai
+    sub cT0
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [SOLVEMS]
+    spa                 // skip once SOLVEMS have passed
+    jmp ctItem
+    jmp ctPace
+ctSwept,
+    idx cSweepTot
+    dzm cNext
+    lac [cEntries:011-CW]
+    dac cE
+    lac cMax
+    dzm cMax
+    sub [CSETTLE+1]
+    spa                 // skip if a point moved more than CSETTLE
+    jmp ctStop
+    idx cSweeps
+    rck
+    lai
+    sub cW0
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [SOLVEGIVE]
+    spa                 // skip once SOLVEGIVE have passed since the wake
+    jmp ctTime
+    idx cGaveUp         // counted once a wake: the free sweep after ctFree gives up again
+    sad [1]             // skip unless the wake's first give-up
+    idx cGiveUps
+ctStop,
+    lac cHeld
+    sas [NOPOINT]       // skip unless the point dropped is still held
+    jmp ctFree
+    dzm cRun
+    jsp cDoze
+    jmp ctPub
+ctFree,
+    lac [NOPOINT]       // let it go, and settle again with it free, as after a drop under the pen,
+    dac cHeld           // within the give-up counted from the drop (the sweep starts from the
+    dac cHeld2          // first item, cMax cleared, as ctSwept left them); the second point too
+    jmp ctTime
+ctPace,
+    rck
+    lai
+    sub cPubAt
+    spa                 // skip unless the clock wrapped
+    add [CLOCKWRAP]
+    sub [PUBMS]
+    spa                 // skip once PUBMS have passed since the last write
+    jmp ctNone
+ctPub,
+    rck
+    dio cPubAt
+    jsp cPublish
+    jmp rtn
+ctNone,
+    cla
+rtn, jmp .
+ctT, 0
+ctN4, 0
+    endloc
+
+// The points held, found again when the sets are built: the solver's point where the last drag
+// left it (cDropX, cDropY), the point dragged or dropped, and the second point held likewise
+// (cDrop2X, cDrop2Y; a line's to end). A merge at the drop renames a point to
+// the point it merged into, which sits there, and a removal moves the last point into its index;
+// cBuild may run before cTick sees either (cMarks).
+// Exit: cHeld, cHeld2 = those points, NOPOINT if none or none was held. AC and IO are clobbered.
+// Called via jsp.
+cRefind,
+    local rtn, rfLoop, rfNext, rfDone, rfOut, rfK, rfP, rfT, rfX, rfY, rfH
+    dap rtn
+    lac cHeld2
+    lio [cDrop2X:010]
+    jda cFindAt
+    dac cHeld2
+    lac cHeld
+    lio [cDropX:010]
+    jda cFindAt
+    dac cHeld
+rtn, jmp .
+
+// The solver's point at the place kept at an address and the word after it, if one is held.
+// Entry: AC = the point held, NOPOINT if none; IO = the address. Exit: AC = the point found
+// there, NOPOINT if none or none was held. IO is clobbered. Called via jda.
+cFindAt, 0
+    dap rfOut
+    dio rfT
+    lac i rfT
+    dac rfX
+    idx rfT
+    lac i rfT
+    dac rfY
+    lac [NOPOINT]
+    dac rfH
+    lac cFindAt
+    sad [NOPOINT]       // skip if a point is held
+    jmp rfDone
+    dzm rfK
+rfLoop,
+    lac rfK
+    sad cInN            // skip while points remain
+    jmp rfDone
+    add [cIn:011]
+    dac rfT
+    lac i rfT
+    dac rfP
+    add [pointX:3]
+    dac rfT
+    lac i rfT
+    sas rfX             // skip if its x is the place's
+    jmp rfNext
+    lac rfP
+    add [pointY:3]
+    dac rfT
+    lac i rfT
+    sas rfY             // skip if its y is the place's
+    jmp rfNext
+    lac rfP
+    dac rfH
+    jmp rfDone
+rfNext,
+    idx rfK
+    jmp rfLoop
+rfDone,
+    lac rfH
+rfOut, jmp .
+rfK, 0
+rfP, 0
+rfT, 0
+rfX, 0
+rfY, 0
+rfH, 0
+    endloc
+
+// Take up the point table's values for the solver's points. A point whose table value is not its
+// working value rounded has been moved by a drag, and its working value becomes the table's
+// (cTake); any such point wakes the solver. Every other mover of a point changes the topology
+// (cTopo, or a count), and its pass builds the sets, which takes up every point.
+// AC and IO are clobbered. Called via jsp.
+cReload,
+    local rtn, rlLoop, rlDone, rlK, rlP, rlChg
+    dap rtn
+    dzm rlChg
+    dzm rlK
+rlLoop,
+    lac rlK
+    sad cInN            // skip while points remain
+    jmp rlDone
+    add [cIn:011]
+    dac tkT
+    lac i tkT
+    dac rlP
+    add [pointX:3]
+    dac tkT
+    lac rlP
+    add [wX:011]
+    dac tkW
+    jsp cTake
+    ior rlChg
+    dac rlChg
+    lac rlP
+    add [pointY:3]
+    dac tkT
+    lac rlP
+    add [wY:011]
+    dac tkW
+    jsp cTake
+    ior rlChg
+    dac rlChg
+    idx rlK
+    jmp rlLoop
+rlDone,
+    lac rlChg
+    sza i               // skip if a point was moved
+    jmp rtn
+    dac cMkDirty
+    jsp cWake
+rtn, jmp .
+rlK, 0
+rlP, 0
+rlChg, 0
+    endloc
+
+// One coordinate taken up, the table's word at tkT against the working value at tkW rounded to a
+// unit; when they differ, the working value becomes the table's.
+// Exit: AC = 1 if it changed, 0 if not. IO is clobbered. Called via jsp.
+cTake,
+    local rtn, tkNew
+    dap rtn
+    lac i tkW
+    add [0d16]
+    sar 5s
+    sas i tkT           // skip if the table agrees
+    jmp tkNew
+    cla
+    jmp rtn
+tkNew,
+    lac i tkT
+    sal 5s
+    dac i tkW
+    law 1
+rtn, jmp .
+    endloc
+
+// Write the points the sweeps touched since the last write (cPub) to the point table. Each whose
+// working value, rounded to a unit, differs from the table's is written, its old place kept for
+// cRevert, its FMOV mark set and its index moved to cPub's front (cMovN), where cRevert and
+// cUnmark find it; the list is then the front alone. Each touched point's working values are
+// first kept on the canvas (cClamp), here rather than at every move. Every touched point's FTCH
+// mark is cleared.
+// A point no sweep touched has its working value as the table's, rounded, already. The front's
+// FMOV marks were cleared at the pass's start.
+// Exit: AC = the points written. IO is clobbered. Called via jsp.
+cPublish,
+    local rtn, puLoop, puNew, puNext, puDone, puK, puP, puM, puTX, puTY, puX, puY, puT
+    dap rtn
+    dzm cMovN
+    dzm puK
+puLoop,
+    lac puK
+    sad cPubN           // skip while points remain
+    jmp puDone
+    add [cPub:011]
+    dac puT
+    lac i puT
+    dac puP
+    add [cFlag:011]
+    dac puM
+    lac i puM
+    and [FTCHOFF]
+    dac i puM
+    lac puP             // its working values kept on the canvas first
+    jda cClamp
+    lac puP
+    add [wX:011]
+    dac puT
+    lac i puT
+    add [0d16]
+    sar 5s
+    dac puX
+    lac puP
+    add [wY:011]
+    dac puT
+    lac i puT
+    add [0d16]
+    sar 5s
+    dac puY
+    lac puP
+    add [pointX:3]
+    dac puTX
+    lac puP
+    add [pointY:3]
+    dac puTY
+    lac i puTX
+    sas puX             // skip if x is unchanged
+    jmp puNew
+    lac i puTY
+    sas puY             // skip if y is unchanged
+    jmp puNew
+    jmp puNext
+puNew,
+    lac puP
+    add [oX:011]
+    dac puT
+    lac i puTX
+    dac i puT
+    lac puP
+    add [oY:011]
+    dac puT
+    lac i puTY
+    dac i puT
+    lac puX
+    dac i puTX
+    lac puY
+    dac i puTY
+    lac i puM
+    ior [FMOV]
+    dac i puM
+    lac cMovN           // to the front; cMovN is at most puK, a place already read
+    add [cPub:011]
+    dac puT
+    lac puP
+    dac i puT
+    idx cMovN
+puNext,
+    idx puK
+    jmp puLoop
+puDone,
+    lac cMovN
+    dac cPubN
+    sza                 // skip unless a point was written
+    dac cMkDirty
+    sza                 // skip unless a point was written: an anchor among them, perhaps
+    dac cScChg
+rtn, jmp .
+puK, 0
+puP, 0
+puM, 0
+puTX, 0
+puTY, 0
+puX, 0
+puY, 0
+puT, 0
+    endloc
+
+// Point p into this pass's list of touched points (cPub), once, its FTCH mark set.
+// Entry: AC = p. AC is clobbered, IO preserved. Called via jda.
+cTouch, 0
+    dap tcRtn
+    lac cTouch
+    add [cFlag:011]
+    dac tcT
+    lac i tcT
+    and [FTCH]
+    sza                 // skip unless it is listed already
+    jmp tcRtn
+    lac i tcT
+    ior [FTCH]
+    dac i tcT
+    lac cPubN
+    add [cPub:011]
+    dac tcT
+    lac cTouch
+    dac i tcT
+    idx cPubN
+tcRtn, jmp .
+tcT, 0
+
+// The last write's FMOV marks cleared, from cPub's front, and the front taken off the list. After
+// a write the list is the front alone (cPublish), so it is left empty; after a pass that wrote
+// nothing the front is empty, and the points touched since the last write stay listed.
+// AC is clobbered, IO preserved. Called via jsp.
+cUnmark,
+    local rtn, umLoop, umDone, umK, umT
+    dap rtn
+    dzm umK
+umLoop,
+    lac umK
+    sad cMovN           // skip while points remain
+    jmp umDone
+    add [cPub:011]
+    dac umT
+    lac i umT
+    add [cFlag:011]
+    dac umT
+    lac i umT
+    and [FMOVOFF]
+    dac i umT
+    idx umK
+    jmp umLoop
+umDone,
+    lac cPubN
+    sub cMovN
+    dac cPubN
+    dzm cMovN
+rtn, jmp .
+umK, 0
+umT, 0
+    endloc
+
+// An arc refused the points the last publish wrote, or Undo put back (the arc module's
+// conArcs). Each, from cPub's front, goes back to where it was, its working value with it and
+// its mark cleared, and the solver sleeps until something wakes it.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cRevert,
+    local rtn, rvLoop, rvDone, rvK, rvP, rvM, rvT, rvU
+    dap rtn
+    idx cRefused
+    dzm rvK
+rvLoop,
+    lac rvK
+    sad cMovN           // skip while points remain
+    jmp rvDone
+    add [cPub:011]
+    dac rvT
+    lac i rvT
+    dac rvP
+    add [cFlag:011]
+    dac rvM
+    lac i rvM
+    and [FMOVOFF]
+    dac i rvM
+    lac rvP
+    add [oX:011]
+    dac rvT
+    lac rvP
+    add [pointX:3]
+    dac rvU
+    lac i rvT
+    dac i rvU
+    lac rvP
+    add [wX:011]
+    dac rvU
+    lac i rvT
+    sal 5s
+    dac i rvU
+    lac rvP
+    add [oY:011]
+    dac rvT
+    lac rvP
+    add [pointY:3]
+    dac rvU
+    lac i rvT
+    dac i rvU
+    lac rvP
+    add [wY:011]
+    dac rvU
+    lac i rvT
+    sal 5s
+    dac i rvU
+    idx rvK
+    jmp rvLoop
+rvDone,
+    law 1
+    dac cMkDirty
+    dzm cMovN
+    dzm cPubN
+    dzm cRun
+    jsp cDoze
+    cla
+rtn, jmp .
+rvK, 0
+rvP, 0
+rvM, 0
+rvT, 0
+rvU, 0
+    endloc
+
+// Whether point p may move, not fixed and not a point held (cHeld, cHeld2).
+// Entry: AC = p. Exit: AC = 1 if it may, 0 if not. IO is preserved. Called via jda.
+cFree, 0
+    local rtn, frNo
+    dap rtn
+    lac cFree
+    sad cHeld           // skip unless it is held
+    jmp frNo
+    sad cHeld2          // skip unless it is the second point held
+    jmp frNo
+    add [cFlag:011]
+    dac cFree
+    lac i cFree
+    and [FFIX]
+    sza                 // skip unless fixed
+    jmp frNo
+    law 1
+    jmp rtn
+frNo,
+    cla
+rtn, jmp .
+    endloc
+
+// A move of d into the sweep's largest, cMax, by its magnitude.
+// Entry: AC = d. AC is clobbered, IO preserved. Called via jda.
+cMaxOf, 0
+    local rtn
+    dap rtn
+    lac cMaxOf
+    spa                 // skip if plus
+    cma
+    dac cMaxOf
+    sub cMax
+    spa                 // skip unless smaller than cMax
+    jmp rtn
+    lac cMaxOf
+    dac cMax
+rtn, jmp .
+    endloc
+
+// An H entry, cE. Its two points are brought to one y (CTHL) or one x (CTHP). When both may move,
+// A moves half the way and B the rest; when one may, it moves all of it; when neither may,
+// nothing moves. The larger move goes into cMax, and a point moved into cPub (cTouch).
+// Entry: cE. AC and IO are clobbered. Called via jsp.
+cProjH,
+    local rtn, phLev, phGo, phOnlyA, phOnlyB, phTB, phMax, phT, phA, phB, phPA, phPB, phD, phH, \
+        phFA
+    dap rtn
+    lac i cE
+    sad [CTHL]          // skip unless level: the y are made one
+    jmp phLev
+    lac [wX:011]
+    jmp phGo
+phLev,
+    lac [wY:011]
+phGo,
+    dac phT
+    lac cE
+    add [1]
+    dac phPA
+    lac i phPA
+    dac phA
+    add phT
+    dac phPA
+    lac cE
+    add [2]
+    dac phPB
+    lac i phPB
+    dac phB
+    add phT
+    dac phPB
+    lac i phPB
+    sub i phPA
+    sza i               // skip unless satisfied
+    jmp rtn
+    dac phD
+    lac phA
+    jda cFree
+    dac phFA
+    lac phB
+    jda cFree
+    sza i               // skip if B may move
+    jmp phOnlyA
+    lac phFA
+    sza i               // skip if A may move too
+    jmp phOnlyB
+    lac phD             // both: A by half the difference, B by the rest
+    sar 1s
+    dac phH
+    add i phPA
+    dac i phPA
+    lac phD
+    sub phH
+    dac phD
+    cma
+    add i phPB
+    dac i phPB
+    lac phA
+    jda cTouch
+    jmp phTB
+phOnlyB,
+    lac i phPA
+    dac i phPB
+phTB,
+    lac phB
+    jda cTouch
+    jmp phMax
+phOnlyA,
+    lac phFA
+    sza i               // skip if A may move
+    jmp rtn
+    lac i phPB
+    dac i phPA
+    lac phA
+    jda cTouch
+phMax,
+    lac phD
+    jda cMaxOf
+rtn, jmp .
+phT, 0
+phA, 0
+phB, 0
+phPA, 0
+phPB, 0
+phD, 0
+phH, 0
+phFA, 0
+    endloc
+
+// An E or L entry, cE. Line A-B's length is made line C-D's (CTEQ), or the entry's parameter
+// (CTLEN, and CTGAP, whose parameter cScBind writes). Each line is measured once (cLine), its
+// root started from its length at the last sweep (cLast). For E, when both lines can change
+// (each with an end that may move, cFree), both go to their mean, each from its measure; when
+// one can, it goes to the other's; when neither can, nothing moves. A line changes along its
+// direction (cSetLen); a line of no length has none, and the entry is passed over. The
+// length each line is given is kept in cLast for the next sweep's root, as is the one found for
+// a line that cannot change.
+// Entry: cE, and cNext its place in the table. AC and IO are clobbered. Called via jsp.
+cProjM,
+    local rtn, pmLen, pmOnly1, pmOnly2, pmSet1, pmR1, pmR2, pmF1, pmF2, pmU1, pmV1, pmFA1, \
+        pmFB1, pmP, pmC
+    dap rtn
+    lac cNext
+    sal 1s
+    add [cLast:011]
+    dac pmC             // line A-B's length kept; line C-D's the word after
+    lac cE
+    add [1]
+    dac pmP
+    lac i pmP
+    dac slA
+    idx pmP
+    lac i pmP
+    dac slB
+    lac i pmC
+    dac cGuess
+    jsp cLine
+    sza i               // skip unless line A-B has no length
+    jmp rtn
+    dac cR
+    dac pmR1
+    dac i pmC
+    lac i cE
+    sad [CTLEN]         // skip unless L
+    jmp pmLen
+    sad [CTGAP]         // skip unless O, a Length to the digits' anchor
+    jmp pmLen
+    lac cLnF            // line A-B's measure, kept while line C-D is measured
+    dac pmF1
+    lac cU
+    dac pmU1
+    lac cV
+    dac pmV1
+    lac cFA
+    dac pmFA1
+    lac cFB
+    dac pmFB1
+    idx pmP
+    lac i pmP
+    dac slA
+    idx pmP
+    lac i pmP
+    dac slB
+    idx pmC
+    lac i pmC
+    dac cGuess
+    jsp cLine
+    sza i               // skip unless line C-D has no length
+    jmp rtn
+    dac cR
+    dac pmR2
+    dac i pmC
+    lac cLnF
+    dac pmF2
+    lac pmF1
+    sza i               // skip if line A-B can change
+    jmp pmOnly2
+    lac pmF2
+    sza i               // skip if line C-D can change too
+    jmp pmOnly1
+    lac pmR1            // both: to the mean, line C-D first, its measure still in place
+    add pmR2
+    sar 1s
+    dac slT
+    dac i pmC
+    jsp cSetLen
+    jmp pmSet1
+pmOnly2,
+    lac pmF2
+    sza i               // skip if line C-D can change
+    jmp rtn
+    lac pmR1
+    dac slT
+    dac i pmC
+    jsp cSetLen
+    jmp rtn
+pmOnly1,
+    lac pmR2
+    dac slT
+pmSet1,
+    law i 1             // back to line A-B's kept length
+    add pmC
+    dac pmC
+    lac slT
+    dac i pmC
+    lac cE              // line A-B's measure put back
+    add [1]
+    dac pmP
+    lac i pmP
+    dac slA
+    idx pmP
+    lac i pmP
+    dac slB
+    lac pmR1
+    dac cR
+    lac pmU1
+    dac cU
+    lac pmV1
+    dac cV
+    lac pmFA1
+    dac cFA
+    lac pmFB1
+    dac cFB
+    lac pmF1
+    dac cLnF
+    jsp cSetLen
+    jmp rtn
+pmLen,
+    lac cLnF
+    sza i               // skip if an end may move
+    jmp rtn
+    lac cE
+    add [5]
+    dac pmP
+    lac i pmP
+    and [0377777]       // the length, its sign bit cleared
+    dac slT
+    dac i pmC
+    jsp cSetLen
+rtn, jmp .
+pmR1, 0
+pmR2, 0
+pmF1, 0
+pmF2, 0
+pmU1, 0
+pmV1, 0
+pmFA1, 0
+pmFB1, 0
+pmP, 0
+pmC, 0
+    endloc
+
+// Line slA-slB, whether each end may move (cFA, cFB, and cLnF if either may), and its vector
+// B - A in working values (cU, cV), through cRay with cCen at A; a guess at its length in
+// cGuess starts the root (cHyp).
+// Exit: AC = its length in 32nds, 0 for none. IO is clobbered. Called via jsp.
+cLine,
+    local rtn
+    dap rtn
+    lac slA
+    jda cFree
+    dac cFA
+    lac slB
+    jda cFree
+    dac cFB
+    ior cFA
+    dac cLnF
+    lac slA
+    dac cCen
+    lac slB
+    jda cRay
+rtn, jmp .
+    endloc
+
+// Line slA-slB's length made slT, in 32nds, along its direction (cAlong), from its measure
+// (cLine), its length cR, its vector cU, cV, and whether each end may move, cFA, cFB and cLnF.
+// When both ends may move each goes half the change, when one may it goes all of it, and with
+// CSOR set the change is half as large again. The moves go into cMax.
+// Entry: slA, slB, slT; cR (not 0), cU, cV, cFA, cFB, cLnF. AC and IO are clobbered. Called via
+// jsp.
+cSetLen,
+    local rtn, snBoth, snGo, snD, snDA
+    dap rtn
+    lac cLnF
+    sza i               // skip if an end may move
+    jmp rtn
+    lac slT
+    sub cR
+#if CSOR
+    dac snD
+    sar 1s
+    add snD
+#endif
+    dac snD
+    dzm snDA
+    lac cFA
+    sza i               // skip if A may move
+    jmp snGo            // only B: it goes all of the change
+    lac cFB
+    sza                 // skip unless B may move too
+    jmp snBoth
+    lac snD             // only A
+    dac snDA
+    dzm snD
+    jmp snGo
+snBoth,
+    lac snD
+    sar 1s
+    dac snDA
+    cma
+    add snD
+    dac snD
+snGo,
+    lac slB
+    dac cP
+    lac snD
+    jda cAlong          // B, along A to B
+    lac cU
+    cma
+    dac cU
+    lac cV
+    cma
+    dac cV
+    lac slA
+    dac cP
+    lac snDA
+    jda cAlong          // A, along B to A
+rtn, jmp .
+snD, 0
+snDA, 0
+    endloc
+
+// A D entry, cE, line A-B and the scalar of the digits whose anchor is C, cScOf's
+// for the entry's place; passed over when it names none. The line is measured once (cLine), its
+// root started from cLast, as cProjM's are, and a line of no length passes the entry over. A
+// scalar typed, or set by a Y (scYN), drives the line, which is given the scalar's length along
+// its direction (cSetLen), unless the value is one no line can meet (cFromMils), when nothing
+// moves. A free scalar this D alone binds (scDN) is given the line's length; one several D's
+// bind goes with the line to their mean, as an E's two lines do, or to the line's length when
+// the line cannot change or the scalar's value is out of reach.
+// Entry: cE, and cNext its place in the table. AC and IO are clobbered. Called via jsp.
+cProjD,
+    local rtn, pdDrive, pdRead, pdSet, pdS, pdC, pdP, pdR, pdT
+    dap rtn
+    lac cNext
+    add [cScOf:3]
+    dac pdT
+    lac i pdT
+    sad [NOPOINT]       // skip if it names a scalar
+    jmp rtn
+    dac pdS
+    lac cNext
+    sal 1s
+    add [cLast:011]
+    dac pdC
+    lac cE
+    add [1]
+    dac pdP
+    lac i pdP
+    dac slA
+    idx pdP
+    lac i pdP
+    dac slB
+    lac i pdC
+    dac cGuess
+    jsp cLine
+    sza i               // skip unless line A-B has no length
+    jmp rtn
+    dac cR
+    dac pdR
+    dac i pdC
+    lac pdS
+    add [scFix:3]
+    dac pdT
+    lac i pdT
+    sza                 // skip unless typed
+    jmp pdDrive
+    lac pdS
+    add [scYN:3]
+    dac pdT
+    lac i pdT
+    sza                 // skip unless a Y sets it
+    jmp pdDrive
+    lac pdS
+    add [scDN:3]
+    dac pdT
+    lac i pdT
+    sad [1]             // skip unless this D alone binds it
+    jmp pdRead
+    lac pdS             // several: the line and the scalar to their mean
+    jda cFromMils
+    spa                 // skip unless out of reach
+    jmp pdRead
+    add pdR
+    sar 1s
+    dac slT
+    dac i pdC
+    jsp cSetLen
+    lac cLnF
+    sza i               // skip if the line can change
+    jmp pdRead
+    lac slT
+    jmp pdSet
+pdRead,
+    lac pdR
+pdSet,
+    jda cToMils
+    lio pdS
+    jda cScSet
+    jmp rtn
+pdDrive,
+    lac pdS
+    jda cFromMils
+    spa                 // skip unless out of reach
+    jmp rtn
+    dac slT
+    dac i pdC
+    jsp cSetLen
+rtn, jmp .
+pdS, 0
+pdC, 0
+pdP, 0
+pdR, 0
+pdT, 0
+    endloc
+
+// A Y entry, cE, the scalar of the digits whose anchor is C (cScOf) set to line
+// A-B's length less the entry's parameter, the length when it was made; no point moves. A scalar
+// typed keeps its value, and an entry that names none is passed over. The line is measured as
+// cProjD measures it, a line of no length as 0.
+// Entry: cE, and cNext its place in the table. AC and IO are clobbered. Called via jsp.
+cProjY,
+    local rtn, pyS, pyC, pyP, pyT
+    dap rtn
+    lac cNext
+    add [cScOf:3]
+    dac pyT
+    lac i pyT
+    sad [NOPOINT]       // skip if it names a scalar
+    jmp rtn
+    dac pyS
+    add [scFix:3]
+    dac pyT
+    lac i pyT
+    sza                 // skip unless typed
+    jmp rtn
+    lac cNext
+    sal 1s
+    add [cLast:011]
+    dac pyC
+    lac cE
+    add [1]
+    dac pyP
+    lac i pyP
+    dac slA
+    idx pyP
+    lac i pyP
+    dac slB
+    lac i pyC
+    dac cGuess
+    jsp cLine
+    dac i pyC
+    dac pyT
+    lac cE
+    add [5]
+    dac pyP
+    lac i pyP
+    and [0377777]       // the length then, its sign bit cleared
+    cma
+    add pyT
+    jda cToMils
+    lio pyS
+    jda cScSet
+rtn, jmp .
+pyS, 0
+pyC, 0
+pyP, 0
+pyT, 0
+    endloc
+
+// A length in 32nds of a unit as thousandths of an inch, MILSPERUNIT to a unit, rounded to the
+// nearest, its sign kept, and never -0.
+// Entry: AC = the length. Exit: AC = the thousandths. IO is clobbered. Called via jda.
+cToMils, 0
+    local rtn, tmPos, tmOut, tmNeg, tmR
+    dap rtn
+    dzm tmNeg
+    lac cToMils
+    sma                 // skip if negative
+    jmp tmPos
+    cma
+    dac cToMils
+    idx tmNeg
+tmPos,
+    lac cToMils
+    mul [MILSPERUNIT]
+    div [0d32]
+    cla                 // no skip: overflow, which no length on the screen can make
+    dac cToMils
+    dio tmR
+    lac tmR
+    sub [0d16]
+    sma                 // skip if the remainder is under half
+    idx cToMils
+    lac tmNeg
+    sza i               // skip if negative
+    jmp tmOut
+    lac cToMils
+    sza                 // skip if 0, which stays +0
+    cma
+    jmp rtn
+tmOut,
+    lac cToMils
+rtn, jmp .
+tmNeg, 0
+tmR, 0
+    endloc
+
+// Scalar s's value, in thousandths, as a length in 32nds of a unit, or -1 for a value no line
+// can meet, a negative one or one past DMAXMILS, the screen's diagonal.
+// Entry: AC = s. Exit: AC = the length, or -1. IO is clobbered. Called via jda.
+cFromMils, 0
+    local rtn, fmNo, fmP
+    dap rtn
+    lac cFromMils
+    add [scVal:3]
+    dac fmP
+    lac i fmP
+    spa                 // skip unless negative
+    jmp fmNo
+    sub [DMAXMILS + 1]
+    sma                 // skip if at most DMAXMILS
+    jmp fmNo
+    lac i fmP
+    mul [0d32]
+    div [MILSPERUNIT]
+fmNo,
+    law i 1             // no skip from div: overflow, which DMAXMILS cannot make
+rtn, jmp .
+fmP, 0
+    endloc
+
+// Scalar s given value v, in thousandths, and cScChg set if that changes it, so that the text
+// module writes its digits again.
+// Entry: AC = v; IO = s. AC is clobbered, IO preserved. Called via jda.
+cScSet, 0
+    local rtn, scsP
+    dap rtn
+    dio scsP
+    lac scsP
+    add [scVal:3]
+    dac scsP
+    lac cScSet
+    sad i scsP          // skip unless its value already
+    jmp rtn
+    dac i scsP
+    law 1
+    dac cScChg
+rtn, jmp .
+scsP, 0
+    endloc
+
+// A P or R entry, cE, line A-B made parallel (CTPAR) or perpendicular (CTPERP) to line C-D.
+// Each line's direction is made CUNIT long, line C-D's turned a right angle first for R, and
+// turned round when it points away from line A-B's, so that the two meet the nearer way. When
+// both lines can turn the aim is the sum of the two directions, the one between them; when one
+// can, the other's direction; when neither can, nothing moves. Each line that can turn is turned
+// to the aim (cTurn), line C-D's taken back through the half turn and the right angle. A line
+// of no length is passed over.
+// Entry: cE. AC and IO are clobbered. Called via jsp.
+cProjP,
+    local rtn, ppPar, ppAim, ppAim1, ppAim2, ppLen, ppL2, ppNoFlip, ppNoRot, ppP, ppA, ppB, \
+        ppC, ppD, ppR1, ppR2, ppF1, ppF2, ppX1, ppY1, ppX2, ppY2, ppS, ppT, ppTX, ppTY, ppTL
+    dap rtn
+    lac cE
+    add [1]
+    dac ppP
+    lac i ppP
+    dac slA
+    dac ppA
+    idx ppP
+    lac i ppP
+    dac slB
+    dac ppB
+    jsp cLine
+    sza i               // skip unless line A-B has no length
+    jmp rtn
+    dac ppR1
+    lac cLnF
+    dac ppF1
+    lac cU
+    mul [CUNIT]
+    div ppR1
+    cla                 // no skip: overflow, which |cU| at most the length rules out
+    dac ppX1
+    lac cV
+    mul [CUNIT]
+    div ppR1
+    cla                 // no skip: overflow
+    dac ppY1
+    idx ppP
+    lac i ppP
+    dac slA
+    dac ppC
+    idx ppP
+    lac i ppP
+    dac slB
+    dac ppD
+    jsp cLine
+    sza i               // skip unless line C-D has no length
+    jmp rtn
+    dac ppR2
+    lac cLnF
+    dac ppF2
+    lac i cE
+    sas [CTPERP]        // skip if R: (u, v) turned a right angle, to (-v, u)
+    jmp ppPar
+    lac cV
+    cma
+    lio cU
+    dac cU
+    dio cV
+ppPar,
+    lac cU
+    mul [CUNIT]
+    div ppR2
+    cla                 // no skip: overflow
+    dac ppX2
+    lac cV
+    mul [CUNIT]
+    div ppR2
+    cla                 // no skip: overflow
+    dac ppY2
+
+    // The sign of their dot product, from the directions cut to 7 bits. That is enough, since
+    // only near a right angle can it come out wrong, and there either way round will do.
+    dzm ppS
+    lac ppX1
+    sar 7s
+    dac ppT
+    lac ppX2
+    sar 7s
+    mul ppT
+    div [1]
+    cla                 // no skip: overflow, which 7-bit factors rule out
+    dac ppTX
+    lac ppY1
+    sar 7s
+    dac ppT
+    lac ppY2
+    sar 7s
+    mul ppT
+    div [1]
+    cla                 // no skip: overflow
+    add ppTX
+    sma                 // skip if they point apart
+    jmp ppAim
+    law 1
+    dac ppS
+    lac ppX2
+    cma
+    dac ppX2
+    lac ppY2
+    cma
+    dac ppY2
+ppAim,
+    lac ppF1
+    sza i               // skip if line A-B can turn
+    jmp ppAim1
+    lac ppF2
+    sza i               // skip if line C-D can turn too
+    jmp ppAim2
+    lac ppX1
+    add ppX2
+    dac ppTX
+    lac ppY1
+    add ppY2
+    dac ppTY
+    jmp ppLen
+ppAim1,
+    lac ppF2
+    sza i               // skip if line C-D can turn
+    jmp rtn
+    lac ppX1
+    dac ppTX
+    lac ppY1
+    dac ppTY
+    jmp ppLen
+ppAim2,
+    lac ppX2
+    dac ppTX
+    lac ppY2
+    dac ppTY
+ppLen,
+    lio ppTY
+    lac ppTX
+    jda cHyp
+    sza i               // skip unless the aim has no length
+    jmp rtn
+    dac ppTL
+    lac ppF1
+    sza i               // skip if line A-B can turn
+    jmp ppL2
+    lac ppA
+    dac slA
+    lac ppB
+    dac slB
+    lac ppTX
+    dac cTX
+    lac ppTY
+    dac cTY
+    lac ppTL
+    dac cTL
+    lac ppR1
+    dac cR
+    jsp cTurn
+ppL2,
+    lac ppF2
+    sza i               // skip if line C-D can turn
+    jmp rtn
+    lac ppTX
+    dac cTX
+    lac ppTY
+    dac cTY
+    lac ppS
+    sza i               // skip if line C-D's direction was turned round
+    jmp ppNoFlip
+    lac cTX
+    cma
+    dac cTX
+    lac cTY
+    cma
+    dac cTY
+ppNoFlip,
+    lac i cE
+    sas [CTPERP]        // skip if R: the right angle taken back, (x, y) to (y, -x)
+    jmp ppNoRot
+    lac cTX
+    cma
+    lio cTY
+    dio cTX
+    dac cTY
+ppNoRot,
+    lac ppC
+    dac slA
+    lac ppD
+    dac slB
+    lac ppTL
+    dac cTL
+    lac ppR2
+    dac cR
+    jsp cTurn
+rtn, jmp .
+ppP, 0
+ppA, 0
+ppB, 0
+ppC, 0
+ppD, 0
+ppR1, 0
+ppR2, 0
+ppF1, 0
+ppF2, 0
+ppX1, 0
+ppY1, 0
+ppX2, 0
+ppY2, 0
+ppS, 0
+ppT, 0
+ppTX, 0
+ppTY, 0
+ppTL, 0
+    endloc
+
+// Turn line slA-slB to the direction (cTX, cTY), of length cTL, keeping its length cR, about its
+// midpoint when both ends may move, about the end that may not when one may.
+// Entry: slA, slB, cTX, cTY, cTL, cR. AC and IO are clobbered. Called via jsp.
+cTurn,
+    local rtn, tuOnlyB, tuOnlyA, tuOff, tuB, tuFA, tuFB, tuPA, tuQA, tuPB, tuQB, tuL, tuBX, \
+        tuBY, tuOX, tuOY
+    dap rtn
+    lac slA
+    jda cFree
+    dac tuFA
+    lac slB
+    jda cFree
+    dac tuFB
+    lac slA
+    add [wX:011]
+    dac tuPA
+    lac slA
+    add [wY:011]
+    dac tuQA
+    lac slB
+    add [wX:011]
+    dac tuPB
+    lac slB
+    add [wY:011]
+    dac tuQB
+    lac tuFA
+    sza i               // skip if A may move
+    jmp tuOnlyB
+    lac tuFB
+    sza i               // skip if B may move too
+    jmp tuOnlyA
+    lac cR              // both: about the midpoint, each end half the length out
+    sar 1s
+    dac tuL
+    lac i tuPA
+    add i tuPB
+    sar 1s
+    dac tuBX
+    lac i tuQA
+    add i tuQB
+    sar 1s
+    dac tuBY
+    jmp tuOff
+tuOnlyB,
+    lac tuFB
+    sza i               // skip if B may move
+    jmp rtn
+    lac cR              // about A, B the whole length out
+    dac tuL
+    lac i tuPA
+    dac tuBX
+    lac i tuQA
+    dac tuBY
+    jmp tuOff
+tuOnlyA,
+    lac cR              // about B, A the whole length back
+    dac tuL
+    lac i tuPB
+    dac tuBX
+    lac i tuQB
+    dac tuBY
+tuOff,
+    lac cTX
+    mul tuL
+    div cTL
+    cla                 // no skip: overflow, which |cTX| at most cTL rules out
+    dac tuOX
+    lac cTY
+    mul tuL
+    div cTL
+    cla                 // no skip: overflow
+    dac tuOY
+    lac tuFA
+    sza i               // skip if A may move
+    jmp tuB
+    lac tuBX
+    sub tuOX
+    sub i tuPA
+    dac cDX
+    lac tuBY
+    sub tuOY
+    sub i tuQA
+    dac cDY
+    lac slA
+    jda cNudge
+tuB,
+    lac tuFB
+    sza i               // skip if B may move
+    jmp rtn
+    lac tuBX
+    add tuOX
+    sub i tuPB
+    dac cDX
+    lac tuBY
+    add tuOY
+    sub i tuQB
+    dac cDY
+    lac slB
+    jda cNudge
+rtn, jmp .
+tuFA, 0
+tuFB, 0
+tuPA, 0
+tuQA, 0
+tuPB, 0
+tuQB, 0
+tuL, 0
+tuBX, 0
+tuBY, 0
+tuOX, 0
+tuOY, 0
+    endloc
+
+// An X entry, cE, point A made the midpoint of line B-C. Twice the error, E = 2A - B - C, is
+// shared out the least way among the points that may move. With k = 4 for A and 1 for each end
+// that may move, A goes -2E/k and each end E/k (all three: A two thirds of the error, each end a
+// third). When none may move, nothing does.
+// Entry: cE. AC and IO are clobbered. Called via jsp.
+cProjX,
+    local rtn, pxGo, pxEndB, pxEndC, pxT, pxFA, pxFB, pxFC, pxK, pxQX, pxQY
+    dap rtn
+    lac cE
+    add [1]
+    dac pxT
+    lac i pxT
+    dac cxA
+    idx pxT
+    lac i pxT
+    dac cxB
+    idx pxT
+    lac i pxT
+    dac cxC
+    lac cxA
+    jda cFree
+    dac pxFA
+    lac cxB
+    jda cFree
+    dac pxFB
+    lac cxC
+    jda cFree
+    dac pxFC
+    lac pxFA
+    sal 2s
+    add pxFB
+    add pxFC
+    sza i               // skip if a point may move
+    jmp rtn
+    dac pxK
+    lac [wX:011]
+    jda cMidE
+    mul [1]
+    div pxK
+    cla                 // no skip: overflow, which k at least 1 rules out
+    dac pxQX
+    lac [wY:011]
+    jda cMidE
+    mul [1]
+    div pxK
+    cla                 // no skip: overflow
+    dac pxQY
+    sza                 // skip unless y moves
+    jmp pxGo
+    lac pxQX
+    sza i               // skip if x moves
+    jmp rtn
+pxGo,
+    lac pxFA
+    sza i               // skip if A may move
+    jmp pxEndB
+    lac pxQX
+    sal 1s
+    cma
+    dac cDX
+    lac pxQY
+    sal 1s
+    cma
+    dac cDY
+    lac cxA
+    jda cNudge
+pxEndB,
+    lac pxFB
+    sza i               // skip if B may move
+    jmp pxEndC
+    lac pxQX
+    dac cDX
+    lac pxQY
+    dac cDY
+    lac cxB
+    jda cNudge
+pxEndC,
+    lac pxFC
+    sza i               // skip if C may move
+    jmp rtn
+    lac pxQX
+    dac cDX
+    lac pxQY
+    dac cDY
+    lac cxC
+    jda cNudge
+rtn, jmp .
+pxT, 0
+pxFA, 0
+pxFB, 0
+pxFC, 0
+pxK, 0
+pxQX, 0
+pxQY, 0
+    endloc
+
+// Twice point cxA's distance from line cxB-cxC's midpoint on one axis, 2A - B - C, in the
+// working values from base (wX or wY).
+// Entry: AC = the base. Exit: AC = 2A - B - C. IO is preserved. Called via jda.
+cMidE, 0
+    local rtn, meT, meE
+    dap rtn
+    lac cMidE
+    add cxA
+    dac meT
+    lac i meT
+    sal 1s
+    dac meE
+    lac cMidE
+    add cxB
+    dac meT
+    lac meE
+    sub i meT
+    dac meE
+    lac cMidE
+    add cxC
+    dac meT
+    lac meE
+    sub i meT
+rtn, jmp .
+meT, 0
+meE, 0
+    endloc
+
+// An N entry, cE, point A kept on the line through B and C. A's offset off the line, m, is
+// taken along the line's normal made CUNIT long, the line's length started from its length at
+// the last sweep (cLast), and shared out the least way, the line moved whole. With A and both
+// ends free to move (cFree), A goes two thirds
+// of m toward the line and each end a third toward A; with A free and an end not, A goes all of
+// it; with A not free, each end that may move goes all of it toward A. A line of no length is
+// passed over.
+// Entry: cE, and cNext its place in the table. AC and IO are clobbered. Called via jsp.
+cProjN,
+    local rtn, pnPt, pnEnds, pnMove, pnEndC, pnP, pnD, pnNX, pnNY, pnMX, pnMY, pnTX, pnTY
+    dap rtn
+    lac cNext
+    sal 1s
+    add [cLast:011]
+    dac pnP
+    lac i pnP
+    dac cGuess
+    lac cE
+    add [1]
+    dac pnD
+    lac i pnD
+    dac cxA
+    idx pnD
+    lac i pnD
+    dac slA
+    idx pnD
+    lac i pnD
+    dac slB
+    jsp cLine           // (cU, cV) = C - B; cFA, cFB whether B and C may move
+    sza i               // skip unless the line has no length
+    jmp rtn
+    dac i pnP
+    dac cR
+    lac cV              // the normal, (-v, u) made CUNIT long
+    mul [CUNIT]
+    div cR
+    cla                 // no skip: overflow, which |cV| at most the length rules out
+    cma
+    dac pnNX
+    lac cU
+    mul [CUNIT]
+    div cR
+    cla                 // no skip: overflow
+    dac pnNY
+
+    // A's distance off the line along the normal, then m, the normal that long.
+    lac [wX:011]
+    lio pnNX
+    jda cOffN
+    dac pnD
+    lac [wY:011]
+    lio pnNY
+    jda cOffN
+    add pnD
+    dac pnD
+    mul pnNX
+    div [CUNIT]
+    cla                 // no skip: overflow, which a normal CUNIT long rules out
+    dac pnMX
+    lac pnD
+    mul pnNY
+    div [CUNIT]
+    cla                 // no skip: overflow
+    dac pnMY
+
+    // pnTX, pnTY: what each end that moves goes toward A.
+    dzm pnTX
+    dzm pnTY
+    lac cxA
+    jda cFree
+    sza i               // skip if A may move
+    jmp pnEnds
+    lac cFA
+    and cFB
+    sza i               // skip if both ends may move too: a third of m theirs
+    jmp pnPt
+    lac pnMX
+    mul [1]
+    div [3]
+    cla                 // no skip: overflow, which a divisor of 3 rules out
+    dac pnTX
+    lac pnMY
+    mul [1]
+    div [3]
+    cla                 // no skip: overflow
+    dac pnTY
+pnPt,
+    lac pnTX            // A goes the rest of m, toward the line
+    sub pnMX
+    dac cDX
+    lac pnTY
+    sub pnMY
+    dac cDY
+    lac cxA
+    jda cNudge
+    lac cFA
+    and cFB
+    sza i               // skip if the ends go their third
+    jmp rtn
+    jmp pnMove
+pnEnds,
+    lac pnMX
+    dac pnTX
+    lac pnMY
+    dac pnTY
+pnMove,
+    lac cFA
+    sza i               // skip if B may move
+    jmp pnEndC
+    lac pnTX
+    dac cDX
+    lac pnTY
+    dac cDY
+    lac slA
+    jda cNudge
+pnEndC,
+    lac cFB
+    sza i               // skip if C may move
+    jmp rtn
+    lac pnTX
+    dac cDX
+    lac pnTY
+    dac cDY
+    lac slB
+    jda cNudge
+rtn, jmp .
+pnP, 0
+pnD, 0
+pnNX, 0
+pnNY, 0
+pnMX, 0
+pnMY, 0
+pnTX, 0
+pnTY, 0
+    endloc
+
+// Point cxA's offset from point slA on one axis, in the working values from base (wX or wY),
+// times n over CUNIT.
+// Entry: AC = the base, IO = n, at most CUNIT. Exit: AC = the product. IO is clobbered. Called
+// via jda.
+cOffN, 0
+    local rtn, onT, onW, onN
+    dap rtn
+    dio onN
+    lac cOffN
+    add cxA
+    dac onT
+    lac i onT
+    dac onW
+    lac cOffN
+    add slA
+    dac onT
+    lac onW
+    sub i onT
+    mul onN
+    div [CUNIT]
+    cla                 // no skip: overflow, which n at most CUNIT rules out
+rtn, jmp .
+onT, 0
+onW, 0
+onN, 0
+    endloc
+
+// A C entry, cE, point A kept on the circle about B through C, as an arc's implicit C keeps its
+// end (cRim). A and C are brought to one distance from B along their rays, B never moved for it.
+// Entry: cE. AC and IO are clobbered. Called via jsp.
+cProjK,
+    local rtn, pkT
+    dap rtn
+    lac cE
+    add [1]
+    dac pkT
+    lac i pkT
+    dac crE
+    idx pkT
+    lac i pkT
+    dac cCen
+    idx pkT
+    lac i pkT
+    dac crS
+    lac cNext           // its radius kept in its first cLast word
+    sal 1s
+    add [cLast:011]
+    dac crG
+    jsp cRim
+rtn, jmp .
+pkT, 0
+    endloc
+
+// A tie, t, its place in iTie. Instance i's attacher a, t being
+// a * MAXINST + i, holds tie point p where the attacher's master point lies in the instance, its
+// origin (the solver's point MAXPTS + i) plus the point's offset in Copy's store at the
+// instance's scale. The error, that place less p, is shared as an H's is: when both may move, p
+// goes half of it and the origin the rest the other way; when one may, it goes all of it. Each
+// move is a nudge (cNudge), which clamps the origin as instAt would (cClamp).
+// Entry: AC = t. AC and IO are clobbered. Called via jda.
+cProjT, 0
+    local rtn, ptOnlyP, ptOnlyO, ptMove, ptP, ptO, ptS, ptJ, ptT, ptE, ptFO, ptEX, ptEY, \
+        ptOX, ptOY
+    dap rtn
+    lac cProjT
+    and [MAXINST - 1]
+    dac ptO             // i, for now
+    add [iScale:3]
+    dac ptT
+    lac i ptT
+    add [ieShTab:7]
+    dac ptS             // the scale's shift
+    lac ptO
+    add [iMaster:012]
+    dac ptT
+    lac i ptT
+    dac ptJ             // k
+    sal 1s
+    add ptJ
+    sal 1s              // k * NATT, 6
+    dac ptT
+    lac cProjT
+    sar 5s              // a
+    add ptT
+    add [cpAtt:5]
+    dac ptT
+    lac ptJ
+    sal CPPSHIFT
+    add i ptT
+    dac ptJ             // the master point's word in Copy's store
+    lac ptO
+    add [MAXPTS]
+    dac ptO
+    lac cProjT
+    add [iTie:3]
+    dac ptT
+    lac i ptT
+    dac ptP
+
+    // The error on each axis, in 32nds.
+    lac ptJ
+    add [cpX:5]
+    dac ptT
+    lac i ptT
+    xct i ptS
+    sal 5s
+    dac ptE
+    lac ptO
+    add [wX:011]
+    dac ptT
+    lac i ptT
+    add ptE
+    dac ptE
+    lac ptP
+    add [wX:011]
+    dac ptT
+    lac ptE
+    sub i ptT
+    dac ptEX
+    lac ptJ
+    add [cpY:5]
+    dac ptT
+    lac i ptT
+    xct i ptS
+    sal 5s
+    dac ptE
+    lac ptO
+    add [wY:011]
+    dac ptT
+    lac i ptT
+    add ptE
+    dac ptE
+    lac ptP
+    add [wY:011]
+    dac ptT
+    lac ptE
+    sub i ptT
+    dac ptEY
+
+    // The shares.
+    lac ptO
+    jda cFree
+    dac ptFO
+    lac ptP
+    jda cFree
+    sza i               // skip if p may move
+    jmp ptOnlyO
+    lac ptFO
+    sza i               // skip if the origin may move too
+    jmp ptOnlyP
+    lac ptEX            // both: p half the way, the origin the rest back
+    sar 1s
+    dac cDX
+    sub ptEX
+    dac ptOX
+    lac ptEY
+    sar 1s
+    dac cDY
+    sub ptEY
+    dac ptOY
+    jmp ptMove
+ptOnlyP,
+    lac ptEX
+    dac cDX
+    lac ptEY
+    dac cDY
+    dzm ptOX
+    dzm ptOY
+    jmp ptMove
+ptOnlyO,
+    lac ptFO
+    sza i               // skip if the origin may move
+    jmp rtn
+    dzm cDX
+    dzm cDY
+    cla
+    sub ptEX
+    dac ptOX
+    cla
+    sub ptEY
+    dac ptOY
+ptMove,
+    lac ptP
+    jda cNudge
+    lac ptOX
+    dac cDX
+    lac ptOY
+    dac cDY
+    lac ptO
+    jda cNudge
+rtn, jmp .
+ptP, 0
+ptO, 0
+ptS, 0
+ptJ, 0
+ptT, 0
+ptE, 0
+ptFO, 0
+ptEX, 0
+ptEY, 0
+ptOX, 0
+ptOY, 0
+    endloc
+
+// Move point p by (cDX, cDY) in working values, half as far again with CSOR set, kept on the
+// canvas when it is published (cPublish); the larger part of the move goes into cMax, and p into
+// cPub (cTouch).
+// Entry: AC = p; cDX, cDY. AC and IO are clobbered. Called via jda.
+cNudge, 0
+    local rtn, ngP
+    dap rtn
+#if CSOR
+    lac cDX
+    sar 1s
+    add cDX
+    dac cDX
+    lac cDY
+    sar 1s
+    add cDY
+    dac cDY
+#endif
+    lac cDX             // the larger of |cDX| and |cDY|, one cMaxOf for both
+    spa                 // skip if plus
+    cma
+    dac ngP
+    lac cDY
+    spa                 // skip if plus
+    cma
+    sub ngP
+    spa                 // skip unless |cDY| is the smaller
+    cla
+    add ngP
+    jda cMaxOf
+    lac cNudge
+    add [wX:011]
+    dac ngP
+    lac i ngP
+    add cDX
+    dac i ngP
+    lac cNudge
+    add [wY:011]
+    dac ngP
+    lac i ngP
+    add cDY
+    dac i ngP
+    lac cNudge
+    jda cTouch
+rtn, jmp .
+ngP, 0
+    endloc
+
+// The implicit C of arc j, as the thesis gives every circle arc, its start and end brought to one
+// distance from its center along their rays (cRim). Passed over unless its three points are the
+// solver's (an arc removed or replaced since the last build is not).
+// Entry: AC = j. AC and IO are clobbered. Called via jda.
+cProjC, 0
+    local rtn
+    dap rtn
+    lac cProjC
+    sub i [arcCount:2]
+    sma                 // skip if j is still an arc
+    jmp rtn
+    lac cProjC
+    jda cArcIn
+    sas [3]             // skip if its three points are the solver's
+    jmp rtn
+    lac cArcS
+    dac crS
+    sad cArcE           // skip unless a full circle, which has one rim point
+    jmp rtn
+    lac cArcE
+    dac crE
+    lac cProjC          // its radius kept in cArcG
+    add [cArcG:011]
+    dac crG
+    jsp cRim
+rtn, jmp .
+    endloc
+
+// Points crS and crE brought to one distance from the center cCen along their rays, which the
+// center keeps. When both may move each goes half the difference; when one may, it goes all of
+// it. Passed over for a point on the center. The moves go into cMax. Both rays' lengths start
+// from the radius in the word at crG (cHyp's guess), and the radius the points are brought to
+// is kept there for the next sweep.
+// Entry: cCen, crS, crE, crG. AC and IO are clobbered. Called via jsp.
+cRim,
+    local rtn, pcOnlyS, pcOnlyE, pcMove, pcRS, pcRE, pcUS, pcVS, pcFS, pcDS, pcDE
+    dap rtn
+    lac i crG
+    dac cGuess
+    lac crS
+    jda cRay
+    sza i               // skip unless the start is on the center
+    jmp rtn
+    dac pcRS
+    lac cU
+    dac pcUS
+    lac cV
+    dac pcVS
+    lac i crG
+    dac cGuess
+    lac crE
+    jda cRay            // cU, cV: the end's ray
+    sza i               // skip unless the end is on the center
+    jmp rtn
+    dac pcRE
+    lac crS
+    jda cFree
+    dac pcFS
+    lac crE
+    jda cFree
+    sza i               // skip if the end may move
+    jmp pcOnlyS
+    lac pcFS
+    sza i               // skip if the start may move too
+    jmp pcOnlyE
+    lac pcRS            // both: each to the mean
+    add pcRE
+    sar 1s
+    dac pcDE
+    sub pcRS
+    dac pcDS
+    lac pcDE
+    sub pcRE
+    dac pcDE
+    jmp pcMove
+pcOnlyE,
+    lac pcRS
+    sub pcRE
+    dac pcDE
+    dzm pcDS
+    jmp pcMove
+pcOnlyS,
+    lac pcFS
+    sza i               // skip if the start may move
+    jmp rtn
+    lac pcRE
+    sub pcRS
+    dac pcDS
+    dzm pcDE
+pcMove,
+    lac pcRS            // the radius both are brought to, the next sweep's guess
+    add pcDS
+    dac i crG
+    lac crE
+    dac cP
+    lac pcRE
+    dac cR
+    lac pcDE
+    jda cAlong
+    lac crS
+    dac cP
+    lac pcUS
+    dac cU
+    lac pcVS
+    dac cV
+    lac pcRS
+    dac cR
+    lac pcDS
+    jda cAlong
+rtn, jmp .
+pcRS, 0
+pcRE, 0
+pcUS, 0
+pcVS, 0
+pcFS, 0
+pcDS, 0
+pcDE, 0
+    endloc
+
+// Point p's ray from the center cCen in working values, (cU, cV), and its length.
+// Entry: AC = p. Exit: AC = the length in 32nds, 0 on the center; cU, cV. IO is clobbered.
+// Called via jda.
+cRay, 0
+    local rtn, ryT
+    dap rtn
+    lac cRay
+    add [wX:011]
+    dac ryT
+    lac i ryT
+    dac cU
+    lac cCen
+    add [wX:011]
+    dac ryT
+    lac cU
+    sub i ryT
+    dac cU
+    lac cRay
+    add [wY:011]
+    dac ryT
+    lac i ryT
+    dac cV
+    lac cCen
+    add [wY:011]
+    dac ryT
+    lac cV
+    sub i ryT
+    dac cV
+    lio cV
+    lac cU
+    jda cHyp
+rtn, jmp .
+ryT, 0
+    endloc
+
+// Move point cP d along its ray (cU, cV) of length cR, kept on the canvas when it is published
+// (cPublish); d goes into cMax, and cP into cPub (cTouch). The ray's parts over its length
+// scale d, so no divide overflows.
+// Entry: AC = d, in 32nds; cP, cU, cV, cR. AC and IO are clobbered. Called via jda.
+cAlong, 0
+    local rtn, alT, alP
+    dap rtn
+    lac cAlong
+    sza i               // skip unless no move
+    jmp rtn
+    jda cMaxOf
+    lac cU
+    mul cAlong
+    div cR
+    cla                 // no skip: overflow
+    dac alT
+    lac cP
+    add [wX:011]
+    dac alP
+    lac alT
+    add i alP
+    dac i alP
+    lac cV
+    mul cAlong
+    div cR
+    cla                 // no skip: overflow
+    dac alT
+    lac cP
+    add [wY:011]
+    dac alP
+    lac alT
+    add i alP
+    dac i alP
+    lac cP
+    jda cTouch
+rtn, jmp .
+alT, 0
+alP, 0
+    endloc
+
+// Keep point p's working values where the target's center can reach, as every point placed is;
+// an instance's origin, p MAXPTS plus its index, where its figure's box at its scale stays on
+// the screen, as instAt holds it.
+// Entry: AC = p. AC and IO are clobbered. Called via jda.
+cClamp, 0
+    local rtn, clO, clOAx, clORt, clI, clS, clM
+    dap rtn
+    lac cClamp
+    add [wX:011]
+    dac clT
+    lac cClamp
+    sub [MAXPTS]
+    sma                 // skip if a point, not an origin
+    jmp clO
+    lac [TRKXMIN*0d32]
+    dac clLo
+    lac [TRKXMAX*0d32]
+    dac clHi
+    jsp cClamp1
+    lac cClamp
+    add [wY:011]
+    dac clT
+    lac [TRKYMIN*0d32]
+    dac clLo
+    lac [TRKYMAX*0d32]
+    dac clHi
+    jsp cClamp1
+    jmp rtn
+clO,
+    dac clI
+    add [iScale:3]
+    dac clS
+    lac i clS
+    add [ieShTab:7]
+    dac clS             // the scale's shift
+    lac clI
+    add [iMaster:012]
+    dac clM
+    lac i clM
+    add [mMinX:2]
+    dac clM
+    jsp clOAx
+    lac cClamp
+    add [wY:011]
+    dac clT
+    lac clM
+    add [2 * NMASTER]   // mMinY, two tables after mMinX
+    dac clM
+    jsp clOAx
+    jmp rtn
+
+    // One axis: the origin from minus the box's low side to 1023 less its high side, the high
+    // side's word NMASTER after the low's (mMaxX after mMinX, mMaxY after mMinY).
+clOAx,
+    dap clORt
+    lac i clM
+    xct i clS
+    sal 5s
+    dac clLo
+    cla
+    sub clLo
+    dac clLo
+    lac clM
+    add [NMASTER]
+    dac clI
+    lac i clI
+    xct i clS
+    sal 5s
+    dac clHi
+    lac [0d1023 * 0d32]
+    sub clHi
+    dac clHi
+    jsp cClamp1
+clORt, jmp .
+rtn, jmp .
+clI, 0
+clS, 0
+clM, 0
+    endloc
+
+// The word at clT kept from clLo to clHi.
+// AC is clobbered, IO preserved. Called via jsp.
+cClamp1,
+    local rtn, c1Hi
+    dap rtn
+    lac i clT
+    sub clLo
+    sma                 // skip if under clLo
+    jmp c1Hi
+    lac clLo
+    dac i clT
+    jmp rtn
+c1Hi,
+    lac clHi
+    sub i clT
+    sma                 // skip if over clHi
+    jmp rtn
+    lac clHi
+    dac i clT
+rtn, jmp .
+    endloc
+
+// The length of (a, b), both in 32nds and at most 1023 units, as bank 2's arcHypot finds it,
+// without its scaling, so the module calls nothing outside bank 8. Newton's root, m and n
+// the larger and smaller magnitudes. With no guess, three steps from m + n/2, which is never
+// below the root. A guess (cGuess) from m to m + n/2, where the root lies, is started from
+// instead, and the steps stop once one changes the length by at most 8 32nds, which leaves it
+// within a 32nd of the unguessed steps' length and 1.5 32nds of the root for a length of 1 to
+// 1023 units (the unguessed steps' worst is 1.49), or after six; a guess outside that range is
+// not used. The divisor is never below m, so no divide overflows. cGuess is cleared.
+// Entry: AC = a, IO = b; cGuess, 0 for none. Exit: AC = the length, in 32nds, 0 for (0, 0). IO
+// is clobbered. Called via jda.
+cHyp, 0
+    local rtn, hyGo, hyNoG, hyLoop, hyNext, hyDone, hyM, hyN, hyH, hyQ, hyI, hyG, hyD
+    dap rtn
+    dio hyN
+    lac cGuess
+    dac hyG
+    dzm cGuess
+    lac cHyp
+    spa                 // skip if plus
+    cma
+    dac hyM
+    lac hyN
+    spa                 // skip if plus
+    cma
+    dac hyN
+    sub hyM
+    spa                 // skip if |b| is the larger: swap
+    jmp hyGo
+    lac hyN
+    lio hyM
+    dac hyM
+    dio hyN
+hyGo,
+    lac hyM
+    sza i               // skip unless both are 0
+    jmp rtn
+    lac hyN
+    sar 1s
+    add hyM
+    dac hyH
+    law i 3
+    dac hyI
+    lac hyG
+    sza i               // skip if a guess was given
+    jmp hyLoop
+    sub hyM
+    spa                 // skip unless under m
+    jmp hyNoG
+    lac hyH
+    sub hyG
+    spa                 // skip unless over m + n/2
+    jmp hyNoG
+    lac hyG
+    dac hyH
+    law i 6
+    dac hyI
+    jmp hyLoop
+hyNoG,
+    dzm hyG
+hyLoop,
+    lac hyM
+    mul hyM
+    div hyH
+    cla                 // no skip: overflow
+    dac hyQ
+    lac hyN
+    mul hyN
+    div hyH
+    cla                 // no skip: overflow
+    add hyQ
+    add hyH
+    sar 1s
+    dac hyQ
+    sub hyH
+    dac hyD             // the step
+    lac hyQ
+    dac hyH
+    lac hyG
+    sza i               // skip if from a guess
+    jmp hyNext
+    lac hyD
+    spa                 // skip if plus
+    cma
+    sub [0d9]
+    spa                 // skip if the step was over 8
+    jmp hyDone
+hyNext,
+    isp hyI
+    jmp hyLoop
+hyDone,
+    lac hyH
+rtn, jmp .
+hyM, 0
+hyN, 0
+hyH, 0
+hyQ, 0
+hyI, 0
+hyG, 0
+hyD, 0
+    endloc
+
+// Whether point p is the solver's (FIN). The answer is 1, not FIN's bit, since cArcIn adds them.
+// Entry: AC = p. Exit: AC = 1 if the point is the solver's, else 0. IO is preserved. Called via
+// jda.
+cIsIn, 0
+    dap ciRtn
+    lac cIsIn
+    add [cFlag:011]
+    dac cIsIn
+    lac i cIsIn
+    and [FIN]
+    sza                 // skip unless the solver's
+    law 1
+ciRtn, jmp .
+
+// Set flags on point p.
+// Entry: AC = p, IO = the flags. AC is clobbered, IO preserved. Called via jda.
+cFlagOr, 0
+    local rtn, foT
+    dap rtn
+    dio foT
+    lac cFlagOr
+    add [cFlag:011]
+    dac cFlagOr
+    lac i cFlagOr
+    ior foT
+    dac i cFlagOr
+rtn, jmp .
+foT, 0
+    endloc
+
+// Arc j's points into cCen, cArcS and cArcE, and how many of the three are the solver's, a full
+// circle's one rim point counted twice.
+// Entry: AC = j. Exit: AC = 0 to 3. IO is clobbered. Called via jda.
+cArcIn, 0
+    local rtn, aiT, aiN
+    dap rtn
+    lac cArcIn
+    add [arcTC:2]
+    dac aiT
+    lac i aiT
+    dac cCen
+    jda cIsIn
+    dac aiN
+    lac cArcIn
+    add [arcTS:2]
+    dac aiT
+    lac i aiT
+    dac cArcS
+    jda cIsIn
+    add aiN
+    dac aiN
+    lac cArcIn
+    add [arcTE:2]
+    dac aiT
+    lac i aiT
+    dac cArcE
+    jda cIsIn
+    add aiN
+rtn, jmp .
+aiT, 0
+aiN, 0
+    endloc
+
+// Build the solver's sets from the table. Every flag and mark cleared; the points of each entry
+// but a fix, an attacher or the truss's types the solver's (FIN), each fix's point fixed (FFIX);
+// each tie's point and its instance's origin, the variable MAXPTS plus the instance's index, the
+// solver's too, and the tie listed (cTies); then each arc with one
+// of its points the solver's has all three made so, over again until no arc adds one, and the
+// arcs with all three, but full circles, listed (cArcs); then the solver's points listed (cIn),
+// their working values taken from the point table, and the lines on any of them listed (cLines),
+// for conRedraw. The counts of lines and arcs seen are kept, for cTick. With every flag clear,
+// cPub is empty; with every point taken up, no reload is wanted (cRld); the marks are to be
+// written again (cMkDirty), the ranks of the marks on one line counted again first (bank 13's
+// mkRkOld); the numbers are bound to their scalars (cScBind); the point held
+// is found again under its index now (cRefind).
+// AC and IO are clobbered. Called via jsp.
+cBuild,
+    local rtn, cbClr, cbCon, cbFl, cbPt1, cbTies, cbTie, cbTieNx, cbArcs, cbArc, cbArcNext, \
+        cbArcEnd, cbList, cbLsNext, cbPts, cbPt, cbPtIn, cbPtNext, cbPtO, cbLns, cbLn, \
+        cbLnMine, cbLnNext, cbDone, cbI, cbP, cbT, cbChg, cbK, cbF
+    dap rtn
+    law 1
+    dac cMkDirty
+    dac i [mkRkOld:015]
+    dzm cMovN
+    dzm cPubN
+    dzm cRld
+    lac [cFlag:011]
+    dac cbP
+cbClr,
+    dzm i cbP
+    idx cbP
+    sas [cFlag:011+NVAR] // skip once every flag is clear
+    jmp cbClr
+    lac [cEntries:011]
+    dac cbP
+cbCon,
+    lac cbP
+    sad cEnd            // skip while entries remain
+    jmp cbTies
+    lac i cbP
+    and [CTMASK]
+    add [cNPts:011]
+    dac cbT
+    lac i cbT
+    cma
+    dac cbK             // -n, for the n points the type names
+    lio [FIN]
+    lac i cbP
+    sad [CTF]           // skip unless a fix, whose point is fixed, not the solver's
+    lio [FFIX]
+    sub [CTATT]
+    spa                 // skip unless below CTATT
+    jmp cbFl
+    sub [CTDIST-CTATT]
+    spa                 // skip if a number's type, D, Y or O, whose points are the solver's: an
+    cli                 // attacher's point, and a beam's, a load's, a roller's or a designation's,
+cbFl,                   // is neither
+    dio cbF
+    lac cbP
+    add [1]
+    dac cbT
+cbPt1,
+    lac i cbT
+    lio cbF
+    jda cFlagOr
+    idx cbT
+    isp cbK             // skip once every point is flagged
+    jmp cbPt1
+    lac cbP
+    add [CW]
+    dac cbP
+    jmp cbCon
+
+    // The ties: each tie point and its instance's origin, MAXPTS plus the instance's index, the
+    // solver's, and the tie listed (cTies) by its place in iTie.
+cbTies,
+    dzm cTieN
+    dzm cbI
+cbTie,
+    lac cbI
+    add [iTie:3]
+    dac cbT
+    lac i cbT
+    sad [NOPOINT]       // skip if a tie
+    jmp cbTieNx
+    lio [FIN]
+    jda cFlagOr
+    lac cbI
+    and [MAXINST - 1]
+    add [MAXPTS]
+    lio [FIN]
+    jda cFlagOr
+    lac cTieN
+    add [cTies:011]
+    dac cbT
+    lac cbI
+    dac i cbT
+    idx cTieN
+cbTieNx,
+    idx cbI
+    sas [NATT * MAXINST] // skip once every tie is looked at
+    jmp cbTie
+
+    // The arcs on the solver's points, until a pass adds none.
+cbArcs,
+    dzm cbChg
+    dzm cbI
+cbArc,
+    lac cbI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp cbArcEnd
+    jda cArcIn
+    sza i               // skip if one of its points is the solver's
+    jmp cbArcNext
+    sad [3]             // skip unless all three are
+    jmp cbArcNext
+    law 1
+    dac cbChg
+    lac cCen
+    lio [FIN]
+    jda cFlagOr
+    lac cArcS
+    lio [FIN]
+    jda cFlagOr
+    lac cArcE
+    lio [FIN]
+    jda cFlagOr
+cbArcNext,
+    idx cbI
+    jmp cbArc
+cbArcEnd,
+    lac cbChg
+    sza                 // skip once a pass adds no point
+    jmp cbArcs
+    dzm cArcN
+    dzm cbI
+cbList,
+    lac cbI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp cbPts
+    jda cArcIn
+    sas [3]             // skip if its three points are the solver's
+    jmp cbLsNext
+    lac cArcS
+    sad cArcE           // skip unless a full circle
+    jmp cbLsNext
+    lac cArcN
+    add [cArcs:011]
+    dac cbT
+    lac cbI
+    dac i cbT
+    idx cArcN
+cbLsNext,
+    idx cbI
+    jmp cbList
+
+    // The solver's points and their working values, the points, then the origins.
+cbPts,
+    dzm cInN
+    dzm cbI
+cbPt,
+    lac cbI
+    sad i [pointCount:4] // skip while points remain
+    jmp cbPtO
+cbPtIn,
+    jda cIsIn
+    sza i               // skip if the point is the solver's
+    jmp cbPtNext
+    lac cInN
+    add [cIn:011]
+    dac cbT
+    lac cbI
+    dac i cbT
+    idx cInN
+    lac cbI
+    add [pointX:3]
+    dac cbT
+    lac cbI
+    add [wX:011]
+    dac cbP
+    lac i cbT
+    sal 5s
+    dac i cbP
+    lac cbI
+    add [pointY:3]
+    dac cbT
+    lac cbI
+    add [wY:011]
+    dac cbP
+    lac i cbT
+    sal 5s
+    dac i cbP
+cbPtNext,
+    idx cbI
+    sas [NVAR]          // skip once every origin is looked at
+    jmp cbPt
+    jmp cbLns
+cbPtO,
+    lac [MAXPTS]
+    dac cbI
+    jmp cbPtIn
+
+    // The lines on them.
+cbLns,
+    dzm cLnN
+    dzm cbI
+cbLn,
+    lac cbI
+    sad i [lineCount:4] // skip while lines remain
+    jmp cbDone
+    add [lineFrom:3]
+    dac cbT
+    lac i cbT
+    jda cIsIn
+    sza                 // skip unless its start is the solver's
+    jmp cbLnMine
+    lac cbI
+    add [lineTo:3]
+    dac cbT
+    lac i cbT
+    jda cIsIn
+    sza i               // skip if its end is the solver's
+    jmp cbLnNext
+cbLnMine,
+    lac cLnN
+    add [cLines:011]
+    dac cbT
+    lac cbI
+    dac i cbT
+    idx cLnN
+cbLnNext,
+    idx cbI
+    jmp cbLn
+cbDone,
+    lac i [lineCount:4]
+    dac cLnSeen
+    lac i [arcCount:2]
+    dac cArcSeen
+    dzm cTopo
+    jsp cScBind
+    jsp cRefind
+rtn, jmp .
+cbI, 0
+cbP, 0
+cbT, 0
+cbChg, 0
+cbK, 0
+cbF, 0
+    endloc
+
+// The numbers' entries bound to their digits' scalars. For each D, Y and O, the
+// digits whose anchor it names (C for D and Y, B for O) looked for in bank 3's txAn, and their
+// scalar kept in cScOf by the entry's place, NOPOINT when none are found or the entry is no
+// number's; each scalar's D's and Y's counted (scDN, scYN); and an O's parameter made its gap
+// at the digits' scale (cGapTab).
+// AC and IO are clobbered. Called via jsp.
+cScBind,
+    local rtn, sbClr, sbLoop, sbFind, sbLook, sbHas, sbY, sbCnt, sbGap, sbNext, sbP, sbK, sbT, \
+        sbA, sbI, sbE, sbS
+    dap rtn
+    dzm sbK
+sbClr,
+    lac sbK
+    add [scDN:3]
+    dac sbT
+    dzm i sbT
+    lac sbK
+    add [scYN:3]
+    dac sbT
+    dzm i sbT
+    idx sbK
+    sas [NSCAL]         // skip once every count is cleared
+    jmp sbClr
+    dzm sbK
+    lac [cEntries:011]
+    dac sbP
+sbLoop,
+    lac sbP
+    sad cEnd            // skip while entries remain
+    jmp rtn
+    lac sbK
+    add [cScOf:3]
+    dac sbS
+    lac [NOPOINT]
+    dac i sbS
+    lac i sbP
+    and [CTNUM]
+    sza i               // skip if a number's type
+    jmp sbNext
+    lac sbP
+    add [3]             // C, a D's or a Y's anchor
+    dac sbA
+    lac i sbP
+    sas [CTGAP]         // skip if an O, whose anchor is B
+    jmp sbFind
+    law i 1
+    add sbA
+    dac sbA
+sbFind,
+    lac i sbA
+    dac sbA
+    lac [txAn:3]
+    dac sbT
+    add i [txN:012]
+    dac sbE
+sbLook,
+    lac sbT
+    sad sbE             // skip while texts remain
+    jmp sbNext
+    lac i sbT
+    sad sbA             // skip unless the anchor
+    jmp sbHas
+    idx sbT
+    jmp sbLook
+sbHas,
+    lac sbT
+    sub [txAn:3]
+    dac sbI             // the digits
+    add [txSv:3]
+    dac sbT
+    lac i sbT
+    dac i sbS
+    dac sbS             // their scalar
+    lac i sbP
+    sad [CTGAP]         // skip unless an O
+    jmp sbGap
+    sad [CTCHG]         // skip unless a Y
+    jmp sbY
+    lac sbS
+    add [scDN:3]
+    jmp sbCnt
+sbY,
+    lac sbS
+    add [scYN:3]
+sbCnt,
+    dac sbT
+    idx i sbT
+    jmp sbNext
+sbGap,
+    lac sbI
+    add [txSc:012]
+    dac sbT
+    lac i sbT
+    add [cGapTab:010]
+    dac sbT
+    lac sbP
+    add [5]
+    dac sbA
+    lac i sbT
+    dac i sbA
+sbNext,
+    idx sbK
+    lac sbP
+    add [CW]
+    dac sbP
+    jmp sbLoop
+rtn, jmp .
+sbP, 0
+sbK, 0
+sbT, 0
+sbA, 0
+sbI, 0
+sbE, 0
+sbS, 0
+    endloc
+
+// Drop the entries a removal or a merge spoiled, each checked as it is copied, one with a point
+// gone or its points run together (cBad), and, after a merge (cDup), one an earlier entry
+// repeats (cFind); each kept one put in order (cBad), the rest closed up in order.
+// AC and IO are clobbered. Called via jsp.
+cPurge,
+    local rtn, pgLoop, pgKeep, pgDone, pgS, pgD, pgN
+    dap rtn
+    lac [cEntries:011]
+    dac pgS
+    dac pgD
+    dzm pgN
+pgLoop,
+    lac pgS
+    sad cEnd            // skip while entries remain
+    jmp pgDone
+    dac mvS
+    lac [cfT:010]
+    dac mvD
+    jsp cMove
+    lac pgS
+    add [CW]
+    dac pgS
+    jsp cBad
+    sza                 // skip unless it is spoiled
+    jmp pgLoop
+    lac cDup
+    sza i               // skip if a merge may have made repeats
+    jmp pgKeep
+    lac pgD
+    dac cfLim
+    jsp cFind
+    sza                 // skip unless an earlier entry repeats it
+    jmp pgLoop
+pgKeep,
+    lac [cfT:010]
+    dac mvS
+    lac pgD
+    dac mvD
+    jsp cMove
+    lac pgD
+    add [CW]
+    dac pgD
+    idx pgN
+    jmp pgLoop
+pgDone,
+    lac pgN
+    dac i [cCount:011]
+    jsp cEndSet
+    dzm cDup
+    dzm cGone
+rtn, jmp .
+pgS, 0
+pgD, 0
+pgN, 0
+    endloc
+
+// Copy an entry's CW words from mvS to mvD, both left past them.
+// AC is clobbered, IO preserved. Called via jsp.
+cMove,
+    local rtn, mvLoop, mvK
+    dap rtn
+    law i CW
+    dac mvK
+mvLoop,
+    lac i mvS
+    dac i mvD
+    idx mvS
+    idx mvD
+    isp mvK             // skip once every word is copied
+    jmp mvLoop
+rtn, jmp .
+mvK, 0
+    endloc
+
+// Whether the entry in cfT to cfPar is spoiled: its type word not CTHL to CTLAST, a point it
+// names gone (NOPOINT), or its points run together (a line's two ends one point, two lines one
+// line, a midpoint on its line's end, or likewise an N's point on its line's end or a C's on
+// its center or its rim point); or an N's line, a beam's or a load's line, or a C's arc gone
+// (no line joining the N's two ends or the beam's or load's two points, no arc with the C's
+// center and start), looked for only while cGone is set, since only
+// a deletion removes one. A sound entry is put in order, so that a repeat of it has the same words
+// (cFind): each line's ends the smaller index first, a midpoint's or an N's line likewise after
+// its point, and two lines the one with the smaller ends first; a C's center and rim point keep
+// their places, and so do a load's ends, A being the one it acts at. A roller is spoiled only
+// by its point's going: its line's end gone, its line's ends one point, or its line gone leaves
+// it level, its B and C its A. A D's or a Y's line A-B is put in order and its anchor C kept in
+// its place, and an O's point and anchor keep theirs.
+// Exit: AC = 0 if sound, else 1; cfN = how many points its type names. IO is clobbered. Called
+// via jsp.
+cBad,
+    local rtn, bdPt, bdMid, bdTri, bdTwo, bdFour, bdSwap, bdOwn, bdLine, bdLnGo, bdLnLp, bdLnB, \
+        bdLnNx, bdArLp, bdArNx, bdOk, bdBad, bdP, bdK, bdT, bdE, bdE1, bdE2, bdRoll, bdLevel, \
+        bdLnNo, bdRl, bdNum
+    dap rtn
+    lac cfT
+    sub [CTHL]
+    spa                 // skip unless below CTHL, or not a type word at all
+    jmp bdBad
+    sub [CTLAST-CTHL+1]
+    sma                 // skip if at most CTLAST
+    jmp bdBad
+    lac cfT
+    and [CTMASK]
+    add [cNPts:011]
+    dac bdP
+    lac i bdP
+    dac cfN
+    cma
+    dac bdK
+    dzm bdRl
+    lac cfT
+    sad [CTROLL]        // skip unless a roller, which its line's going leaves level
+    jmp bdRoll
+    lac [cfA:010]
+    dac bdP
+bdPt,
+    lac i bdP
+    sad [NOPOINT]       // skip unless the point is gone
+    jmp bdBad
+    idx bdP
+    isp bdK             // skip once every point is looked at
+    jmp bdPt
+    lac cfN
+    sad [1]             // skip unless one point, which has no order
+    jmp bdOk
+    sad [3]             // skip unless a midpoint, an N or a C
+    jmp bdMid
+    lac cfT
+    sad [CTLOAD]        // skip unless a load, whose ends keep their places
+    jmp bdTwo
+    sad [CTGAP]         // skip unless an O, likewise: its point, then its digits' anchor
+    jmp bdTwo
+    lac [cfA:010]
+    jda cSort2
+bdTwo,
+    lac cfA
+    sad cfB             // skip unless the line's ends are one
+    jmp bdBad
+    lac cfN
+    sas [2]             // skip if one line
+    jmp bdFour
+    lac cfT
+    sad [CTBEAM]        // skip unless a beam, which goes with its line
+    jmp bdOwn
+    sas [CTLOAD]        // skip if a load, likewise
+    jmp bdOk
+bdOwn,
+    lac cGone
+    sza i               // skip if a line may have gone since the last purge
+    jmp bdOk
+    lac cfA
+    dac bdE1
+    lac cfB
+    dac bdE2
+    jmp bdLnGo
+bdFour,
+    lac [cfC:010]
+    jda cSort2
+    lac cfC
+    sad cfD             // skip unless the second line's ends are one
+    jmp bdBad
+    sub cfA
+    spa                 // skip unless C is below A
+    jmp bdSwap
+    sza                 // skip if C is A
+    jmp bdOk
+    lac cfD
+    sub cfB
+    sza i               // skip unless D is B as well: one line twice
+    jmp bdBad
+    sma                 // skip if D is below B
+    jmp bdOk
+bdSwap,
+    lac cfA
+    lio cfC
+    dac cfC
+    dio cfA
+    lac cfB
+    lio cfD
+    dac cfD
+    dio cfB
+    jmp bdOk
+bdMid,
+    lac cfT
+    sad [CTONC]         // skip unless a C, whose center and rim point keep their places
+    jmp bdTri
+    and [CTNUM]
+    sza                 // skip unless a D or a Y: line A-B in order, its digits' anchor C apart
+    jmp bdNum
+    lac [cfB:010]
+    jda cSort2
+bdTri,
+    lac cfB
+    sad cfC             // skip unless the line's ends, or the center and the rim, are one
+    jmp bdBad
+    lac cfA
+    sad cfB             // skip unless the point is the line's first end, or the center
+    jmp bdBad
+    sad cfC             // skip unless it is the second, or the rim point
+    jmp bdBad
+    lac cGone
+    sza i               // skip if a line or an arc may have gone since the last purge
+    jmp bdOk
+    lac cfT
+    sad [CTON]          // skip unless an N
+    jmp bdLine
+    sas [CTONC]         // skip if a C
+    jmp bdOk
+
+    // A C needs an arc about B starting at C.
+    dzm bdP
+bdArLp,
+    lac bdP
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp bdBad
+    add [arcTC:2]
+    dac bdT
+    lac i bdT
+    sas cfB             // skip if its center is B
+    jmp bdArNx
+    lac bdP
+    add [arcTS:2]
+    dac bdT
+    lac i bdT
+    sad cfC             // skip unless it starts at C
+    jmp bdOk
+bdArNx,
+    idx bdP
+    jmp bdArLp
+
+    // An N needs a line joining B and C, either way round, one whose from end is either and
+    // whose ends xor to theirs. A beam or a load (bdOwn) needs a line joining A and B likewise.
+bdLine,
+    lac cfB
+    dac bdE1
+    lac cfC
+    dac bdE2
+bdLnGo,
+    lac bdE1
+    xor bdE2
+    dac bdK
+    dzm bdP
+bdLnLp,
+    lac bdP
+    sad i [lineCount:4] // skip while lines remain
+    jmp bdLnNo
+    add [lineTo:3]
+    dac bdT
+    lac i bdT
+    dac bdE
+    lac bdP
+    add [lineFrom:3]
+    dac bdT
+    lac i bdT
+    sad bdE1            // skip unless the line starts at the first end
+    jmp bdLnB
+    sas bdE2            // skip if it starts at the second
+    jmp bdLnNx
+bdLnB,
+    xor bdE
+    sad bdK             // skip unless it joins B and C
+    jmp bdOk
+bdLnNx,
+    idx bdP
+    jmp bdLnLp
+bdLnNo,
+    lac bdRl
+    sza i               // skip if a roller's line, whose going leaves it level
+    jmp bdBad
+    jmp bdLevel
+
+    // A roller is gone with its point A; level, its B and C its A, once its line's end is gone,
+    // its line's ends are one point (a level roller's are) or its line is gone; otherwise its
+    // line's ends put in order.
+bdRoll,
+    lac cfA
+    sad [NOPOINT]       // skip unless its point is gone
+    jmp bdBad
+    lac cfB
+    sad [NOPOINT]       // skip unless the line's first end is gone
+    jmp bdLevel
+    lac cfC
+    sad [NOPOINT]       // skip unless the second is
+    jmp bdLevel
+    sad cfB             // skip unless the line's ends are one point
+    jmp bdLevel
+    lac [cfB:010]
+    jda cSort2
+    lac cGone
+    sza i               // skip if a line may have gone since the last purge
+    jmp bdOk
+    lac cfB
+    dac bdE1
+    lac cfC
+    dac bdE2
+    law 1
+    dac bdRl
+    jmp bdLnGo
+bdLevel,
+    lac cfA
+    dac cfB
+    dac cfC
+    jmp bdOk
+
+    // A D or a Y is spoiled by its line's ends being one point, the pen never taking an anchor
+    // for one.
+bdNum,
+    lac [cfA:010]
+    jda cSort2
+    lac cfA
+    sad cfB             // skip unless the line's ends are one
+    jmp bdBad
+bdOk,
+    cla
+    jmp rtn
+bdBad,
+    law 1
+rtn, jmp .
+bdP, 0
+bdK, 0
+bdT, 0
+bdE, 0
+bdE1, 0
+bdE2, 0
+bdRl, 0
+    endloc
+
+// Put the two words at p and p + 1 in order, the smaller first.
+// Entry: AC = p. AC and IO are clobbered. Called via jda.
+cSort2, 0
+    local rtn, s2Q
+    dap rtn
+    lac cSort2
+    add [1]
+    dac s2Q
+    lac i s2Q
+    sub i cSort2
+    sma                 // skip if the second is the smaller
+    jmp rtn
+    lac i s2Q
+    lio i cSort2
+    dac i cSort2
+    dio i s2Q
+rtn, jmp .
+s2Q, 0
+    endloc
+
+// The first entry before cfLim whose type and points are cfT to cfD; for a roller, whose B and C
+// words name its axis's line (cAxis), its type and point A alone. Every entry is in order
+// (cBad), so a repeat has the same words.
+// Exit: AC = its address, 0 if none. IO is clobbered. Called via jsp.
+cFind,
+    local rtn, fdGo, fdLoop, fdCmp, fdNext, fdNone, fdP, fdT, fdC, fdK, fdW
+    dap rtn
+    law i 5
+    dac fdW
+    lac cfT
+    sas [CTROLL]        // skip if a roller
+    jmp fdGo
+    law i 2
+    dac fdW
+fdGo,
+    lac [cEntries:011]
+    dac fdP
+fdLoop,
+    lac fdP
+    sad cfLim           // skip while entries remain
+    jmp fdNone
+    dac fdT
+    lac [cfT:010]
+    dac fdC
+    lac fdW
+    dac fdK
+fdCmp,
+    lac i fdT
+    sas i fdC           // skip if the words agree
+    jmp fdNext
+    idx fdT
+    idx fdC
+    isp fdK             // skip once the type and the four points agree
+    jmp fdCmp
+    lac fdP
+    jmp rtn
+fdNext,
+    lac fdP
+    add [CW]
+    dac fdP
+    jmp fdLoop
+fdNone,
+    cla
+rtn, jmp .
+fdP, 0
+fdT, 0
+fdC, 0
+fdK, 0
+fdW, 0
+    endloc
+
+// The words a type does not use, C, D and the parameter, set to CUNUSED.
+// AC is clobbered, IO preserved. Called via jsp.
+cUnused,
+    dap cuRtn
+    lac [CUNUSED]
+    dac cfC
+    dac cfD
+    dac cfPar
+cuRtn, jmp .
+
+// Append the entry cfT to cfPar; the topology has changed.
+// AC is clobbered, IO preserved. Called via jsp.
+cAppend,
+    local rtn
+    dap rtn
+    lac [cfT:010]
+    dac mvS
+    lac cEnd
+    dac mvD
+    jsp cMove
+    idx i [cCount:011]
+    jsp cEndSet
+    law 1
+    dac cTopo
+rtn, jmp .
+    endloc
+
+// Horv. An H entry on line L's two points, level if the line is nearer level than plumb, plumb
+// otherwise; refused for a line of one point, one whose points an H already holds, or a full
+// table. Every point's place is kept first (cSnap), so that Undo can put back whatever the solver
+// moves for it, and the solver wakes.
+// Entry: AC = L. Exit: AC = 0 added, 1 refused as one point or already held, 2 the table full.
+// IO is clobbered. Called via jda.
+cHorv, 0
+    local rtn, hvPlumb, hvType, hvOne, hvFull, hvT, hvD, hvX, hvK
+    dap rtn
+    lac cHorv
+    jda cEnds
+    lac ceF
+    dac cfA
+    lac ceT
+    dac cfB
+    jsp cUnused
+
+    // |dy| against |dx|.
+    lac cfB
+    add [pointY:3]
+    dac hvT
+    lac i hvT
+    dac hvD
+    lac cfA
+    add [pointY:3]
+    dac hvT
+    lac hvD
+    sub i hvT
+    spa                 // skip if plus
+    cma
+    dac hvD
+    lac cfB
+    add [pointX:3]
+    dac hvT
+    lac i hvT
+    dac hvX
+    lac cfA
+    add [pointX:3]
+    dac hvT
+    lac hvX
+    sub i hvT
+    spa                 // skip if plus
+    cma
+    sub hvD
+    spa                 // skip if |dx| >= |dy|: level
+    jmp hvPlumb
+    lac [CTHL]
+    jmp hvType
+hvPlumb,
+    lac [CTHP]
+hvType,
+    dac hvK
+    dac cfT
+    jsp cBad            // the ends in order
+    sza                 // skip unless the line is one point
+    jmp hvOne
+    lac cEnd
+    dac cfLim
+    lac [CTHL]
+    dac cfT
+    jsp cFind
+    sza                 // skip unless a level H holds them
+    jmp hvOne
+    lac [CTHP]
+    dac cfT
+    jsp cFind
+    sza                 // skip unless a plumb H holds them
+    jmp hvOne
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full
+    jmp hvFull
+    lac hvK
+    dac cfT
+    jsp cSnap
+    jsp cAppend
+    jsp cWake
+    cla
+    jmp rtn
+hvOne,
+    law 1
+    jmp rtn
+hvFull,
+    law 2
+rtn, jmp .
+hvT, 0
+hvD, 0
+hvX, 0
+hvK, 0
+    endloc
+
+// Line L's ends, ceF its start, ceT its end.
+// Entry: AC = L. AC is clobbered, IO preserved. Called via jda.
+cEnds, 0
+    dap enRtn
+    lac cEnds
+    add [lineFrom:3]
+    dac enT
+    lac i enT
+    dac ceF
+    lac cEnds
+    add [lineTo:3]
+    dac enT
+    lac i enT
+    dac ceT
+enRtn, jmp .
+enT, 0
+
+// Equal's, Paral's, Perp's, Length's and Mid's last lift, and Beam's and Load's lift. The entry
+// consType on the main bank's picks: lines consL1 and consL2 (E, P, R), line consL2, its length
+// now the parameter in 32nds (L), point consPt and line consL2 (X), or line consL2 (Beam, Load);
+// and Dist's, Change's and Gap's last lift, their points and digits (adNum).
+// Refused when its points run together (cBad, one line twice, a midpoint on its line's end), when
+// it repeats an entry, or with the table full; a beam on a load's line, and a load unless exactly
+// one of its line's ends is a member's point, which becomes A, refused too. Every
+// point's place is kept first (cSnap), so that Undo can put back whatever the solver moves for
+// it, and the solver wakes.
+// Exit: AC = 0 added, 1 refused as run together, a repeat or by the truss's rules, 2 the table
+// full. IO is clobbered. Called via jsp.
+cAdd,
+    local rtn, adLen, adLnAB, adMid, adNum, adGap, adBeam, adLoad, adLdT, adChk, adOne, adFull, \
+        adT, adX
+    dap rtn
+    jsp cUnused
+    lac i [consType:4]
+    dac cfT
+    lac i [consL2:4]
+    jda cEnds
+    lac cfT
+    sad [CTMID]         // skip unless a midpoint
+    jmp adMid
+    sad [CTLEN]         // skip unless a length
+    jmp adLen
+    sad [CTBEAM]        // skip unless a beam
+    jmp adBeam
+    sad [CTLOAD]        // skip unless a load
+    jmp adLoad
+    and [CTNUM]
+    sza                 // skip unless a number's type
+    jmp adNum
+    lac ceF             // E, P, R: the second line is C-D, the first A-B
+    dac cfC
+    lac ceT
+    dac cfD
+    lac i [consL1:4]
+    jda cEnds
+    lac ceF
+    dac cfA
+    lac ceT
+    dac cfB
+    jmp adChk
+adLen,
+    lac ceF
+    dac cfA
+    lac ceT
+    dac cfB
+adLnAB,
+    add [pointX:3]
+    dac adT
+    lac i adT
+    dac adX
+    lac cfA
+    add [pointX:3]
+    dac adT
+    lac adX
+    sub i adT
+    sal 5s
+    dac adX
+    lac cfB
+    add [pointY:3]
+    dac adT
+    lac i adT
+    dac cfPar
+    lac cfA
+    add [pointY:3]
+    dac adT
+    lac cfPar
+    sub i adT
+    sal 5s
+    dac cfPar
+    lio cfPar
+    lac adX
+    jda cHyp
+    ior [CUNUSED]       // negative, so that no rename takes it for a point
+    dac cfPar
+    jmp adChk
+adMid,
+    lac ceF
+    dac cfB
+    lac ceT
+    dac cfC
+    lac i [consPt:4]
+    dac cfA
+    jmp adChk
+
+    // A number's entry, a D or a Y on points consPt and consL1 and the digits' anchor
+    // consL2, a Y's parameter its line's length now; an O on point consL1 and the anchor.
+adNum,
+    lac cfT
+    sad [CTGAP]         // skip unless an O
+    jmp adGap
+    lac i [consL2:4]
+    dac cfC
+    lac i [consPt:4]
+    dac cfA
+    lac i [consL1:4]
+    dac cfB
+    lac cfT
+    sas [CTCHG]         // skip if a Y
+    jmp adChk
+    lac cfB
+    jmp adLnAB
+adGap,
+    lac i [consL1:4]
+    dac cfA
+    lac i [consL2:4]
+    dac cfB
+    jmp adChk
+
+    // A beam is refused on a load's line, either way round, as a load is on a beam's (adLoad).
+adBeam,
+    lac [CTLOAD]
+    dac cfT
+    lac cEnd
+    dac cfLim
+    lac ceF
+    dac cfA
+    lac ceT
+    dac cfB
+    jsp cFind
+    sza                 // skip unless a load from its start
+    jmp adOne
+    lac ceT
+    dac cfA
+    lac ceF
+    dac cfB
+    jsp cFind
+    sza                 // skip unless a load from its end
+    jmp adOne
+    lac [CTBEAM]
+    dac cfT
+    jmp adChk           // cBad puts its ends in order
+
+    // A load's A is the end that is a member's point, B the other, which is none's.
+adLoad,
+    lac ceF
+    jda cMember
+    dac adX
+    lac ceT
+    jda cMember
+    sad adX             // skip unless both ends or neither are a member's
+    jmp adOne
+    sza                 // skip if its end is no member's: it acts at its start
+    jmp adLdT
+    lac ceF
+    dac cfA
+    lac ceT
+    dac cfB
+    jmp adChk
+adLdT,
+    lac ceT
+    dac cfA
+    lac ceF
+    dac cfB
+adChk,
+    jsp cBad
+    sza                 // skip unless its points run together
+    jmp adOne
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza                 // skip unless an entry repeats it
+    jmp adOne
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full
+    jmp adFull
+    jsp cSnap
+    jsp cAppend
+    jsp cWake
+    cla
+    jmp rtn
+adOne,
+    law 1
+    jmp rtn
+adFull,
+    law 2
+rtn, jmp .
+adT, 0
+adX, 0
+    endloc
+
+// Whether point p is a member's, one of a beam entry's two points.
+// Entry: AC = p. Exit: AC = 1 if it is, 0 if not. IO is preserved. Called via jda.
+cMember, 0
+    local rtn, mbLoop, mbNext, mbYes, mbNo, mbP, mbT
+    dap rtn
+    lac [cEntries:011]
+    dac mbP
+mbLoop,
+    lac mbP
+    sad cEnd            // skip while entries remain
+    jmp mbNo
+    lac i mbP
+    sas [CTBEAM]        // skip if a beam
+    jmp mbNext
+    lac mbP
+    add [1]
+    dac mbT
+    lac i mbT
+    sad cMember         // skip unless its A is p
+    jmp mbYes
+    idx mbT
+    lac i mbT
+    sad cMember         // skip unless its B is p
+    jmp mbYes
+mbNext,
+    lac mbP
+    add [CW]
+    dac mbP
+    jmp mbLoop
+mbYes,
+    law 1
+    jmp rtn
+mbNo,
+    cla
+rtn, jmp .
+mbP, 0
+mbT, 0
+    endloc
+
+// What the pseudo pen location locks onto (the main bank's penLine, pen2Line, penArc) kept in
+// slot s of kpLock, KEEPSTART at the lift of a chain's start or an arc's center, KEEPRIM at an
+// arc's start's, each a vertex not yet a point, until the commit makes its point (cMake); and
+// KEEPNOW, the lock at the commit or the drop itself.
+// Entry: AC = s. Exit: AC = 0. IO is clobbered. Called via jda.
+cKeep, 0
+    local rtn, kpT
+    dap rtn
+    lac cKeep
+    sal 1s
+    add cKeep           // three words a slot
+    add [kpLock:011]
+    dac kpT
+    lac i [penLine:4]
+    dac i kpT
+    idx kpT
+    lac i [pen2Line:4]
+    dac i kpT
+    idx kpT
+    lac i [penArc:4]
+    dac i kpT
+    cla
+rtn, jmp .
+kpT, 0
+    endloc
+
+// A commit's N's and C's. Each point the commit made gets them for what the pseudo pen location
+// locked onto where the point was placed (cMkPt), the newest
+// line's start (AC = 0) from slot KEEPSTART and its end from the lock now; or the newest arc's
+// (AC = 1) center from KEEPSTART, its start from KEEPRIM and its end from the lock now, which
+// for the end, placed on its circle on the ray toward the lock, holds it where the two
+// cross. The first entry made keeps every point's place first (cSnap) and sets the main bank's
+// uLk, so that Undo of the commit takes them back with whatever the solver moved for them.
+// Entry: AC = 0 or 1. Exit: AC = 0. IO is clobbered. Called via jda.
+cMake, 0
+    local rtn, cmArc, cmB, cmC
+    dap rtn
+    law KEEPNOW
+    jda cKeep
+    law 1
+    dac cmSnap
+    lac cMake
+    sza                 // skip if a line
+    jmp cmArc
+    lac i [lineCount:4]
+    sub [1]
+    jda cEnds
+    lac ceT
+    dac cmB
+    lac ceF
+    lio [KEEPSTART]
+    jda cMkPt
+    lac cmB
+    lio [KEEPNOW]
+    jda cMkPt
+    cla
+    jmp rtn
+cmArc,
+    lac i [arcCount:2]
+    sub [1]
+    jda cArcIn
+    lac cArcS
+    dac cmB
+    lac cArcE
+    dac cmC
+    lac cCen
+    lio [KEEPSTART]
+    jda cMkPt
+    lac cmB
+    lio [KEEPRIM]
+    jda cMkPt
+    lac cmC
+    lio [KEEPNOW]
+    jda cMkPt
+    cla
+rtn, jmp .
+cmB, 0
+cmC, 0
+    endloc
+
+// A Move's drop of point p, its N's and C's for what the pseudo pen location locks onto
+// (cMkOn). A drop is no commit, so Undo does not take them back and no
+// place is kept. With a point locked there are none: the drop's merge may have renumbered p,
+// and placeLock locks no line or arc with a point, so this only guards that rule.
+// Entry: AC = p. Exit: AC = 0. IO is clobbered. Called via jda.
+cDrop, 0
+    local rtn, cdNone
+    dap rtn
+    law KEEPNOW
+    jda cKeep
+    dzm cmSnap
+    lac i [penIdx:4]
+    sas [NOPOINT]       // skip unless a point is locked
+    jmp cdNone
+    lac cDrop
+    lio [KEEPNOW]
+    jda cMkOn
+cdNone,
+    cla
+rtn, jmp .
+    endloc
+
+// Copy's drop, its constraints. Master copyArg's (cpCon, bank 9) are added, their points moved
+// past the points the table held before the copy (copyBase), each put in order (cBad); the
+// copy's points are new, so none repeats an entry. A Length's length, and a Y's, is shifted by a
+// dismember's scale (the instance module's dismShift, none for Copy), its sign bit kept. Every
+// point's place is kept first (cSnap) and the
+// main bank's uLk set, so that Undo of the drop takes them back, and the N's and C's the drop
+// makes, with whatever the solver moved for them. The caller has checked for room (copyRoom).
+// For Define's instances after the first (the instance module's dismNest) the places are not
+// kept again, so a refusal's Undo cuts the table back to its count before them all.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cCopy,
+    local rtn, cqKept, cqLoop, cqShift, cqLen, cqPt, cqNext, cqDone, cqS, cqN, cqK, cqP
+    dap rtn
+    lac i [dismNest:7]
+    sza                 // skip unless a later instance of Define's
+    jmp cqKept
+    jsp cSnap
+cqKept,
+    law 1
+    dac i [uLk:4]
+    lac i [copyArg:4]
+    add [cpNCon:011]
+    dac cqP
+    lac i cqP
+    sza i               // skip if the master has constraints
+    jmp cqDone
+    cma
+    dac cqN
+    lac i [copyArg:4]
+    sal 5s
+    dac cqS
+    sal 1s
+    add cqS             // k * 96, NCPCON * CW
+    add [cpCon:011]
+    dac cqS
+cqLoop,
+    lac cqS
+    dac mvS
+    lac [cfT:010]
+    dac mvD
+    jsp cMove           // mvS left past the entry
+    lac mvS
+    dac cqS
+    lac cfT
+    sad [CTCHG]         // skip unless a Y, whose length shifts as a Length's
+    jmp cqShift
+    sas [CTLEN]         // skip if a Length
+    jmp cqLen
+cqShift,
+    lac cfPar
+    and [0377777]       // the length, its sign bit cleared: sal brings the sign in at the right
+    xct i [dismShift:7]
+    ior [CUNUSED]       // and set again
+    dac cfPar
+cqLen,
+    lac cfT
+    and [CTMASK]
+    add [cNPts:011]
+    dac cqP
+    lac i cqP
+    cma
+    dac cqK
+    lac [cfA:010]
+    dac cqP
+cqPt,
+    lac i cqP
+    add i [copyBase:4]
+    dac i cqP
+    idx cqP
+    isp cqK             // skip once every point is moved
+    jmp cqPt
+    jsp cBad
+    sza                 // skip unless its points run together
+    jmp cqNext
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full, which copyRoom's check rules out
+    jmp cqNext
+    jsp cAppend
+cqNext,
+    isp cqN             // skip once every entry is looked at
+    jmp cqLoop
+    jsp cWake
+cqDone,
+    cla
+rtn, jmp .
+cqS, 0
+cqN, 0
+cqK, 0
+cqP, 0
+    endloc
+
+// Point p's N's and C's for slot s (cMkOn) if the commit made p, that is, if it lies at or past
+// the main bank's uPts, the points before the commit.
+// Entry: AC = p, IO = s. AC and IO are clobbered. Called via jda.
+cMkPt, 0
+    local rtn
+    dap rtn
+    lac cMkPt
+    sub i [uPts:4]
+    spa                 // skip if the commit made p
+    jmp rtn
+    lac cMkPt
+    jda cMkOn           // IO still s
+rtn, jmp .
+    endloc
+
+// Point p's N's and C's for what slot s of kpLock holds, an N for each line, a C for the arc.
+// Entry: AC = p, IO = s. AC and IO are clobbered. Called via jda.
+cMkOn, 0
+    local rtn, moT
+    dap rtn
+    dio moT
+    lac cMkOn
+    dac cmP
+    lac moT
+    sal 1s
+    add moT             // three words a slot
+    add [kpLock:011]
+    dac moT
+    lac i moT
+    jda cMkN
+    idx moT
+    lac i moT
+    jda cMkN
+    idx moT
+    lac i moT
+    jda cMkC
+rtn, jmp .
+moT, 0
+    endloc
+
+// An N on point cmP and line L's ends (cMkAdd), none for L NOPOINT.
+// Entry: AC = L. AC and IO are clobbered. Called via jda.
+cMkN, 0
+    local rtn
+    dap rtn
+    lac cMkN
+    sad [NOPOINT]       // skip unless no line
+    jmp rtn
+    jda cEnds
+    jsp cUnused
+    lac [CTON]
+    dac cfT
+    lac ceF
+    dac cfB
+    lac ceT
+    dac cfC
+    jsp cMkAdd
+rtn, jmp .
+    endloc
+
+// A C on point cmP, arc j's center and its start (cMkAdd), none for j NOPOINT.
+// Entry: AC = j. AC and IO are clobbered. Called via jda.
+cMkC, 0
+    local rtn, mcT
+    dap rtn
+    lac cMkC
+    sad [NOPOINT]       // skip unless no arc
+    jmp rtn
+    jsp cUnused
+    lac [CTONC]
+    dac cfT
+    lac cMkC
+    add [arcTC:2]
+    dac mcT
+    lac i mcT
+    dac cfB
+    lac cMkC
+    add [arcTS:2]
+    dac mcT
+    lac i mcT
+    dac cfC
+    jsp cMkAdd
+rtn, jmp .
+mcT, 0
+    endloc
+
+// Add the entry cfT, its point cmP, unless its points run together (cBad), an entry repeats it
+// (cFind), or the table is full, when the point is placed without it. While cmSnap is set the
+// first one added keeps every point's place first (cSnap) and sets the main bank's uLk. The
+// solver wakes.
+// AC and IO are clobbered. Called via jsp.
+cMkAdd,
+    local rtn, maGo
+    dap rtn
+    lac cmP
+    dac cfA
+    jsp cBad
+    sza                 // skip unless its points run together
+    jmp rtn
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza                 // skip unless an entry repeats it
+    jmp rtn
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full
+    jmp rtn
+    lac cmSnap
+    sza i               // skip if the places are still to keep
+    jmp maGo
+    dzm cmSnap
+    jsp cSnap
+    law 1
+    dac i [uLk:4]
+maGo,
+    jsp cAppend
+    jsp cWake
+rtn, jmp .
+    endloc
+
+// Delete's lift on entry k's mark. A fix unfixes its point (cUnfix); any other entry is dropped
+// alone, its points left where they are. The marks are written again. Undo does not take it
+// back, since it is a deletion.
+// Entry: AC = k. Exit: AC = 0. IO is clobbered. Called via jda.
+cDel, 0
+    local rtn, dlFix, dlDone, dlT
+    dap rtn
+    lac cDel
+    sub i [cCount:011]
+    sma                 // skip if k is an entry
+    jmp dlDone
+    lac cDel
+    sal 1s
+    add cDel
+    sal 1s              // k * CW, 6
+    add [cEntries:011]
+    dac dlT
+    lac i dlT
+    sad [CTF]           // skip unless a fix
+    jmp dlFix
+    idx dlT
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i dlT
+    jsp cPurge
+    law 1
+    dac cTopo
+    jmp dlDone
+dlFix,
+    idx dlT
+    lac i dlT
+    jda cUnfix
+dlDone,
+    jsp cMarks
+    cla
+rtn, jmp .
+dlT, 0
+    endloc
+
+// Misc's Del cons. Every entry is dropped, fixes, attachers, designations and the numbers' D, Y
+// and O among them, but the truss's beams, loads and rollers (CTBEAM to CTROLL), the points left
+// where they are. The sets are built again from what is left, which clears every fix's flag,
+// and the marks written.
+// The solver is neither woken nor put to sleep, since the ties it may be settling are no
+// entries; while it is awake its sweep starts again from the first entry (cWake), the table
+// having closed up under it.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cDelAll,
+    local rtn, daLoop, daDrop, daNext, daDone, daP, daT
+    dap rtn
+    lac [cEntries:011]
+    dac daP
+daLoop,
+    lac daP
+    sad cEnd            // skip while entries remain
+    jmp daDone
+    lac i daP
+    sub [CTBEAM]
+    spa                 // skip unless below CTBEAM
+    jmp daDrop
+    sub [CTROLL-CTBEAM+1]
+    spa                 // skip if past CTROLL: a designation, or a number's type
+    jmp daNext
+daDrop,
+    lac daP
+    add [1]
+    dac daT
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i daT
+daNext,
+    lac daP
+    add [CW]
+    dac daP
+    jmp daLoop
+daDone,
+    jsp cPurge
+    jsp cBuild
+    lac cRun
+    sza                 // skip unless the solver is awake
+    jsp cWake
+    jsp cMarks
+    cla
+rtn, jmp .
+daP, 0
+daT, 0
+    endloc
+
+// Misc's Unfix. Every fix, attacher and designation is dropped, the points left where they are;
+// instances' tie points are no entries and stay. The sets are built again from what is left,
+// which clears every fix's flag, and the marks written. The solver is woken while entries or
+// ties remain, since a point freed may let the figure settle where a fix made it give up.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cUnfixAll,
+    local rtn, uaLoop, uaDrop, uaNext, uaDone, uaP, uaT
+    dap rtn
+    lac [cEntries:011]
+    dac uaP
+uaLoop,
+    lac uaP
+    sad cEnd            // skip while entries remain
+    jmp uaDone
+    lac i uaP
+    sad [CTF]           // skip unless a fix
+    jmp uaDrop
+    sad [CTDES]         // skip unless a designation
+    jmp uaDrop
+    sas [CTATT]         // skip if an attacher
+    jmp uaNext
+uaDrop,
+    lac uaP
+    add [1]
+    dac uaT
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i uaT
+uaNext,
+    lac uaP
+    add [CW]
+    dac uaP
+    jmp uaLoop
+uaDone,
+    jsp cPurge
+    jsp cBuild
+    lac i [cCount:011]
+    ior cInN
+    sza                 // skip unless entries or ties remain
+    jsp cWake
+    jsp cMarks
+    cla
+rtn, jmp .
+uaP, 0
+uaT, 0
+    endloc
+
+// Fix's lift on point p, unfixed if it is fixed (cUnfix); else fixed, an F entry, every point's
+// place kept first (cSnap) as for an H; refused on a roller or with the table full.
+// Fixing moves nothing, so the solver is not woken. Either way the marks are written again.
+// Entry: AC = p. Exit: AC = 0 fixed, 1 unfixed, 2 refused. IO is clobbered. Called via jda.
+cFix, 0
+    local rtn, fxOff, fxFull
+    dap rtn
+    lac [CTF]
+    dac cfT
+    lac cFix
+    dac cfA
+    lac [CUNUSED]
+    dac cfB
+    jsp cUnused
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza                 // skip unless it is fixed
+    jmp fxOff
+    lac [CTROLL]
+    dac cfT
+    jsp cFind
+    sza                 // skip unless it is a roller
+    jmp fxFull
+    lac [CTF]
+    dac cfT
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full
+    jmp fxFull
+    jsp cSnap
+    jsp cAppend
+    lac cFix
+    lio [FFIX]
+    jda cFlagOr
+    jsp cMarks
+    jmp rtn
+fxOff,
+    lac cFix
+    jda cUnfix
+    jsp cMarks
+    law 1
+    jmp rtn
+fxFull,
+    law 2
+rtn, jmp .
+    endloc
+
+// Tie's lift on point p, an attacher's entry (CTATT) on it dropped
+// if it has one; else one made, its parameter one past the latest designation's, CUNUSED's sign
+// bit set, so that Define takes the attachers in the order designated (instMap), every point's
+// place kept first (cSnap) as for an F; refused at NATT attachers or with the table full. Nothing
+// moves, so the solver is not woken. Either way the marks are written again.
+// Designate's lift (cDes) is the same with a designation's entry (CTDES), up to NATT of them;
+// the k-th in the table is designation k, the parameter's order kept as well.
+// Entry: AC = p. Exit: AC = 0 made, 1 dropped, 2 refused. IO is clobbered. Called via jda.
+cDes, 0
+    local rtn, atTy, atLoop, atNext, atGo, atOff, atFull, atP, atT, atN, atM, atY
+    dap rtn
+    lac cDes
+    dac cAtt
+    lac [CTDES]
+    jmp atTy
+cAtt, 0
+    dap rtn
+    lac [CTATT]
+atTy,
+    dac atY
+    dac cfT
+    lac cAtt
+    dac cfA
+    lac [CUNUSED]
+    dac cfB
+    jsp cUnused
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza                 // skip unless it is an attacher, or designated
+    jmp atOff
+    dzm atN
+    lac [CUNUSED]
+    dac atM
+    lac [cEntries:011]
+    dac atP
+atLoop,
+    lac atP
+    sad cEnd            // skip while entries remain
+    jmp atGo
+    lac i atP
+    sas atY             // skip if an attacher, or a designation
+    jmp atNext
+    idx atN
+    lac atP
+    add [5]
+    dac atT
+    lac i atT
+    sub atM
+    spa                 // skip unless designated before the latest so far
+    jmp atNext
+    lac i atT
+    dac atM
+atNext,
+    lac atP
+    add [CW]
+    dac atP
+    jmp atLoop
+atGo,
+    lac atN
+    sad [NATT]          // skip unless every attacher is designated
+    jmp atFull
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full
+    jmp atFull
+    lac atM
+    add [1]
+    dac cfPar
+    jsp cSnap
+    jsp cAppend
+    jsp cMarks
+    cla
+    jmp rtn
+atOff,
+    add [1]
+    dac atT
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i atT
+    jsp cPurge
+    law 1
+    dac cTopo
+    jsp cMarks
+    law 1
+    jmp rtn
+atFull,
+    law 2
+rtn, jmp .
+atP, 0
+atT, 0
+atN, 0
+atM, 0
+atY, 0
+    endloc
+
+// Copy's drop, before its parts are added. The designated points, in the order
+// designated, written to bank 3's desPt for the arc module's copyMerge, the rest of its NATT
+// words NOPOINT; then the designations dropped, the table purged and the marks written (cMarks),
+// before cCopy keeps the table's count for Undo (cSnap), so that Undo of the drop does not bring
+// them back.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cDesTake,
+    local rtn, dtLoop, dtNext, dtFill, dtMk, dtP, dtK
+    dap rtn
+    lac [desPt:3]
+    dac dtK
+    lac [cEntries:011]
+    dac dtP
+dtLoop,
+    lac dtP
+    sad cEnd            // skip while entries remain
+    jmp dtFill
+    lac i dtP
+    sas [CTDES]         // skip if a designation
+    jmp dtNext
+    idx dtP
+    lac i dtP
+    dac i dtK
+    idx dtK
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i dtP
+    lac dtP
+    sub [1]
+    dac dtP
+dtNext,
+    lac dtP
+    add [CW]
+    dac dtP
+    jmp dtLoop
+dtFill,
+    lac dtK
+    sad [desPt:3 + NATT]    // skip while words remain
+    jmp dtMk
+    lac [NOPOINT]
+    dac i dtK
+    idx dtK
+    jmp dtFill
+dtMk,
+    jsp cPurge
+    law 1
+    dac cTopo
+    jsp cMarks
+    cla
+rtn, jmp .
+dtP, 0
+dtK, 0
+    endloc
+
+// Roller's lift on point p, its roller entry (CTROLL) dropped if it has one; else
+// one made, every point's place kept first (cSnap) as for an F; refused on a fixed point or with
+// the table full. Only the truss's analysis reads it, so the solver is not woken. Either way the
+// marks are written again.
+// Entry: AC = p. Exit: AC = 0 made, 1 dropped, 2 refused. IO is clobbered. Called via jda.
+cRoll, 0
+    local rtn, roOff, roNo, roT
+    dap rtn
+    lac [CTROLL]
+    dac cfT
+    lac cRoll
+    dac cfA
+    lac [CUNUSED]
+    dac cfB
+    jsp cUnused
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza                 // skip unless it is a roller
+    jmp roOff
+    lac [CTF]
+    dac cfT
+    jsp cFind
+    sza                 // skip unless it is fixed
+    jmp roNo
+    lac [CTROLL]
+    dac cfT
+    lac i [cCount:011]
+    sad [NCON]          // skip unless the table is full
+    jmp roNo
+    jsp cSnap
+    lac cfA             // level, its axis's line its point twice
+    dac cfB
+    dac cfC
+    jsp cAppend
+    jsp cMarks
+    cla
+    jmp rtn
+roOff,
+    add [1]
+    dac roT
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i roT
+    jsp cPurge
+    law 1
+    dac cTopo
+    jsp cMarks
+    law 1
+    jmp rtn
+roNo,
+    law 2
+rtn, jmp .
+roT, 0
+    endloc
+
+// Axis's lifts on point p. The first, the main bank's consPick 0, asks whether p is a roller.
+// The second gives p's roller line consL2 as its axis, the line's two points kept in its entry's
+// B and C words, the smaller first, so that the axis turns as the line does; the truss's
+// analysis (taRlD) and the O's ticks (cRlDir) take its
+// direction from their places. Only the analysis reads it, so the solver is not woken; the marks
+// are written again.
+// Entry: AC = p. Exit: AC = 0 a roller, or its axis set; 1 no roller. IO is clobbered. Called
+// via jda.
+cAxis, 0
+    local rtn, axNo, axE, axT
+    dap rtn
+    lac [CTROLL]
+    dac cfT
+    lac cAxis
+    dac cfA
+    jsp cUnused
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza i               // skip if p is a roller
+    jmp axNo
+    dac axE
+    lac i [consPick:4]
+    sza i               // skip if the second lift
+    jmp rtn             // AC is 0
+    lac i [consL2:4]
+    jda cEnds
+    lac axE
+    add [2]
+    dac axT
+    lac ceF
+    dac i axT
+    idx axT
+    lac ceT
+    dac i axT
+    lac axE
+    add [2]
+    jda cSort2
+    jsp cMarks
+    jmp rtn             // AC is 0
+axNo,
+    law 1
+rtn, jmp .
+axE, 0
+axT, 0
+    endloc
+
+// Stiff's lift on line l, whether it is a member, a Beam drawn either way
+// round; if so, its parameter word, the stiffness, whose address is kept (cStE) for the keyboard's
+// answer (cStSet). The keyboard is open in between, and nothing changes the table meanwhile.
+// Entry: AC = l. Exit: AC = the Beam's parameter word, which is negative, or 0 for no member. IO
+// is clobbered. Called via jda.
+cStiff, 0
+    local rtn, sfHas
+    dap rtn
+    lac cStiff
+    jda cEnds
+    jsp cUnused
+    lac [CTBEAM]
+    dac cfT
+    lac cEnd
+    dac cfLim
+    lac ceF
+    dac cfA
+    lac ceT
+    dac cfB
+    jsp cFind
+    sza                 // skip unless a member drawn from its start
+    jmp sfHas
+    lac ceT
+    dac cfA
+    lac ceF
+    dac cfB
+    jsp cFind
+    sza i               // skip if a member drawn from its end
+    jmp rtn             // AC is 0
+sfHas,
+    add [5]
+    dac cStE
+    lac i cStE
+rtn, jmp .
+    endloc
+
+// The keyboard's answer for Stiff's member (cStiff), its parameter word set. The truss's
+// analysis finds the change in its snapshot; nothing else reads the word.
+// Entry: AC = the parameter word. Exit: AC = 0. IO is preserved. Called via jda.
+cStSet, 0
+    dap ssRtn
+    lac cStSet
+    dac i cStE
+    cla
+ssRtn, jmp .
+cStE, 0
+
+// Write the marks in bank 0 (fixList), through the marks module in bank 13 (spmarks.ac,
+// mkMarks). A table changed since the sets were built is
+// purged and built first, so that every entry names points that exist.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cMarks,
+    local rtn, cmGo
+    dap rtn
+    lac cTopo
+    sza i               // skip if the table changed since the build
+    jmp cmGo
+    jsp cPurge
+    jsp cBuild
+cmGo,
+    jsp i [mkMarks:015]
+rtn, jmp .
+    endloc
+
+// Delete's lock with Show on, the mark nearest the target's center, found by the marks module
+// (spmarks.ac, mkNear), stale marks written first.
+// Exit: AC = the entry, NOPOINT if none or Show is off; cNearX, cNearY its mark's place. IO is
+// clobbered. Called via jsp.
+cNear,
+    local rtn
+    dap rtn
+    lac cTopo
+    ior cMkDirty
+    sza                 // skip unless the marks are stale
+    jsp cMarks
+    jsp i [mkNear:015]
+rtn, jmp .
+    endloc
+
+// Unfix point p, every F entry on it dropped, its flag cleared.
+// Entry: AC = p. AC and IO are clobbered. Called via jda.
+cUnfix, 0
+    local rtn, ufLoop, ufDone, ufT
+    dap rtn
+    lac [CTF]
+    dac cfT
+    lac cUnfix
+    dac cfA
+    lac [CUNUSED]
+    dac cfB
+    jsp cUnused
+ufLoop,
+    lac cEnd
+    dac cfLim
+    jsp cFind
+    sza i               // skip if an F entry holds it
+    jmp ufDone
+    add [1]
+    dac ufT
+    lac [NOPOINT]
+    dac i ufT
+    jmp ufLoop
+ufDone,
+    jsp cPurge
+    lac cUnfix
+    add [cFlag:011]
+    dac ufT
+    lac i ufT
+    and [FFIXOFF]
+    dac i ufT
+    law 1
+    dac cTopo
+rtn, jmp .
+ufT, 0
+    endloc
+
+// A drag's move of point p, unfixed if it was fixed (in the thesis, moving an object with the
+// light pen unfixes it), a reload asked for (cRld), and the main loop's pass asked for while
+// there are entries, so that the solver takes up the move (cReload). The reload takes up every
+// solver point, since moving an arc by its center moves its rim points too. Where p now is is
+// kept (cDropX, cDropY), to find the point dropped again after a merge (cRefind).
+// Entry: AC = p. Exit: AC = 0. IO is clobbered. Called via jda.
+cDrag, 0
+    local rtn, dgGo, dgWake, dgT, dgAt
+    dap rtn
+    lac [cDropX:010]
+dgGo,
+    dac dgAt
+    law 1
+    dac cRld
+    lac cDrag
+    add [pointX:3]
+    dac dgT
+    lac i dgT
+    dac i dgAt
+    idx dgAt
+    lac cDrag
+    add [pointY:3]
+    dac dgT
+    lac i dgT
+    dac i dgAt
+    lac cDrag
+    add [cFlag:011]
+    dac dgT
+    lac i dgT
+    and [FFIX]
+    sza i               // skip if fixed
+    jmp dgWake
+    lac cDrag
+    jda cUnfix
+dgWake,
+    lac i [cCount:011]
+    ior cInN
+    sza                 // skip unless there are entries or ties
+    dac i [conWake:4]
+    cla
+rtn, jmp .
+dgT, 0
+dgAt, 0
+
+// cDrag for the second point held, a line's to end while the line is dragged whole. It is held
+// as cHeld2, as the pen holds the first (cTick), and where it now is kept in cDrop2X, cDrop2Y
+// for cRefind.
+// Entry: AC = p. Exit: AC = 0. IO is clobbered. Called via jda.
+cDrag2, 0
+    dap rtn
+    lac cDrag2
+    dac cHeld2
+    dac cDrag
+    lac [cDrop2X:010]
+    jmp dgGo
+    endloc
+
+// Keep every point's place, and every instance's origin's, in bank 9's uSX and uSY, and the
+// entries' count, for Undo of the entry about to be added; and every scalar's value, in bank 3's
+// uScV.
+// AC and IO are clobbered. Called via jsp.
+cSnap,
+    local rtn, snLoop, snIn, snOrg, snSc, snI, snT, snU
+    dap rtn
+    lac i [cCount:011]
+    dac uSC
+    lac i [pointCount:4]
+    dac uSN
+    dzm snI
+snLoop,
+    lac snI
+    sad uSN             // skip while points remain
+    jmp snOrg
+snIn,
+    add [pointX:3]
+    dac snT
+    lac snI
+    add [uSX:011]
+    dac snU
+    lac i snT
+    dac i snU
+    lac snI
+    add [pointY:3]
+    dac snT
+    lac snI
+    add [uSY:011]
+    dac snU
+    lac i snT
+    dac i snU
+    idx snI
+    sas [NVAR]          // skip once every origin is kept
+    jmp snLoop
+    dzm snI             // and every scalar's value
+snSc,
+    lac snI
+    add [scVal:3]
+    dac snT
+    lac snI
+    add [uScV:3]
+    dac snU
+    lac i snT
+    dac i snU
+    idx snI
+    sas [NSCAL]         // skip once every scalar is kept
+    jmp snSc
+    jmp rtn
+snOrg,
+    lac [MAXPTS]
+    dac snI
+    jmp snIn
+rtn, jmp .
+snI, 0
+snT, 0
+snU, 0
+    endloc
+
+// Undo of an entry. The last pass's marks cleared (cUnmark) and the points the sweeps touched
+// but have not written dropped from cPub (the build the changed topology asks for takes every
+// point up from the table, and clears their marks), then every point not where cSnap found it
+// goes back, marked (FMOV) and listed at cPub's front for the arc module's conArcs and the main
+// bank's conRedraw, its place before kept, so that cRevert puts it there if an arc refuses; the
+// table is cut back to its count then, every scalar's value put back, the topology
+// has changed, and the solver wakes.
+// Exit: AC = 0. IO is clobbered. Called via jsp.
+cUndo,
+    local rtn, udGo, udLoop, udIn, udBack, udNext, udOrg, udCut, udI, udN, udTX, udTY, udUX, \
+        udUY, udT, udSc
+    dap rtn
+    jsp cUnmark
+    dzm cPubN
+    lac uSN
+    dac udN
+    lac i [pointCount:4]
+    sub udN
+    sma                 // skip if fewer points now
+    jmp udGo
+    lac i [pointCount:4]
+    dac udN
+udGo,
+    dzm udI
+udLoop,
+    lac udI
+    sad udN             // skip while points remain
+    jmp udOrg
+udIn,
+    add [pointX:3]
+    dac udTX
+    lac udI
+    add [pointY:3]
+    dac udTY
+    lac udI
+    add [uSX:011]
+    dac udUX
+    lac udI
+    add [uSY:011]
+    dac udUY
+    lac i udUX
+    sas i udTX          // skip if x is as kept
+    jmp udBack
+    lac i udUY
+    sas i udTY          // skip if y is as kept
+    jmp udBack
+    jmp udNext
+udBack,
+    lac udI
+    add [oX:011]
+    dac udT
+    lac i udTX
+    dac i udT
+    lac udI
+    add [oY:011]
+    dac udT
+    lac i udTY
+    dac i udT
+    lac i udUX
+    dac i udTX
+    lac i udUY
+    dac i udTY
+    lac udI
+    add [cFlag:011]
+    dac udT
+    lac i udT
+    ior [FMOV]
+    dac i udT
+    lac cMovN
+    add [cPub:011]
+    dac udT
+    lac udI
+    dac i udT
+    idx cMovN
+udNext,
+    idx udI
+    sas [NVAR]          // skip once every origin is looked at
+    jmp udLoop
+    jmp udCut
+udOrg,
+    lac [MAXPTS]
+    dac udI
+    jmp udIn
+udCut,
+    lac cMovN
+    dac cPubN
+    lac uSC
+    dac i [cCount:011]
+    jsp cEndSet
+    dzm udI             // every scalar's value put back
+udSc,
+    lac udI
+    add [uScV:3]
+    dac udUX
+    lac udI
+    add [scVal:3]
+    dac udT
+    lac i udUX
+    dac i udT
+    idx udI
+    sas [NSCAL]         // skip once every scalar is put back
+    jmp udSc
+    law 1
+    dac cTopo
+    dac cScChg
+    jsp cWake
+    cla
+rtn, jmp .
+udI, 0
+udN, 0
+udTX, 0
+udTY, 0
+udUX, 0
+udUY, 0
+udT, 0
+    endloc
+
+// The module's words.
+cRun, 0                 // nonzero while the solver is awake
+cHeld, 0                // the point the solver holds: the one dragged, or dropped while the
+                        // figure settles (NOPOINT when none)
+cPen, 0                 // the point the pen holds, as dragIdx was at the last pass, or the
+                        // origin of the instance carried, MAXPTS plus dragInst
+cNext, 0                // the sweep's next item: an entry, then an arc of cArcs, then a tie
+                        // of cTies
+cSweeps, 0              // sweeps since the solver woke
+cMax, 0                 // the largest move of the sweep so far, in 32nds
+cT0, 0                  // the clock when this pass's sweeping began
+cW0, 0                  // the clock at the last wake, for the give-up
+cGaveUp, 0              // the give-ups since the last wake, the first counted (cGiveUps)
+cPubAt, 0               // the clock at the last write (cPublish)
+cGuess, 0               // a guess at the next length cHyp finds, 0 for none
+cE, 0                   // the entry the projections work on
+cInN, 0                 // points in cIn
+cRld, 0                 // nonzero when a drag asks for the next pass's reload
+cPubN, 0                // points in cPub
+cMovN, 0                // of which the first cMovN carry FMOV marks
+cArcN, 0                // arcs in cArcs
+cTieN, 0                // ties in cTies
+cMkTy, CTF              // the type whose marks show with Show off: CTF, CTATT in Tie mode or
+                        // CTROLL in Roller mode (the modes module's afMode sets it)
+cLnSeen, 0              // the lines' count at the last build
+cArcSeen, 0             // and the arcs'
+cCen, 0                 // cArcIn's arc: its center, start and end
+cArcS, 0
+cArcE, 0
+crS, 0                  // cRim's two rim points, about cCen
+crE, 0
+crG, 0                  // and the full address of their radius' guess word
+cU, 0                   // cAlong's ray, its length and its point
+cV, 0
+cR, 0
+cP, 0
+clT, 0                  // cClamp1's word and bounds
+clLo, 0
+clHi, 0
+slA, 0                  // cLine's line, cSetLen's length, cTurn's line too
+slB, 0
+slT, 0
+cFA, 0                  // whether each end may move, and either
+cFB, 0
+cLnF, 0
+cTX, 0                  // cTurn's direction, its length
+cTY, 0
+cTL, 0
+cDX, 0                  // cNudge's move
+cDY, 0
+cxA, 0                  // cProjX's point and line
+cxB, 0
+cxC, 0
+ceF, 0                  // cEnds' line's start and end
+ceT, 0
+cfT, 0                  // an entry's words, in order, as cMove copies them: for cFind, cBad,
+cfA, 0                  // cAppend and cPurge
+cfB, 0
+cfC, 0
+cfD, 0
+cfPar, 0
+cfLim, 0                // cFind's limit
+cfN, 0                  // the points cfT names (cBad)
+mvS, 0                  // cMove's source and destination
+mvD, 0
+cNearX, 0               // cNear's mark
+cNearY, 0
+tkT, 0                  // cTake's table word and working value
+tkW, 0
+uSN, 0                  // the points and entries when cSnap kept the places
+uSC, 0
+cmP, 0                  // the point cMkOn makes entries on, and whether cMkAdd is to keep the
+cmSnap, 0               // places first
+// cKeep's slots, kpLock, are bank 9's.
+// Diagnostic counters: passes, sweeps, give-ups at SOLVEGIVE, and publishes refused.
+cTickTot, 0
+cSweepTot, 0
+cGiveUps, 0
+cRefused, 0
+
+// Where the last drag left its point (cDrag), for cRefind; last in the bank, so that the words
+// other banks reach keep their addresses. Then the second point held (cDrag2), where its last
+// drag left it.
+cDropX, 0
+cDropY, 0
+cHeld2, 0
+cDrop2X, 0
+cDrop2Y, 0

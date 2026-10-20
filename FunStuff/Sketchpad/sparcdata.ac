@@ -1,0 +1,190 @@
+// sparcdata.ac -- bank 2's storage: the arc being drawn, Copy's counts, the arc table and a
+// drag's arcs, and the sine table. The instance table is in bank 10 (sketchpad.am1).
+//
+// Bank 2, after spdefine.ac.
+// Part of sketchpad.am1, included where it stands.
+
+// The arc being drawn, or written. Center, and the start's offset from it, in 32nds. arcX32
+// and arcY32 are the center in 32nds plus a half, so a vertex rounds to a unit with one shift.
+// arcR32 is the radius in 32nds. arcDir: 1 counterclockwise, -1 clockwise, 0 not yet chosen.
+// arcK: whole steps swept. arcAllOn: nonzero when every vertex of the full circle is on the
+// canvas.
+// arcCX to arcQY stay together, AKEEPN words, for arcLock's save of them (spedit.ac's arcKeep).
+arcCX, 0
+arcCY, 0
+arcU, 0
+arcV, 0
+arcX32, 0
+arcY32, 0
+arcR32, 0
+arcDir, 0
+arcK, 0
+arcAllOn, 0
+// arcSinCos's results, 17-bit fractions.
+arcS, 0
+arcC, 0
+// arcVertex's results: the offset in 32nds, and the vertex rounded to a unit.
+arcUk, 0
+arcVk, 0
+arcX, 0
+arcY, 0
+// The pen's direction from the center as a vector of length 65536, and its distance in 32nds.
+arcPX, 0
+arcPY, 0
+arcPH, 0
+// The arc's end; arcCross's dot product; the band's part-step word, 0 for none.
+arcEX, 0
+arcEY, 0
+arcDot, 0
+arcPart, 0
+// arcEntry's copies of the main bank's pseudo pen location and target center; the point arcNorm
+// measures.
+mPenX, 0
+mPenY, 0
+mHitX, 0
+mHitY, 0
+arcQX, 0
+arcQY, 0
+// The table routines' scratch: arcRenum's renumbering; the two points arcDelete holds, which
+// follow a point moved into a removed one's place, as the arc's points still to check do; the
+// merge's two points; ptPut's position; and a drag's point and where it goes.
+rnFrom, 0
+rnTo, 0
+heldK, 0
+heldJ, 0
+delS, 0
+delE, 0
+mgP, 0
+mgQ, 0
+ppX, 0
+ppY, 0
+dgP, 0
+dgX, 0
+dgY, 0
+// The band's words for penISR (arcPut): while arcPosting is set, arcPostN of them, at the full
+// addresses in arcPostA.
+arcPosting, 0
+arcPostN, 0
+arcPostA,
+    table APOSTS, 0
+arcPostW,
+    table APOSTS, 0
+// Set by a change of view (arcView): the band's vectors are to be written again at its next
+// pass, by the view module's vaBand, whatever the scale.
+arcRebase, 0
+// Define's work: the slot, the main bank's lineCount, the pass (0 the box's, 1 the words'), the
+// box, the origin, where the beam is, the words written, their drawing time in half
+// microseconds and whether they ran past MWORDS; the next point's beam, on or off, and the move
+// to it.
+dfK, 0
+dfNL, 0
+dfPass, 0
+dfMinX, 0
+dfMaxX, 0
+dfMinY, 0
+dfMaxY, 0
+dfCX, 0
+dfCY, 0
+dfBX, 0
+dfBY, 0
+dfN, 0
+dfT, 0
+dfOver, 0
+dvVis, 0
+dmDX, 0
+dmDY, 0
+// Copy's work: the master, the point table's length before the copy, the master's arcs, a
+// count and two pointers; and moveWords' from, to, count and addend.
+cyK, 0
+cyPC, 0
+cyNA, 0
+cyJ, 0
+cyP, 0
+cyQ, 0
+mwA, 0
+mwB, 0
+mwN, 0
+mwD, 0
+
+// The master directory: each master's length in words, 0 while its slot is empty, then its box
+// relative to its origin; NMASTER of each.
+mLen,
+    table NMASTER, 0
+mMinX,
+    table NMASTER, 0
+mMaxX,
+    table NMASTER, 0
+mMinY,
+    table NMASTER, 0
+mMaxY,
+    table NMASTER, 0
+
+// Copy's part of the directory, CBOXOFF words after the figure's box: the copy box, the
+// figure's box widened to take in every point, relative to the origin; then how many points,
+// lines and arcs Copy's store holds for each master.
+cMinX,
+    table NMASTER, 0
+cMaxX,
+    table NMASTER, 0
+cMinY,
+    table NMASTER, 0
+cMaxY,
+    table NMASTER, 0
+cpNP,
+    table NMASTER, 0
+cpNL,
+    table NMASTER, 0
+cpNA,
+    table NMASTER, 0
+
+// The master directory, mLen to cpNA, and the arc table after it stay together. A failed
+// load's wipe (sptape.ac's tlWipe) zeroes them as one run.
+// The arc table: arcCount arcs, each its center's, start's and end's point indices (a full
+// circle's end is its start), its direction, its whole steps and its radius in 32nds (for
+// delete mode's lock). NATAB tables, one after another (arcRemove). Then a drag's start, end
+// and whole steps for each arc on the dragged point; the points that move with it are marked in
+// bank 3 (ptMark).
+arcCount, 0
+arcTC,
+    table MAXARCS, 0
+arcTS,
+    table MAXARCS, 0
+arcTE,
+    table MAXARCS, 0
+arcTD,
+    table MAXARCS, 0
+arcTK,
+    table MAXARCS, 0
+arcTR,
+    table MAXARCS, 0
+mvSX,
+    table MAXARCS, 0
+mvSY,
+    table MAXARCS, 0
+mvEX,
+    table MAXARCS, 0
+mvEY,
+    table MAXARCS, 0
+mvK,
+    table MAXARCS, 0
+
+// sin(j * 2pi/NARC) for j = 0 to NQ, as 17-bit fractions; sin(pi/2) is one unit short of 1.
+// For NARC 64 only.
+sinTab,
+    000000
+    031057
+    061743
+    112240
+    141757
+    170533
+    216164
+    242317
+    265012
+    305710
+    324666
+    341613
+    354407
+    364764
+    373051
+    376611
+    377777

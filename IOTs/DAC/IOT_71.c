@@ -33,6 +33,7 @@
  *
  * 24-Sep-2026 Claude written.
  * 14-Oct-2026 wje allow modifiying room and onset via the IOT, not just the config file
+ * 30-Oct-2026 wje use iotCondlong, not stderr
  */
 
 #include <math.h>
@@ -47,6 +48,18 @@
 #include "configuration.h"
 #include "room.h"
 #include "edge.h"
+
+//#define DOLOGGING
+#include "iotLogger.h"
+#ifndef LOG_DAC_SETUP
+#define LOG_DAC_SETUP 0          // the start-up lines: stream, gain, room, onset
+#endif
+#ifndef LOG_DAC_CHANGES
+#define LOG_DAC_CHANGES 0        // the room or onset changed by the voices or the program
+#endif
+#ifndef LOG_DAC_COUNTS
+#define LOG_DAC_COUNTS 1         // the counts at stop: late samples, lost fetches, clipping
+#endif
 
 #if defined(__has_include)
 #if __has_include("sdl3.h")
@@ -455,11 +468,11 @@ int frames;
     if( (audioDev != AUDIO_HANDLE_INVALID) &&
         SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(audioDev), &spec, &frames) )
     {
-        fprintf(stderr, "IOT 71: %d Hz stream, device freq=%d\n", OUT_RATE, spec.freq);
+        iotCondLog(LOG_DAC_SETUP, "IOT 71: %d Hz stream, device freq=%d\n", OUT_RATE, spec.freq);
         return;
     }
 #endif
-    fprintf(stderr, "IOT 71: %d Hz stream%s\n", OUT_RATE,
+    iotCondLog(LOG_DAC_SETUP, "IOT 71: %d Hz stream%s\n", OUT_RATE,
         (audioDev == AUDIO_HANDLE_INVALID) ? ", no audio device" : "");
 }
 
@@ -530,7 +543,7 @@ int i;
     {
         mixGain = (float)settingNumber(settingP);
     }
-    fprintf(stderr, "IOT 71: gain %.3f\n", mixGain);
+    iotCondLog(LOG_DAC_SETUP, "IOT 71: gain %.3f\n", mixGain);
 
     // "dacroom=" is the room after the mixer: hall, busch, voices (as the notes' voicing
     // chooses), or off (anything else).
@@ -549,7 +562,7 @@ int i;
             roomKind = ROOM_VOICES;
         }
     }
-    fprintf(stderr, "IOT 71: room %s\n",
+    iotCondLog(LOG_DAC_SETUP, "IOT 71: room %s\n",
             ((roomKind == ROOM_BUSCH) ? "busch" : ((roomKind == ROOM_HALL) ? "hall" :
              ((roomKind == ROOM_VOICES) ? "from the voices, hall until one chooses busch" : "off"))));
 
@@ -562,7 +575,7 @@ int i;
             onsetCycles = 0;
         }
     }
-    fprintf(stderr, "IOT 71: onset %d cycles\n", onsetCycles);
+    iotCondLog(LOG_DAC_SETUP, "IOT 71: onset %d cycles\n", onsetCycles);
     configRoomKind = roomKind;
     configOnsetCycles = onsetCycles;
 
@@ -1827,7 +1840,7 @@ int kind;
     if( kind != room.kind )
     {
         roomInit(&room, kind);
-        fprintf(stderr, "IOT 71: room %s, from the voices\n", ((kind == ROOM_BUSCH) ? "busch" : "hall"));
+        iotCondLog(LOG_DAC_CHANGES, "IOT 71: room %s, from the voices\n", ((kind == ROOM_BUSCH) ? "busch" : "hall"));
     }
 }
 
@@ -1854,7 +1867,7 @@ setRoom(int kind)
     {
         roomInit(&room, kind);
     }
-    fprintf(stderr, "IOT 71: room %s, set by the program\n",
+    iotCondLog(LOG_DAC_CHANGES, "IOT 71: room %s, set by the program\n",
             ((kind == ROOM_BUSCH) ? "busch" : ((kind == ROOM_HALL) ? "hall" :
              ((kind == ROOM_VOICES) ? "from the voices" : "off"))));
 }
@@ -1883,7 +1896,7 @@ int units;
         if( cycles != onsetCycles )
         {
             onsetCycles = cycles;
-            fprintf(stderr, "IOT 71: onset %d cycles, set by the program\n", onsetCycles);
+            iotCondLog(LOG_DAC_CHANGES, "IOT 71: onset %d cycles, set by the program\n", onsetCycles);
         }
         break;
 
@@ -2308,7 +2321,7 @@ int n;
         converters[n].commitWaiting = false;
     }
 
-    fprintf(stderr, "IOT 71: late samples %d %d %d %d, lost fetches %d, clipped frames %d, windows %d\n",
+    iotCondLog(LOG_DAC_COUNTS, "IOT 71: late samples %d %d %d %d, lost fetches %d, clipped frames %d, windows %d\n",
             converters[0].late, converters[1].late, converters[2].late, converters[3].late, lostFetches,
             clippedFrames, windows);
     clippedFrames = 0;

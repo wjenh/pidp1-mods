@@ -13,6 +13,12 @@ Two examples are the Adventure game and the ZMachine that are here. Did they exi
 No. But they could have if someone had thought of them, they both would run on a real PDP-1 with the proper
 hardware with only a minor tweak for the use of the DCS device, necessary because of the modern host.
 
+And yes, AI was used to help with all of this, Claude Opus.
+Heresy?
+Not at all, any true hacker of the time would have killed to use it.
+We didn't use paper tape and card punches because we wanted to, we used them because that's all there was.
+How do I know? I was there (MIT) and I was a hacker.
+
 ## Checking it out
 
 Checkout must be done in the /opt directory.

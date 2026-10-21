@@ -1,18 +1,21 @@
 
 /*
  * This is a copy of the ascii<->flexo conversion routines used in IOT_22, DCS2.
+ * am1 and ad1 use these; see flexoConversion.h.
  */
 
+#include "flexoConversion.h"
+
 // Used in the flexo (actually concise) conversions, these are the flex lower/upper shift characters
-#define CUNSHIFT   072
-#define CSHIFT     074
+#define CUNSHIFT   FLEXO_CUNSHIFT
+#define CSHIFT     FLEXO_CSHIFT
 
 // No equivalent flexo for ascii char
 #define FLEX_NCHAR 013
 
-#define NONE -1
-#define LCS -2
-#define UCS -3
+#define NONE FLEXO_NONE
+#define LCS FLEXO_LCS
+#define UCS FLEXO_UCS
 #define Red NONE
 #define Blk NONE
 #define LF NONE
@@ -25,12 +28,13 @@
 // 205	∨	!
 // 206	∧	&
 // 211	↑       ^
-// 220	→	\
+// 220	→	\ (backslash)
 // 273	×	*
 // 140	·	@
 // 156	‾	`
 
-static const char concise2ascii[] = {
+// short, not char: NONE, LCS and UCS are negative, and the Pi's char is unsigned.
+static const short concise2ascii[] = {
         ' ', '1', '2', '3', '4', '5', '6', '7',         // 00-07
         '8', '9', LF, NONE, NONE, NONE, NONE, NONE,     // 10-17
         '0', '/', 's', 't', 'u', 'v', 'w', 'x',         // 20-27
@@ -54,25 +58,25 @@ static const char concise2ascii[] = {
 // Bit 0200 means shifted
 // Neither means no case
 static int ascii2concise[] = {
-	NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, // 00
-	0075, 0036, NONE, NONE, NONE, 0077, NONE, NONE,
-	NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE,
-	NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE,
+        NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, // 00
+        0075, 0036, NONE, NONE, NONE, 0077, NONE, NONE,
+        NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE,
+        NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE,
 
-	0000, 0205, 0201, 0204, NONE, NONE, 0206, 0202, // 40
-	0157, 0155, 0273, 0254, 0133, 0154, 0173, 0121,
-	0120, 0101, 0102, 0103, 0104, 0105, 0106, 0107,
-	0110, 0111, NONE, NONE, 0207, 0233, 0210, 0221,
+        0000, 0205, 0201, 0204, NONE, NONE, 0206, 0202, // 40
+        0157, 0155, 0273, 0254, 0133, 0154, 0173, 0121,
+        0120, 0101, 0102, 0103, 0104, 0105, 0106, 0107,
+        0110, 0111, NONE, NONE, 0207, 0233, 0210, 0221,
 
-	0140, 0261, 0262, 0263, 0264, 0265, 0266, 0267, // 100
-	0270, 0271, 0241, 0242, 0243, 0244, 0245, 0246,
-	0247, 0250, 0251, 0222, 0223, 0224, 0225, 0226,
-	0227, 0230, 0231, 0257, 0220, 0255, 0211, 0240,
+        0140, 0261, 0262, 0263, 0264, 0265, 0266, 0267, // 100
+        0270, 0271, 0241, 0242, 0243, 0244, 0245, 0246,
+        0247, 0250, 0251, 0222, 0223, 0224, 0225, 0226,
+        0227, 0230, 0231, 0257, 0220, 0255, 0211, 0240,
 
-	0156, 0161, 0162, 0163, 0164, 0165, 0166, 0167, // 140
-	0170, 0171, 0141, 0142, 0143, 0144, 0145, 0146,
-	0147, 0150, 0151, 0122, 0123, 0124, 0125, 0126,
-	0127, 0130, 0131, NONE, 0256, NONE, 0203, NONE
+        0156, 0161, 0162, 0163, 0164, 0165, 0166, 0167, // 140
+        0170, 0171, 0141, 0142, 0143, 0144, 0145, 0146,
+        0147, 0150, 0151, 0122, 0123, 0124, 0125, 0126,
+        0127, 0130, 0131, NONE, 0256, NONE, 0203, NONE
 };
 
 
@@ -82,10 +86,25 @@ static int ascii2concise[] = {
 // Typically, the contents of shiftP are set to 0 for the initial call.
 // Subsquent calls will update it so strings of flexo characters can be processed.
 int
-flexoToAscii(char fc, int *shiftP)
+flexoToAscii(int fc, int *shiftP)
 {
 int ac;
-    
+
+    ac = flexoToAsciiShift(fc, shiftP);
+    if( (ac == LCS) || (ac == UCS) )
+    {
+        return(NONE);
+    }
+
+    return(ac);
+}
+
+// As flexoToAscii(), but a shift character returns LCS or UCS, so the caller can show it.
+int
+flexoToAsciiShift(int fc, int *shiftP)
+{
+int ac;
+
     fc &= 0177;                 // in case it's actually fiodec, convert to concise
 
     if( *shiftP )
@@ -102,13 +121,13 @@ int ac;
     if( ac == LCS )
     {
         *shiftP = 0;
-        return(NONE);
+        return(LCS);
     }
 
     if( ac == UCS )
     {
         *shiftP = 1;
-        return(NONE);
+        return(UCS);
     }
 
     return(ac);
@@ -119,11 +138,19 @@ int ac;
 // The caller should then repeat the call with the original character to get the properly shifted one.
 // The contents of shiftP should be initialized to 0 before the first call.
 // It can be left unchanged across calls if multiple characters are being converted.
-char
-asciiToFlexo(char ac, int *shiftP)
+int
+asciiToFlexo(int ac, int *shiftP)
 {
 int fc;
-    
+
+    // A byte above 0177 has no Flexo code.  Passed from a char, it is negative where char is
+    // signed and above 0177 where it is not (the Pi); either way it would index outside the
+    // table, which has 128 entries.
+    if( (ac < 0) || (ac > 0177) )
+    {
+        return(NONE);
+    }
+
     fc = ascii2concise[ac];
     if( fc == NONE )
     {

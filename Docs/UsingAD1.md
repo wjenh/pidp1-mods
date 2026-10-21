@@ -115,7 +115,7 @@ lines can be displayed by line number.
 
 ## Usage
 
-ad1 [-v] [-y] [-x] [-T] [-h host[:port]] [filename ...]
+ad1 [-v] [-y] [-x] [-T] [-h host[:port]] [-i drumfile] [filename ...]
 
 The **-v** option prints the version number and exits.
 
@@ -129,12 +129,17 @@ An attempt is made to load the test memory with the last saved actual pidp-1 cor
 the */opt/pidp1-mods* directory.
 There is no processor in test mode, *step* and *monitor* are not available and *start*, *stop*
 and *continue* only record what was asked.
+*load* puts a program in the test memory but does not write its drum overlays.
 
 The **-h** option names the machine the pidp-1 is running on as a host name or address with an optional port.
 The default is the pidp-1 on this machine, port 1044.
 A host with no port defaults to 1044 if it is this machine, *localhost* or a loopback address and 1045,
 the usual *ad1remoteport*, if it is remote.
 The value can follow the option after a space or be attached to it, as in *-h 192.168.1.20:1045*.
+
+The **-i** option names the drum file *load* writes a program's drum overlays to.
+The default is */opt/pidp1-mods/pdp23drum*, the pidp-1's drum.
+The value can follow the option after a space or be attached to it, as **-h**'s can.
 
 If **ad1** cannot connect, it says which host and port it tried and exits.
 If the connection is lost while **ad1** is running, it says so and exits.
@@ -319,10 +324,11 @@ expression = (bank-ref << 12) | (expression & 07777)
 
 ## Programs with drum overlays
 
-A program assembled with drum overlays, see *UsingOverlays.md*, has two additonal files:
+A program assembled with drum overlays, see *UsingOverlays.md*, has two additional files:
 *name.ovl* and *name.osym*.
 **ad1** reads both when it opens the program and lists how many overlays and windows it found.
-With neither, it behaves as for a program wihtout overlays.
+*load* writes the overlays to the drum along with the tape, see *LOad* below.
+With neither, it behaves as for a program without overlays.
 With only one of them, or a damaged one, it reports that and treats the program as having no overlays.
 
 The overlays of a window share its addresses, so what **ad1** shows at one depends on which overlay is
@@ -645,7 +651,7 @@ The first number is the line in the file being viewed and is the line a *list at
 
 ## LOad [name]
 
-Attept to load the named file as an am1 or macro .bin or rim tape.
+Attempt to load the named file as an am1 or macro .bin or rim tape.
 If no name is given, use the first opened file name, from the command line or the *file* command.
 
 If successful, the current start address is set to the starting address unless the tape was an am1
@@ -653,10 +659,23 @@ tape with a *stop* directive, in which case no starting address is set.
 
 It does **not** change the current PC.
 
-The whole tape is read and checked first, then written to the pidp-1's memory in one step.
+The entire tape is read and checked first, then written to the pidp-1's memory in one step.
 A tape that turns out to be bad changes nothing.\
 If the pidp-1 is running it is stopped first, and *ad1* says so.
 It is not started again, use *start* to run the loaded program.
+
+If an overlay file exists with the tape's name with *.ovl* in place of its extension, the program
+has drum overlays and *load* also loads them onto the drum , as *ovlload* does:
+- The *.ovl* is read and checked, the build stamp in the tape must be the same as the *.ovl*'s.
+  If either fails, *ad1* reports why and nothing is written, neither the drum nor memory.
+- The pidp-1 is stopped if it is running, then each overlay is written to its track in the drum file,
+  */opt/pidp1-mods/pdp23drum* or the one **-i** names, and a summary given.
+- The program tape then loads as usual.
+
+In test mode, **-T**, the drum is not written.
+With **-h** naming another machine, the drum is not written either, since the drum file on that
+machine is not accessible. *ad1* reports this, loads the tape,
+and then *ovlload* must be run on the target machine to write the overlays.
 
 ## Monitor count filename
 

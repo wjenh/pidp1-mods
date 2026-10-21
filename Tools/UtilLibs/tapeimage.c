@@ -1,18 +1,24 @@
 /*
  * Read a binary tape as read-in would, for fastload and ovlload.
- * A tape in macro bin or am1 format is checked whole and either written to the
- * core-memory file as it is read, or collected as an image of blocks that
- * sendImage() stores in the running pdp-1 over the debugger link in one step.
- * The image's words can also be looked up by address before it is sent.
+ * A tape in macro bin or am1 format is checked and collected as an image of blocks
+ * which sendImage() stores in the running pdp-1 over the debugger link in one step, or that
+ * tapeWriteMemFile() writes to the core-memory file.
+ * Nothing is written until the entire tape has been read, a bad tape changes nothing.
  * Depends on ad1's link client, ad1link.c, which the program links in.
+ *
+ * 21-Oct-2026 Claude each tape starts a fresh image, a bad tape's file is closed, and the
+ *   memory file is written from the image
+ * 21-Oct-2026 wje cleanup
  */
 
+#include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
-#include "../AD1/ad1link.h"
+#include "ad1link.h"
 #include "tapeimage.h"
 
 // The kind of tape we are loading
@@ -28,8 +34,8 @@
 
 static int savedWord;
 
-// The words of the tape, block after block, and where each block goes. They are collected while
-// the tape is parsed and sent only when it has parsed cleanly.
+// The words of the tape, block after block, and where each block goes.
+// They are collected while the tape is parsed and sent only when it has parsed cleanly.
 static uint32_t *imageP;
 static uint32_t imageWords;
 static uint32_t imageCap;
@@ -39,29 +45,31 @@ static uint32_t blocksCap;
 
 static int getWord(FILE *fP);
 static int skipLoader(FILE *fP);
-static int loadAm1(FILE *fP, FILE *memFilefP, bool toFile);
-static int loadBin(FILE *fP, FILE *memFilefP, bool toFile);
+static int loadAm1(FILE *fP);
+static int loadBin(FILE *fP);
 static bool beginBlock(uint32_t address);
 static bool addWord(uint32_t word);
 static void ungetWord(int word);
 
-// Read and check a tape. To a file, the words are written as they are read. Otherwise they are
-// only collected, for sendImage() to send once the whole tape has been read.
+// Read and check a tape for sendImage() or tapeWriteMemFile().
 // Return the starting address or LOADSTOP on success, else LOADFAILED.
 int
-loadTape(char *filenameP, FILE *memFileFp, bool toFile)
+loadTape(char *filenameP)
 {
 int kind;           // which kind of format we are loading
 int addr;
 FILE *fP;
+
+    // The buffers are kept for reuse; only what they hold is dropped.
+    imageWords = 0;
+    nBlocks = 0;
+    savedWord = -1;             // for ungetWord() pushback
 
     if( !(fP = fopen(filenameP, "r")) )
     {
         printf("Can't open tape file '%s'.\n", filenameP);
         return( -1 );
     }
-
-    savedWord = -1;             // for ungetWord() pushback
 
     // A tape can be a bin tape, an am1 tape with a loader, or an am1 tape with no loader.
     // Tapes with loaders are loaded by read-in.
@@ -83,17 +91,19 @@ FILE *fP;
     // ready to load
     if( kind == AM1TAPE )
     {
-        if( (addr = loadAm1(fP, memFileFp, toFile)) == LOADFAILED )
+        if( (addr = loadAm1(fP)) == LOADFAILED )
         {
             printf("Loading failed, tape is not the correct format.\n");
+            fclose(fP);
             return(LOADFAILED);
         }
     }
     else if( kind == BINTAPE )
     {
-        if( (addr = loadBin(fP, memFileFp, toFile)) == LOADFAILED )
+        if( (addr = loadBin(fP)) == LOADFAILED )
         {
             printf("Loading failed, tape is not the correct format.\n");
+            fclose(fP);
             return(LOADFAILED);
         }
     }
@@ -204,9 +214,8 @@ int kind;
 
 // Load an am1 binary, return the starting address or LOADSTOP, or LOADFAIL for an error.
 // LOADSTOP is returned if the program ended with a stop directive.
-// If toFile is true, write to the memory file, else collect the words for sendImage().
 int
-loadAm1(FILE *fP, FILE *memFilefP, bool toFile)
+loadAm1(FILE *fP)
 {
 int word;
 int op;
@@ -226,7 +235,7 @@ bool loading;
                 curAddr = word & 0177777;
                 endAddr = getWord(fP);
                 loading = true;
-                if( !toFile && !beginBlock((uint32_t)curAddr) )
+                if( !beginBlock((uint32_t)curAddr) )
                 {
                     return(LOADFAILED);
                 }
@@ -251,20 +260,12 @@ bool loading;
                 return(LOADFAILED);
             }
 
-            if( toFile )
+            if( !addWord((uint32_t)word) )
             {
-                fprintf(memFilefP,"%06o: %06o\n", curAddr++, word);
-            }
-            else
-            {
-                if( !addWord((uint32_t)word) )
-                {
-                    return(LOADFAILED);
-                }
-
-                ++curAddr;
+                return(LOADFAILED);
             }
 
+            ++curAddr;
             if( curAddr == endAddr )
             {
                 loading = false;                // end of a data block
@@ -276,9 +277,8 @@ bool loading;
 }
 
 // Load a macro-style binary, return the starting address or LOADFAIL for an error.
-// If toFile is true, write to the memory file, else collect the words for sendImage().
 int
-loadBin(FILE *fP, FILE *memFilefP, bool toFile)
+loadBin(FILE *fP)
 {
 int word;
 int op;
@@ -299,7 +299,7 @@ bool loading;
                 curAddr = ADDRESSOF(word);
                 endAddr = ADDRESSOF(getWord(fP));
                 loading = true;
-                if( !toFile && !beginBlock((uint32_t)curAddr) )
+                if( !beginBlock((uint32_t)curAddr) )
                 {
                     return(LOADFAILED);
                 }
@@ -320,20 +320,12 @@ bool loading;
                 return(LOADFAILED);
             }
 
-            if( toFile )
+            if( !addWord((uint32_t)word) )
             {
-                fprintf(memFilefP,"%06o: %06o\n", curAddr++, word);
-            }
-            else
-            {
-                if( !addWord((uint32_t)word) )
-                {
-                    return(LOADFAILED);
-                }
-
-                ++curAddr;
+                return(LOADFAILED);
             }
 
+            ++curAddr;
             if( curAddr == endAddr )
             {
                 getWord(fP);                    // discard the checksum
@@ -392,8 +384,9 @@ addWord(uint32_t word)
     return(true);
 }
 
-// Stop the pdp-1 if it is running and write the collected blocks, all together or not at all.
-// Sets *wasRunningP. Returns false, after saying why, if it could not be done.
+// Stop the pdp-1 if it is running and write the collected blocks, all or not at all.
+// Sets *wasRunningP.
+// Returns false, after saying why on an error.
 bool
 sendImage(Ad1Link *linkP, bool *wasRunningP)
 {
@@ -402,8 +395,8 @@ uint32_t used;
 uint32_t wasRunning;
 int status;
 
-    // A block that ended up with no words has nothing to write; drop it, keeping the words of
-    // the others in step.
+    // A block that ended up with no words has nothing to write.
+    // Drop it, keeping the words of the others in step.
     used = 0;
     for( i = 0; i < nBlocks; ++i )
     {
@@ -437,7 +430,8 @@ int status;
 }
 
 // Find the word the collected image puts at address, the last one given when blocks overlap,
-// as read-in would leave it. Returns true with *wordP set, or false if no block covers address.
+// as read-in would leave it.
+// Returns true with *wordP set, or false if no block covers address.
 bool
 tapeImageWord(uint32_t address, uint32_t *wordP)
 {
@@ -459,4 +453,56 @@ bool found;
     }
 
     return(found);
+}
+
+// Whether the memory file can be written, asked without changing it.
+// If it did not exist before is removed again.
+bool
+tapeMemFileWritable(const char *nameP)
+{
+struct stat st;
+bool existed;
+FILE *fP;
+
+    // lstat, so a symlink to a file not yet made counts as there and is not removed.
+    existed = (lstat(nameP, &st) == 0);
+    if( !(fP = fopen(nameP, "a")) )
+    {
+        return(false);
+    }
+
+    fclose(fP);
+    if( !existed )
+    {
+        unlink(nameP);
+    }
+
+    return(true);
+}
+
+// Write the collected image to an opened core-memory file, one line per word in tape order, as
+// the pidp-1 reads it at its start.
+// Returns false if a write failed; the file may be partial then.
+bool
+tapeWriteMemFile(FILE *memFileFp)
+{
+uint32_t i;
+uint32_t j;
+uint32_t first;
+
+    first = 0;
+    for( i = 0; i < nBlocks; ++i )
+    {
+        for( j = 0; j < blocksP[i].count; ++j )
+        {
+            if( fprintf(memFileFp, "%06o: %06o\n", (blocksP[i].address + j), imageP[first + j]) < 0 )
+            {
+                return(false);
+            }
+        }
+
+        first += blocksP[i].count;
+    }
+
+    return(fflush(memFileFp) == 0);
 }

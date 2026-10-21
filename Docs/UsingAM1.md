@@ -271,14 +271,30 @@ It can be on another machine, see *-h* below.
 For loading into the memory file, the pidp-1 process must not be running.\
 If it is, the memory file will be overwritten.\
 You will be asked to confirm it is not running before loading occurs.\
-Load with -m first, then start the pidp-1.
+Load with -m first, then start the pidp-1.\
+A load that fails, a bad tape or a drum that can't be written, leaves the memory file as it was.
 
-Usage: fastload [-h host[:port]] [-m] [-f memfilename]  *rimtapefile*
+A program with drum overlays, a tape with a *.ovl* beside it (the tape's name with *.ovl* in place of
+its extension), has its overlays written to the drum first, as *ovlload* does; see *UsingOverlays.md*.
+The *.ovl* is checked whole and the tape's build stamp must be the *.ovl*'s, or nothing is written.
+Then the pidp-1 is stopped if it is running, each overlay is written to its track in the drum file,
+one line says which overlays and tracks, and the tape is loaded either way above.
+A track that held another tool's data, a program *drumupdater* loaded, Adventure's saved game or part of
+a Z-machine story, is overwritten and named.
+
+Usage: fastload [-h host[:port]] [-y] [-m] [-f memfilename] [-i drumfile] *rimtapefile*
 
 The *-h* option names a pidp-1 on another machine, as for **ad1**. The default is *localhost:1044*.
 A host other than this machine with no port gets 1045, the usual *ad1remoteport*.
 Only one debugger client can be connected to a pidp-1 at a time, so *fastload* will refuse if
 **ad1** is connected.
+With *-h* naming another machine, a program's drum overlays are not written, since the drum file is on
+that machine; *fastload* says so and loads the tape, and *ovlload* must be run there.
+
+The *-y* option starts the program once it is loaded, without asking.
+
+The *-i* option names the drum file a program's overlays are written to.
+The default is */opt/pidp1-mods/pdp23drum*, the pidp-1's drum.
 
 It will report the starting address and offer to start the program at that address.
 
@@ -424,10 +440,11 @@ The *lineno* value is the line number in the original source file where the symb
 
 ### The origin map
 
-Whenever a listing is written (*-l* or *-d*), the origin map *file*.map is written beside it. The listing shows
-a macro's expansion at the line where the macro was used; the map says which macros made each word, and from
-which line of which file. **ad1** reads it to show the lines you wrote, see *UsingAD1.md*. The *lst* and *sym*
-files are the same with or without it.
+Whenever a listing is written (*-l* or *-d*), the origin map *file*.map is written also.
+The listing shows a macro's expansion at the line where the macro was used.
+The map says which macros made each word and from which line of which file.
+**ad1** reads it to show the lines you wrote, see *UsingAD1.md*.
+The *lst* and *sym* files are the same with or without it.
 
 It is plain text, one record per line, the fields separated by one space:
 ```
@@ -441,18 +458,19 @@ S symbol-name n
 ```
 
 - The first three lines are a label, a version, and the source file as it was given to **am1**.
-- An *F* record numbers a file the first time a record needs it. Files are named as the preprocessor found
-  them, relative to the directory **am1** ran in or from the root of the include files.
+- An *F* record numbers a file the first time a record needs it.
+  Files are named as the preprocessor found them, relative to the directory **am1** ran
+  in or from the root of the include files.
 - There is one *W* or *P* record for each word the listing shows, in the listing's order, so the two can be
-  paired by counting. A listing line can hold two words: a label's, and the first word of a *type340* string
-  on the same line.
+  paired by counting.
+  A listing line can hold two words: a label's, and the first word of a *type340* string on the same line.
 - A *W* record is a word assembled from code: its address (bank and address, as in the listing), the drum
-  overlay it is in, or *-* for the root, and the file number and line the listing gives its statement. Then,
-  when macros made the statement, one triple per macro, from the one the program used inward: the macro's
-  name, the file it was defined in, and the line of its body the statement came from. A block macro's
-  statements each have their own body line; a one-line macro's all have its one line.
-- A statement made from a macro's argument has the origin of where the argument was written, not the
-  macro's. A token made by *##* is the macro's.
+  overlay it is in, or *-* for the root, and the file number and line the listing gives its statement.
+  Then, when macros created the statement, one triple per macro, from the one the program used inward: the macro's
+  name, the file it was defined in, and the line of its body the statement came from.
+  A block macro's statements each have their own body line; a one-line macro's all have its one line.
+- A statement made from a macro's argument has the origin of where the argument was written, not the macro's.
+  A token made by *##* is the macro's.
 - A *P* record is a word of a constants or variables pool, which has no origin.
 - An *S* record gives the file each symbol of the *sym* file is defined in, in the same order.
 - A file number of *-1* means the file is not known.

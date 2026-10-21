@@ -10,9 +10,11 @@ static bool isLocal;
 static bool isDead;                 // the link is gone and the program is on its way out
 static bool linkIsOpen;
 static bool hasConds;               // the emulator takes conditions; test mode always does
+static bool isRemote;               // the emulator is on another machine
 static Ad1Link lnk;
 
-// The test-mode image. There is no processor, so run control only records what was asked for.
+// The test-mode image.
+// There is no processor, so run control only records what was asked for.
 static struct
 {
     uint32_t core[AD1P_MEM_WORDS];
@@ -28,7 +30,8 @@ static struct
     Ad1Cond watchCond[AD1P_NUM_WATCHES];
 } local;
 
-// A lost connection ends the program. Anything else is the caller's to handle.
+// A lost connection ends the program.
+// Anything else is the caller's to handle.
 static int
 check(int status)
 {
@@ -57,6 +60,7 @@ Ad1Cond watch[AD1P_NUM_WATCHES];
     }
 
     linkIsOpen = true;
+    isRemote = (ad1LinkIsRemote(hostSpec) != 0);
 
     // An emulator from before conditions answers BAD_REQUEST, and ad1 does without them.
     hasConds = (check(ad1CondList(&lnk, brk, AD1P_NUM_BREAKPOINTS, watch, AD1P_NUM_WATCHES)) ==
@@ -89,6 +93,12 @@ bool
 tgtIsLocal(void)
 {
     return( isLocal );
+}
+
+bool
+tgtIsRemote(void)
+{
+    return( isRemote );
 }
 
 void
@@ -479,8 +489,8 @@ tgtBpDelete(uint32_t number)
     return( check(ad1BpDelete(&lnk, number)) );
 }
 
-// Enable or disable a local breakpoint or watch, given whether it is set, enabled, and what to
-// do. Returns the status the server would give.
+// Enable or disable a local breakpoint or watch, given whether it is set, enabled, and what to do.
+// Returns the status the server would give.
 static int
 localToggle(int isSet, int *enabledP, int enable)
 {

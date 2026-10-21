@@ -1,10 +1,13 @@
-CC=gcc -O3 -Wall -Wextra -Wno-unused-result -I../../src/blincolnlights/pdp1
+# Shared code: the link client, the Flexo converter and the .ovl reader and drum writer are in
+# ../UtilLibs, the link's wire format in the emulator's ad1proto.h.
+UTILLIBS=../UtilLibs
+CC=gcc -O3 -Wall -Wextra -Wno-unused-result -I$(UTILLIBS)
 #CC=gcc -g
 BISONFLAGS=
 #CONFLICTS=-Wcounterexamples
 
 OBJS=ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o \
-	flexToAscii.o loader.o ad1link.o target.o overlays.o ../Disassembler/decode_instruction.o
+	flexoConversion.o loader.o ad1link.o target.o overlays.o ovlfile.o ../Disassembler/decode_instruction.o
 
 .PHONY: all clean install
 .DELETE_ON_ERROR:
@@ -21,37 +24,40 @@ install: ad1
 	cp ad1 ../../bin
 	strip ../../bin/ad1
 
-ad1.o: ad1.c ad1.h target.h ad1link.h helpmsgs.h y.tab.h
+ad1.o: ad1.c ad1.h target.h $(UTILLIBS)/ad1link.h helpmsgs.h y.tab.h $(UTILLIBS)/flexoConversion.h
 	$(CC) -c ad1.c
 
 helpText.o: helpText.c
 	$(CC) -c helpText.c
 
-files.o: files.c ad1.h target.h ad1link.h
+files.o: files.c ad1.h target.h $(UTILLIBS)/ad1link.h
 	$(CC) -c files.c
 
-eval.o: eval.c ad1.h target.h ad1link.h y.tab.h
+eval.o: eval.c ad1.h target.h $(UTILLIBS)/ad1link.h y.tab.h
 	$(CC) -c eval.c
 
-commands.o: commands.c ad1.h target.h ad1link.h helpmsgs.h y.tab.h ../Disassembler/decode_instruction.h
+commands.o: commands.c ad1.h target.h $(UTILLIBS)/ad1link.h helpmsgs.h y.tab.h ../Disassembler/decode_instruction.h
 	$(CC) -c commands.c
 
-listFile.o: listFile.c ad1.h target.h ad1link.h
+listFile.o: listFile.c ad1.h target.h $(UTILLIBS)/ad1link.h
 	$(CC) -c listFile.c
 
-loader.o: loader.c ad1.h target.h ad1link.h
+loader.o: loader.c ad1.h target.h $(UTILLIBS)/ad1link.h $(UTILLIBS)/ovlfile.h
 	$(CC) -c loader.c
 
-ad1link.o: ad1link.c ad1link.h ad1proto.h
-	$(CC) -c ad1link.c
+ad1link.o: $(UTILLIBS)/ad1link.c $(UTILLIBS)/ad1link.h $(UTILLIBS)/ad1proto.h
+	$(CC) -c $(UTILLIBS)/ad1link.c -o ad1link.o
 
-target.o: target.c target.h ad1link.h ad1proto.h
+target.o: target.c target.h $(UTILLIBS)/ad1link.h $(UTILLIBS)/ad1proto.h
 	$(CC) -c target.c
 
-flexToAscii.o: flexToAscii.c
-	$(CC) -c flexToAscii.c
+flexoConversion.o: $(UTILLIBS)/flexoConversion.c $(UTILLIBS)/flexoConversion.h
+	$(CC) -c $(UTILLIBS)/flexoConversion.c -o flexoConversion.o
 
-overlays.o: overlays.c ad1.h target.h ad1link.h
+ovlfile.o: $(UTILLIBS)/ovlfile.c $(UTILLIBS)/ovlfile.h
+	$(CC) -c $(UTILLIBS)/ovlfile.c -o ovlfile.o
+
+overlays.o: overlays.c ad1.h target.h $(UTILLIBS)/ad1link.h
 	$(CC) -c overlays.c
 
 ../Disassembler/decode_instruction.o: ../Disassembler/decode_instruction.c

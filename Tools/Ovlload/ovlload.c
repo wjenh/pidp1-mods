@@ -4,10 +4,10 @@
  * am1 assembles each overlay of a program to run in a core window and writes them all
  * to a text file, file.ovl.
  * It contains a heading whose stamp line gives the build stamp and the
- * full address of the program's overlay table.
- * Then for each overlay a line giving its window, bank, first and last address,
+ * full address of the program's overlay table,
+ * then for each overlay a line giving its window, bank, first and last address,
  * drum track, length and mode, followed by its code words,
- * the two header words, the overlay stamp and the overlay's number, included.
+ * the two header words, the overlay stamp and the overlay's number.
  * All numbers are octal.
  *
  * Each overlay goes on its track at drum addresses equal to its window's core
@@ -21,8 +21,7 @@
  * With -n no tape is read and nothing is compared: a program from another build, loaded
  * later, is caught by the overlay manager's stamp check at its first overlay load.
  *
- * A track holding something another tool put there is overwritten and
- * named in a warning.
+ * A track holding something another program put there is overwritten and named in a warning.
  * The user is responsible for saving a drum image that is to be preserved.
  *
  * The .ovl is read and checked by ovlfile.c, which drumlist shares.
@@ -41,6 +40,10 @@
  * 13-Oct-2026 Claude .ovl reader shared in ovlfile.c; other tools' tracks warned of; -f gone
  * 13-Oct-2026 Claude -p punches a tape the pdp-1 writes its own drum from, by ovlwriter.h
  * 18-Oct-2026 wje for a rim produced using -p, just start the program when it loads, no halting.
+ * 21-Oct-2026 Claude the drum writer moved to ovlfile.c for ad1 and fastload; says when it
+ *   halted a running pdp-1
+ * 21-Oct-2026 Claude a failed -m load leaves the memory file as it was
+ * 21-Oct-2026 wje cleanup
  */
 
 #include <unistd.h>
@@ -53,8 +56,8 @@
 #include <errno.h>
 #include <sys/stat.h>
 
-#include "../AD1/ad1link.h"
-#include "../AM1/tapeimage.h"
+#include "ad1link.h"
+#include "tapeimage.h"
 #include "../AM1/xldr.h"
 #include "../AM1/font5x7.h"
 #include "ovlfile.h"
@@ -115,11 +118,7 @@ static size_t punchLength;
 static size_t punchCap;
 static bool punchFailed;            // a frame could not be added, so the tape is not written
 
-static bool readDrum(const char *pathP);
-static void warnOverwritten(void);
-static int overlayNames(int track, char *namesP, size_t size);
 static int compareDrum(void);
-static bool writeDrum(const char *pathP);
 static char *tapeName(const char *ovlPathP);
 static int punchTape(const char *pathP, const char *rootTapeP, bool drumOnly);
 static bool readRootTape(const char *pathP);
@@ -141,6 +140,7 @@ int opt;
 int address;
 int status;
 uint32_t stampWord;
+uint32_t state[AD1P_STATE_WORDS];
 uint32_t run;
 uint32_t pc;
 bool compare;
@@ -149,8 +149,10 @@ bool useMemFile;
 bool autoStart;
 bool wasRunning;
 bool stillRunning;
+bool haveStamp;
 bool programOption;
 bool drumOption;
+bool written;
 char *drumNameP;
 char *punchNameP;
 char *tapeNameP;
@@ -255,6 +257,7 @@ Ad1Link link;
         exit(EXIT_ERROR);
     }
 
+    ovlSetProgram("ovlload", stderr);
     ovlNameP = argv[optind];
     if( !ovlRead(ovlNameP, &ovl, err) )
     {
@@ -264,7 +267,7 @@ Ad1Link link;
 
     if( compare )
     {
-        if( !readDrum(drumNameP) )
+        if( !ovlReadDrum(drumNameP, drum, &drumFileWords) )
         {
             exit(EXIT_ERROR);
         }
@@ -286,23 +289,16 @@ Ad1Link link;
             exit(EXIT_ERROR);
         }
 
-        if( (address = loadTape(tapeNameP, NULL, false)) == LOADFAILED )
+        if( (address = loadTape(tapeNameP)) == LOADFAILED )
         {
             fprintf(stderr, "ovlload: can't load the tape '%s', is it a valid am1 rim tape?\n", tapeNameP);
             exit(EXIT_ERROR);
         }
 
-        if( !tapeImageWord((uint32_t)ovl.tableAddr, &stampWord) )
+        stampWord = 0;
+        haveStamp = tapeImageWord((uint32_t)ovl.tableAddr, &stampWord);
+        if( !ovlStampMatches(&ovl, tapeNameP, haveStamp, stampWord) )
         {
-            fprintf(stderr, "ovlload: the tape '%s' has no word at the overlay table's address %06o;"
-                " it is not this program's tape.\n", tapeNameP, ovl.tableAddr);
-            exit(EXIT_ERROR);
-        }
-
-        if( (int)stampWord != ovl.stamp )
-        {
-            fprintf(stderr, "ovlload: the tape's stamp %06o is not the .ovl's %06o: they are from different"
-                " builds.  Nothing was written.\n", stampWord, ovl.stamp);
             exit(EXIT_ERROR);
         }
     }
@@ -312,7 +308,7 @@ Ad1Link link;
         exit(punchTape(punchNameP, tapeNameP, drumOnly));
     }
 
-    if( !readDrum(drumNameP) )
+    if( !ovlReadDrum(drumNameP, drum, &drumFileWords) )
     {
         exit(EXIT_ERROR);
     }
@@ -334,7 +330,9 @@ Ad1Link link;
             exit(EXIT_DONE);
         }
 
-        if( !(memFilefP = fopen(memFileNameP, "w")) )
+        // Asked without emptying the file: it is emptied and written only once the drum is,
+        // so a load that fails leaves it as it was.
+        if( !tapeMemFileWritable(memFileNameP) )
         {
             fprintf(stderr, "ovlload: can't open memory file '%s', be sure the directory and file have"
                 " write permission.\n", memFileNameP);
@@ -349,7 +347,16 @@ Ad1Link link;
             exit(EXIT_ERROR);
         }
 
-        // Stopped first, so no running program uses the drum while it changes.
+        // Stopped first, so no running program uses the drum while it changes. STOP's reply
+        // gives the state after the stop, so whether it was running is asked first.
+        if( (status = ad1GetState(&link, state)) != AD1P_ST_OK )
+        {
+            fprintf(stderr, "ovlload: can't read the pdp-1's state: %s\n", ad1StatusText(status));
+            ad1LinkClose(&link);
+            exit(EXIT_ERROR);
+        }
+
+        wasRunning = (state[AD1P_STATE_RUN] != 0);
         run = 0;
         if( (status = ad1Stop(&link, &run, &pc)) != AD1P_ST_OK )
         {
@@ -357,15 +364,12 @@ Ad1Link link;
             ad1LinkClose(&link);
             exit(EXIT_ERROR);
         }
-
-        wasRunning = (run != 0);
     }
 
-    if( !writeDrum(drumNameP) )
+    if( !ovlWriteDrum(drumNameP, &ovl, drumFileWords, true) )
     {
-        if( memFilefP )
+        if( useMemFile )
         {
-            fclose(memFilefP);
             printf("The memory file was not written.\n");
         }
         else if( !drumOnly )
@@ -377,25 +381,32 @@ Ad1Link link;
         exit(EXIT_ERROR);
     }
 
-    warnOverwritten();
+    ovlWarnOverwritten(&ovl, drum);
 
     if( drumOnly )
     {
         exit(EXIT_DONE);
     }
 
-    // The program, as fastload loads it.
-    if( memFilefP )
+    // The program, as fastload loads it, from the tape parsed above.
+    if( useMemFile )
     {
-        if( (address = loadTape(tapeNameP, memFilefP, true)) == LOADFAILED )
+        if( !(memFilefP = fopen(memFileNameP, "w")) )
         {
-            fclose(memFilefP);
-            fprintf(stderr, "ovlload: can't load the tape, is it a valid macro or am1 rim tape?\n");
+            fprintf(stderr, "ovlload: can't open memory file '%s', be sure the directory and file have"
+                " write permission.\n", memFileNameP);
+            printf("The drum was written; the memory file was not.\n");
+            exit(EXIT_ERROR);
+        }
+
+        written = tapeWriteMemFile(memFilefP);
+        if( (fclose(memFilefP) != 0) || !written )
+        {
+            fprintf(stderr, "ovlload: can't write memory file '%s'.\n", memFileNameP);
             printf("The drum was written; the memory file is incomplete.\n");
             exit(EXIT_ERROR);
         }
 
-        fclose(memFilefP);
         if( address == LOADSTOP )
         {
             printf("Tape loaded, an am1 program with a stop directive.\n");
@@ -409,7 +420,7 @@ Ad1Link link;
     }
 
     // The pdp-1 is stopped already, so sendImage() finds it halted; whether it was
-    // running is what ad1Stop() said.
+    // running is what ad1GetState() said before the stop.
     if( !sendImage(&link, &stillRunning) )
     {
         ad1LinkClose(&link);
@@ -455,112 +466,6 @@ Ad1Link link;
     exit(EXIT_DONE);
 }
 
-// Read the drum file into drum[], words past its end zero.  A missing file leaves drum[]
-// zero and drumFileWords -1.  Returns false, after saying why, if the file can't be read.
-static bool
-readDrum(const char *pathP)
-{
-int fd;
-ssize_t got;
-struct stat st;
-
-    memset(drum, 0, sizeof(drum));
-    if( (fd = open(pathP, O_RDONLY)) < 0 )
-    {
-        if( errno == ENOENT )
-        {
-            drumFileWords = -1;
-            return(true);
-        }
-
-        fprintf(stderr, "ovlload: can't open drum file '%s': %s\n", pathP, strerror(errno));
-        return(false);
-    }
-
-    if( (fstat(fd, &st) < 0) || ((got = read(fd, drum, sizeof(drum))) < 0) )
-    {
-        fprintf(stderr, "ovlload: can't read drum file '%s': %s\n", pathP, strerror(errno));
-        close(fd);
-        return(false);
-    }
-
-    drumFileWords = (long)(st.st_size / (off_t)sizeof(int32_t));
-    close(fd);
-    return(true);
-}
-
-// Warn of each track an overlay was written on that held another tool's data: a program
-// drumupdater loaded, Adventure's save block, or part of a Z-machine story.  drum[] still
-// holds the drum as it was before the write.
-static void
-warnOverwritten(void)
-{
-int t;
-int zTracks;
-char names[1024];
-
-    zTracks = storyTracks(drum);
-    for( t = 0; t < OVL_TRACKS; ++t )
-    {
-        if( !overlayNames(t, names, sizeof(names)) )
-        {
-            continue;
-        }
-
-        if( drumupdaterMarked(drum, t) )
-        {
-            fprintf(stderr, "ovlload: track %o (%d decimal) held a program drumupdater loaded; it was overwritten"
-                " by %s.\n", t, t, names);
-        }
-
-        if( (t == ADVENTURE_SAVE_TRACK) && adventureSaved(drum) )
-        {
-            fprintf(stderr, "ovlload: track %o (%d decimal) held Adventure's save block; it was overwritten"
-                " by %s.\n", t, t, names);
-        }
-
-        if( t < zTracks )
-        {
-            fprintf(stderr, "ovlload: track %o (%d decimal) held part of a Z-machine story, tracks 0-%o; it was"
-                " overwritten by %s.\n", t, t, zTracks - 1, names);
-        }
-    }
-}
-
-// The overlays written on a track, as "overlay a" or "overlays a, b", in namesP.
-// Returns how many there are.
-static int
-overlayNames(int track, char *namesP, size_t size)
-{
-int i;
-int n;
-int listed;
-size_t used;
-
-    n = 0;
-    for( i = 0; i < ovl.count; ++i )
-    {
-        if( ovl.overlaysP[i].track == track )
-        {
-            ++n;
-        }
-    }
-
-    // snprintf() gives the length it wanted, so a truncated list ends the loop.
-    used = (size_t)snprintf(namesP, size, "%s", (n == 1) ? "overlay" : "overlays");
-    listed = 0;
-    for( i = 0; (i < ovl.count) && (used < size); ++i )
-    {
-        if( ovl.overlaysP[i].track == track )
-        {
-            used += (size_t)snprintf(namesP + used, size - used, "%s%s", (listed++ == 0) ? " " : ", ",
-                ovl.overlaysP[i].name);
-        }
-    }
-
-    return(n);
-}
-
 // Compare the drum with the .ovl: a read-only overlay word for word over its window,
 // the padding included; a persistent one by its header only, since the overlay manager
 // writes its words back.  Returns EXIT_DONE if all agree, else EXIT_DIFFERS.
@@ -595,76 +500,8 @@ Overlay *ovP;
     return( (differs) ? EXIT_DIFFERS : EXIT_DONE );
 }
 
-// Write each overlay's window range on its track: its words, then zeros to the window's
-// end.  Returns false, after saying why and what was written, if a write fails.
-static bool
-writeDrum(const char *pathP)
-{
-int i;
-int fd;
-int span;
-size_t bytes;
-long end;
-int32_t buffer[OVL_TRACKWORDS];
-Overlay *ovP;
-
-    if( (fd = open(pathP, O_RDWR | O_CREAT, 0666)) < 0 )
-    {
-        fprintf(stderr, "ovlload: can't open drum file '%s' to write it: %s\n", pathP, strerror(errno));
-        return(false);
-    }
-
-    if( drumFileWords < 0 )
-    {
-        printf("Drum file %s created.\n", pathP);
-    }
-
-    end = 0;
-    for( i = 0; i < ovl.count; ++i )
-    {
-        ovP = &ovl.overlaysP[i];
-        span = (ovP->last - ovP->first) + 1;
-        if( ((long)(ovP->track * OVL_TRACKWORDS) + ovP->last + 1) > end )
-        {
-            end = (long)(ovP->track * OVL_TRACKWORDS) + ovP->last + 1;
-        }
-        memset(buffer, 0, sizeof(buffer));
-        memcpy(buffer, ovP->wordsP, ovP->length * sizeof(int32_t));
-        bytes = span * sizeof(int32_t);
-
-        // Past the file's end, the write extends it and the gap reads as zeros.
-        if( pwrite(fd, buffer, bytes, (off_t)((ovP->track * OVL_TRACKWORDS) + ovP->first) * sizeof(int32_t))
-            != (ssize_t)bytes )
-        {
-            fprintf(stderr, "ovlload: writing overlay %s to '%s' failed: %s\n", ovP->name, pathP, strerror(errno));
-            fprintf(stderr, "ovlload: %d of %d overlays were written before it.\n", i, ovl.count);
-            close(fd);
-            return(false);
-        }
-
-        printf("overlay %s: track %o, drum %04o-%04o, %o words, %s\n", ovP->name, ovP->track,
-            ovP->first, ovP->last, ovP->length, (ovP->persistent) ? "rw" : "ro");
-    }
-
-    if( close(fd) != 0 )
-    {
-        fprintf(stderr, "ovlload: closing '%s' failed: %s\n", pathP, strerror(errno));
-        return(false);
-    }
-
-    // Only a file that ended before the last overlay's window was extended; the file
-    // then ends there, not at a whole drum.
-    if( (drumFileWords >= 0) && (drumFileWords < end) )
-    {
-        printf("Drum file %s was %ld words long; the overlays past its end extended it with zeros.\n",
-            pathP, drumFileWords);
-    }
-
-    return(true);
-}
-
-// The program's tape, beside the .ovl with the same base name: .rim, else .bin, as am1
-// writes it.  Returns the name, or NULL after saying neither exists.
+// The program's tape, the .ovl with the same base name: .rim or .bin.
+// Returns the name or NULL after saying neither exists.
 static char *
 tapeName(const char *ovlPathP)
 {
@@ -735,7 +572,7 @@ Overlay *ovP;
     {
         if( (ovl.overlaysP[i].bank == 0) && (ovl.overlaysP[i].last >= LDR_START_ADDR) )
         {
-            fprintf(stderr, "ovlload: the window %s, %04o-%04o, reaches the tape's loader at %04o.  Nothing was"
+            fprintf(stderr, "ovlload: the window %s, %04o-%04o, owrwrites the loader at %04o.  Nothing was"
                 " punched.\n", ovl.overlaysP[i].window, ovl.overlaysP[i].first, ovl.overlaysP[i].last,
                 LDR_START_ADDR);
             return(EXIT_ERROR);
@@ -744,7 +581,7 @@ Overlay *ovP;
 
     if( (origin = placeWriter()) < 0 )
     {
-        fprintf(stderr, "ovlload: bank 0 has no %o words free of the windows between %04o and %04o for the"
+        fprintf(stderr, "ovlload: bank 0 has less than %o words free of the windows between %04o and %04o for the"
             " writer.  Nothing was punched.\n", OVW_SIZE, WRITER_LOWEST, WRITER_HIGHEST);
         return(EXIT_ERROR);
     }
@@ -808,7 +645,7 @@ Overlay *ovP;
 
     // Each overlay's window range, its words then zeros as on the drum, and its parameters,
     // the checksum the sum the writer makes with add.
-    printf("Tape %s: the writer at %04lo-%04lo, the %s loader.\n", pathP, origin, origin + OVW_SIZE - 1,
+    printf("Tape %s: the writer is at %04lo-%04lo, the %s loader.\n", pathP, origin, origin + OVW_SIZE - 1,
         (eem) ? "eem" : "nop");
     for( i = 0; i < ovl.count; ++i )
     {

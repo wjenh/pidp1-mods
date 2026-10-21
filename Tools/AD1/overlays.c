@@ -1,21 +1,18 @@
 // Drum overlays: what am1's .ovl and .osym files say about a program's overlays, and which
 // overlay each window holds now.
 //
-// The .ovl gives the windows, the overlays in source order (their numbers, from 1), the build
+// The .ovl file gives the windows, the overlays in source order (their numbers, from 1), the build
 // stamp and the address of the overlay manager's table; the .osym gives the overlays' symbols.
-// Which overlay is in a window is the manager's resident word for it.  Its address is not in
-// the .ovl, but the table in core holds it, in the last word of each overlay's entry.
-// ad1 reads core live whether or not the machine runs, so the resident words and the stamp are
-// read when a command first needs them and forgotten before the next one.
-// A breakpoint or watch bound to an overlay is kept here too.  An emulator with conditions
-// holds the binding as one, the window's resident word holding the overlay's number, and keeps
-// the count; with one from before conditions, a bound breakpoint is an ordinary one at count 1
-// and the count is kept here.
+// Which overlay is in a window is the manager's resident word for it.
+// Its address is not in the .ovl, a table in core holds it in the last word of each overlay's entry.
+// Ad1 reads core live so the resident words and the stamp are read when every command is executed.
+// A breakpoint or watch bound to an overlay is kept on the emulator also.
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 
 #include "ad1.h"
 
@@ -53,6 +50,7 @@ typedef struct {
     u32 coreStamp;              // for this command: the stamp in core
     bool warned;                // the stamp in core differs and has been reported
     u32 warnedStamp;            // the stamp reported
+    char *pathP;                // the .ovl read, so load can tell whether it loads that one
 } FileOverlays, *FileOverlaysP;
 
 // One per file, indexed by the file's number, as its symbols are.
@@ -90,8 +88,9 @@ static int findWindow(FileOverlaysP foP, char *nameP);
 static char *dupString(const char *sP);
 static void dropNewline(char *lineP);
 
-// Read name.ovl and name.osym beside the file's name.sym.  Neither there: nothing to do.  Only
-// one, or either malformed: say so, and the file has no overlays here.
+// Read name.ovl and name.osym beside the file's name.sym.
+// Neither there: nothing to do.
+// If only one, or if either is malformed, say so.
 void
 ovlLoad(FileInfoP infoP)
 {
@@ -152,6 +151,7 @@ char osymName[1024];
     {
         printf("Loaded %d overlays in %d windows from '%s'.\n", foP->numOverlays, foP->numWindows,
             ovlName);
+        foP->pathP = dupString(ovlName);
         adopt(infoP->fileNo);
     }
 
@@ -164,6 +164,45 @@ char osymName[1024];
     {
         fclose(osymFP);
     }
+}
+
+// Whether the overlays' symbols came from the .ovl at pathP.
+// 1 if a file's did, 0 if only/ other .ovl files were read, -1 if none were.
+// Names are compared as real paths so that // "./x.ovl" and "x.ovl" are considered the same file.
+int
+ovlSymbolsFrom(const char *pathP)
+{
+int i;
+int found;
+char want[PATH_MAX];
+char have[PATH_MAX];
+
+    if( !realpath(pathP, want) )
+    {
+        snprintf(want, sizeof(want), "%s", pathP);
+    }
+
+    found = -1;
+    for( i = 0; i < MAXFILES; ++i )
+    {
+        if( !fileOverlays[i].pathP )
+        {
+            continue;
+        }
+
+        found = 0;
+        if( !realpath(fileOverlays[i].pathP, have) )
+        {
+            snprintf(have, sizeof(have), "%s", fileOverlays[i].pathP);
+        }
+
+        if( !strcmp(want, have) )
+        {
+            return( 1 );
+        }
+    }
+
+    return( found );
 }
 
 // Forget every file's overlays, and their symbols.
@@ -213,9 +252,9 @@ FileOverlaysP foP;
     return( foP->windowsP[foP->overlaysP[overlay - 1].window].resident == overlay );
 }
 
-// Is a listing line of this overlay to be shown?  It is when its overlay is in its window, and
-// when none is, so that a window with nothing in it lists every overlay's line, as before ad1
-// knew overlays.
+// Is a listing line of this overlay to be shown?
+// It is when its overlay is in its window, and when none is.
+// A window with nothing in it lists every overlay's line.
 bool
 ovlLineShown(int fileNo, int overlay)
 {
@@ -334,8 +373,8 @@ ovlRef(void)
     return( &commandRef );
 }
 
-// The condition that binds to the overlay refP names: its window's resident word holds its
-// number.  The word's address is read from the table in core, so the program must be there.
+// The condition that binds to the overlay refP names: its window's resident word holds its number.
+// The word's address is read from the table in core, so the program must be there.
 // Returns nil, or why there is no condition.
 const char *
 ovlCondFor(OverlayRefP refP, Ad1Cond *condP)
@@ -379,7 +418,8 @@ bind(BindingP bP, OverlayRefP refP, bool inEmu)
     }
 }
 
-// Bind a breakpoint to the overlay refP names.  inEmu: the emulator holds it as a condition;
+// Bind a breakpoint to the overlay refP names.
+// inEmu: the emulator holds it as a condition;
 // otherwise it is at count 1 there, and fires here on every count-th pass of its overlay.
 void
 ovlBindBreak(int number, OverlayRefP refP, int count, bool inEmu)
@@ -448,9 +488,10 @@ char *ovNameP;
 }
 
 // For the breakpoint listing, the rest of a bound breakpoint's line: its symbol and overlay, or
-// its address, the count and the overlay.  The count is the emulator's, count and curCount,
-// when it holds the binding, else ad1's.  Returns false, printing nothing, if the breakpoint is
-// not bound.
+// its address, the count and the overlay.
+// The count is the emulator's, count and curCount,
+// when it holds the binding, else ad1's.
+// Returns false, printing nothing, if the breakpoint is not bound.
 bool
 ovlPrintBinding(int number, u32 address, bool enabled, int count, int curCount)
 {
@@ -517,7 +558,8 @@ ovlWatchOverlay(int number)
 }
 
 // With the stamp in core not the files', a bound breakpoint or watch cannot fire: say so, once
-// until the stamp changes, and return true.  Residency must have been read for its file.
+// until the stamp changes, and return true.
+// Residency must have been read for its file.
 static bool
 stampSays(BindingP bP, const char *whatP, int n)
 {
@@ -543,8 +585,8 @@ FileOverlaysP foP;
 }
 
 // A hit of watch number: false if it is bound and must not fire, the stamp in core not being
-// the files'; *saidP is set if that was printed now.  The emulator holds the condition, so
-// otherwise a hit is always in the bound overlay.
+// the files'; *saidP is set if that was printed now.
+// The emulator holds the condition, so otherwise a hit is always in the bound overlay.
 bool
 ovlWatchHit(int number, bool *saidP)
 {
@@ -639,14 +681,14 @@ int w;
     foP->read = false;
 }
 
-// A hit of breakpoint number at this address.  A bound breakpoint the emulator holds as a
-// condition fired there in its overlay with its count reached, so it fires here when it is the
-// one the emulator named, unless the stamp in core is not the files'.  Without conditions, each
-// enabled bound breakpoint here counts the pass when its overlay is in its window, and fires when
-// its count is reached: the emulator names only the first breakpoint at an address, and two
-// overlays' entries often share one, so every one here is taken, whichever the emulator named.
-// The one it named, if not bound, fires as it always has.  Returns false if no bound breakpoint
-// is here.
+// A hit of breakpoint number at this address.
+// A bound breakpoint the emulator holds as a condition fired there in its overlay with its count reached,
+// so it fires here when it is the/ one the emulator named, unless the stamp in core is not the files'.
+// Without conditions, each/ enabled bound breakpoint here counts the pass when its overlay is in its window,
+// and fires when/ its count is reached: the emulator names only the first breakpoint at an address,
+// and two/ overlays' entries often share one, so every one here is taken, whichever the emulator named.
+// The one it named, if not bound, fires as it always has.
+// Returns false if no bound breakpoint is here.
 bool
 ovlBreakHit(int number, u32 address, BoundHitP hitP)
 {
@@ -762,7 +804,8 @@ int n;
     }
 }
 
-// exit leaves the emulator's breakpoints, disabled.  One the emulator holds as a condition stays
+// exit leaves the emulator's breakpoints, disabled.
+// One the emulator holds as a condition stays
 // bound, and a later ad1 with the same files finds it; one bound here goes with ad1.
 void
 ovlBreaksLeft(void)
@@ -780,8 +823,8 @@ int n;
     }
 }
 
-// The .ovl: its header, the stamp line, and an "overlay" line for each overlay, in source
-// order.  The lines of words between them are the loader's, not ours.
+// The .ovl: its header, the stamp line, and an "overlay" line for each overlay, in source order.
+// The lines of words between them are the loader's, not ours.
 static bool
 readOvl(FileOverlaysP foP, FILE *fP)
 {
@@ -854,8 +897,8 @@ char winName[256];
     return( foP->numOverlays > 0 );
 }
 
-// The .osym: its header, then "aaaaaa t name line overlay" for each symbol.  Every line is
-// checked before any symbol is added, so a bad file adds none.
+// The .osym: its header, then "aaaaaa t name line overlay" for each symbol.
+// Every line is checked before any symbol is added, so a bad file adds none.
 static bool
 readOsym(int fileNo, FILE *fP)
 {
@@ -901,7 +944,8 @@ char ovName[256];
 }
 
 // Read the table in core, once per command: the stamp, then each overlay's resident-word
-// address, then each window's resident word.  A stamp that is not the .ovl's means the files
+// address, then each window's resident word.
+// A stamp that is not the .ovl's means the files
 // are not the program in core, said once until the stamp changes; then, and when the table's
 // addresses are not this program's, every window holds none.
 static void
@@ -1019,6 +1063,7 @@ int i;
 
     free(foP->windowsP);
     free(foP->overlaysP);
+    free(foP->pathP);
     memset(foP, 0, sizeof(FileOverlays));
 }
 

@@ -46,7 +46,7 @@ ovlwriter, puts a program's drum overlays on the drum from paper tape
 // for tracks 0-17, 1 << (n - 020) in the second for tracks 20-37.
 #define OVW_TRACKS_A_WORD 020
 
-// The other tools' data the survey looks for, as Tools/Ovlload/ovlfile.h
+// The other tools' data the survey looks for, as Tools/UtilLibs/ovlfile.h
 // gives it: drumupdater's marker in the last three words of a track, and
 // Adventure's save block, its magic in word 0 of track 20.
 #define OVW_MARK 0707070

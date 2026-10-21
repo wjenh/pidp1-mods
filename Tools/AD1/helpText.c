@@ -75,6 +75,9 @@ char *loadHelp[] = {
     "It is the equivalent of mounting a tape and pressing read-in.",
     "If no file name is given and there is a current file, a RIM for that name will be tried.",
     "Either a .rim or a .bin file extension can be used, both are searched for.",
+    "A program with drum overlays also has a .ovl file.",
+    "Load writes its overlays to the drum, just as ovlload does, if the tape's stamp matches the .ovl's.",
+    "In test mode, or with -h naming another machine, the drum is not written; run ovlload on that machine.",
     "Example: load foo.rim",
     NIL};
 

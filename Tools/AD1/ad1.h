@@ -5,7 +5,7 @@
 #include "ad1link.h"
 #include "target.h"
 
-#define VERSION "2.7 20-Oct-2026"
+#define VERSION "2.8 21-Oct-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    10000 // max number of lines in a file
@@ -26,7 +26,7 @@
 
 #define INDIRECT_BIT 010000
 
-// flexToAscii() returns
+// flexoToAsciiShift() returns
 #define NOCHAR -1
 #define LCS -2
 #define UCS -3
@@ -34,6 +34,10 @@
 // loader returns
 #define LOADFAILED -1
 #define LOADSTOP -2
+
+// The drum file load writes a program's overlays to, unless -i names another.
+#define DRUMFILE "/opt/pidp1-mods/pdp23drum"
+extern char *drumFileP;
 
 // Flags used in Directives
 #define FORCE_DECIMAL 1 // a number will only be interpreted as a base 10 number
@@ -140,6 +144,7 @@ typedef struct {
 } FileInfo, *FileInfoP;
 
 void ovlLoad(FileInfoP infoP);
+int ovlSymbolsFrom(const char *pathP);
 void ovlClear(void);
 void ovlForget(void);
 bool ovlSymbolShown(int fileNo, int overlay);

@@ -1,12 +1,16 @@
 // Load a binary tape as if it had been done via read-in.
 // A tape in bin or am1 format can be loaded.
+// A tape with a .ovl also is a program with drum overlays.
+// They are written to the drum file first, as ovlload does.
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include "ad1.h"
+#include "ovlfile.h"
 
 // The kind of tape we are loading
 #define BINTAPE 1
@@ -28,9 +32,14 @@ static void ungetWord(int word);
 static int skipLoader(FILE *fP);
 static int loadAm1(FILE *fP);
 static int loadBin(FILE *fP);
+// The drum as it was before the overlays were written, for the warnings.
+static int32_t drum[OVL_DRUMWORDS];
+
 static bool beginBlock(uint32_t address);
 static bool addWord(uint32_t word);
-static bool sendImage(void);
+static bool tapeWord(uint32_t address, uint32_t *wordP);
+static bool writeOverlays(const char *tapeP, bool *wasRunningP);
+static bool sendImage(bool wasRunning);
 
 // Attempt to load a tape.
 // If the file can't be opened, say so and return LOADFAILED.
@@ -42,6 +51,7 @@ loadTape(char *filenameP)
 {
 int kind;           // which kind of format we are loading
 int addr;
+bool wasRunning;
 FILE *fP;
 
     if( !(fP = fopen(filenameP, "r")) )
@@ -88,7 +98,14 @@ FILE *fP;
         return(LOADFAILED);
     }
 
-    if( !sendImage() )
+    // The overlays go on the drum before the program goes in core, as ovlload does it.
+    wasRunning = false;
+    if( !writeOverlays(filenameP, &wasRunning) )
+    {
+        return(LOADFAILED);
+    }
+
+    if( !sendImage(wasRunning) )
     {
         return(LOADFAILED);
     }
@@ -350,14 +367,141 @@ addWord(uint32_t word)
     return(true);
 }
 
-// Send the tape to the emulator in one request, stopping it first if it is running. Nothing is
-// stored unless all of it can be. Returns true on success.
+// Find the word the parsed tape puts at address, the last one given when blocks overlap, as
+// read-in would leave it. Returns true with *wordP set, or false if no block covers address.
 static bool
-sendImage(void)
+tapeWord(uint32_t address, uint32_t *wordP)
+{
+uint32_t i;
+uint32_t first;
+bool found;
+
+    found = false;
+    first = 0;
+    for( i = 0; i < nBlocks; ++i )
+    {
+        if( (address >= blocks[i].address) && (address < (blocks[i].address + blocks[i].count)) )
+        {
+            *wordP = imageWords[first + (address - blocks[i].address)];
+            found = true;
+        }
+
+        first += blocks[i].count;
+    }
+
+    return(found);
+}
+
+// If the tape has a .ovl file aslo, check it against the tape and write its overlays to the
+// drum file, stopping the pdp-1 first if it is running, *wasRunningP says whether it did.
+// In test mode,or with the emulator on another machine the drum is not written and a message given.
+// Returns false, having said why, if the program must not be loaded.
+// Nothing is written then unless the message says it was.
+static bool
+writeOverlays(const char *tapeP, bool *wasRunningP)
+{
+OvlFile ovl;
+char *ovlNameP;
+char err[OVL_ERRSIZE];
+uint32_t stampWord;
+uint32_t pc;
+uint32_t state[AD1P_STATE_WORDS];
+long drumFileWords;
+bool haveStamp;
+bool ok;
+int status;
+
+    if( !(ovlNameP = ovlNameForTape(tapeP)) )
+    {
+        printf("Out of memory, nothing was loaded.\n");
+        return(false);
+    }
+
+    if( access(ovlNameP, F_OK) != 0 )
+    {
+        free(ovlNameP);
+        return(true);               // no overlays, a program like any other
+    }
+
+    ovlSetProgram("ad1", stdout);
+    if( !ovlRead(ovlNameP, &ovl, err) )
+    {
+        printf("The overlay file is not usable: %s.  Nothing was loaded.\n", err);
+        free(ovlNameP);
+        return(false);
+    }
+
+    // Every check comes before anything is written.
+    stampWord = 0;
+    haveStamp = tapeWord((uint32_t)ovl.tableAddr, &stampWord);
+    if( !ovlStampMatches(&ovl, tapeP, haveStamp, stampWord) )
+    {
+        ovlFree(&ovl);
+        free(ovlNameP);
+        return(false);
+    }
+
+    if( ovlSymbolsFrom(ovlNameP) == 0 )
+    {
+        printf("The overlays are from '%s', not the overlay file whose symbols ad1 has.\n", ovlNameP);
+    }
+
+    ok = true;
+    if( tgtIsLocal() )
+    {
+        printf("Test mode: the overlays in '%s' were not written to the drum.\n", ovlNameP);
+    }
+    else if( tgtIsRemote() )
+    {
+        printf("The pdp-1 is on another machine: the overlays in '%s' were not written to its drum;"
+            " run ovlload there.\n", ovlNameP);
+    }
+    else if( !(ok = ovlReadDrum(drumFileP, drum, &drumFileWords)) )
+    {
+        printf("Nothing was loaded.\n");
+    }
+    else
+    {
+        // Stopped first, so no running program uses the drum while it changes. STOP's reply
+        // gives the state after the stop, so whether it runs is asked first.
+        if( (status = tgtGetState(state)) != AD1P_ST_OK )
+        {
+            printf("Can't read the pdp-1's state: %s.  Nothing was loaded.\n", ad1StatusText(status));
+            ok = false;
+        }
+        else if( state[AD1P_STATE_RUN] && ((status = tgtStop(&pc)) != AD1P_ST_OK) )
+        {
+            printf("Can't stop the pdp-1: %s.  Nothing was loaded.\n", ad1StatusText(status));
+            ok = false;
+        }
+        else
+        {
+            *wasRunningP = (state[AD1P_STATE_RUN] != 0);
+            if( !(ok = ovlWriteDrum(drumFileP, &ovl, drumFileWords, false)) )
+            {
+                printf("The program was not loaded; the pdp-1 is stopped.\n");
+            }
+            else
+            {
+                ovlWarnOverwritten(&ovl, drum);
+            }
+        }
+    }
+
+    ovlFree(&ovl);
+    free(ovlNameP);
+    return(ok);
+}
+
+// Send the tape to the emulator in one request, stopping it first if it is running. Nothing is
+// stored unless all of it can be. wasRunning says writeOverlays() stopped it already. Returns
+// true on success.
+static bool
+sendImage(bool wasRunning)
 {
 uint32_t i;
 uint32_t used;
-bool wasRunning;
+bool stillRunning;
 int status;
 
     // A block that ended up with no words has nothing to write; drop it, keeping the words of
@@ -377,7 +521,8 @@ int status;
         return(true);               // an empty tape, nothing to store
     }
 
-    status = tgtWriteBlocks(blocks, nBlocks, imageWords, true, &wasRunning);
+    // A tape with overlays has words, so one that stopped the pdp-1 for them never ends above.
+    status = tgtWriteBlocks(blocks, nBlocks, imageWords, true, &stillRunning);
     if( status != AD1P_ST_OK )
     {
         printf("Can't load the pdp-1: %s.\n", ad1StatusText(status));
@@ -389,7 +534,7 @@ int status;
         return(false);
     }
 
-    if( wasRunning )
+    if( wasRunning || stillRunning )
     {
         printf("The pdp-1 was running and has been stopped.\n");
     }

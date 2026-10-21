@@ -129,6 +129,20 @@ long port;
     return( 0 );
 }
 
+int
+ad1LinkIsRemote(const char *specP)
+{
+char host[AD1L_MAX_HOST];
+int port;
+
+    if( ad1LinkParseHost(specP, host, sizeof(host), &port) != 0 )
+    {
+        return( 0 );
+    }
+
+    return( !isLoopbackHost(host) );
+}
+
 // Milliseconds left until a monotonic deadline given in ms.
 static int64_t
 nowMs(void)

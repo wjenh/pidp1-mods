@@ -1,17 +1,21 @@
-CC=gcc $(CCFLAGS)
+CC=gcc $(CCFLAGS) -I$(UTILLIBS)
 CCFLAGS= -O3 -s
 #CCFLAGS= -g
 #BISONFLAGS=-Wcounterexamples
 BISONFLAGS=
-# LINKDIR is where fastload finds the socket info for connecting to the pdp-1
-LINKDIR=../AD1
+# Shared code is in UTILLIBS
+# Am1 uses its Flexo converter, fastload uses the link client, the tape reader
+# and the .ovl reader and drum writer
+# Each into this directory, no object files are created there.
+# The link's wire format is the emulator's ad1proto.h.
+UTILLIBS=../UtilLibs
 
 OBJS=am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o eval.o \
         maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o optimizer.o \
         optdecode.o optrefs.o optflow.o optreturn.o optroutine.o optcallgraph.o \
         optstrings.o optrules.o optreport.o optshare.o optregion.o opttransform.o \
         optvalue.o optpreserve.o optscratch.o optguess.o optspeed.o optrelayout.o optwindow.o \
-        srccodegen.o ovlcodegen.o preprocess.o mapcodegen.o
+        srccodegen.o ovlcodegen.o preprocess.o mapcodegen.o flexoConversion.o
 
 # am1test is am1 built with AM1_TEST_SWITCHES defined, which also accepts the
 # -O= modifiers that exist to test the optimizer; wordtable_check.sh and
@@ -28,11 +32,9 @@ am1:    $(OBJS)
 am1test: $(TESTOBJS)
 	$(CC) -o am1test $^
 
-# fastload uses ad1's debugger link client, compiled in, so that no
-# object file is left in $(LINKDIR).
-# Its tape reader, tapeimage.c, is shared with ovlload which compiles it the same way from ../Ovlload.
-fastload: fastload.c tapeimage.c tapeimage.h $(LINKDIR)/ad1link.c $(LINKDIR)/ad1link.h $(LINKDIR)/ad1proto.h
-	$(CC) -I$(LINKDIR) fastload.c tapeimage.c $(LINKDIR)/ad1link.c -o fastload
+fastload: fastload.c $(UTILLIBS)/tapeimage.c $(UTILLIBS)/tapeimage.h $(UTILLIBS)/ad1link.c \
+	$(UTILLIBS)/ad1link.h $(UTILLIBS)/ad1proto.h $(UTILLIBS)/ovlfile.c $(UTILLIBS)/ovlfile.h
+	$(CC) -I$(UTILLIBS) fastload.c $(UTILLIBS)/tapeimage.c $(UTILLIBS)/ad1link.c $(UTILLIBS)/ovlfile.c -o fastload
 
 clean:
 	@rm -f *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 am1test fastload symtabgen cvtxldr \
@@ -47,7 +49,7 @@ install: am1 fastload
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c
 
-lex.yy.o: lex.yy.c y.tab.h lexfuncs.c preprocess.h
+lex.yy.o: lex.yy.c y.tab.h lexfuncs.c preprocess.h $(UTILLIBS)/flexoConversion.h
 	$(CC) -c lex.yy.c
 
 y.tab.o: y.tab.c
@@ -131,6 +133,9 @@ optwindow.o: optwindow.c optimizer.h am1.h symtab.h y.tab.h
 optrelayout.o: optrelayout.c optimizer.h am1.h symtab.h y.tab.h
 	$(CC) -c optrelayout.c
 
+flexoConversion.o: $(UTILLIBS)/flexoConversion.c $(UTILLIBS)/flexoConversion.h
+	$(CC) -c $(UTILLIBS)/flexoConversion.c -o flexoConversion.o
+
 parsefns.o: parsefns.c am1.h y.tab.h
 	$(CC) -c parsefns.c
 
@@ -143,13 +148,13 @@ maccodegen.o: maccodegen.c am1.h y.tab.h
 bincodegen.o: bincodegen.c am1.h y.tab.h font5x7.h xldr.h
 	$(CC) -c bincodegen.c
 
-listcodegen.o: listcodegen.c am1.h y.tab.h
+listcodegen.o: listcodegen.c am1.h y.tab.h $(UTILLIBS)/flexoConversion.h
 	$(CC) -c listcodegen.c
 
 mapcodegen.o: mapcodegen.c am1.h symtab.h preprocess.h
 	$(CC) -c mapcodegen.c
 
-srccodegen.o: srccodegen.c optimizer.h am1.h y.tab.h type340chars.h
+srccodegen.o: srccodegen.c optimizer.h am1.h y.tab.h type340chars.h $(UTILLIBS)/flexoConversion.h
 	$(CC) -c srccodegen.c
 
 testcodegen.o: testcodegen.c am1.h y.tab.h

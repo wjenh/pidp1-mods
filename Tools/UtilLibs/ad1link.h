@@ -1,4 +1,4 @@
-// Client side of the emulator's debugger, shared by ad1 and fastload.
+// Client side of the emulator's debugger, shared by ad1, fastload and ovlload.
 // One connection, one request in flight, a typed wrapper for each request.
 //
 // Every wrapper returns AD1L_COMM if there is no connection or no reply, with the reason in
@@ -103,6 +103,10 @@ typedef struct
 // host with no port gets the loopback port if it is a loopback name or address, else the
 // remote one. Returns 0, or AD1L_COMM if the text is not one of those.
 int ad1LinkParseHost(const char *specP, char *hostP, size_t hostSize, int *portP);
+
+// 1 if a host given as for ad1LinkParseHost() is another machine, 0 if it is this one (a
+// loopback name or address, or none). Text that does not parse gives 0; opening it will fail.
+int ad1LinkIsRemote(const char *specP);
 
 // The text of the last failure. It names the host and port that were tried.
 const char *ad1LinkError(void);

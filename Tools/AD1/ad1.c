@@ -41,6 +41,8 @@
  *   condition (lexer.l, parser.y, commands.c, helpText.c); a listed mask reads "mask m"
  * 14-Oct-26 Claude - v2.6, various minor bugfixes, type corrections
  * 14-Oct-26 wje production cleanup
+ * 21-Oct-26 Claude - v2.8, load writes a program's drum overlays; -i names the drum file
+ * 21-Oct-26 wje cleanup
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -56,6 +58,7 @@
 #include "ad1.h"
 #include "helpmsgs.h"
 #include "y.tab.h"
+#include "flexoConversion.h"
 
 #define MEMFILE "/opt/pidp1-mods/coremem"
 
@@ -71,6 +74,7 @@ char *fmt16P = "%05x";
 char *fmt2P = "%018b";
 char *symFileNameP;
 char *sourceFileNameP;
+char *drumFileP = DRUMFILE;
 
 // Names that start with the same character(s) can be selected by the order they are in below.
 // The first match with the given significance matches.
@@ -118,7 +122,7 @@ Dispatch extraHelpTable[] = {
 int memListCount;
 void *memList[256];     // allocated memory
 
-static bool flexShifted = true; // last shift state returned by flexToAscii(), true is UC,  reset on format change
+static bool flexShifted = true; // last shift state returned by flexoToAsciiShift(), true is UC,  reset on format change
 
 DispatchP findCommand(DispatchP tableP, char *nameP);
 
@@ -167,7 +171,6 @@ extern int getMapForFileNo(MapEntryP mapP, int fileNo);
 extern int signExtend(int oc);
 extern int twosCompl(int val);
 extern int getNumber(char *strP, int base);
-extern int flexToAscii(int ch, bool *shiftP);
 extern bool isFileMapped(int fileno);
 extern bool printLine(int fileNo, int lineNo);
 extern bool printNextLine(void);
@@ -226,6 +229,25 @@ char line[256];
                     --argc;
                     ++argv;
                     hostP = *argv;
+                }
+                else
+                {
+                    usage();
+                }
+                break;
+
+            case 'i':
+                // The drum file, as for -h: the rest of this argument or the whole next one.
+                if( *cP )
+                {
+                    drumFileP = cP;
+                    cP += strlen(cP);
+                }
+                else if( argc > 1 )
+                {
+                    --argc;
+                    ++argv;
+                    drumFileP = *argv;
                 }
                 else
                 {
@@ -591,10 +613,12 @@ bool
 printFlex(bool shifted, char ch)
 {
 int chr;
+int shift;
 bool newShift;
 
-    newShift = shifted;
-    chr = flexToAscii(ch, &newShift);
+    shift = shifted;
+    chr = flexoToAsciiShift(ch, &shift);
+    newShift = (shift != 0);
     switch( chr )
     {
     case NOCHAR:
@@ -1153,11 +1177,12 @@ sigHandler(int signo)
 void
 usage()
 {
-    printf("Usage: ad1 [-v] [-y] [-x] [-T] [-h host[:port]] [filename ...]\n");
+    printf("Usage: ad1 [-v] [-y] [-x] [-T] [-h host[:port]] [-i drumfile] [filename ...]\n");
     printf("-v prints the version and exits\n");
     printf("-y enables yacc debugging\n");
     printf("-x enables lex debugging\n");
     printf("-T enables test mode\n");
     printf("-h connects to the emulator on another machine, default is this one\n");
+    printf("-i names the drum file load writes a program's overlays to, default %s\n", DRUMFILE);
     exit(1);
 }

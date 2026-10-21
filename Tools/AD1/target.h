@@ -1,6 +1,6 @@
 // What ad1 talks to, a running emulator over the debugger link (ad1link), or, in test mode, a
 // local image of memory and registers with no processor behind it.
-// The rest of ad1 calls only/ these functions, so it does not know which one it has.
+// The rest of ad1 calls only these functions, so it does not know which one it has.
 //
 // Every function returns the server's status, the localimage imitates the ones that apply.
 // A lost connection ends the program here with a message, callers never see one.
@@ -12,24 +12,29 @@
 
 #include "ad1link.h"
 
-// Connect to the emulator at host[:port] (NULL is localhost). Returns 0, or -1 with the reason
-// in ad1LinkError().
+// Connect to the emulator at host[:port] (NULL is localhost).
+// Returns 0, or -1 with the reason in ad1LinkError().
 int tgtOpen(const char *hostSpec);
 
-// Use a local image instead. The memory is empty until the caller fills tgtLocalCore().
+// Use a local image instead.
+// The memory is empty until the caller fills tgtLocalCore().
 void tgtOpenLocal(void);
 uint32_t *tgtLocalCore(void);
 
 bool tgtIsLocal(void);
 
-// Leave the emulator: apply the policy for the breakpoints and watches, and close the link. Safe
-// to call more than once or after the link is gone.
+// The emulator is on another machine: tgtOpen() was given a host that is not this one.
+bool tgtIsRemote(void);
+
+// Leave the emulator: apply the policy for the breakpoints and watches, and close the link.
+// Safe to call more than once or after the link is gone.
 void tgtClose(int policy);
 
 // The socket to select() on, or -1 in test mode.
 int tgtFd(void);
 
-// Read and queue whatever the emulator has sent. Returns 1 if a hit event is waiting.
+// Read and queue whatever the emulator has sent.
+// Returns 1 if a hit event is waiting.
 int tgtPump(void);
 
 // The next queued event, or 0 if none.
@@ -62,8 +67,9 @@ int tgtWatchEnable(uint32_t number);
 int tgtWatchDisable(uint32_t number);
 int tgtWatchList(Ad1WatchEntry *entriesP);      // AD1P_NUM_WATCHES entries
 
-// Conditions: (word at address & mask) == value. tgtHasConds() says whether the emulator takes
-// them; one from before them does not, and the three calls return AD1P_ST_BAD_STATE there.
+// Conditions: (word at address & mask) == value.
+// tgtHasConds() says whether the emulator takes them; one from before them does not,
+// and the three calls return AD1P_ST_BAD_STATE there.
 // tgtCondList() fills AD1P_NUM_BREAKPOINTS and AD1P_NUM_WATCHES entries.
 bool tgtHasConds(void);
 int tgtBpSetCond(uint32_t address, uint32_t count, const Ad1Cond *condP, uint32_t *numberP);

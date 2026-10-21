@@ -112,6 +112,8 @@ ovlload ovldemo.ovl
 **am1** writes *ovldemo.rim* (the root) and *ovldemo.ovl* (the two overlays).
 **ovlload** writes the overlays to the drum, then loads *ovldemo.rim* into the running pidp-1 as
 **fastload** does, and offers to start it.
+*fastload ovldemo.rim*, or **ad1**'s *load ovldemo.rim*, does the same, since a tape with a *.ovl*
+beside it has its overlays written too (see "Loading with fastload or ad1").
 
 ## The directives
 
@@ -344,81 +346,84 @@ A program that runs with breaks on needs a handler for the drum's channel.
 One that keeps them off and turns them on later should issue a *cbs* first, or it will take a break
 for the manager's last transfer.
 
-### Your program's own use of the drum
+### Your program's use of the drum
 
-The manager waits for the drum to be idle, then makes its own transfers, so your program may use the
-drum too, with these cautions:
+The manager waits for the drum to be idle then makes its own transfers.
+Your program can use the drum also, with these cautions:
 
-- reserve its tracks with *%%drumreserve*, so no overlay is put there;
+- reserve tracks with *%%drumreserve* so no overlay is put there;
 - a *dra* read after an *%%ovcall* reports the manager's transfer, not yours.
 
 ## Read-only and persistent overlays
 
 A **read-only** overlay, the default, is never written back.
-Each load starts from the assembled words, and a load can always be made again.
-Its *var*s and other words start again at every load, which is why a *var* in a read-only overlay
-gets the *overlay* warning.
+Each load starts from the assembled data.
+Its *var*s and other words start with the original values at every load, unlike those in core memory.
+A *var* in a read-only overlay gets an *overlay* warning.
 
-A **persistent** overlay, *%%overlay name, window, persistent*, is written back to its own track when
-another overlay is about to take its window, then the other is read: two transfers.
-Its words, counters and *var*s survive.
+A **persistent** overlay, *%%overlay name, window, persistent*, is written back to its drum location
+when another overlay is going to to be loaded into its window.
+Any changes made while in memory are preserved.
 
-A halt during the write-back leaves the window recorded as holding the persistent overlay, its words
-still whole in core, so nothing is lost; the next call writes it back again.
+A halt during the swapping can leave both the memory version and the drum version in an incosistent state.
 
 ### The single-pass swap
 
-The drum can write one track and read another in the same transfer, at the same drum address and core
-location (*UsingType23Drum.md*, "Setting both read and write"), and every overlay of a window is at
-the same drum address.
-So a persistent overlay can be written back and the next one read in one transfer, a swap, which
-saves a whole revolution of the drum, 34.8 ms, on every such eviction.
-Define *OV_SINGLE_PASS* before the manager is included, and every eviction of a persistent overlay in
-the program is a swap:
+The drum can write one track and read another in the same transfer.
+A persistent overlay can be written back and the next one read in one transfer, a swap, which
+saves a complete revolution of the drum, 34.8 ms, on every swap.
+This is the default behavior.
+
+Define *OV_TWO_PASS* before the manager is included to use a two-part update, separate writes and reads.
+This can cost an extra drum rotation, it's not usually used.
 
 ```
-#define OV_SINGLE_PASS
+#define OV_TWO_PASS
 #include <DRUM/overlay.ac>
 ```
 
-Nothing else changes: the same directives, the same *.ovl*, the same **ovlload**.
-Evicting a read-only overlay is still a single read.
-The swap moves as many words as the longer of the two overlays; the words past the shorter one's end
-are its own track's, inside its window's range, which no other overlay uses.
+Nothing else changes, the same directives, the same *.ovl*, the same **ovlload**.
+Swapping a read-only overlay is still a single read, since nothing is written back for one.
+The swap moves as many words as the longer of the two overlays.
+Space is always reserved on the drum for each overlay using the size of the largest in the window,
+there is no danger of overrunning an overlay's storage.
 
-**The price is a halt.**
-An ad1 stop, the STOP switch or a single step part-way through a swap ends it in error, and by then
+**The price of a halt.**
+
+An ad1 stop, the STOP switch, or a single step part-way through a swap ends it in error, but by then
 the window holds the incoming overlay's first words and the outgoing one's after them, while the
 outgoing overlay's track holds its new words up to the same point and the words of its previous
 eviction after it.
-Nothing records where that point was, so the outgoing overlay's words cannot be put back together,
-and a swap is never made again: making it again would write the incoming overlay's words over the
-outgoing one's track.
-Instead the manager stops at *ovErrSwap* with 4 in AC, the window recorded as holding nothing (or goes
-to the error hook).
-Continue reads the incoming overlay alone, an ordinary read, and the program goes on; the outgoing
-overlay's next load gets its track as the swap left it, part new and part old.
-Starting the program again from its start address after such a halt, instead of continuing, loses the
-outgoing overlay's words the same way, and nothing reports it.
+Nothing records where that point was, so the outgoing overlay's words cannot be put back together;
+a swap is never made again.
 
-So use the swap for a program you will not stop while it is evicting a persistent overlay, or whose
-persistent overlays can stand losing their words after a stop; while debugging with ad1, assemble
-without it.
+Making it again would write the incoming overlay's words over the outgoing one's track.
+Instead, the manager stops at *ovErrSwap* with 4 in AC, the window recorded as holding nothing
+or calls the error hook if defined.
+
+Continue reads just the incoming overlay, an ordinary read, and the program goes on.
+The outgoing overlay's next load gets its track as the swap left it, part new and part old.
+Starting the program again from its start address after such a halt instead of continuing loses the
+outgoing overlay's words the same way.
+
+Use persistend overlays for a program you will not stop while it is swapping, or whose
+persistent overlays can stand losing their words after a stop.
+Take carw while debugging with ad1.
 
 ## The drum layout
 
-**am1** places every overlay; nothing else needs to know where.
+**am1** places every overlay itself.
 
-- Each overlay gets its window's whole range on one track, at drum addresses equal to the window's core
+- Each overlay gets its window's entire  range on one track at drum addresses equal to the window's core
   addresses.
-  All the overlays of one window are at the same drum addresses, on different tracks.
+  All the overlays of one window are at the same drum addresses but on different tracks.
 - Tracks are given out in source order, the lowest free first, skipping the reserved ones.
-  Windows whose ranges do not overlap can share a track; two windows at the same range, in different
-  banks, cannot.
-- With 32 tracks, a window can have as many overlays as there are tracks left.
-  When they run out, **am1** says which overlay has no track.
+  Windows whose ranges do not overlap can share a track, two windows with the same addresses but in different
+  banks cannot.
+- A window can have as many overlays as there are tracks allowed, up to 32.
+  If no more can be assigned, **am1** reports which one failed.
 
-*-S* prints the layout after the per-bank high-water marks, and the listing has it above *%%ovtable*:
+*-S* prints the drum layout after the per-bank high-water marks; the listing has it aft3er *%%ovtable*:
 
 ```
 Overlays on the drum, stamp 110524:
@@ -435,81 +440,77 @@ Each halt stops with its number in AC:
 | Label | AC | Cause | Continue |
 |-------|----|-------|----------|
 | *ovErrNest* | 1 | an *%%ovcall* or *%%ovload* while an overlay is running | halts again |
-| *ovErrStamp* | 2 | the overlay read is not this build's, or not this overlay: the drum holds another build's overlays, or none | reads the overlay again, so run **ovlload** and continue |
+| *ovErrStamp* | 2 | the overlay read is not this build's, or not this overlay, or none is loaded | reads the overlay again, so run **ovlload** and continue |
 | *ovErrDrum* | 3 | *OV_TRIES* transfers in a row (4 by default) ended in error | tries as many again |
 | *ovErrSwap* | 4 | with *OV_SINGLE_PASS* only: a swap ended in error, a halt part-way through it; the outgoing overlay's words are lost | reads the incoming overlay alone |
 
-The stamp is what makes the second one useful: a root reassembled and the drum not reloaded, or the
-other way round, stops at the first load instead of running the wrong code.
+The stamp is what makes the second one useful, a root reassembled and the drum not reloaded, or the
+opposite, stops at the first load instead of running the wrong code.
 
 The numbers are *OV_ERR_NEST*, *OV_ERR_STAMP*, *OV_ERR_DRUM* and *OV_ERR_SWAP* in *overlay.ah*.
 
 ### Not halting: the error hook
 
 A program that must not stop, one serving users over a terminal line for example, sets *ovErrHook*
-to the full address of its own recovery point, once, after *ovInit*:
+to the full address of its own recovery point after *ovInit*:
 
 ```
         lac [recover:.]         // the full address of the recovery point
         dac i [ovErrHook:*]     // with extended mode on
 ```
 
-On any of the errors the manager then jumps to it, by *jmp i*, instead of halting, and never
-gets control back: the program decides whether to report the error, try the work again, or carry
+On any of the errors the manager then jumps to it, by *jmp i*, instead of halting.
+The program decides whether to report the error, try the work again, or carry
 on without the overlay.
-At the recovery point:
 
+At the recovery point:
 - AC holds the error number, as at the halt;
 - IO holds the return address of the *%%ovcall* or *%%ovload* that failed, past its two data words,
-  as a *jsp* leaves it, so its low 16 bits are the full address;
-- *ovActive* is 0, so the next *%%ovcall* or *%%ovload* is taken.
-  After a nesting error this abandons the overlay that made the call, and every return pending
+  as a *jsp* leaves it so its low 16 bits are the full address;
+- *ovActive* is 0, so the next *%%ovcall* or *%%ovload* is allowed.
+  After a nesting error this abandons the overlay that made the call and every return pending
   inside it;
 - extended mode is on;
-- the window's record is what the error left: nothing, after a failed read, a failed swap or a stamp
+- the window's record is what the error left, nothing, after a failed read, a failed swap or a stamp
   mismatch.
-  After a failed write-back of a persistent overlay it still names that overlay, whose words are
-  whole in core, and after a nesting error it still names the overlay that was running.
+  After a failed write-back of a persistent overlay it  names the overlay whose words are
+  in core; after a nesting error it names the overlay that was running.
 
-So a later *%%ovcall* reads the overlay again where it has to.
-A recovery point that retries the same call after a stamp error will meet the same drum, so count the
-tries, or tell the user to run **ovlload**.
+A later *%%ovcall* reads the overlay again when it needs to.
+A recovery point that retries the same call after a stamp error will fail again.
+So count the tries and giv up, or tell the user to run **ovlload**.
 Setting *ovErrHook* back to 0 restores the halts.
 
 ## What it costs
 
 **Core:**
 
-- the manager: 217 words, and 6 literals in its bank's pool; with *OV_TWO_PASS*, 184 words and 5
-  literals;
-- the table: 1 word, 1 per window, and 4 per overlay;
+- the manager: space in its bank's pool, larger with *OV_TWO_PASS*
+- the table: 1 header word, 1 per window, and 4 per overlay
 - each *%%ovcall* or *%%ovload*: 3 words from the manager's bank, 4 from another, plus one literal
-  in each other bank shared by the calls of the same kind there;
-- each overlay: the 2 header words at the start of its window;
-- each window: its whole range, kept from the root.
+  in each other bank shared by the same calls
+- each overlay: the 2 header words at the start of its window
+- each window: its entire range
 
 **Time,** for a load of n words, the header included:
 
-- the drum turning to the window's address, half a revolution on average, 17.4 ms, at most a whole one,
-  34.8 ms; an address the drum reaches within the 250 us settle after the *dcl* waits the whole
-  revolution;
+- the drum rotating to the window's address, half a revolution on average, 17.4 ms, at most
+  34.8 ms; an address the drum reaches within the 250 us after the *dcl* waits an entire revolution
 - the transfer, n x 8.5 us: 1,024 words take 8.7 ms, a whole bank 34.8 ms.
 
-So a 1,024-word read-only overlay loads in about 26 ms on average and at most about 44 ms.
-Evicting a persistent overlay adds its write-back and most of a revolution between the two transfers,
-about 61 ms in all for 1,024 words.
-With *OV_SINGLE_PASS* it is one transfer of the longer overlay's length, the time of a read: about
+A 1,024-word read-only overlay loads in about 26 ms on average and at most about 44 ms.
+Swappng a persistent overlay in *OV_TWO_PASS* mode  adds its write-back and most of a
+revolution between the two transfers, about 61 ms in all for 1,024 words.
+
+Without *OV_TWO_PASS* it is only one transfer of the longer overlay's length, the time is about
 26 ms for 1,024 words.
-On the emulator, two persistent overlays of 3,534 and 2,574 words, called in turn, took 69.6 ms an
-eviction without the swap and 34.8 ms with it.
 
-A call to an overlay already in its window does no transfer, but the manager's checks are not free:
-100 such calls took 64 ms on the emulator, about 0.6 ms a call, loop included, in a program with two
-windows.
-Finding the overlay in the table takes one more step for each window.
+A call to an overlay already in its window does no transfer, but the manager's checks are not free.
+Each call then takes about 0.6 ms in a program with two windows.
+Finding the overlay in the table is a linear search, so more windows add more time.
 
-Overlays suit coarse phases (a mode, a command, a setup), with each call doing a whole job, not inner
-loops.
+Overlays suit coarse phases with each call doing a significant amount of work or one that has
+a long runtime, not inner loops.
 
 ## Assembling
 
@@ -517,7 +518,7 @@ A program without an overlay assembles exactly as it did before.
 With overlays:
 
 - **The tape**, *file.rim* or *file.bin*, holds the root only, not any overlay code.
-- ***file.ovl*** is created with the primary rim or bin file.
+- ***file.ovl*** is created along with the primary rim or bin file.
 - ***file.osym*** is created in additon to the *.sym* file when *-s* is given.
 - **The listing**, *-l*, lists each overlay under its own heading with its two header words.
   Its addresses use its window's address.
@@ -553,11 +554,11 @@ overlay minus window work bank 1 first 2000 last 3777 track 1 length 13 mode ro
 The third line gives the source's name, the build stamp and the full address of the table on the
 tape.
 Each overlay's line gives its window, bank, track, length (header included) and mode, *ro* or *rw*
-(persistent), and its words follow, 8 to a line, the header first.
+(persistent), and its data words follow, 8 to a line, the header first.
 
 ### The .osym file
 
-The overlays' own symbols, which the *.sym* leaves out, in the *.sym* line format with the overlay's
+The overlays' own symbols in the *.sym* line format with the overlay's
 name added:
 
 ```
@@ -570,7 +571,7 @@ ovldemo.am1
 ```
 
 The *.sym* itself is unchanged and holds the root's symbols only, so *import* is not affected.
-**ad1** reads the *.osym* and the *.ovl* beside it (see "Debugging").
+**ad1** reads the both the *.osym* and the *.ovl* files, see "Debugging".
 
 ## Loading: ovlload
 
@@ -579,49 +580,50 @@ ovlload [-i drumfile] [-c] [-n] [-t tape] [-h host[:port]] [-y] [-m] [-M memfile
 ovlload -p tapefile [-n | -t tape] file.ovl
 ```
 
-**ovlload** checks the whole *.ovl* first, then writes each overlay on its track at its window's
-drum addresses, the rest of the window's range filled with zeros.
-Nothing else on the drum is touched.
-It then loads the program's tape as **fastload** does, with **fastload**'s own code.
+**ovlload** checks the entire *.ovl* first, then writes each overlay on its track at its window's
+drum addresses with the rest of the window's range filled with zeros.
+It then loads the program's tape as **fastload** does.
 
-- *-i drumfile*: the drum file, by default */opt/pidp1-mods/pdp23drum*, as for the emulator.
-  It is written in place; a missing file is created, and a short one extended with zeros.
+- *-i drumfile*: the drum file, by default */opt/pidp1-mods/pdp23drum*
+  It is written in place, a missing file is created and a short one extended with zeros.
 - *-n*: write the drum only, load no program; no tape is read, so the stamp is not checked.
-- *-t tape*: the tape to load; by default the *.ovl*'s name with *.rim*, else *.bin*.
-- *-h host[:port]*: the pidp-1 to load into over the debugger link, as for **fastload**; by default
+- *-t tape*: the tape to load; by default the *.ovl* name matching the *.rim or *.bin* name.
+- *-h host[:port]*: the pidp-1 to load into over the debugger link, by default
   *localhost:1044*.
 - *-y*: start the program once it is loaded, without asking.
-- *-m*: load into the core-memory file instead, */opt/pidp1-mods/coremem*, asking first, as
+- *-m*: load into the core-memory file instead, */opt/pidp1-mods/coremem*, asking first, just as
   **fastload** *-m* does; *-M memfile* names the file and implies *-m*.
 - *-c*: compare only (below).
 - *-p tapefile*: punch a paper tape for the pdp-1 to write its own drum from (below).
 
 **Before anything is written,** the tape's word at the table's address must be the *.ovl*'s stamp,
-so **ovlload** never loads a drum and a program from different builds.
-There is no override: assemble again and use the pair that came out together.
-With *-n* no tape is read and nothing is compared, so the program you load afterwards is yours to
-match: if it is from another build, the manager's stamp check catches it at its first overlay load
-(*ovErrStamp*, above).
-Over the debugger link the pidp-1 is stopped before the drum is written, so a pidp-1 that cannot be
-reached changes nothing, and no running program uses the drum while it changes.
+**ovlload** never loads a drum and a program from different builds.
+There is no override, assemble again and use the matching pair.
+With *-n* no tape is read and nothing is compared.
 
-**Other tools' data** on a track it writes is written over, without asking; what is on the drum is
-yours to manage.
-Afterwards **ovlload** warns, on stderr, of each such track it wrote:
+Over the debugger link the pidp-1 is stopped before the drum is written.
 
-- a track **drumupdater** loaded a program into, by its marker, 0707070 in words 07775-07777;
-- Adventure's save block, by its magic word in word 0 of track 20 octal;
-- the tracks of a Z-machine story **zloader** installed, the story recognized by its header in track 0.
+**Existing data** on a track it writes is written over, without asking.
+If you want to preserve the current drum, copy it.
 
-```
-ovlload: track 1 (1 decimal) held a program drumupdater loaded; it was overwritten by overlay one.
-```
+*%%drumreserve* keeps a program's overlays off tracks you have given to something else.
 
-*%%drumreserve* (above) keeps a program's overlays off tracks you have given to something else.
-
-**ovlload** does not refuse to run while the emulator runs; the drum plugin rereads the file when
+**ovlload** can run while the emulator runs, the drum plugin rereads the file when
 **ovlload** closes it.
 With *-n* the pidp-1 is not stopped, so make sure no program is using the drum.
+
+### Loading with fastload or ad1
+
+**fastload** and **ad1**'s *load* write a program's overlays too when the tape has a *.ovl*.
+They use **ovlload**'s own code, so the checks, the drum writes, and the warnings are the same:
+
+- With *-h* naming another machine they load the tape but not the drum.
+- **ad1** in test mode, *-T*, writes no drum data.
+- **fastload** *-m* writes the drum then the core-memory file.
+- A tape with no *.ovl* loads as it always has.
+
+**ovlload** is still the tool for writing the drum alone (*-n*), comparing it (*-c*), loading
+another tape than the *.ovl*'s (*-t*) and punching a paper tape (*-p*).
 
 It prints one line per overlay:
 
@@ -740,8 +742,9 @@ in its window, so one overlay of several sharing a window can be debugged withou
 others. From v2.4, with an emulator from 13-Oct-2026 on, the emulator keeps that binding as a
 condition on the window's word in the table, so the other overlays' passes do not halt the machine
 at all, and a watch can be bound the same way, *watch edCount@edit*, unmoved by the other
-overlays' writes and by the window's loading. *Using AD1* has the details, under "Programs with
-drum overlays".
+overlays' writes and by the window's loading. From v2.8, *load* writes the program's overlays to
+the drum along with its tape (see "Loading with fastload or ad1"). *Using AD1* has the details,
+under "Programs with drum overlays".
 
 Which overlay is in a window is in the table: *ovTable* is the stamp, the next word is the first
 window's resident overlay number (0 for none), then the next window's, in the order the windows were

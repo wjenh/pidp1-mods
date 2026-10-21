@@ -3637,10 +3637,7 @@ bool open;
     }
 }
 
-// Write an overlay directive.  Each writes again what the parser made of it:
-// an %%ovcall its directive, never its words, and an %%ovtable no words at all,
-// since assembling the file makes them.  A %%drumreserve's tracks are written
-// as runs, as the listing writes them.
+// Write an overlay directive.
 static void
 srcOverlayDirective(PNodeP nodeP)
 {
@@ -3704,7 +3701,7 @@ bool first;
         break;
 
     case OVCALL:
-        putf("\t%%%%ovcall %s, %s", nodeP->value.strP, nodeP->value2.strP);
+        putf("\t%%%%%s %s, %s", OVCALLNAME(nodeP), nodeP->value.strP, nodeP->value2.strP);
         break;
 
     default:

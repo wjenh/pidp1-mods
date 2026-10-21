@@ -73,7 +73,7 @@ static int ovSavedBank;                 // the bank current at the open %%overla
 static int ovTableLine;                 // the %%ovtable's line, 0 when none yet
 SymNodeP ovTableSymP;                   // and its label, NILP when none yet; the
                                         // optimizer's relayout moves it
-static PNodeListP ovCallsP;             // every %%ovcall's node, in source order
+static PNodeListP ovCallsP;             // every %%ovcall's and %%ovload's node, in source order
 
 extern PNodeListP wildcardsP;           // any wildcarded cross-bank refs
 extern SymNodeP permSymP;               // the instructions and other permanent values
@@ -116,7 +116,7 @@ PNodeP declareWindow(char *nameP, PNodeP firstP, PNodeP lastP);
 PNodeP openOverlay(char *nameP, char *windowNameP, char *modeP);
 PNodeP closeOverlay(void);
 PNodeP placeOvTable(void);
-PNodeP ovCall(char *ovNameP, char *entryNameP);
+PNodeP ovCall(char *ovNameP, char *entryNameP, bool load);
 PNodeP literalNode(int lineNo, int pc, PNodeP exprP, PNodeP endP);
 PNodeP directiveNode(int type);
 void reserveTracks(long first, long last);
@@ -302,6 +302,10 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token ENDOVERLAY
 %token OVCALL
 %token OVTABLE
+
+// %%ovload, the lexer's only; its node is an OVCALL with PN_OVLOAD.
+// Declared after the others so that each keeps its number.
+%token OVLOAD
 
 %type <strP> ovIdent
 
@@ -622,7 +626,7 @@ one_stmt        : expr
                     {
                         verrorl(pendingLabelLine, ($1->flags & SYMF_RESOLVED)?
                             "label %s in overlay %s has the name of a global of bank %d's root, defined at line %d":
-                            "label %s in overlay %s has a name the root of bank %d refers to; the root reaches an overlay only through %%%%ovcall",
+                            "label %s in overlay %s has a name the root of bank %d refers to; the root reaches an overlay only through %%%%ovcall or %%%%ovload",
                             $1->name, curOverlayP->nameP, curBank, $1->lineno);
                     }
 
@@ -814,7 +818,11 @@ one_stmt        : expr
                 }
                 | OVCALL ovIdent LOCATION ovIdent
                 {
-                    $$ = ovCall($2, $4);
+                    $$ = ovCall($2, $4, false);
+                }
+                | OVLOAD ovIdent LOCATION ovIdent
+                {
+                    $$ = ovCall($2, $4, true);
                 }
                 ;
 
@@ -2990,18 +2998,18 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// The overlay manager's entry, OVENTERNAME, defined in the root in this bank
-// if it is here, else in the lowest bank that has it.
+// The overlay manager's entry nameP, OVENTERNAME or OVFETCHNAME, defined in
+// the root in this bank if it is here, else in the lowest bank that has it.
 // Its bank goes to *bankP.
 // Returns its symbol, NILP when no bank has it yet.
 static SymNodeP
-findOvEnter(int *bankP)
+findOvEntry(char *nameP, int *bankP)
 {
 int bank;
 SymNodeP symP;
 BankContextP ctxP;
 
-    if( (symP = sym_find(&(curBankP->globalSymP), OVENTERNAME)) && (symP->flags & SYMF_RESOLVED) )
+    if( (symP = sym_find(&(curBankP->globalSymP), nameP)) && (symP->flags & SYMF_RESOLVED) )
     {
         *bankP = curBank;
         return(symP);
@@ -3010,7 +3018,7 @@ BankContextP ctxP;
     for( bank = 0; bank <= MAXBANK; ++bank )
     {
         if( (ctxP = findBank(bank)) &&
-            (symP = sym_find(&(ctxP->globalSymP), OVENTERNAME)) && (symP->flags & SYMF_RESOLVED) )
+            (symP = sym_find(&(ctxP->globalSymP), nameP)) && (symP->flags & SYMF_RESOLVED) )
         {
             *bankP = bank;
             return(symP);
@@ -3029,17 +3037,19 @@ ovCallWord(PNodeP *tailPP, int lineNo, int pc, PNodeP exprP)
     return( &((*tailPP)->leftP) );
 }
 
-// An %%ovcall, in the root.
+// An %%ovcall, or with load an %%ovload, in the root.
 // A call of the overlay manager, then two data words, the full addresses of the overlay's
-// descriptor table entry and of the entry/ point.
+// descriptor table entry and of the entry point, or for %%ovload of the symbol.
+// %%ovcall calls the manager's OVENTERNAME, which calls the entry; %%ovload its
+// OVFETCHNAME, which returns the symbol's address in AC.
 // The manager is called with jsp when it is in this bank else as cross-bank jsp.
-// The literal is pooled her, so the manager's bank must be known here, overlay.ac
-// must come before the first %%ovcall.
+// The literal is pooled here, so the manager's bank must be known here, overlay.ac
+// must come before the first %%ovcall or %%ovload.
 // The data words are filled in by resolveOvCalls() once every overlay and the table have their addresses.
-// Returns the OVCALL node, its words are EXPR nodes from rightP, linked through
-// leftP and the overlay's name is in value.strP, the entry's in value2.strP.
+// Returns the OVCALL node, PN_OVLOAD set for %%ovload, its words are EXPR nodes from rightP,
+// linked through leftP and the overlay's name is in value.strP, the entry's in value2.strP.
 PNodeP
-ovCall(char *ovNameP, char *entryNameP)
+ovCall(char *ovNameP, char *entryNameP, bool load)
 {
 int line;
 int pc;
@@ -3050,25 +3060,43 @@ PNodeP exprP;
 PNodeP *tailPP;
 PNodeListP itemP;
 PNodeListP *itemPP;
+char *dirP;
+char *managerP;
 
     line = optRegionTokenLine;
+    dirP = (load? "ovload": "ovcall");
+    managerP = (load? OVFETCHNAME: OVENTERNAME);
 
     if( curOverlayP )
     {
-        verrorl(line, "%%%%ovcall %s, %s is inside overlay %s; only the root calls an overlay",
-            ovNameP, entryNameP, curOverlayP->nameP);
+        verrorl(line, "%%%%%s %s, %s is inside overlay %s; only the root %s an overlay",
+            dirP, ovNameP, entryNameP, curOverlayP->nameP, (load? "loads": "calls"));
     }
 
-    if( !(enterP = findOvEnter(&enterBank)) )
+    if( !(enterP = findOvEntry(managerP, &enterBank)) )
     {
-        verrorl(line, "%%%%ovcall %s, %s comes before %s, the overlay manager's entry, is defined."
-            " Include overlay.ac before the first %%%%ovcall",
-            ovNameP, entryNameP, OVENTERNAME);
+        // ovEnter without ovFetch: the manager included is older than %%ovload.
+        if( load && findOvEntry(OVENTERNAME, &enterBank) )
+        {
+            verrorl(line, "%%%%ovload %s, %s needs %s, which the overlay.ac included does not define."
+                " It is older than %%%%ovload",
+                ovNameP, entryNameP, managerP);
+        }
+
+        verrorl(line, "%%%%%s %s, %s comes before %s, the overlay manager's entry, is defined."
+            " Include overlay.ac before the first %%%%%s",
+            dirP, ovNameP, entryNameP, managerP, dirP);
     }
 
     // One higher, as openOptRegion() explains.
     nodeP = newnode(line + 1, curBankP->cur_pc, OVCALL, NILP, NILP);
     nodeP->flags |= PN_NOINC;
+
+    if( load )
+    {
+        nodeP->flags |= PN_OVLOAD;
+    }
+
     nodeP->value.strP = ovNameP;
     nodeP->value2.strP = entryNameP;
     nodeP->srcLine = line;
@@ -3108,11 +3136,11 @@ PNodeListP *itemPP;
     ovCallWord(tailPP, line + 1, pc++, exprP);
 
     curBankP->cur_pc = pc;
-    checkPCBound("The %%ovcall", pc - 1, line);
+    checkPCBound((load? "The %%ovload": "The %%ovcall"), pc - 1, line);
 
     if( !(itemP = (PNodeListP)calloc(1, sizeof(PNodeListItem))) )
     {
-        verror("out of memory recording an %%%%ovcall");
+        verror("out of memory recording an %%%%%s", dirP);
     }
 
     itemP->nodeP = nodeP;
@@ -3126,7 +3154,7 @@ PNodeListP *itemPP;
     return(nodeP);
 }
 
-// After the parse, check each %%ovcall's overlay and entry and fill in its two data words.
+// After the parse, check each %%ovcall's and %%ovload's overlay and entry and fill in its two data words.
 // An overlay without %%ovtable is an error here too since the
 // first data word is an address in the table.
 // The optimizer's relayout calls it again whenever it moves the table.
@@ -3152,16 +3180,16 @@ SymNodeP entryP;
 
         if( !(ovP = findOverlay(nodeP->value.strP)) )
         {
-            verrorlf(nodeP->srcLine, nodeP->srcFileP, "%%%%ovcall names overlay %s, which is not declared",
-                nodeP->value.strP);
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "%%%%%s names overlay %s, which is not declared",
+                OVCALLNAME(nodeP), nodeP->value.strP);
         }
 
         entryP = sym_find(&(ovP->ctx.globalSymP), nodeP->value2.strP);
 
         if( !entryP || !(entryP->flags & SYMF_EXPORTED) || !(entryP->flags & SYMF_RESOLVED) )
         {
-            verrorlf(nodeP->srcLine, nodeP->srcFileP, "%%%%ovcall names %s, which overlay %s does not export",
-                nodeP->value2.strP, ovP->nameP);
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "%%%%%s names %s, which overlay %s does not export",
+                OVCALLNAME(nodeP), nodeP->value2.strP, ovP->nameP);
         }
 
         // The last two words are the data words.
@@ -3247,7 +3275,7 @@ OverlayContextP ovP;
     else
     {
         verrorl(stmtP->lineNo,
-            "the root names %s, a symbol of overlay %s; the root reaches an overlay only through %%%%ovcall",
+            "the root names %s, a symbol of overlay %s; the root reaches an overlay only through %%%%ovcall or %%%%ovload",
             symP->name, ovP->nameP);
     }
 }

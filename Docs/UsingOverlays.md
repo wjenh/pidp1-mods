@@ -6,9 +6,9 @@ It covers the directives, the overlay manager the program includes, the loader *
 each costs.
 *UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-This is version 1.2 and covers up through am1 version 4.1; it will be updated as needed.\
-Edit date 19-Oct-2026
-Fix typos, update -p description
+This is version 1.3 and covers up through am1 version 5.1; it will be updated as needed.\
+Edit date 21-Oct-2026
+Add %%ovload
 
 ## What are overlays?
 
@@ -25,14 +25,16 @@ With overlays, **am1** does that for you:
 **ovlload** puts the overlays on the drum and loads the tape.
 At run time, a small **overlay manager** in the root reads an overlay into its window when it is
 called and is not already there, then calls it.
+An overlay may also be data only, brought in by *%%ovload*, which calls nothing and gives the root
+the address of the data.
 
 A program may have several windows, in the same bank or in different ones, and an overlay in each
 can be in core at the same time.
 
 Two rules shape everything else:
 
-- **Only the root calls an overlay.** An overlay may use any root routine or word, but it may not call
-  or name another overlay, in its own window or any other.
+- **Only the root calls or loads an overlay.** An overlay may use any root routine or word, but it may
+  not call or name another overlay, in its own window or any other.
 - **An overlay is read-only unless it says otherwise.** Each load starts from the words **am1**
   assembled; what it changed while it ran is lost when another overlay takes the window.
   State that must last belongs in the root, or the overlay is declared *persistent* and is written
@@ -168,12 +170,13 @@ Inside an overlay:
   (*UsingAM1.md*, "Bank and cross-bank references").
 - **An overlay's label may not have the name of a root global of its bank.**
   It would be the usual redefinition, and it keeps root names unambiguous inside every overlay.
-- ***export*** names the entry points the root may call with *%%ovcall*.
-  An overlay exports only symbols it defines itself.
+- ***export*** names the symbols the root may reach: the entry points it calls with *%%ovcall*, and the
+  data it loads with *%%ovload*.
+  An overlay may export any number of them, and exports only symbols it defines itself.
 - *local* scopes work as they do anywhere, but one may not be open across *%%overlay* or
   *%%endoverlay*.
-- Not allowed: *bank*, an origin (*xxx/*), *import*, *%%window*, *%%ovtable*, *%%ovcall*, and another
-  *%%overlay*: overlays do not nest.
+- Not allowed: *bank*, an origin (*xxx/*), *import*, *%%window*, *%%ovtable*, *%%ovcall*, *%%ovload*,
+  and another *%%overlay*: overlays do not nest.
 
 An overlay must begin and end in the same file.
 
@@ -186,7 +189,7 @@ an overlay may be called *plus* and a label *plus* too.
         %%ovcall overlay, entry
 ```
 
-The only way the root reaches an overlay.
+The way the root runs an overlay's code; *%%ovload*, next, brings in its data.
 *entry* must be a symbol the overlay exports.
 It assembles to the manager's call and two data words, chosen by **am1** so you need not know where
 the manager is:
@@ -208,6 +211,40 @@ before:
 sPlus,
         %%ovcall plus, plusRun
 ```
+
+### %%ovload
+
+```
+        %%ovload overlay, symbol
+```
+
+The same as *%%ovcall*, except that nothing is called: the overlay is made resident, read from the
+drum only if it is not already in its window, and the manager returns with the full address of
+*symbol* in AC.
+It is for an overlay that is data, a *type340* display list or a table, though it works on any
+overlay.
+*symbol* must be a symbol the overlay exports, and an overlay may export several, so one data
+overlay can hold several lists.
+
+It is the same size as *%%ovcall*, calls the manager's *ovFetch* in place of *ovEnter*, and has the
+same two data words, the second the symbol's full address.
+The rules are *%%ovcall*'s: the root only, after *overlay.ac*, and no label on its line.
+After it:
+
+- AC holds the symbol's full address, and IO is as it was;
+- extended mode is on, so the data is reached through the address with an indirect:
+
+```
+        %%ovload pics, picBoat  // AC is picBoat's full address
+        dac picP
+        lac i picP              // picBoat's first word
+```
+
+The address is good until another overlay takes the window.
+A *persistent* data overlay keeps what the program writes into it across evictions, as any
+persistent overlay does.
+*%%ovload* is refused while an overlay's entry is running, as *%%ovcall* is (see "When the manager
+halts").
 
 ### %%ovtable
 
@@ -233,8 +270,8 @@ An entry is an ordinary cross-bank *jsp* routine, in the shape of *memory.ah*'s 
 The caller sees extended mode on after the call, whatever it was before.
 
 An entry may call root routines.
-It may not, directly or through a root routine, reach another *%%ovcall*: the manager stops at
-*ovErrNest* (see "When the manager halts").
+It may not, directly or through a root routine, reach another *%%ovcall* or a *%%ovload*: the manager
+stops at *ovErrNest* (see "When the manager halts").
 
 ## The overlay manager
 
@@ -244,13 +281,13 @@ The manager is *Am1Includes/DRUM/overlay.ac*, with its defines in *overlay.ah*:
 #include <DRUM/overlay.ac>
 ```
 
-Include it once, in the root, in any bank, before the first *%%ovcall*.
+Include it once, in the root, in any bank, before the first *%%ovcall* or *%%ovload*.
 Its literals go into the including bank's next *constants*.
 It uses plain PDP-1 instructions only, so it runs on any configuration.
 
 It defines:
 
-- *ovEnter*, the entry *%%ovcall* calls;
+- *ovEnter*, the entry *%%ovcall* calls, and *ovFetch*, the entry *%%ovload* calls;
 - *ovInit*, to call at the program's start (*jsp ovInit* from its bank, *farjsp* from another).
   It clears *ovActive* and *ovRetries*, so that a program stopped inside an overlay, or at one of the
   manager's halts, can be started again.
@@ -265,7 +302,8 @@ It defines:
 - *ovErrNest*, *ovErrStamp* and *ovErrDrum*, the halts, and *ovErrSwap* with *OV_SINGLE_PASS*
   (see "The single-pass swap").
 
-On each *%%ovcall* the manager:
+On each *%%ovcall* the manager does the following; on each *%%ovload* it does the same, but returns
+the symbol's address in place of calling an entry:
 
 1. stops at *ovErrNest* if an overlay is running;
 2. finds the overlay in the table, and calls the entry at once if the overlay is already in its window;
@@ -396,7 +434,7 @@ Each halt stops with its number in AC:
 
 | Label | AC | Cause | Continue |
 |-------|----|-------|----------|
-| *ovErrNest* | 1 | an *%%ovcall* while an overlay is running | halts again |
+| *ovErrNest* | 1 | an *%%ovcall* or *%%ovload* while an overlay is running | halts again |
 | *ovErrStamp* | 2 | the overlay read is not this build's, or not this overlay: the drum holds another build's overlays, or none | reads the overlay again, so run **ovlload** and continue |
 | *ovErrDrum* | 3 | *OV_TRIES* transfers in a row (4 by default) ended in error | tries as many again |
 | *ovErrSwap* | 4 | with *OV_SINGLE_PASS* only: a swap ended in error, a halt part-way through it; the outgoing overlay's words are lost | reads the incoming overlay alone |
@@ -422,9 +460,9 @@ on without the overlay.
 At the recovery point:
 
 - AC holds the error number, as at the halt;
-- IO holds the return address of the *%%ovcall* that failed, past its two data words, as a *jsp*
-  leaves it, so its low 16 bits are the full address;
-- *ovActive* is 0, so the next *%%ovcall* is taken.
+- IO holds the return address of the *%%ovcall* or *%%ovload* that failed, past its two data words,
+  as a *jsp* leaves it, so its low 16 bits are the full address;
+- *ovActive* is 0, so the next *%%ovcall* or *%%ovload* is taken.
   After a nesting error this abandons the overlay that made the call, and every return pending
   inside it;
 - extended mode is on;
@@ -442,11 +480,11 @@ Setting *ovErrHook* back to 0 restores the halts.
 
 **Core:**
 
-- the manager: 173 words, and 5 literals in its bank's pool; with *OV_SINGLE_PASS*, 206 words and 6
+- the manager: 217 words, and 6 literals in its bank's pool; with *OV_TWO_PASS*, 184 words and 5
   literals;
 - the table: 1 word, 1 per window, and 4 per overlay;
-- each *%%ovcall*: 3 words from the manager's bank, 4 from another, plus one literal shared by the
-  calls in each other bank;
+- each *%%ovcall* or *%%ovload*: 3 words from the manager's bank, 4 from another, plus one literal
+  in each other bank shared by the calls of the same kind there;
 - each overlay: the 2 header words at the start of its window;
 - each window: its whole range, kept from the root.
 
@@ -483,7 +521,7 @@ With overlays:
 - ***file.osym*** is created in additon to the *.sym* file when *-s* is given.
 - **The listing**, *-l*, lists each overlay under its own heading with its two header words.
   Its addresses use its window's address.
-  Each *%%ovcall* is listed with the table with what it holds.
+  Each *%%ovcall* and *%%ovload* is listed with the table with what it holds.
 - **Test mode**, *-T*, dumps each overlay word with the overlay's name after it:
   *bbaaaa vvvvvv name*.
 - ***-O*, *-O1*, *-O2*** and *-O=source* work with overlays.
@@ -736,18 +774,20 @@ Each of these is an error, with its line:
 - an *%%overlay* inside an overlay or a local scope, naming an undeclared window, or with a third
   operand other than *persistent*; an *%%endoverlay* with none open; an overlay never closed, or
   crossing a file boundary;
-- inside an overlay: *bank*, an origin, *import*, *%%window*, *%%ovtable*, *%%ovcall*, or a local
-  scope still open at *%%endoverlay*;
+- inside an overlay: *bank*, an origin, *import*, *%%window*, *%%ovtable*, *%%ovcall*, *%%ovload*, or
+  a local scope still open at *%%endoverlay*;
 - an overlay longer than its window, header included;
 - a window whose first address is above its last, shorter than 3 words, outside its bank, above 07750
   in bank 0, tagged with another bank, overlapping another window, or holding a root word;
 - a window or overlay name declared twice;
 - a reference from an overlay to another overlay's symbol, or from the root to any overlay symbol
-  except through *%%ovcall*;
+  except through *%%ovcall* or *%%ovload*;
 - an overlay label, *var* or *export* with the name of a root global of its bank, or an *export* of a
   symbol the overlay never defines;
 - an *%%ovcall* naming an overlay that does not exist, an entry it does not export, or coming before
   *ovEnter* is defined;
+- a *%%ovload* likewise, its symbol in place of the entry and *ovFetch* in place of *ovEnter*; with
+  an *overlay.ac* older than *%%ovload*, which has no *ovFetch*, the message says so;
 - a program with overlays and no *%%ovtable*; an *%%ovtable* given twice, before any overlay, or
   followed by a *%%window* or *%%overlay*;
 - a *%%drumreserve* track outside 0-37, or a range running backward;

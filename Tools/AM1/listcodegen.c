@@ -942,16 +942,16 @@ OverlayContextP ovP;
         (ovP->windowP->last - ovP->windowP->first + 1));
 }
 
-// An %%ovcall line, then each of its words on a line of its own, the last two,
-// the data words, saying what they hold.  bincodegen.c saved their values; the
-// statement's terminator ends the last line.
+// An %%ovcall or %%ovload line, then each of its words on a line of its own, the last two,
+// the data words, saying what they hold.
+// Bincodegen.c saved their values, the statement's terminator ends the last line.
 static void
 listOvCall(FILE *outfP, PNodeP nodeP)
 {
 PNodeP wordP;
 
     startLine(true, outfP, nodeP);
-    output(outfP, doOutput, "%%%%ovcall %s, %s", nodeP->value.strP, nodeP->value2.strP);
+    output(outfP, doOutput, "%%%%%s %s, %s", OVCALLNAME(nodeP), nodeP->value.strP, nodeP->value2.strP);
 
     for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
     {
@@ -971,9 +971,7 @@ PNodeP wordP;
     }
 }
 
-// The drum layout, then the %%ovtable line, then each of the table's words on a
-// line of its own, saying what it holds.  ovlcodegen.c made the words; the
-// statement's terminator ends the last line.
+// The drum layout, then the %%ovtable line, then each of the table's words on a line of its own. 
 static void
 listOvTable(FILE *outfP, PNodeP nodeP)
 {
@@ -1014,4 +1012,3 @@ va_list argP;
         va_end(argP);
     }
 }
-

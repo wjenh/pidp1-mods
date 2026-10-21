@@ -31,7 +31,7 @@ f1_overlap|fail||window w2 overlaps window w1, 2000-2777 in bank 2
 f1_unknown|fail||names wstart, which has no value yet
 f1_dupwindow|fail||window w1 is already declared
 f1_dupoverlay|fail||overlay edit is already declared
-f1_badmode|fail||resident is not a mode; the one mode is persistent
+f1_badmode|fail||overlay print: 'resident' is not a valid mode
 f1_ovtablein|fail||the table is in the root
 f1_ovtabletwice|fail||%%ovtable is given twice
 f1_ovtableearly|fail||%%ovtable comes before any overlay
@@ -52,7 +52,7 @@ f1_optimize|ok|-O1|
 f1_optimize|ok|-O2|
 f1_optimize|optgrep|-O|^This program has drum overlays
 f1_debug|lstgrep|bin -d|^// Overlay print, number 2, in window w1, bank 2, 2000-2777, persistent$
-f8_varro|warn||a var in overlay print, which is read-only
+f8_varro|warn||a var in overlay print is read-only
 f2_valid|ok||
 f2_valid|ok|bin|
 f2_valid|lstgrep|bin -l|^ +36: 000102 630131     jsp i \[ovEnter:1\]$
@@ -82,6 +82,7 @@ f4_layout|outgrep|-S|^Bank 3, none$
 f4_layout|outgrep|-S|^Bank 0, 00124 \(84 decimal\)$
 f4_fit|outgrep|-S|^overlay o32, number 32: track 37, drum 2000-2777
 f4_full|fail||overlay o33 has no drum track
+f4_full|fail|-O|overlay o33 has no drum track
 f5_table|refsub||
 f5_word|refsub||
 f5_track|refsub||

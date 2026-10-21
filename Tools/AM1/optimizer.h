@@ -944,7 +944,8 @@ typedef struct optregion
     int contradictions;         // of those, words marked written, taken or patched:
                                 // the declaration and the evidence disagree
     int ovcall;                 // a hands-off span am1 made around a %%ovcall's
-                                // words, not one the author declared
+                                // words, not one the author declared, 1, or 2
+                                // for an %%ovload
 } OptRegion, *OptRegionP;
 
 // One 'inline NAME' marking.  A POINT, not a span: it names a routine to inline

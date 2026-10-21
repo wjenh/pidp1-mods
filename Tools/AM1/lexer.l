@@ -226,16 +226,17 @@ thisbank[ \t]*      { return(THISBANK); }
 [ \t]*%%overlay[ \t]+                   { return(directiveToken(OVERLAYDECL)); }
 [ \t]*%%overlay/{DIREND}                { return(directiveToken(OVERLAYDECL)); }
 [ \t]*%%ovcall[ \t]+                    { return(directiveToken(OVCALL)); }
-[ \t]*%%ovcall/{DIREND}         { return(directiveToken(OVCALL)); }
+[ \t]*%%ovcall/{DIREND}                 { return(directiveToken(OVCALL)); }
+[ \t]*%%ovload[ \t]+                    { return(directiveToken(OVLOAD)); }
+[ \t]*%%ovload/{DIREND}                 { return(directiveToken(OVLOAD)); }
 [ \t]*%%ovtable[ \t]+                   { return(directiveToken(OVTABLE)); }
 [ \t]*%%ovtable/{DIREND}                { return(directiveToken(OVTABLE)); }
 
-                    /* %% and a name that is no directive is an error.
-                     * This rule must stay below every directive pattern,
-                     * at the end of a line a directive matches the same length
-                     * here and flex breaks the tie by rule order.
-                     */
 [ \t]*%%[a-zA-Z_][a-zA-Z0-9_]*  {
+                        // %% and a name that is no directive is an error.
+                        // This rule must stay below every directive pattern,
+                        // at the end of a line a directive matches the same length
+                        // here and flex breaks the tie by rule order.
                         verror("%s is not an am1 directive", strchr(yytext, '%'));
                         return(BAD);
                         }

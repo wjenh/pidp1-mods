@@ -630,7 +630,7 @@ SymNodeP symP;
 
 // An overlay directive, annotated as a bank is: macro1 has no overlays, so the
 // result is not runnable.  An overlay is given an origin at its first word, and
-// the root another after it; an %%ovcall's words are emitted as they are.
+// the root another after it; an %%ovcall's or %%ovload's words are emitted as they are.
 static void
 emitOverlayDirective(FILE *outfP, PNodeP nodeP)
 {
@@ -686,7 +686,7 @@ PNodeP node2P;
         break;
 
     case OVCALL:
-        fprintf(outfP, "/ %%%%ovcall %s, %s\n", nodeP->value.strP, nodeP->value2.strP);
+        fprintf(outfP, "/ %%%%%s %s, %s\n", OVCALLNAME(nodeP), nodeP->value.strP, nodeP->value2.strP);
 
         for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
         {

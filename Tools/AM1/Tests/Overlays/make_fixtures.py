@@ -128,7 +128,7 @@ VARIANTS = [
     ("f1_dupoverlay", [("%%overlay small, w2\n", "%%overlay edit, w2\n")],
         ["fail||overlay edit is already declared"]),
     ("f1_badmode", [("%%overlay print, w1, persistent\n", "%%overlay print, w1, resident\n")],
-        ["fail||resident is not a mode; the one mode is persistent"]),
+        ["fail||overlay print: 'resident' is not a valid mode"]),
 
     # The table
     ("f1_ovtablein", [("        lac count\n", "        lac count\n%%ovtable\n")],
@@ -175,7 +175,7 @@ VARIANTS = [
 
     # F8: the read-only var warning
     ("f8_varro", [("%%overlay print, w1, persistent\n", "%%overlay print, w1\n")],
-        ["warn||a var in overlay print, which is read-only"]),
+        ["warn||a var in overlay print is read-only"]),
 ]
 
 # The control's own lines: it assembles; the forward reference from an overlay
@@ -429,7 +429,9 @@ def many_overlays(name, count):
 
 F4_MANY = [
     ("f4_fit", 32, ["outgrep|-S|^overlay o32, number 32: track 37, drum 2000-2777"]),
-    ("f4_full", 33, ["fail||overlay o33 has no drum track"]),
+    # -O too: the error comes after the optimizer's report is closed
+    ("f4_full", 33, ["fail||overlay o33 has no drum track",
+                     "fail|-O|overlay o33 has no drum track"]),
 ]
 
 # F5 and F6: the table, the headers, the stamp and the files, worked out by hand

@@ -162,8 +162,9 @@ optRegionStatement(OptTableP tableP, PNodeP nodeP, int bank, int pc)
     }
 }
 
-// A %%ovcall's words are am1's: the manager reads its data words through the
-// call's return address, so none may be rewritten, deleted or moved apart.
+// A %%ovcall's or %%ovload's words.
+// The manager reads its data words through the
+// call's return address, none may be rewritten, deleted or moved apart.
 // They are a hands-off span of their own, unless the author's is open.
 void
 optRegionOvcall(OptTableP tableP, PNodeP nodeP, int bank, int pc, int open)
@@ -175,7 +176,7 @@ optRegionOvcall(OptTableP tableP, PNodeP nodeP, int bank, int pc, int open)
         if( !openHandsOffP )
         {
             openHandsOffP = newHandsOff(tableP, nodeP->srcLine, nodeP->srcFileP, bank, pc);
-            openHandsOffP->ovcall = 1;
+            openHandsOffP->ovcall = ((nodeP->flags & PN_OVLOAD)? 2: 1);
             ovcallSpanP = openHandsOffP;
         }
 
@@ -1061,7 +1062,7 @@ int count;
 
     if( tableP->ovCallCount )
     {
-        fprintf(fP, "  am1 makes each %%%%ovcall's words a span of their own: the drum overlay\n");
+        fprintf(fP, "  am1 makes each %%%%ovcall's and %%%%ovload's words a span of their own: the drum overlay\n");
         fprintf(fP, "  manager reads the words after the call through its return address.\n");
     }
 
@@ -1069,8 +1070,8 @@ int count;
     {
         if( spanP->ovcall )
         {
-            fprintf(fP, "\n  span %d  %s line %d, %%%%ovcall\n", spanP->id,
-                (spanP->fileP)?spanP->fileP:"-", spanP->openLine);
+            fprintf(fP, "\n  span %d  %s line %d, %%%%%s\n", spanP->id,
+                (spanP->fileP)?spanP->fileP:"-", spanP->openLine, ((spanP->ovcall == 2)? "ovload": "ovcall"));
         }
         else
         {

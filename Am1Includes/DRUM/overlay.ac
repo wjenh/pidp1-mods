@@ -3,15 +3,17 @@
 // it is called and the overlay is not resident, then calls the entry.
 // This is specifically for use with am1's %%ovcall,
 // see Docs/UsingOverlays.md.
+// For am1's %%ovload it loads the overlay the same way and calls nothing,
+// returning the address of the symbol named in AC.
 //
 // Include it once in the root of a program with overlays, in any bank, before
-// the first %%ovcall.
+// the first %%ovcall or %%ovload.
 //
 // Each transfer polls cks for the drum's end with breaks left as they are.
 // The drum automatically requests a break at the end of every transfer, so a program running with
 // breaks on needs a handler for the drum's channel or turn it off before using %%ovcall.
 //
-// Defines ovEnter, ovInit, the in-an-overlay flag ovActive, the retry count
+// Defines ovEnter, ovFetch, ovInit, the in-an-overlay flag ovActive, the retry count
 // ovRetries, the error hook ovErrHook, and the error halts ovErrNest,
 // ovErrStamp and ovErrDrum, each stopping with its OV_ERR_ number in AC.
 // A program that must not halt sets ovErrHook to a full address and on an error
@@ -29,6 +31,7 @@
 // 12-Oct-2026 Claude: the single-pass swap, OV_SINGLE_PASS.
 // 19-Oct-2026 wje rework to deal with the Type 340 display dra overlap.
 // 19-Oct-2026 wje single pass, i.e. simultaneous read/write, now the default.
+// 21-Oct-2026 Claude: ovFetch, for am1's %%ovload.
 
 #ifndef OVERLAY_AC
 #define OVERLAY_AC
@@ -46,7 +49,7 @@
 #include <DRUM/overlay.ah>
 
     local ovRtn, ovArg, ovEnt, ovEntry, ovWant, ovScan, ovPtr, \
-        ovDia, ovDwc, ovDcl, ovRes, ovTblP, ovInitR, \
+        ovDia, ovDwc, ovDcl, ovRes, ovTblP, ovInitR, ovNoCall, ovBegin, ovFetched, \
         ovScanNext, ovEvict, ovLoad, ovLoaded, ovRun, \
         ovXfer, ovXferStart, ovXferIdle, ovXferBusy, ovXferX, ovXferBad, \
         ovXDia, ovXDwc, ovXDcl, ovStatus, ovTries, \
@@ -67,6 +70,23 @@
 // returns by jmp i through its AC, eem on (memory.ah's farrtn).
 ovEnter,
     dac ovRtn
+    cla
+    jmp ovBegin
+
+// The %%ovload entry: makes the overlay resident if it is not, as ovEnter does,
+// and calls nothing.
+// Entry: AC is the jsp return, the address of two data words: the full address
+// of the overlay's table entry, then of the symbol.
+// Exit: AC is the symbol's full address, IO is preserved; returns past the data
+// words with eem on.
+// Called via jsp, or eem and jsp i from another bank, as %%ovload makes it.
+ovFetch,
+    dac ovRtn
+    law 1
+
+    // Both entries, with ovNoCall set: the body ovEnter describes.
+ovBegin,
+    dac ovNoCall
     lac ovActive
     sza
     jmp ovFailNest
@@ -211,12 +231,20 @@ ovLoaded,
     dac i ovRes
 
 ovRun,
+    lio ovArg
+    lac ovNoCall
+    sza                     // skip if the entry is to be called
+    jmp ovFetched
     law 1
     dac ovActive
-    lio ovArg
     jsp i ovEntry
     dzm ovActive
     eem
+    jmp i ovRtn
+
+    // An %%ovload: eem is still on from the entry.
+ovFetched,
+    lac ovEntry
     jmp i ovRtn
 
 // One drum transfer of ovXDia, ovXDwc and ovXDcl.
@@ -284,8 +312,8 @@ ovInit,
 // An error: to the program's hook if ovErrHook is set, else back past the
 // jda, into the error's halt.
 // Entry: AC is the OV_ERR_ number, stored by the jda.
-// Exit, to the hook: AC the number, IO the failing %%ovcall's return past its
-// data words, ovActive 0, eem on; the hook never returns here.  Back, with no
+// Exit, to the hook: AC the number, IO the failing %%ovcall's or %%ovload's return
+// past its data words, ovActive 0, eem on; the hook never returns here.  Back, with no
 // hook: AC clobbered, IO preserved.
 // Called via jda, from this bank only.
 ovErrTo, 0
@@ -302,7 +330,7 @@ ovErrToX,
 
 // Each error goes first to ovErrTo, then falls into its halt, each halt with
 // its OV_ERR_ number in AC.
-// An %%ovcall while an overlay runs; there is no going on.  It has not yet
+// An %%ovcall or %%ovload while an overlay runs; there is no going on.  It has not yet
 // stepped ovRtn past the two data words, as the others have.
 ovFailNest,
     idx ovRtn
@@ -363,6 +391,7 @@ ovDwc, 0
 ovDcl, 0
 ovRes, 0
 ovInitR, 0
+ovNoCall, 0              // nonzero for an %%ovload, which calls nothing
 ovXDia, 0
 ovXDwc, 0
 ovXDcl, 0

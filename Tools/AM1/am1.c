@@ -235,6 +235,9 @@
  * 20-Oct-2026 claude - am1 preprocesses its source itself (preprocess.c) and no longer runs cpp
  * 20-Oct-2026 claude - a function-like #define with nothing after its parameters opens a block, closed by #enddef
  * 20-Oct-2026 wje - cleanup for release, remove #warning or #error and quotes from these messages
+ * 21-Oct-2026 claude - v5.1, add %%ovload
+ * 21-Oct-2026 claude - the optimizer report is no longer closed twice when a fatal error follows it under -O
+ * 21-Oct-2026 wje - more cleanup
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -676,6 +679,7 @@ int top;                    // -S: one past a bank's highest word
         i = optimize(rootP, basename);
 
         fclose(outfP);
+        outfP = NILP;             // a later fatal error must not have leave() close it again
 
         if(!i)                    // optimizer failed
         {

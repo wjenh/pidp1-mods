@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v5.0 18-Oct-2026"
-#define AM1SHORTVERSION "am1 v5.0"
+#define AM1VERSION "am1 v5.1 21-Oct-2026"
+#define AM1SHORTVERSION "am1 v5.1"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -25,6 +25,7 @@
 #define OVENTRYWORDS 4          // descriptor table words per overlay
 #define OVTABLENAME "ovTable"   // the label am1 gives the descriptor table
 #define OVENTERNAME "ovEnter"   // the overlay manager's entry, which %%ovcall calls
+#define OVFETCHNAME "ovFetch"   // the overlay manager's entry, which %%ovload calls
 
 // The warning ids we have
 #define WARN_1D 1
@@ -59,6 +60,10 @@
 #define PN_CEILING  64  // an OPTIMIZE node written as '%%ceiling EXPR', a point;
                         // value2.ival holds the ceiling reduced to the bank, and
                         // bank the bank
+#define PN_OVLOAD   128 // an OVCALL node written as %%ovload
+
+// The directive an OVCALL node was written as, without its %%.
+#define OVCALLNAME(nodeP) ((((nodeP)->flags) & PN_OVLOAD)? "ovload": "ovcall")
 
 // What a RELAYOUT node is, in its value.ival.
 // Only optrelayout.c makes them, every back end but the listing skips them

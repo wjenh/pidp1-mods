@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 2.05 and covers up through am1 version 5.0; it will be updated as needed.\
-Edit date 20-Oct-2026
-Update some of the overlay descriptions.
+This is version 3.00 and covers up through am1 version 5.1; it will be updated as needed.\
+Edit date 21-Oct-2026
+Add %%ovload.
 
 ## What is **am1**?
 
@@ -1092,7 +1092,13 @@ Directives are:
 - bank
 - %%optimize
 - %%endoptimize
-- %%drumreserve, %%window, %%overlay, %%endoverlay, %%ovcall, %%ovtable, for drum overlays
+- %%drumreserve
+- %%window
+- %%overlay
+- %%endoverlay
+- %%ovcall
+- %%ovload
+- %%ovtable
 - start
 - stop
 - import
@@ -1435,7 +1441,7 @@ usually a blank, a tab, a `;`, a comment or the end of the line.
 
 ## Drum overlays
 
-Six directives let parts of one program share the same core locations.
+Seven directives let parts of one program share the same core locations.
 Overlays are kept on the Type 23 drum and loaded when called.
 *UsingOverlays.md* is the full description.
 
@@ -1461,12 +1467,14 @@ bank 0
 - *%%window name, first, last* declares a range of the current bank that no root word may use.
 - *%%overlay name, window* and *%%endoverlay* bracket an overlay, assembled at its window's first
   address plus 2 in the window's bank.
-  *export* inside it names the entries the root can call.
+  *export* inside it names the symbols the root can reach, entries or data.
   An overlay's labels are private to it and a symbol it does not define is in its bank's globals.
 - *%%ovcall overlay, entry* is the root's call of an overlay's entry.
   It is not allowed inside an overlay and must be on its own line.
+- *%%ovload overlay, symbol*, the overlay is made
+  resident and AC will have the full address of *symbol* which the overlay exports.
 - *%%ovtable* emits the table the manager uses.
-  Give it once after every window and overlay.
+  Give it once, after every window and overlay had been specified.
 
 The overlays are written to *file.ovl*, not to the tape.
 *-O*, *-O1* and *-O2* will also optimize a program with overlays.
@@ -1760,6 +1768,7 @@ If a keyword has parentheses, e.g. loc(al), the part in the parentheses is optio
 | %%forcelocal  |
 | %%optimize    |
 | %%ovcall      |
+| %%ovload      |
 | %%overlay     |
 | %%ovtable     |
 | %%window      |

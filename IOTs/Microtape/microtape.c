@@ -8,6 +8,7 @@
  * 27-Sep-2026 Claude - image writes go through a write-behind queue, so a slow card or disk does
  *    not hold the emulator thread
  * 4-Oct-2035 wje - power clear hook
+ * 21-Oct-2035 wje - add logging instead of using stderr
  */
 
 #define NOT_IN_PDP1
@@ -19,7 +20,6 @@
 #include <sys/stat.h>
 
 #include "configuration.h"
-#include "iotLogger.h"                      // DOLOGGING is not defined: the calls compile away
 #include "microtape.h"
 #include "writeBehind.h"
 
@@ -30,8 +30,14 @@
 #pragma weak wbTruncate
 #pragma weak wbDrain
 
+//#define DOLOGGING
+#include "iotLogger.h"
+
 #define LOG_MT_IOT      0
 #define LOG_MT_CONFIG   0
+#define LOG_MT_LIST     0                   // microtapesbs and microtapes.txt problems
+#define LOG_MT_MOUNT    0                   // a failed mount, a blank tape made, a remount
+#define LOG_MT_WRITE_ERROR 0                // a failed image write-back
 
 #define MT_WBMAXBYTES   (1024 * 1024)       // queued image writes: about 1000 blocks
 
@@ -341,7 +347,7 @@ char specs[MT_UNITS + 1][SPEC_MAX];
         }
         else
         {
-            fprintf(stderr, "microtapesbs must be a channel number 0-15; using %d\n", MT_DEFAULT_SBS);
+            iotCondLog(LOG_MT_LIST, "microtapesbs must be a channel number 0-15; using %d\n", MT_DEFAULT_SBS);
         }
     }
 
@@ -416,7 +422,7 @@ int unit;
 
 // Reads microtapes.txt whole into listText (listLen bytes), noting its device, inode, size
 // and times in listStat, or the reason it could not be read in listErr. A missing file reads
-// as an empty one, which lists no tapes; any other failure to read it is reported on stderr.
+// as an empty one, which lists no tapes; any other failure to read it is logged (LOG_MT_LIST).
 // Returns true if the file is not what the last read found -- different bytes, a different
 // file (renamed over, as Tools/TapeUtils/mtp writes it), different times, or readable where
 // it was not -- and always on the first read.
@@ -472,12 +478,12 @@ bool changed;
 
         if( (err != 0) && (err != ENOENT) )
         {
-            fprintf(stderr, "%s: %s\n", MT_LIST_FILE, strerror(err));
+            iotCondLog(LOG_MT_LIST, "%s: %s\n", MT_LIST_FILE, strerror(err));
         }
 
         if( len > LIST_MAX_BYTES )
         {
-            fprintf(stderr, "%s: longer than %d bytes; the rest is ignored\n", MT_LIST_FILE, LIST_MAX_BYTES);
+            iotCondLog(LOG_MT_LIST, "%s: longer than %d bytes; the rest is ignored\n", MT_LIST_FILE, LIST_MAX_BYTES);
         }
     }
 
@@ -485,7 +491,7 @@ bool changed;
 }
 
 // Parses listText, the file readListFile() read, into specs[1..8] ("" for a drive with no
-// line); see parseListLine(). A line too long for any valid entry is reported on stderr and
+// line); see parseListLine(). A line too long for any valid entry is logged (LOG_MT_LIST) and
 // skipped. No return value.
 static void
 parseList(char specs[][SPEC_MAX])
@@ -509,7 +515,7 @@ int lineNo;
 
         if( len >= (sizeof(line) - 1) )
         {
-            fprintf(stderr, "%s line %d: too long, skipped\n", MT_LIST_FILE, lineNo);
+            iotCondLog(LOG_MT_LIST, "%s line %d: too long, skipped\n", MT_LIST_FILE, lineNo);
         }
         else
         {
@@ -526,7 +532,7 @@ int lineNo;
 // "<drive> <path>[,locked]": the drive number in decimal, 1-8 (the octal 01-10 of the mse
 // field), then at least one space or tab, then the rest of the line with trailing spaces
 // dropped. Blank lines and lines whose first non-space character is # are skipped. A bad line
-// is reported on stderr and skipped; a drive listed twice gets the later line.
+// is logged (LOG_MT_LIST) and skipped; a drive listed twice gets the later line.
 // No return value.
 static void
 parseListLine(char *lineP, int lineNo, char specs[][SPEC_MAX])
@@ -536,6 +542,7 @@ char *endP;
 size_t len;
 long unit;
 
+    (void)lineNo;                           // only the log calls read it, and they can compile away
     len = strlen(lineP);
     while( (len > 0) && ((lineP[len - 1] == '\r') || (lineP[len - 1] == ' ') || (lineP[len - 1] == '\t')) )
     {
@@ -556,13 +563,13 @@ long unit;
     unit = strtol(cP, &endP, 10);
     if( (endP == cP) || ((*endP != ' ') && (*endP != '\t')) )
     {
-        fprintf(stderr, "%s line %d: want \"<drive 1-8> <path>[,locked]\"\n", MT_LIST_FILE, lineNo);
+        iotCondLog(LOG_MT_LIST, "%s line %d: want \"<drive 1-8> <path>[,locked]\"\n", MT_LIST_FILE, lineNo);
         return;
     }
 
     if( (unit < 1) || (unit > MT_UNITS) || (errno != 0) )
     {
-        fprintf(stderr, "%s line %d: drive %ld; the drives are 1-8\n", MT_LIST_FILE, lineNo, unit);
+        iotCondLog(LOG_MT_LIST, "%s line %d: drive %ld; the drives are 1-8\n", MT_LIST_FILE, lineNo, unit);
         return;
     }
 
@@ -573,13 +580,13 @@ long unit;
 
     if( strlen(cP) >= SPEC_MAX )
     {
-        fprintf(stderr, "%s line %d: path too long\n", MT_LIST_FILE, lineNo);
+        iotCondLog(LOG_MT_LIST, "%s line %d: path too long\n", MT_LIST_FILE, lineNo);
         return;
     }
 
     if( specs[unit][0] )
     {
-        fprintf(stderr, "%s line %d: drive %ld is listed again; this line wins\n", MT_LIST_FILE, lineNo, unit);
+        iotCondLog(LOG_MT_LIST, "%s line %d: drive %ld is listed again; this line wins\n", MT_LIST_FILE, lineNo, unit);
     }
 
     strcpy(specs[unit], cP);
@@ -606,7 +613,7 @@ bool locked;
 
     if( !parseSpec(listSpec[unit], path, &locked) )
     {
-        fprintf(stderr, "%s: bad entry \"%s\" in %s (want path[,locked])\n", who, listSpec[unit], MT_LIST_FILE);
+        iotCondLog(LOG_MT_LIST, "%s: bad entry \"%s\" in %s (want path[,locked])\n", who, listSpec[unit], MT_LIST_FILE);
         unmountDrive(unit, now);
         listFailed[unit] = true;
         return;
@@ -643,8 +650,8 @@ size_t len;
 }
 
 // Puts the image at pathP (relative to MT_TAPE_DIR unless it starts with /) on drive unit,
-// replacing whatever was there; see mountResolved(). A path too long to resolve is reported
-// on stderr under whoP and leaves the drive with no tape.
+// replacing whatever was there; see mountResolved(). A path too long to resolve is logged
+// (LOG_MT_MOUNT) under whoP and leaves the drive with no tape.
 // Returns MT_MOUNT_OK, MT_MOUNT_LOCKED or MT_MOUNT_FAILED, as mountResolved().
 static int
 mountDrive(int unit, const char *pathP, bool locked, uint64_t now, const char *whoP)
@@ -663,7 +670,7 @@ int len;
 
     if( (len < 0) || (len >= (int)sizeof(full)) )
     {
-        fprintf(stderr, "%s: image path too long: %s\n", whoP, pathP);
+        iotCondLog(LOG_MT_MOUNT, "%s: image path too long: %s\n", whoP, pathP);
         unmountDrive(unit, now);
         return(MT_MOUNT_FAILED);
     }
@@ -673,9 +680,9 @@ int len;
 
 // Puts the image at fullP, a path already resolved against MT_TAPE_DIR (a unit's own path is
 // one), on drive unit, replacing whatever was there. An unlocked image that does not exist is
-// created as a blank tape, and that is reported on stderr. A file already mounted on another
-// drive is refused, since each drive would write back its own copy. Any failure is reported
-// on stderr under whoP and leaves the drive with no tape.
+// created as a blank tape, and that is logged (LOG_MT_MOUNT). A file already mounted on another
+// drive is refused, since each drive would write back its own copy. Any failure is logged
+// (LOG_MT_MOUNT) under whoP and leaves the drive with no tape.
 // Returns MT_MOUNT_OK, MT_MOUNT_LOCKED (mounted write-locked, asked for or because the file
 // is read-only), or MT_MOUNT_FAILED.
 static int
@@ -686,6 +693,7 @@ char err[MT_PATH_MAX + 160];
 int other;
 int result;
 
+    (void)whoP;                             // only the log calls read it, and they can compile away
     uP = mt550Unit(&ctl, unit);
     mt555Unmount(uP);
     ioErrorReported[unit] = false;
@@ -701,17 +709,17 @@ int result;
 
     if( other <= MT_UNITS )
     {
-        fprintf(stderr, "%s: %s is already mounted on drive %d\n", whoP, fullP, other);
+        iotCondLog(LOG_MT_MOUNT, "%s: %s is already mounted on drive %d\n", whoP, fullP, other);
     }
     else if( !mt555MountFile(uP, fullP, locked, true, err, (int)sizeof(err)) )
     {
-        fprintf(stderr, "%s: %s\n", whoP, err);
+        iotCondLog(LOG_MT_MOUNT, "%s: %s\n", whoP, err);
     }
     else
     {
         if( uP->created )
         {
-            fprintf(stderr, "%s: %s did not exist; created it as a blank tape\n", whoP, fullP);
+            iotCondLog(LOG_MT_MOUNT, "%s: %s did not exist; created it as a blank tape\n", whoP, fullP);
         }
 
         iotCondLog(LOG_MT_CONFIG, "%s: mounted %s%s\n", whoP, fullP, (uP->locked ? " (locked)" : ""));
@@ -740,7 +748,7 @@ unmountDrive(int unit, uint64_t now)
 // blocks meets an unchanged file and loses nothing, and a drive nobody selects is not
 // disturbed. A block not yet written back is dropped, not written: it belongs to the old file.
 // A removed unlocked image comes back as a blank tape, as at any first mount; a removed locked
-// one leaves the drive empty. The mount is reported on stderr. No return value.
+// one leaves the drive empty. The mount is logged (LOG_MT_MOUNT). No return value.
 static void
 remountIfChanged(uint32_t io, uint64_t now)
 {
@@ -765,7 +773,7 @@ int unit;
     snprintf(who, sizeof(who), "microtape%d", unit);
     snprintf(path, sizeof(path), "%s", uP->path);
     locked = uP->locked;
-    fprintf(stderr, "%s: %s changed on disk; mounting it again\n", who, path);
+    iotCondLog(LOG_MT_MOUNT, "%s: %s changed on disk; mounting it again\n", who, path);
     uP->dirtyBlock = -1;
     mountResolved(unit, path, locked, now, who);
 }
@@ -805,7 +813,7 @@ int unit;
 
     if( !unpackName(pdp1P, addr, name, sizeof(name)) )
     {
-        fprintf(stderr, "%s: no valid image name at %06o (packed ascii, ending in its own bank)\n", who, addr);
+        iotCondLog(LOG_MT_MOUNT, "%s: no valid image name at %06o (packed ascii, ending in its own bank)\n", who, addr);
         unmountDrive(unit, now);
         return(MT_MOUNT_FAILED);
     }
@@ -856,7 +864,7 @@ int half;
     return(false);                          // no terminator before the end of the bank
 }
 
-// Prints, once per mount, any failure to write a drive's image file (a block write-back, or
+// Logs (LOG_MT_WRITE_ERROR), once per mount, any failure to write a drive's image file (a block write-back, or
 // the truncation of a mode 7 erase). No return value.
 static void
 reportIoErrors(void)
@@ -869,7 +877,7 @@ int unit;
         uP = mt550Unit(&ctl, unit);
         if( __atomic_load_n(&uP->ioError, __ATOMIC_RELAXED) && !ioErrorReported[unit] )
         {
-            fprintf(stderr, "microtape%d: writing %s failed; the image on disk is out of date\n", unit, uP->path);
+            iotCondLog(LOG_MT_WRITE_ERROR, "microtape%d: writing %s failed; the image on disk is out of date\n", unit, uP->path);
             ioErrorReported[unit] = true;
         }
     }

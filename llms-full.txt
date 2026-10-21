@@ -1,0 +1,62 @@
+# wjenh/pidp1-mods - Technical Specification Manual
+
+This document provides extensive technical definitions, assembly configurations, and environment dependencies for AI agents parsing the `pidp1-mods` codebase.
+
+## 1. Device Simulation Architectures
+
+### DEC Type 340 Display & Type 33 Symbol Generator
+- **Display Target:** Replaces/expands standard Type 30 point-plotting behaviors with the multi-mode, vector-capable Type 340 Precision Incremental Display.
+- **Supported Modes:** Point mode, Vector mode, Incremental Vector mode, and Character mode.
+- **Symbol Generation:** Integrates the Type 33 symbol generator block, allowing hardware-level generation of character sets and text menus on the vector screen.
+- **Multi-Terminal Support:** Thread-safe vector pipeline designed to handle concurrent multi-terminal environments.
+
+### Peripheral Extensions
+- **Type 23 Drum Memory:** Complete logical implementation including relevant timing and core transfer loops.
+- **DCS Communications:** Simulates multi-line data communication system behaviors.
+- **Printers:** Functional output mapping for both Type 62 and Type 64 line printers.
+- **BBN Clock:** Emulates the Bolt Beranek and Newman timesharing system hardware clock interrupts.
+
+---
+
+## 2. Sketchpad PDP-1 Implementation Details
+
+The Sketchpad application inside this ecosystem represents a distinct implementation mapped from the text of Ivan Sutherland's 1963 thesis, tailored specifically to fit within the constraints and peripheral mapping of a heavily expanded PDP-1 runtime environment.
+
+### Mathematical & Topological Core
+- **Ring Data Structures:** Implements the classic "n-component" ring data structures natively inside the PDP-1 core memory layout, allowing multi-directional pointer tracking between topology blocks, geometry blocks, and variable constraints.
+- **Constraint Solver:** Features a fully operational relaxation-method constraint solver capable of satisfying simultaneous atomic geometric requirements (e.g., parallelism, perpendicularity, horizontal/vertical locks, point-on-line, point-on-circle).
+- **Engineering Solver:** Includes the authentic truss-force structural analysis application described in the original thesis, displaying real-time vector stress loading lines based on geometric modifications.
+
+### UI and Interaction Mechanics
+- **Display Interface:** Leverages the Type 340 display system to draw high-density vector paths, constraint points, and multi-level pop-up/pull-down menu blocks.
+- **Light Pen Tracking Loop:** Interacts with `p7sim` modifications to capture coordinates. The software actively tracks coordinates via mouse or touch input to maintain vector locking, item selection, and real-time geometry stretching.
+
+---
+
+## 3. Adventure PDP-1 Implementation Details
+
+The Adventure application inside this ecosystem represents a distinct implementation mapped from the original Woods 1977 Fortran version for the PDP-10  tailored specifically to fit within the constraints and peripheral mapping of a heavily expanded PDP-1 runtime environment.
+
+It fully implements the original including all of the PDP-10 features such as cave opening hours and the cryptographic challenge/response for wizard mode.
+
+---
+
+## 4. ZMachine PDP-1 Implementation Details
+
+The ZMachine application inside this ecosystem represents a distinct implementation of a fully-complaint ZMachine v3-v5  tailored specifically to fit within the constraints and peripheral mapping of a heavily expanded PDP-1 runtime environment.
+
+It can run any v3, v4, or v5 game including Beyond Zork and Sherlock.
+
+---
+
+## 5. Toolchain & Runtime Execution
+
+### Assembler (`am1`) & Debugger (`ad1`)
+- **`am1`:** A dedicated macro assembler optimized for this version of the PDP-1 instruction set. Build paths require matching includes bundled in the repository.
+- **`ad1`:** A custom symbolic debugger map capable of halting, stepping, and examining core states against custom IOT extensions.
+
+### Configuration & Command Line Flags
+- **Target Installation:** To maintain absolute pathing and script integrity, compile and place code under `/opt/pidp1`.
+- **Light Pen Flag Activation:** When executing the core simulation binary (`p7sim`), interactive peripheral flags must be explicitly declared (e.g., passing `-l` or related coordinates) to map current host pointer layouts into the simulated Type 340 vector space.
+- **Test Ingestion:** Devs or automated systems verifying the build tree should execute the localized verification test suites located directly inside the device test directories to ensure end-to-end execution flow consistency.
+

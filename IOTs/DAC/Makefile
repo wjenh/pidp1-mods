@@ -7,11 +7,15 @@
 INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
 CFLAGS= -Wall -Wextra -O2 -fPIC -shared
 DEPS= ../iotHandler.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/dynamicIots.h \
-      ../../src/blincolnlights/pdp1/highSpeedChannels.h ../../src/blincolnlights/pdp1/configuration.h
+      ../../src/blincolnlights/pdp1/highSpeedChannels.h ../../src/blincolnlights/pdp1/configuration.h \
+      ../../src/blincolnlights/pdp1/ad1intf.h
+# The emulator's Makefile writes sdl3.h and its clean removes it; IOT_71.c includes it only
+# if it is there, so it is a prerequisite only then.
+SDL3H= $(wildcard ../../src/blincolnlights/pdp1/sdl3.h)
 
 all: IOT_71.so IOT_72.so
 
-IOT_71.so: IOT_71.c room.h edge.h $(DEPS)
+IOT_71.so: IOT_71.c room.h edge.h ../Lib/iotLogger.h $(SDL3H) $(DEPS)
 	gcc $(CFLAGS) $(INC) IOT_71.c -o $@ -lm
 
 IOT_72.so: IOT_72.c $(DEPS)

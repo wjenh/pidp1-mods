@@ -1,0 +1,24 @@
+# wjenh/pidp1-mods
+
+> Comprehensive emulator modifications, peripheral enhancements, and historical software preservation for the PiDP-1 replica ecosystem. 
+
+## Project Overview
+This repository contains deeply expanded simulation features for the main PiDP-1 replica code. It bridges the hardware console with advanced, high-density peripheral emulations and functional historic computing environments, verified through deep end-to-end execution flow analysis.
+
+## Core Architectural Enhancements
+- **Dynamic IOTs:** Implements dynamically-loaded Input/Output Transfer (IOT) instructions.
+- **Advanced Display Support:** Native simulation of the DEC Type 340 Precision Incremental Display (including full character sets via the Type 33 symbol generator).
+- **Expanded Hardware Stack:** Complete implementations of the Type 23 drum, DCS communications system, Type 62/64 line printers, and the BBN timesharing clock.
+- **Interactive Peripheral Hooks:** Functional light pen tracking utilizing hardware panels, mouse, or touch coordinate overrides.
+
+## Key Applications
+- **Sketchpad:** A rigorous, clean-room port of Ivan Sutherland's iconic 1963 MIT doctoral thesis program. Built natively for the PDP-1 and Type 340 architecture. Includes atomic geometric constraints, a relaxation-method constraint solver, and the structural truss-force analysis solver.
+
+## Critical Setup & Navigation
+- **Repository Setup:** Intended to be cloned directly to `/opt/pidp1`. To optimize build resources, a shallow clone is recommended: `git clone --depth 1 https://github.com`.
+- **System Toolchain:** Includes the custom `am1` macro assembler (along with required include files) and the `ad1` symbolic debugger.
+- **Testing Assets:** Contains full-coverage test suites for all simulated devices, alongside testing utilities like `lightpen.rim` and `lptest.bin`.
+
+## Links
+- [Full LLM Technical Details](llms-full.txt)
+- [Primary Repository Source](https://github.com/wjenh/pidp1-mods)

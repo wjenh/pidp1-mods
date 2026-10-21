@@ -198,6 +198,11 @@ An initial drum image for the Type 23 Parallel Drum can be installed.
 It contains several program images that can be run by several of the PDP-1 programs
 in the FunStuff directory and managed by the drum tools in Tools/Drumupdater.
 
+## What's that llms.txt and llms-full.txt all about?
+
+It's apparently the current way for llm searches to find out about what is in a repository.
+They are here because it was suggested that they be added.
+
 ## Why not track the original repo? Some philosophy.
 
 There are several reasons, but the primary one is a difference in philosopy.

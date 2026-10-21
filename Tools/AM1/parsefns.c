@@ -21,8 +21,8 @@ checkPCBound(char *msgP, int addr, int lineNo)
 {
     if( addr >= BANKSIZE )                 // ran over the end of the memory
     {
-        // Report against the line the caller recorded, not the global lineno:
-        // if bison read the terminator as lookahead before the rule reduced,
+        // Report against the line the caller recorded, not the global lineno.
+        // If bison read the terminator as lookahead before the rule reduced,
         // the global has already moved on to the next line.
         verrorl(lineNo, "%s would go past the memory bank size of 4096 words", msgP);
     }
@@ -38,10 +38,11 @@ PNodeP nP;
         yyerror("out of memory in newnode()");
     }
 
-    nP->lineNo = lineNo - 1;        // because it will already have been incremented by the line terminator in flex
+    nP->lineNo = lineNo - 1;       // it will already have been incremented by the line terminator in flex
     nP->pc = pc;
     nP->bank = curBank;
     nP->overlay = curOverlay;
+    nP->originP = stmtOriginP;
     nP->type = type;
     nP->leftP = leftP;
     nP->rightP = rightP;

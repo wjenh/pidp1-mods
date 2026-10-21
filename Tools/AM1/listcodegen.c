@@ -43,6 +43,10 @@ extern void ovlPrintLayout(FILE *outfP, const char *prefixP);
 extern void ovlTableWordName(int index, char *bufP, size_t size);
 extern char flexoToAscii(char fchar, int *shift);
 extern void verror(char *msgP, ...);
+extern void mapFile(const char *nameP);
+extern void mapStatement(PNodeP stmtP);
+extern void mapPool(bool on);
+extern void mapWord(PNodeP nodeP);
 
 // Walk a tree and list a listing
 int
@@ -65,7 +69,9 @@ listCodegen(FILE *outfP, PNodeP rootP)
             node.bank = bankP->bank;
             node.lineNo = lineno;
             output(outfP, doOutput, "// Constants for bank %d\n", bankP->bank);
+            mapPool(true);
             listConstants(outfP, &node, bankP->constSymP);
+            mapPool(false);
         }
 
         if( bankP->varNodesP )
@@ -75,7 +81,9 @@ listCodegen(FILE *outfP, PNodeP rootP)
             node.lineNo = lineno;
             node.value.ptr = bankP->varNodesP;
             output(outfP, doOutput, "// Variables for bank %d\n", bankP->bank);
+            mapPool(true);
             listVars(outfP, &node);
+            mapPool(false);
         }
     }
 
@@ -105,13 +113,17 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
 
     while( nodeP && (nodeP != stopP) )
     {
+        mapStatement(nodeP);
+
         switch( nodeP->type )
         {
         case RELAYOUT:
-            // Nodes relayout leaves.  The listing stays in source order: a moved
-            // run is listed at the marker where it stood, with the addresses it
-            // now has, and skipped where it sits.  A deleted word has empty
-            // address and value columns; on a label's line the label printed them.
+            // Node'ss relayout leaves.
+            // The listing stays in source order
+            // A moved run is listed at the marker where it originated with the addresses it
+            // now has and skipped.
+            // A deleted word has empty address and value columns,
+            // on a label's line the label printed them.
             switch( nodeP->value.ival )
             {
             case RL_DELETED:
@@ -160,6 +172,7 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
 
         case FILENAME:
             doOutput = !(nodeP->flags & PN_NOTEXT);
+            mapFile(nodeP->value.strP);
             if( !dropIncludeText )
             {
                 output(outfP, doOutput, "File %s\n", nodeP->value.strP);
@@ -216,7 +229,9 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
 
         case VARS:
             output(outfP, doOutput,"// variables\n");
+            mapPool(true);
             listVars(outfP, nodeP);
+            mapPool(false);
             break;
 
         case BANK:
@@ -235,7 +250,9 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
         case CONSTANTS:
             startLine(true, outfP, nodeP);
             output(outfP, doOutput,"constants\n");
+            mapPool(true);
             listConstants(outfP, nodeP, nodeP->value.symP);
+            mapPool(false);
             break;
 
         case TEXT:
@@ -767,6 +784,7 @@ startLine(bool noValue, FILE *outP, PNodeP nodeP)
     else
     {
         fprintf(outP, "%4d: %02o%04o %06o ",  nodeP->lineNo, nodeP->bank, nodeP->pc, nodeP->value2.ival);
+        mapWord(nodeP);     // the .map's record for this word's line
     }
 }
 
@@ -903,7 +921,9 @@ OverlayContextP ovP;
     {
         node.pc = ovP->ctx.constPC;
         output(outfP, doOutput, "// Constants for overlay %s\n", ovP->nameP);
+        mapPool(true);
         listConstants(outfP, &node, ovP->ctx.constSymP);
+        mapPool(false);
     }
 
     if( ovP->ctx.varNodesP )
@@ -911,7 +931,9 @@ OverlayContextP ovP;
         node.pc = ovP->ctx.varPC;
         node.value.ptr = ovP->ctx.varNodesP;
         output(outfP, doOutput, "// Variables for overlay %s\n", ovP->nameP);
+        mapPool(true);
         listVars(outfP, &node);
+        mapPool(false);
     }
 
     startLine(true, outfP, nodeP);

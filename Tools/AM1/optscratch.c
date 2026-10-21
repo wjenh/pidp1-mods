@@ -2342,6 +2342,50 @@ int wrongLocal;
     freePass(&pass);
 }
 
+// The classes the carry measurement's parking and dead-store counts read
+// (task A52, optvalue.c): local and span, the words private to their unit and
+// live neither into it nor across a call, and call, kept apart.  The class
+// is buildScratchPass()'s, so it is the one the dump prints.
+// Returns tableP->count codes by emission index, OPTSP_NONE for every other
+// word; the caller frees them.
+unsigned char *
+optScratchPrivate(OptTableP tableP)
+{
+SPass pass;
+SWord *swP;
+unsigned char *codesP;
+int i;
+
+    buildScratchPass(&pass, tableP);
+    codesP = (unsigned char *)sAlloc(((size_t)tableP->count + 1), 1);
+
+    for( i = 0; i < pass.wordCount; ++i )
+    {
+        swP = &pass.wordsP[i];
+
+        switch( swP->cls )
+        {
+        case SC_LOCAL:
+            codesP[swP->wordP->index] = OPTSP_LOCAL;
+            break;
+
+        case SC_SPAN:
+            codesP[swP->wordP->index] = OPTSP_SPAN;
+            break;
+
+        case SC_CALL:
+            codesP[swP->wordP->index] = OPTSP_CALL;
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    freePass(&pass);
+    return(codesP);
+}
+
 // The report section.
 
 // Is this a pooled word the analysis cannot promise?  The same test as

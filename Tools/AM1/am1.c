@@ -1,6 +1,7 @@
-/* am1.c - another macro1 assembler
+/* am1.c - another macro assembler for the PDP-1
  *
- * Usage: am1 [-abdlmMnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
+ * Usage: am1 [-abdlmMnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-i path]
+ *    [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
@@ -10,7 +11,7 @@
  * -l   generate a listing
  * -m   generate macro1 source
  * -M   memory overwrite by code is a warning, not a fatal error
- * -n   don't run cpp on input source
+ * -n   don't preprocess the input source
  * -N   don't keep any contents from include files in the listing
  * -O   run the optimizer advisor, write its report to sourcefile.opt
  * -O=dump
@@ -110,14 +111,14 @@
  * -D symbol=value
  *      add a #define, also accepts -Dsym.. syntax
  * -I path
- *  add a directory to the cpp #include search list
+ *  add a directory to the #include search list
  *      also accepts -Ipath syntax
  *
  * The following are for debugging, not of general use.
  *
  * -x   enable (f)lex debugging output on stderr
  * -y   enable yacc (bison) debugging output on stderr
- * -k   keep the intermediate cpp file
+ * -k   keep the intermediate preprocessed file
  * -p   dump the parse tree in readable form on stdout
  *
  * The resulting code will be assembled.
@@ -128,7 +129,8 @@
  * sourcefile.mac is the macro1 source output file
  * sourcefile.rim is the loadable executable file in rim/bin format
  * sourcefile.lst is the listing output file
- * sourcefile.cpp is the cpp output file
+ * sourcefile.map is the origin map, written with the listing
+ * sourcefile.cpp is the preprocessed source
  * sourcefile.sym is the symbol table output file
  *
  * The environment variable 'AM1INCDIR' overrides the default system
@@ -230,6 +232,9 @@
  * 13-Oct-2026 claude - v4.0, -O, -O1, -O2 and -O=source take a program with overlays
  * 14-Oct-2026 wje - production cleanup
  * 18-Oct-2026 wje - don't generate a symtab automatically when export is used inside an overlay definition
+ * 20-Oct-2026 claude - am1 preprocesses its source itself (preprocess.c) and no longer runs cpp
+ * 20-Oct-2026 claude - a function-like #define with nothing after its parameters opens a block, closed by #enddef
+ * 20-Oct-2026 wje - cleanup for release, remove #warning or #error and quotes from these messages
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -242,13 +247,7 @@
 #include "am1.h"
 #include "symtab.h"
 #include "optimizer.h"
-
-typedef struct inc_item
-{
-    struct inc_item *nextP;
-    char *incP;
-    char type;                  // I, D, etc
-} Inc_item, *Inc_itemP;
+#include "preprocess.h"
 
 // Define the various warnings that can be enabled and disabled.
 // Flags are enabled, repeats, has been issued
@@ -268,14 +267,15 @@ Warning warnings[] = {
     {"", 0, false, false, false}  // end marker
 };
 
-Inc_itemP incsP;                // the list of cpp stuff
-FILE *outfP;                    // where we put our code
+FILE *outfP;                   // where we put our code
+FILE *mapoutfP;                // the origin map, written with the listing
 
 char *origFilenameP;            // command line input am1 file
 char *filenameP;                // current input am1 file
-char *rawTitleP;                // the source's title line as written, when cpp runs
-char pfilename[128];            // cpp tmp file name
+char *rawTitleP;                // the source's title line as written, when it is preprocessed
+char pfilename[128];            // preprocessed file name
 char ofilename[1024];           // output file; -O=source's carries the source's directory
+char mfilename[1024];           // the origin map's file
 char basename[64];              // base name
 char incroot[256];              // root of includes
 char str1[256];                 // scratch strings
@@ -314,11 +314,10 @@ extern void initParser(void);
 extern FILE *yyin;              // lex input file
 extern int yyparse();
 
-int run_cpp(char *, char *);
+void setIncroot(void);
 char *readTitleLine(char *srcNameP);
 int usage();
 bool doWarn(int warnID);
-void add_cpp(char, char *);
 bool fileIsMain(char *nameP);
 void enableAllWarnings(void);
 void enableWarning(char *nameP);
@@ -330,6 +329,9 @@ extern int evalExpr(PNodeP);
 extern int macCodegen(FILE *, PNodeP);
 extern int binCodegen(FILE *, PNodeP);
 extern int listCodegen(FILE *, PNodeP);
+extern void mapOpen(FILE *fP, const char *srcNameP);
+extern void mapClose(void);
+extern void mapSymbols(BankContextP banksP);
 extern int testCodegen(FILE *, PNodeP);
 extern BankContextP findBank(int bankNo);
 extern int bankTop(BankContextP bankP);
@@ -512,7 +514,7 @@ int top;                    // -S: one past a bank's highest word
                     cP = *argv;
                 }
 
-                add_cpp('I', cP);
+                ppAddOption('I', cP);
                 srcNoteInclude(cP);                         // for -O=source's header
                 cP = "";
                 break;
@@ -525,7 +527,7 @@ int top;                    // -S: one past a bank's highest word
                     cP = *argv;
                 }
 
-                add_cpp( 'D', cP );
+                ppAddOption('D', cP);
                 srcNoteDefine(cP);                          // for -O=source's header
                 cP = "";
                 break;
@@ -581,7 +583,7 @@ int top;                    // -S: one past a bank's highest word
         doBinary = true;                                    // default is binary
     }
 
-    if( testMode )                      // this forces no listing, no macro, no binary, no symtab, do cpp
+    if( testMode )                      // this forces no listing, no macro, no binary, no symtab, do preprocess
     {
         doCpp = true;
         doSymtab = doListing = doMacro = doBinary = false;
@@ -605,16 +607,17 @@ int top;                    // -S: one past a bank's highest word
 
     if( !doMacro )
     {
-        add_cpp( 'D', "AM1" );                   // used by some includes
+        ppAddOption('D', "AM1");                   // used by some includes
     }
 
     if(doCpp)
     {
         rawTitleP = readTitleLine(filenameP);
         sprintf(pfilename, "%s.cpp", basename);
-        if(!run_cpp(filenameP, pfilename))
+        setIncroot();
+        if(!preprocess(filenameP, pfilename, incroot))
         {
-            fprintf(stderr, "am1: cpp failed\n");
+            fprintf(stderr, "am1: preprocessing failed\n");
             leave(0);
         }
 
@@ -815,13 +818,28 @@ int top;                    // -S: one past a bank's highest word
             leave(0);
         }
 
+        // The origin map is written with the listing, a record per word line.
+        strcpy(mfilename, basename);
+        strcat(mfilename, ".map");
+
+        if(!(mapoutfP = fopen(mfilename, "w")))
+        {
+            fprintf(stderr, "am1: can't open output file '%s'\n", mfilename);
+            leave(0);
+        }
+
+        mapOpen(mapoutfP, origFilenameP);
         i = listCodegen(outfP, rootP);
+        mapSymbols(banksP);
+        mapClose();
 
         fclose(outfP);
+        fclose(mapoutfP);
 
         if(!i)                    // codegen failed
         {
             unlink(ofilename);      // get rid of output
+            unlink(mfilename);
         }
     }
 
@@ -1478,10 +1496,10 @@ usage()
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code, the default if neither -b nor -m is given\n");
     fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
-    fprintf(stderr, "  -l generate listing\n");
+    fprintf(stderr, "  -l generate listing, and its origin map, .map\n");
     fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -M memory overwrite is a warning, not a fatal error\n");
-    fprintf(stderr, "  -n don't run cpp\n");
+    fprintf(stderr, "  -n don't preprocess\n");
     fprintf(stderr, "  -N drop any include file text from listing\n");
     fprintf(stderr, "  -O run the optimizer advisor, report goes to sourcefile.opt\n");
     fprintf(stderr, "  -O=xform as -O, and print what -O1 or -O2 does with each finding on stdout; without\n");
@@ -1534,22 +1552,22 @@ usage()
     fprintf(stderr, "  -O=reclaim=off hold the pool reclaim off, so a one-word-for-one-word oracle can still judge\n");
     fprintf(stderr, "      the same-length rewrites; it switches off no rewrite\n");
     fprintf(stderr, "  -O=source=render as -O=source, but every line written from the tree, none copied\n");
-    fprintf(stderr, "  -O=source=tree as -O=source=render, with no line map: cpp's output, assembled with -n\n");
+    fprintf(stderr, "  -O=source=tree as -O=source=render, with no line map: the preprocessed source, assembled with -n\n");
 #endif
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -S summarize memory usage per bank\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
     fprintf(stderr, "  -z keep 1's complement -0 as the result of a math operation\n");
-    fprintf(stderr, "  -D define a symbol to cpp\n");
-    fprintf(stderr, "  -I add an include path to cpp\n");
+    fprintf(stderr, "  -D define a macro, -Dname or -Dname=value\n");
+    fprintf(stderr, "  -I add a directory to the #include search list\n");
     fprintf(stderr, "  -i define the include root directory\n");
     fprintf(stderr, "  -W print all warnings\n");
     fprintf(stderr, "  -W=[-]warning (- don't) print this warning\n");
     fprintf(stderr, "  These are primarily for testing, not generally useful:\n");
     fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
-    fprintf(stderr, "  -k don't delete cpp tmp file\n");
+    fprintf(stderr, "  -k keep the preprocessed source, sourcefile.cpp\n");
     fprintf(stderr, "  -p dump parse tree to stdout\n");
     fprintf(stderr, "  -T special test mode, see docs, disables several other flags\n");
     fprintf(stderr, "\n");
@@ -1560,42 +1578,9 @@ usage()
     exit(1);
 }
 
-void
-add_cpp(char type, char *nameP)        // add a name to the cpp list
-{
-    Inc_itemP iP;
-    Inc_itemP next_iP;
-
-    if(!(iP = (Inc_itemP) malloc(sizeof(Inc_item))))
-    {
-        fprintf(stderr, "am1: out of memory processing -I\n");
-        leave(0);
-    }
-
-    iP->type = type;
-
-    for(next_iP = incsP; next_iP && next_iP->nextP;)
-    {
-        next_iP = next_iP->nextP;   // get to end of list
-    }
-
-    iP->nextP = (Inc_itemP) 0;
-
-    if(incsP)
-    {
-        next_iP->nextP = iP;
-    }
-    else
-    {
-        incsP = iP;
-    }
-
-    iP->incP = nameP;
-}
-
-// The source's first line as written, for the title: cpp expands any macro name in it,
-// -DAM1's included. NILP when the line is empty or a cpp directive, or the file can't be
-// read; the title is then cpp's first line, as before.
+// The source's first line as written, for the title: the preprocessor expands any macro
+// name in it, -DAM1's included. NILP when the line is empty or a directive, or the file
+// can't be read; the title is then the preprocessed first line.
 char *
 readTitleLine(char *srcNameP)
 {
@@ -1623,11 +1608,11 @@ char *titleP;
     return( titleP );
 }
 
-int
-run_cpp(char *filenameP, char *pfilename)
+// The include root, if -i did not give it: $AM1INCDIR, else the built-in AM1INCDIR.
+void
+setIncroot(void)
 {
     char *cP;
-    char tmpstr[2048];
 
     if(!incroot[0])
     {
@@ -1640,25 +1625,6 @@ run_cpp(char *filenameP, char *pfilename)
             strcpy(incroot,AM1INCDIR);
         }
     }
-
-    // Multiple tries, finally ok
-    // Real balancing act between obnoxious cpp noise about defines from include files, etc. and
-    // readable code.
-    //sprintf(tmpstr, "%s -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
-    //sprintf(tmpstr, "%s -nostdinc -isystem %s -C -x assembler-with-cpp --no-line-commands ", CPP_PATH, incroot);
-    sprintf(tmpstr, "%s -nostdinc -isystem %s -C -x assembler-with-cpp ", CPP_PATH, incroot);
-    cP = tmpstr + strlen(tmpstr);
-
-    while(incsP)
-    {
-        sprintf(cP, "-%c%s ", incsP->type, incsP->incP);
-        incsP = incsP->nextP;
-        cP += strlen(cP);
-    }
-
-    sprintf(cP, "%s %s", filenameP, pfilename);
-
-    return(!system(tmpstr));
 }
 
 void

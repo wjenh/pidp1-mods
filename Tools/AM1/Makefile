@@ -10,13 +10,14 @@ OBJS=am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o eval.o \
         maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o optimizer.o \
         optdecode.o optrefs.o optflow.o optreturn.o optroutine.o optcallgraph.o \
         optstrings.o optrules.o optreport.o optshare.o optregion.o opttransform.o \
-        optvalue.o optscratch.o optguess.o optspeed.o optrelayout.o optwindow.o \
-        srccodegen.o ovlcodegen.o
+        optvalue.o optpreserve.o optscratch.o optguess.o optspeed.o optrelayout.o optwindow.o \
+        srccodegen.o ovlcodegen.o preprocess.o mapcodegen.o
 
 # am1test is am1 built with AM1_TEST_SWITCHES defined, which also accepts the
 # -O= modifiers that exist to test the optimizer; wordtable_check.sh and
-# Tests/Symbols run it.  Only am1.c and optimizer.c test the symbol, so only
-# they are compiled twice.  am1test is never installed.
+# Tests/Symbols run it.
+# Only am1.c and optimizer.c test the symbol, so only they are compiled twice.
+# am1test is never installed.
 TESTOBJS=$(filter-out am1.o optimizer.o,$(OBJS)) am1-test.o optimizer-test.o
 
 all: am1 fastload
@@ -27,9 +28,9 @@ am1:    $(OBJS)
 am1test: $(TESTOBJS)
 	$(CC) -o am1test $^
 
-# fastload uses ad1's debugger link client, compiled straight in so that no
-# object file is left in $(LINKDIR).  Its tape reader, tapeimage.c, is shared
-# with ovlload, which compiles it the same way from ../Ovlload.
+# fastload uses ad1's debugger link client, compiled in, so that no
+# object file is left in $(LINKDIR).
+# Its tape reader, tapeimage.c, is shared with ovlload which compiles it the same way from ../Ovlload.
 fastload: fastload.c tapeimage.c tapeimage.h $(LINKDIR)/ad1link.c $(LINKDIR)/ad1link.h $(LINKDIR)/ad1proto.h
 	$(CC) -I$(LINKDIR) fastload.c tapeimage.c $(LINKDIR)/ad1link.c -o fastload
 
@@ -46,7 +47,7 @@ install: am1 fastload
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c
 
-lex.yy.o: lex.yy.c y.tab.h lexfuncs.c
+lex.yy.o: lex.yy.c y.tab.h lexfuncs.c preprocess.h
 	$(CC) -c lex.yy.c
 
 y.tab.o: y.tab.c
@@ -61,13 +62,13 @@ lex.yy.c: lexer.l y.tab.h
 y.tab.%: parser.y am1.h symtab.h
 	bison $(BISONFLAGS) -o y.tab.c -d parser.y
 
-am1.o: am1.c am1.h symtab.h y.tab.h optimizer.h
+am1.o: am1.c am1.h symtab.h y.tab.h optimizer.h preprocess.h
 	$(CC) -c am1.c
 
 optimizer.o: optimizer.c optimizer.h am1.h y.tab.h
 	$(CC) -c optimizer.c
 
-am1-test.o: am1.c am1.h symtab.h y.tab.h optimizer.h
+am1-test.o: am1.c am1.h symtab.h y.tab.h optimizer.h preprocess.h
 	$(CC) -DAM1_TEST_SWITCHES -c am1.c -o am1-test.o
 
 optimizer-test.o: optimizer.c optimizer.h am1.h y.tab.h
@@ -112,6 +113,9 @@ opttransform.o: opttransform.c optimizer.h am1.h symtab.h y.tab.h
 optvalue.o: optvalue.c optimizer.h am1.h y.tab.h
 	$(CC) -c optvalue.c
 
+optpreserve.o: optpreserve.c optimizer.h am1.h y.tab.h
+	$(CC) -c optpreserve.c
+
 optscratch.o: optscratch.c optimizer.h am1.h symtab.h y.tab.h
 	$(CC) -c optscratch.c
 
@@ -142,6 +146,9 @@ bincodegen.o: bincodegen.c am1.h y.tab.h font5x7.h xldr.h
 listcodegen.o: listcodegen.c am1.h y.tab.h
 	$(CC) -c listcodegen.c
 
+mapcodegen.o: mapcodegen.c am1.h symtab.h preprocess.h
+	$(CC) -c mapcodegen.c
+
 srccodegen.o: srccodegen.c optimizer.h am1.h y.tab.h type340chars.h
 	$(CC) -c srccodegen.c
 
@@ -150,6 +157,9 @@ testcodegen.o: testcodegen.c am1.h y.tab.h
 
 ovlcodegen.o: ovlcodegen.c am1.h symtab.h y.tab.h
 	$(CC) -c ovlcodegen.c
+
+preprocess.o: preprocess.c preprocess.h
+	$(CC) -c preprocess.c
 
 listSymtab.o: listSymtab.c am1.h symtab.h y.tab.h
 	$(CC) -c listSymtab.c

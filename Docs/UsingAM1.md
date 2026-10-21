@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 2.04 and covers up through am1 version 4.0; it will be updated as needed.\
-Edit date 18-Oct-2026
+This is version 2.05 and covers up through am1 version 5.0; it will be updated as needed.\
+Edit date 20-Oct-2026
 Update some of the overlay descriptions.
 
 ## What is **am1**?
@@ -32,7 +32,7 @@ code in bank 0, and the PDP-1D and special instructions will give an error unles
 
 Features
 
-- Uses **cpp** to bring the full power of **cpp** to the code
+- Has its own C preprocessor, which does what **cpp** does plus a few additions, see *The preprocessor*
 - Provides local variables and local scoping
 - Provides a new, explicit, variable support with initializers
 - Allows easy use of ascii characters and strings
@@ -51,7 +51,7 @@ Features
 - Can share location symbols across memory banks
 - Can generate either **macro1** source or rim format binary code output
 - The rim format loads a new loader to support extended memory use
-- Does **not** allow redefining symbols (but cpp defines can)
+- Does **not** allow redefining symbols (but preprocessor defines can)
 - Does **not** treat tab as a statement delimiter
 - 'Punches' the readable program header line in binary mode, like the original **macro** does
 
@@ -63,7 +63,7 @@ use of characters in **macro1** that were poorly handled.
 - Constants are now of the form *[xxx* and *[xxx]*, not *(xxx* and *(xxx)*
 - Multiple statements on a line are separated by *;* not tab
 - Tabs are not statement delimiters and are treated as a space
-- Cpp directives of the form *#xxx* are supported
+- C preprocessor directives of the form *#xxx* are supported
 - The operators *& | ~ ^ \* \/ %* (% is mod), as well as *(expr)* are added
 - *C* is defined as 04000 for use with IOTs
 - *dpyc* is defined as 724007 for convenience
@@ -77,7 +77,7 @@ use of characters in **macro1** that were poorly handled.
 - Location symbols in one bank can be referenced from another bank by using the *:banknum* suffix
 - Explicit variable declarations with optional initializers is added, *var name=expr, name...*
 - Tables with optional initializers are added, *table 10, 7+5*
-- Macro1 style define-terminate blocks are **not** supported, use **cpp** #defines
+- Macro1 style define-terminate blocks are **not** supported, use #defines
 
 ## A note on **macro** vs **macro1**
 
@@ -183,7 +183,7 @@ The parser side knows nothing about the details of the code generators, it just 
 and creates the parse tree.
 
 Wrapping the parsing and code generation is control logic that manages the files and optionally
-passes the input through **cpp**.
+preprocesses the input, as **cpp** would, with **am1**'s own preprocessor.
 
 The companion tool, **mactoam1** handles the syntactic differences between **macro1** and **am1** and
 deals with translating them, and also understands the original *define-terminate* syntax and converts
@@ -207,7 +207,7 @@ Just type make.
 - m generate **macro1** code
 - M already used memory overwritten by code is a warning, not a fatal error
 - l generate a program listing
-- n don't run **cpp** on the input
+- n don't preprocess the input
 - N don't keep any text from an included file in a listing
 - O run the optimizer advisor, see *UsingTheAm1Optimizer.md*
 - O=modifier as -O, with additonal behavior
@@ -222,17 +222,17 @@ Just type make.
 - T generate test mode output, see below
 - v print the version number and exit
 - z preserve -0 for math operation results, the default is to convert to 0
-- Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
+- Dsymbol define a symbol for the preprocessor, -Dsym, -Dsym=value or -D sym are all accepted
 - W print all warnings
 - W=[-]name enable or -disable just this warning, can be repeated for more warnings
-- Ipath add a search path to **cpp** for "files", -Ipath or -I path are both accepted
+- Ipath add a directory to the #include search list, -Ipath or -I path are both accepted
 - ipath set the root directory for <file> searches, -ipath or -i path are both accepted
 
 These additional flags are generally for debugging:
 
 - x send lex debugging output to stderr
 - y send yacc debugging output to stderr
-- k keep intermediate **cpp** file
+- k keep the preprocessed source, *file*.cpp
 - p print the internal parse tree in readable form on stdout
 
 Both **macro1** and binary code can be generated at the same time.
@@ -250,7 +250,7 @@ variable *AM1INCDIR* to the full path to the location.
 
 The -i flag has priority, followed by the environment variable, followed by the default.
 
-At runtime, /usr/bin/cpp must exist if preprocessing is being done.
+**am1** preprocesses its source itself: no **cpp** is needed at runtime.
 
 ## The fastload utility
 
@@ -286,7 +286,7 @@ It will report the starting address and offer to start the program at that addre
 
 Test mode is a special mode used to create output suitable for validation tests of **am1** itself.
 
-When used, it overrides generation of macro, binary, list, and symtab files and enables use of cpp.
+When used, it overrides generation of macro, binary, list, and symtab files and enables preprocessing.
 A text file named *progname.dmp* is created that has one line of text for every storage word
 that has been generated, basically a loaderless *rim* tape but in ascii.
 
@@ -374,8 +374,8 @@ Each file being processed will have an initial line identifying the file the lis
 
 Multiple statements on a line will be listed on separate lines, but the line number will be the same for all.
 
-Empty lines are generally eliminated for clarity, since **cpp** tends to generate a lot of them when its
-directives are processed.
+Empty lines are generally eliminated for clarity, since preprocessing leaves a lot of them where its
+directives were.
 
 #define statements are not listed, but the expansion is.
 
@@ -400,10 +400,11 @@ The following can be produced:
 - *file*.bin - binary output that has no rim loader
 - *file*.mac - text output that can (usually) be assembled by **macro1**
 - *file*.lst - text output that is a listing of the assembled program, only generated for binary mode
-- *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
+- *file*.cpp - text output that is the preprocessed source, kept when *-k* is given
 - *file*.sym - text output that is a listing of the global symbols in the program
 - *file*.ovl - text output that holds a program's drum overlays
 - *file*.osym - text output that lists the drum overlay symbols, written with the *sym* file
+- *file*.map - text output that says where each word came from, through any macros, written with the *lst* file
 
 The *ovl* and *osym* files are written only for a program with overlays, *UsingOverlays.md* describes both.
 A program's *sym* file holds the root's symbols only, never an overlay symbol.
@@ -420,6 +421,51 @@ where *aaaaaa* is the full 16-bit address of the symbol's location in memory, an
 or *X*.\
 A *G* means the symbol wasn't exported, *X* means the symbol was, *I* symbols were imported.\
 The *lineno* value is the line number in the original source file where the symbol was *resolved*, not declared.
+
+### The origin map
+
+Whenever a listing is written (*-l* or *-d*), the origin map *file*.map is written beside it. The listing shows
+a macro's expansion at the line where the macro was used; the map says which macros made each word, and from
+which line of which file. **ad1** reads it to show the lines you wrote, see *UsingAD1.md*. The *lst* and *sym*
+files are the same with or without it.
+
+It is plain text, one record per line, the fields separated by one space:
+```
+%%am1 origin map%%
+V1
+source-file
+F n file
+W aaaaaa overlay n line [macro n line]...
+P aaaaaa
+S symbol-name n
+```
+
+- The first three lines are a label, a version, and the source file as it was given to **am1**.
+- An *F* record numbers a file the first time a record needs it. Files are named as the preprocessor found
+  them, relative to the directory **am1** ran in or from the root of the include files.
+- There is one *W* or *P* record for each word the listing shows, in the listing's order, so the two can be
+  paired by counting. A listing line can hold two words: a label's, and the first word of a *type340* string
+  on the same line.
+- A *W* record is a word assembled from code: its address (bank and address, as in the listing), the drum
+  overlay it is in, or *-* for the root, and the file number and line the listing gives its statement. Then,
+  when macros made the statement, one triple per macro, from the one the program used inward: the macro's
+  name, the file it was defined in, and the line of its body the statement came from. A block macro's
+  statements each have their own body line; a one-line macro's all have its one line.
+- A statement made from a macro's argument has the origin of where the argument was written, not the
+  macro's. A token made by *##* is the macro's.
+- A *P* record is a word of a constants or variables pool, which has no origin.
+- An *S* record gives the file each symbol of the *sym* file is defined in, in the same order.
+- A file number of *-1* means the file is not known.
+
+For example, with *twice* defined on line 2 of *sub/defs.ah* and the block macro *three* on lines 8 to 10 of
+*main.am1*, `three(y)` on line 16 gives:
+```
+F 0 main.am1
+F 1 sub/defs.ah
+W 000102 - 0 16 three 0 9
+W 000103 - 0 16 three 0 10 twice 1 2
+W 000104 - 0 16 three 0 10 twice 1 2
+```
 
 ## Files with no loader
 
@@ -441,7 +487,8 @@ appropriate start address.
 
 ## Using macros
 
-The C preprocessor is used to handle macros, and you should be familiar with it.
+Macros are handled by **am1**'s preprocessor, which works as the C preprocessor does.
+What it adds and what it does not support are in *The preprocessor* below.
 
 The simple case:
 ```
@@ -450,7 +497,8 @@ The simple case:
 is essentially identical to the **macro1** *foo=bar*.
 
 However, defining the equivalent of a macro is different. The preprocessor expects the complete definition
-to be one logical line. This is done by using line continuations and semicolons:
+to be one logical line or in a block (below).
+One logical line is made by using line continuations and semicolons:
 ```
 #define mymacro(a,b) lio a; cma; lac b
 
@@ -487,11 +535,133 @@ So, put your comments before the continuation:
     etc.
 ```
 
-Finally, note that the **cpp** preprocessor removes comments from #defines when they are expanded in code.
+A macro of several lines can instead be written as a block with no backslashes or semicolons.
+A function-like *#define* with nothing after its parameter list opens the block, *#enddef* closes it.
+Each line in between is a statement line of its own, comments can go anywhere:
+```
+#define mymacro(a,b)    // This is my macro
+    lio a               // a comment here is fine
+    cma
+    lac b
+#enddef
+```
+
+A block with no parameters is written *mymacro()* and used as *mymacro()*.
+The rules are in *The preprocessor* below.
+
+Finally, note that the preprocessor removes comments from #defines when they are expanded in code.
+
+## The preprocessor
+
+**am1** preprocesses its source using its own builtin preprocessor.
+It is generally the same as what the traditional C preprocessor, cpp, supports.
+It intentionally does not support some of the later extensions to cpp.
+- *#define*, *#undef*, *#include*, *#if*, *#ifdef*, *#ifndef*, *#elif*, *#else*, *#endif*, *#error*,
+  *#warning*, *defined* and *##* pasting work as in **cpp**
+- comments are kept so the listing shows them
+- nothing is expanded inside *"..."* or inside a *'...'* pair closed on the same line, so *text '...'*
+  strings are safe
+- a line starting with *#* that is not a directive is passed through as text
+
+The only name defined at the start is **AM1** (unless *-m* is given) and those given by *-D*.
+The host's names that **cpp** defines, such as *linux*, *unix* or *\_\_GNUC\_\_*, are not.
+
+An *#include "file"* is looked for in the including file's directory, then in each *-I* directory
+in the order given, then in the include root (*-i*, *AM1INCDIR*, or the default).
+An *#include <file>* is looked for in the *-I* directories, then in the include root.
+A file found in the include root is a system header, warnings in it are not reported
+except those of its own *#warning* lines.
+
+Diagnostics have the form *file:line:column: error: text*, or *warning:* in place of *error:*.
+Any error stops the assembly after preprocessing.
+
+### Additions
+
+*#includeonce* has the same forms as *#include* and includes the file unless it is already included.
+The file is the first one found on the search path, however its name is what is matchd, *"x.ah"* and
+*"./x.ah"* are the same file.
+A file brought in by a plain *#include* also counts as included.
+```
+#includeonce <memory.ah>
+```
+
+*#uninclude* undoes the inclusion of a file.
+Every *#define* and *#undef* made by that file and by every file it included,is undone.
+All go back to the state before the include.
+A name the program has changed again after the include keeps the program's change.
+The file and every file it included then count as not included.
+A later *#include* or *#includeonce* brings them in again.
+*#uninclude* of a file that is not included is a warning and does nothing.
+If of a file that is still being read, an error is given.
+```
+#include "tables.ah"
+...
+#uninclude "tables.ah"
+```
+
+Both *#error* and *#warning* can be the body of a macro.
+Nothing is reported where the macro is defined, each *use* of the macro reports the message.
+A function macro's arguments are put into the message.
+An *#error* stops the assembly, a *#warning* is reported and assembly continues.\
+Example:
+```
+#define dra #error "dra has been disabled, use t340dra and t23dra instead."
+```
+
+However, unlike gcc, the #warning or #error string itself is not included, and quotes are removed.
+The above would print:
+```
+error: dra has been disabled, use t340dra and t23dra instead.
+```
+
+A function *#define* with nothing after its parameter list opens a block macro, *#enddef* on a
+later line closes it.
+The body is every line in between, each a statement line of its own,  no *\\* or *;* is needed but is allowed.
+```
+#define farjda(a)
+    eem
+    dac i [a]
+    jsp i [a+1]
+#enddef
+```
+- In the expansion the lines are joined by *;*, a block expands to exactly what the same macro written on
+  one line with *;* would give,and assembles to the same words.
+  A line that already ends in *;* gets no second one.
+- Blank lines add nothing, and comments are dropped, as for any *#define*.
+  A comment can follow the opening *#define* or the *#enddef*.
+- Parameters, *##*, and nested macros work as in a one-line *#define*.
+  A line ending in *\\* is still joined to the next.
+- A block cannot hold a directive. A line in it starting with *#* is an error and the macro is not defined.
+  A macro whose body is *#error* or *#warning* keeps the one-line form.
+- *#enddef* with no block open is an error and tokens after an *#enddef* on the same line give a warning.
+  A block not closed by the end of its file is an error, reported at its *#define*.
+- The lines after a block keep their own line numbers.
+  The listing shows a block's statements at the line where it is used, one listing line each.
+- A block and a one-line *#define* that expand to the same tokens are the same definition, so neither
+  redefining the other is a warning.
+- *#undef*, *#uninclude* and *defined* treat a block like any other macro.
+
+### Not supported
+
+Any of these is an error:
+- the *#* stringizing operator
+- variadic macros: ... and \_\_VA\_ARGS\_\_
+- \_\_FILE\_\_
+- \_\_LINE\_\_
+- pragma and \_Pragma
+- #line
+- #include_next
+- #import
+- #ident
+- #sccs
+- #assert
+- #unassert
+- #elifdef
+- #elifndef
 
 ## PDP-1D instructions
 
-A number of the PDP-1D extended instructions are supported.
+A number of the PDP-1D extended instructions are supported.\
 However, the target PDP-1 must support any that are used.\
 All are supported by the pidp1-mods PDP-1.
 
@@ -515,7 +685,7 @@ All are supported by the pidp1-mods PDP-1.
 All programs start with a title line. This is mandatory. If you forget it, then whatever the first line is
 in the source will be the title, probably not what was expected.
 
-The title is taken exactly as written, on the listing and on the tape: the C preprocessor does not
+The title is taken exactly as written, on the listing and on the tape: the preprocessor does not
 change it, though it changes any other line that holds a defined name (**AM1** is defined unless
 *-m* is given).
 A first line that is a preprocessor directive is not taken as the title. The title is then whatever
@@ -1370,8 +1540,8 @@ export x, y, a
 
 Note that symbol 'a' exists separately in two different banks.
 
-The *import* directive names a file to import symbols from, and has the same form as the *#include* directive
-for **cpp**. It can also be repeated as needed.
+The *import* directive names a file to import symbols from, and has the same form as the *#include* directive.
+It can also be repeated as needed.
 ```
 import "foo.sym"
 import <libx.sym>
@@ -1403,7 +1573,8 @@ One is *%%forcelocal*, which is a terrible hack to allow **mactoam1** to convert
 It causes any location symbol, even if not marked as local, seen in a local scope to be assumed local.
 If that same symbol is then used outside local scopes, it is made non-local.
 
-The second is the **cpp**-inserted line and file marker, used to keep the current file name and line number correct.
+The second is the line and file marker the preprocessor inserts, used to keep the current file name and line
+number correct.
 It will always be on a line by itself and is of the form:
 ```
 # number "filename"
@@ -1457,7 +1628,7 @@ start 100
 
 This is a complete list of all reserved symbols.
 Reserved symbols cannot be redefined as location symbols within a program.
-However, **cpp** can redefine them via the *#define* directive, since it runs first.
+However, the preprocessor can redefine them via the *#define* directive, since it runs first.
 
 |Miscellaneous   | Value |
 |----------------|-------|

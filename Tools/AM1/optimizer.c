@@ -89,6 +89,9 @@ static bool optXformDumpWanted;
 // Set by -O=values: print the AC/IO value measurement on stdout.
 static bool optValuesDumpWanted;
 
+// Set by -O=carry: print the carried value measurement (task A52) on stdout.
+static bool optCarryDumpWanted;
+
 // Set by -O=scratch: print the scratch-pool measurement on stdout.
 static bool optScratchDumpWanted;
 
@@ -313,6 +316,12 @@ optimizeSetOption(char *nameP)
     if( !strcmp(nameP, "values") )
     {
         optValuesDumpWanted = true;
+        return(1);
+    }
+
+    if( !strcmp(nameP, "carry") )
+    {
+        optCarryDumpWanted = true;
         return(1);
     }
 
@@ -1232,7 +1241,7 @@ OptTableP tableP;
     // heading of its own; the root's view prints as it always has.
     if( viewOvP && (optDumpWanted || optDecodeDumpWanted || optRefsDumpWanted || optFlowDumpWanted ||
         optCallsDumpWanted || optShareDumpWanted || optRegionsDumpWanted || optRulesDumpWanted ||
-        optValuesDumpWanted || optScratchDumpWanted || optGuessDumpWanted || optSpeedDumpWanted ||
+        optValuesDumpWanted || optCarryDumpWanted || optScratchDumpWanted || optGuessDumpWanted || optSpeedDumpWanted ||
         optWindowDumpWanted || optXformDumpWanted || optRelayoutDumpWanted) )
     {
         fprintf(stdout, "\n");
@@ -1295,6 +1304,12 @@ OptTableP tableP;
     if( optValuesDumpWanted )
     {
         optDumpValues(stdout, tableP);
+        fflush(stdout);
+    }
+
+    if( optCarryDumpWanted )
+    {
+        optDumpCarry(stdout, tableP);
         fflush(stdout);
     }
 

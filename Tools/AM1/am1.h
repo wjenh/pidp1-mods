@@ -8,15 +8,11 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v4.1 18-Oct-2026"
-#define AM1SHORTVERSION "am1 v4.1"
+#define AM1VERSION "am1 v5.0 18-Oct-2026"
+#define AM1SHORTVERSION "am1 v5.0"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
-
-#ifndef CPP_PATH
-#define CPP_PATH    "/usr/bin/cpp"
-#endif
 
 #define WRDMASK 0777777 // PDP-1 word, 18 bits
 #define ADDRMASK 07777  // PDP-1 address, 12 bits
@@ -64,12 +60,12 @@
                         // value2.ival holds the ceiling reduced to the bank, and
                         // bank the bank
 
-// What a RELAYOUT node is, in its value.ival.  Only optrelayout.c makes them;
-// every back end but the listing steps over them through its default case.
-#define RL_DELETED  1   // a word deleted: exprP holds its expression, value2.ival is
+// What a RELAYOUT node is, in its value.ival.
+// Only optrelayout.c makes them, every back end but the listing skips them
+#define RL_DELETED  1   // a word deleted, exprP holds its expression, value2.ival is
                         // non-zero when the word shared a line with a label
-#define RL_MOVEDFROM 2  // where a moved run stood: value2.ptr is its RL_BEGIN
-#define RL_BEGIN    3   // the moved run follows: value2.ptr is its RL_END
+#define RL_MOVEDFROM 2  // where a moved run was, value2.ptr is its RL_BEGIN
+#define RL_BEGIN    3   // the moved run follows, value2.ptr is its RL_END
 #define RL_END      4   // the moved run ended
 
 // Symbol table flags and such
@@ -95,7 +91,7 @@
 #define SYMF_PRIVATE 0x200000   // is a private local
 #define SYMF_INDIRECT 0x400000  // is an i modifier
 #define SYMF_OVALIAS 0x800000   // an overlay's name for its bank's root global of
-                                // that name: symP is the root's symbol
+                                // that name, symP is the root's symbol
 
 #define CTX_FORCELOCAL 1        // forcelocal is active for this context
 
@@ -140,16 +136,20 @@ typedef struct parsenode
     int lineNo;             // and the source line
     PNodeValue value;
     PNodeValue value2;
-    struct parsenode *exprP;    // an expression relayout must evaluate again (an
-                                // origin's, 'start''s, a table's count), or on a
-                                // RELAYOUT node the deleted word's; NILP elsewhere
+    struct parsenode *exprP;    // an expression relayout must evaluate again or on a
+                                // RELAYOUT node the deleted word's, NILP elsewhere
     int srcLine;                // on a BREF made from a name, the line and file it
     char *srcFileP;             // was written on, for the error given after the
                                 // parse if its symbol never resolves, and on an
-                                // OVCALL its own; 0 and NILP elsewhere
-    int overlay;                // the number of the overlay the node is in, 0 for
-                                // the root
+                                // OVCALL its own.
+                                // 0 and NILP elsewhere
+    int overlay;                // the number of the overlay the node is in, 0 for the root
+    const struct PPOrigin *originP; // the macros that made its statement, NULL for none
 } PNode, *PNodeP;
+
+// The origin of the statement the lexer is reading, from preprocess.c, which
+// newnode() gives each node; NULL when no macro made it.
+extern const struct PPOrigin *stmtOriginP;
 
 // a list of PNodePs, used for wildcard cross-bank refs
 typedef struct parsenodelist
@@ -195,9 +195,11 @@ typedef struct window
     char *fileP;
 } Window, *WindowP;
 
-// An overlay: a section of the program assembled to run in a window, its words
-// kept out of the root's tape.  While it is open curBankP points at ctx, so
-// every grammar action places words, labels, constants and variables in the
+// An overlay.
+// A section of the program assembled to run in a window, the code excluded from the
+// the man program's tape.
+// While it is open, curBankP points at ctx.
+// Every grammar action places words, labels, constants and variables in the
 // overlay's own context, not its bank's.
 typedef struct overlaycontext
 {
@@ -207,13 +209,16 @@ typedef struct overlaycontext
     WindowP windowP;
     bool persistent;        // written back to the drum when evicted
     BankContext ctx;        // its location counter, symbols, constants and
-                            // variables; ctx.bank is the window's bank, and
+                            // variables.
+                            // ctx.bank is the window's bank,
                             // ctx.constPC and ctx.varPC where %%endoverlay put
                             // its pools, -1 for none
     int lineNo;             // its %%overlay line, and file
     char *fileP;
-    int length;             // its words, the header included; ovlcodegen.c sets
-    Word *imageP;           // these three after the parse: the words, and the
+    // The overlay words, header included.
+    // ovlcodegen.c sets these three after the parse.
+    int length;
+    Word *imageP;
     int track;              // drum track they go on
 } OverlayContext, *OverlayContextP;
 

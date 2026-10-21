@@ -9,6 +9,7 @@
 #include "symtab.h"
 #include "y.tab.h"
 #include "type340chars.h"
+#include "preprocess.h"
 
 #define STRBUF 1024        // maximum literal string length
 #define MAXCCOMMENT 4096   // maximum c-style comment length
@@ -19,7 +20,6 @@ static bool sawSemi = false;
 static bool noIncrement = false;
 
 // What the slash rule needs to know about the statement so far, kept by yylex()
-// below from the tokens the scanner returns.
 static bool stmtBare = true;    // nothing yet but one expression with no separator in it
 static int parenDepth = 0;      // open parentheses in that expression
 
@@ -29,11 +29,11 @@ static char commentBuf[MAXCCOMMENT];
 extern int lineno;
 extern char *filenameP;
 extern char *rawTitleP;             // the source's title as written, NIL when cpp did not run
-extern int optRegionTokenLine;     // the line and file of the optimizer directive
+extern int optRegionTokenLine;      // the line and file of the optimizer directive
 extern char *optRegionTokenFileP;   // just scanned, for the parser's messages
 extern int labelTokenLine;          // the line the comma just scanned is on
 extern int nameTokenLine;           // the line the NAME or ADDR just scanned is on
-extern int nameTokenSrcLine;        // and the line it is written on: after a ';' lineno
+extern int nameTokenSrcLine;        // and the line it is written on, after a ';' lineno
                                     // is already one ahead
 extern SymNodeP permSymP;
 extern BankContextP curBankP;
@@ -55,6 +55,7 @@ extern void reset_line(void);
 extern void verror(char *msgP, ...);
 extern void vwarn(int errtype, char *msgP, ...);
 static int directiveToken(int token);
+static void noteStatement(int token);
 
 #define YY_USER_INIT BEGIN FIRST
 
@@ -172,14 +173,16 @@ DIRENDFL        [^A-Za-z0-9_]
                         return(COMMENT);
                     }
 
-                    /* Every am1 directive is spelled with a leading %%; a single
-                       % is the modulo operator.  Each %% rule takes the blanks in
-                       front of it, or "    %%forcelocal" would lex as the longer
-                       match "    %", MOD.  A directive matches only when the next
-                       character cannot continue a name, so "%%inlinefoo" is not
-                       %%inline.  Blanks after a directive are taken by a second
-                       pattern with the same action, since trailing context cannot
-                       overlap them. */
+                    /* Every am1 directive is spelled with a leading %%,
+                     * a single % is the modulo operator.
+                     * Each %% rule takes the blanks infront of it,
+                     * or "    %%forcelocal" would lex as the longer
+                     * match "    %", MOD.
+                     * A directive matches only when the next character cannot continue
+                     * a name, so "%%inlinefoo" is not %%inline.
+                     * Blanks after a directive are taken by a second pattern with
+                     * the same action, since trailing context cannot overlap them.
+                     */
 [ \t]*%%forcelocal/{DIRENDFL}   { return(FORCELOC); }
 
 loc(al)?[ \t]*          { return(LOCAL); }
@@ -192,10 +195,12 @@ table[ \t]*         { return(TABLE); }
 bank[ \t]*          { return(BANK); }
 thisbank[ \t]*      { return(THISBANK); }
 
-                    /* The optimizer directives.  Each records its own line and
-                       file through directiveToken() for the parser's errors:
-                       lineno may already count the terminator at reduction time,
-                       and reset_line() overwrites filenameP's buffer. */
+                    /* The optimizer directives.
+                     * Each records its own line and file through directiveToken()
+                     * for the parser's error messages,
+                     * lineno may already count the terminator at reduction time,
+                     * reset_line() overwrites filenameP's buffer.
+                     */
 [ \t]*%%ceiling[ \t]+                   { return(directiveToken(CEILINGDECL)); }
 [ \t]*%%ceiling/{DIREND}                { return(directiveToken(CEILINGDECL)); }
 [ \t]*%%endspeed[ \t]+                  { return(directiveToken(ENDSPEED)); }
@@ -225,16 +230,17 @@ thisbank[ \t]*      { return(THISBANK); }
 [ \t]*%%ovtable[ \t]+                   { return(directiveToken(OVTABLE)); }
 [ \t]*%%ovtable/{DIREND}                { return(directiveToken(OVTABLE)); }
 
-                    /* %% and a name that is no directive is an error that names
-                       it.  This rule must stay below every directive pattern:
-                       at the end of a line a directive matches the same length
-                       here, and flex breaks the tie by rule order. */
+                    /* %% and a name that is no directive is an error.
+                     * This rule must stay below every directive pattern,
+                     * at the end of a line a directive matches the same length
+                     * here and flex breaks the tie by rule order.
+                     */
 [ \t]*%%[a-zA-Z_][a-zA-Z0-9_]*  {
                         verror("%s is not an am1 directive", strchr(yytext, '%'));
                         return(BAD);
-                    }
+                        }
 
-\:                  { return(BREF); }
+\:                      { return(BREF); }
 ^[ \t]*start[ \t]*      { return(START); }
 ^[ \t]*stop[ \t]*       { return(STOP); }
 ^[ \t]*constants[ \t]*  { return(CONSTANTS); }
@@ -246,9 +252,9 @@ ascii[ \t]+             { return(ASCII); }
 text[ \t]+              { BEGIN DOTEXT; }
 
 type340[ \t]+           {
-                        BEGIN T340STR;
-                        return(TYPE340);
-                    }
+                            BEGIN T340STR;
+                            return(TYPE340);
+                        }
 
 flexo[ \t][^\n;]{1,3}   {
                     int i, ch, shift, nshifts, nchars;
@@ -423,9 +429,11 @@ octal                   { decimalMode = false; }
 [ ]*<<[ ]*          { return(LSHIFT); }
 [ ]*>>[ ]*          { return(RSHIFT); }
 \.                  { return(DOT); }
-                    /* A label's line is recorded here: by the time the label rule
-                       reduces, lineno may already count the TERMINATOR.  Only the
-                       label rules read it. */
+                    /* A label's line is recorded here.
+                     * By the time the label rule reduces, lineno may
+                     * already count the TERMINATOR.
+                     * Only the label rules read it.
+                     */
 \,[ \t]*                { labelTokenLine = lineno; return(LOCATION); }
 
 \[                  {
@@ -442,7 +450,8 @@ octal                   { decimalMode = false; }
                         yylval.ival = (int)strtol(yytext,0,16);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
+                                yytext, WRDMASK);
                             return(BAD);
                         }
                         return(INTEGER);
@@ -452,7 +461,8 @@ octal                   { decimalMode = false; }
                         yylval.ival = (int)strtol(yytext+2,0,10);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
+                                yytext, WRDMASK);
                             return(BAD);
                             }
                         return(INTEGER);
@@ -462,7 +472,8 @@ octal                   { decimalMode = false; }
                         yylval.ival = (int)strtol(yytext+2,0,8);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
+                                yytext, WRDMASK);
                             return(BAD);
                         }
                         return(INTEGER);
@@ -472,7 +483,8 @@ octal                   { decimalMode = false; }
                         yylval.ival = (int)strtol(yytext+2,0,2);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
+                                yytext, WRDMASK);
                             return(BAD);
                         }
                         return(INTEGER);
@@ -488,7 +500,8 @@ octal                   { decimalMode = false; }
                         yylval.ival = (int)strtol(yytext,0,(decimalMode)?10:8);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
+                                yytext, WRDMASK);
                             return(BAD);
                         }
                         return(INTEGER);
@@ -544,8 +557,9 @@ octal                   { decimalMode = false; }
                                 return(LCLADDR);
                             }
                             /* A var name's line is recorded here, for the
-                               reason given at the comma rule above: its
-                               grammar rule cannot read it from lineno. */
+                             * reason given at the comma rule above: its
+                             * grammar rule cannot read it from lineno.
+                             */
                             else if( (symP = sym_find(&(curBankP->globalSymP),yytext)) )
                             {
                                 yylval.symP = symP;
@@ -554,11 +568,11 @@ octal                   { decimalMode = false; }
                                 return(ADDR);
                             }
                             /* Inside an overlay, a name the overlay does not
-                               have is its bank's root global, when the root
-                               has it already; parser.y links the others
-                               after the parse. */
+                             * have is its bank's root global if the root has it already.
+                             * parser.y links the others after the parse.
+                             */
                             else if( curOverlayP &&
-                                     (symP = sym_find(&(findBank(curBank)->globalSymP),yytext)) )
+                                (symP = sym_find(&(findBank(curBank)->globalSymP),yytext)) )
                             {
                                 yylval.symP = symP;
                                 nameTokenLine = lineno;
@@ -575,18 +589,21 @@ octal                   { decimalMode = false; }
                             }
                         }
 
-                    /* % is the modulo operator; there is no %name local (use
-                       local/addlocal).  "jmp %c" assembles silently as jmp MOD c,
-                       since an opcode is an operand. */
-
+                    /*
+                     *% is the modulo operator.
+                     * "jmp %c" assembles silently as jmp MOD c,
+                     * since an opcode is an operand.
+                     */
 ^[\t ]+             { }
 
 [\t ]+              {
                         return(SEPARATOR);
                     }
 
-                    /* The '%' in this lookahead makes "x/%..." lex as DIV then
-                       MOD, a syntax error, rather than an origin and a %. */
+                    /*
+                     * The '%' in this lookahead makes "x/%..." lex as DIV then
+                     * MOD, a syntax error, rather than an origin and a %.
+                     */
 \/[ \t]*[^a-zA-Z0-9\~\%\[\/] {
                     int ch;
 
@@ -1031,18 +1048,19 @@ gdbtarget()
     return;
 }
 
-// The scanner the parser calls.  It returns what the generated scanner returns,
-// and from each token keeps stmtBare and parenDepth for the slash rule.  Only the
-// tokens that can be part of an origin's expression leave the statement bare;
-// any other token, a separator and a label's comma included, ends that, so a
-// directive's operands are never mistaken for an origin.  Every token that ends
-// a statement starts the next one bare.
+// The scanner the parser calls.
+// It returns what the generated scanner returns/ and from each token keeps
+// stmtBare and parenDepth for the slash rule.s
+// Only the tokens that can be part of an origin's expression leave the statement bare.
+// Any other token, a separator and a label's comma included, ends that so a
+// directive's operands are never mistaken for an origin.
+// Every token that ends a statement starts the next one bare.
 //
-// One more thing it does: the rule for a complement swallows the blanks in front
+// Additionally, the rule for a complement swallows the blanks in front
 // of the ~ so that "a & ~b" and "(~b)" need no separator, and that leaves
-// "lac ~07" with no separator token between the two operands.  So when a
-// complement that had a blank in front of it follows an operand, that blank was
-// the separator, and it is handed over as one, ahead of the complement.
+// "lac ~07" with no separator token between the two operands.
+// When a // complement that had a blank in front of it follows an operand, that blank was
+// the separator and it is handed over as one ahead of the complement.
 int
 yylex(void)
 {
@@ -1144,11 +1162,11 @@ yylex(void)
         break;
     }
 
+    noteStatement(token);
     return(token);
 }
 
-// Record where an optimizer directive was seen, for the parser's messages, and
-// return its token; both of each directive's patterns call this.
+// Record where an optimizer directive was seen and return its token.
 static int
 directiveToken(int token)
 {

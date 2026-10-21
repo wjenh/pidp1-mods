@@ -2062,6 +2062,178 @@ void writeTransformReport(FILE *fP, OptTableP tableP);
 // The -O=values dump; after optRunRules(), whose findings it reads.
 void optDumpValues(FILE *fP, OptTableP tableP);
 
+// The carry measurement (task A52, -O=carry): what AC and IO hold across
+// blocks and calls.  A measurement only, like -O=values: no finding, nothing
+// in the report, and no level reads it.  optvalue.c carries the value pass
+// over edges; optpreserve.c says what each routine does to the registers and
+// to memory, and what a call does to the caller's state.
+
+// A value the carried pass does not know.  Every other value is a name: a
+// constant (0 to 0777777) or a name the pass made.
+#define OPTVAL_UNKNOWN      (-1L)
+
+// One memory fact carried over an edge: the word at addr, in the block's
+// bank, holds val.
+typedef struct optcarryfact
+{
+    int addr;
+    long val;
+} OptCarryFact;
+
+// What the carried pass knows on an edge or at a block's entry.
+typedef struct optcarrystate
+{
+    int known;                  // 0 while no edge has arrived: nothing is known yet,
+                                // and a meet takes the other side whole
+    long reg[2];                // AC, IO: a name, or OPTVAL_UNKNOWN
+    OptCarryFact *factsP;
+    int factCount;
+    int factCap;
+} OptCarryState;
+
+// How a call is treated, in a summary run or a leg.
+#define OPTCM_IOTFREE       0x01    // an unknown in-out transfer touches nothing
+#define OPTCM_CALLSOPT      0x02    // every call returns AC (jda, cal) and IO as it
+                                    // found them, and writes nothing
+#define OPTCM_SCCOPT        0x04    // as OPTCM_CALLSOPT, for a callee in the
+                                    // caller's own strongly connected component
+#define OPTCM_FREESUMS      0x08    // read each callee's in-out-free summary
+#define OPTCM_NOWRITES      0x10    // a callee's write set is not applied: what a
+                                    // marker for writes could buy at most
+#define OPTCM_ORACLE        0x20    // leg 3: every resolved callee preserves IO, and
+                                    // AC for jda and cal, and writes only the words it
+                                    // names directly
+
+// Why a register is not preserved; OPTPR_YES when it is.  OPTPR_JSP is AC of
+// a routine any caller enters with jsp, which overwrites AC at the call.
+typedef enum
+{
+    OPTPR_YES,
+    OPTPR_JSP,
+    OPTPR_CLOBBERS,     // a path writes it and does not put it back
+    OPTPR_IOT,          // an in-out transfer the effect table calls unknown
+    OPTPR_CALLS,        // an unresolved call, or a callee not proved
+    OPTPR_JUMPS,        // an indirect jump the body could not follow
+    OPTPR_CYCLE,        // on a cycle of resolved calls
+    OPTPR_NORETURN,     // no return word
+    OPTPR_OPEN,         // the body is entered other than by a call
+    OPTPR_HANDLER,      // reachable from a sequence-break handler
+    OPTPR_UNEXPLAINED,  // not proved, and no reason above applies: a defect
+    OPTPR_COUNT
+} OptPreserveWhy;
+
+// Why a set of words is "any word".
+typedef enum
+{
+    OPTPW_NONE,
+    OPTPW_INDIRECT,     // an indirect reference whose pointer was not followed
+    OPTPW_XCT,          // an xct, whose effect is its target's
+    OPTPW_IOT,          // an in-out transfer the effect table calls unknown
+    OPTPW_SPARE,        // a spare instruction code
+    OPTPW_CALLS,        // a call that went to the sink
+    OPTPW_COUNT
+} OptWordSetWhy;
+
+// A set of memory words, per bank.
+typedef struct optwordset
+{
+    OptWordSetWhy any;                  // OPTPW_NONE while the words below are all of it
+    unsigned char *bankP[MAXBANK + 1];  // BANKSIZE flags per bank, NILP for none
+    int count;                          // words set
+} OptWordSet;
+
+// One routine's register summary.
+typedef struct optpreserve
+{
+    OptRoutineP routineP;
+    int done;                   // made; a callee not yet made is not proved
+    OptPreserveWhy io;          // IO at every return word is IO at the entry
+    OptPreserveWhy ac;          // AC at every return is the AC jda deposited
+    int ioRead;                 // IO's entry value is read, other than moved
+    OptWordSet writes;          // what the body and its callees write
+    OptWordSet reads;           // and read, for the read of a saved IO
+    OptWordSet direct;          // what they name directly: never any (leg 3)
+    // the same with every unknown in-out transfer touching nothing
+    OptPreserveWhy freeIo;
+    OptPreserveWhy freeAc;
+    int freeIoRead;
+    OptWordSet freeWrites;
+    OptWordSet freeReads;
+} OptPreserve, *OptPreserveP;
+
+// Lookups the carried pass and the summaries share.
+typedef struct optcarrymaps
+{
+    OptBlockP *blockOfIdPP;         // blockCount + 1, by block id
+    OptRoutineP *routineOfEntryPP;  // blockCount + 1, the routine a block is the entry of
+} OptCarryMaps, *OptCarryMapsP;
+
+// What one run over a routine's body found.
+typedef struct optbodyrun
+{
+    int returns;            // return words walked
+    int ioKept;             // every one sees IO holding its entry value
+    int acKept;             // every one sees AC holding the AC jda deposited
+    int ioRead;             // IO's entry value is read
+} OptBodyRun;
+
+// optvalue.c, for -O=carry.
+
+// The -O=carry dump; after optRunRules(), whose findings it reads.
+void optDumpCarry(FILE *fP, OptTableP tableP);
+
+// Run the value pass over one routine's body, IO (and AC deposited by jda)
+// holding a symbol at the entry, and say what every return word sees.
+void optCarryBody(OptTableP tableP, OptCarryMapsP mapsP, OptPreserveP sumsP, OptRoutineP routineP,
+                  unsigned int mode, OptBodyRun *runP);
+
+// Free a carried state's facts.
+void optCarryStateFree(OptCarryState *stateP);
+
+// Set a carried state to know nothing: both registers unknown, no facts.
+void optCarryStateUnknown(OptCarryState *stateP);
+
+// Record that a word holds a value, replacing any fact about it.
+void optCarryStateSetFact(OptCarryState *stateP, int addr, long val);
+
+// Copy one carried state over another.
+void optCarryStateCopy(OptCarryState *toP, const OptCarryState *fromP);
+
+// Does a word make every memory fact die?  Returns OPTPW_NONE, or why:
+// OPTPW_IOT, OPTPW_XCT or OPTPW_SPARE.
+int optValueKills(OptWordP wordP);
+
+// optpreserve.c, for -O=carry.
+
+// Build the lookups; optCarryMapsFree() releases them.
+void optCarryMapsBuild(OptTableP tableP, OptCarryMapsP mapsP);
+void optCarryMapsFree(OptCarryMapsP mapsP);
+
+// Make every routine's summary, callees first.  Returns routineCount + 1
+// summaries by routine id; optPreserveFree() releases them.
+OptPreserveP optPreserveBuild(OptTableP tableP, OptCarryMapsP mapsP);
+void optPreserveFree(OptTableP tableP, OptPreserveP sumsP);
+
+// Print one line per routine.
+void optPreserveDump(FILE *fP, OptTableP tableP, OptPreserveP sumsP);
+
+// Is a word one of a routine's return words: "jmp i rtn", or the patched
+// "rtn, jmp ." itself?  Returns 1 when it is, 0 otherwise.
+int optPreserveIsReturn(OptRoutineP routineP, OptWordP wordP);
+
+// The call step: the caller's state after a call returns, from its state
+// just before the call word.  calleeP is NILP for a call that went to the
+// sink.  leg is 1 to 3 for the legs, 0 for a summary run under mode.
+void optCarryCall(OptTableP tableP, OptPreserveP sumsP, int leg, unsigned int mode, OptRoutineP callerP,
+                  OptWordP callP, OptRoutineP calleeP, const OptCarryState *preP, OptCarryState *postP);
+
+// Is a word in a set?  Returns 1 when it is or the set is any word, else 0.
+int optWordSetHas(const OptWordSet *setP, int bank, int addr);
+
+// The name of a reason, for the dump.
+const char *optPreserveWhyName(OptPreserveWhy why);
+const char *optWordSetWhyName(OptWordSetWhy why);
+
 // optscratch.c: can the storage locals share words?  Advisory: no finding, and
 // no level reads it.
 
@@ -2070,6 +2242,14 @@ void optDumpScratch(FILE *fP, OptTableP tableP);
 
 // The report's scratch-word sharing section; its figures are -O=scratch's.
 void writeScratchSharingReport(FILE *fP, OptTableP tableP);
+
+// The scratch classes the carry measurement's parking and dead-store counts
+// read (task A52), by emission index; the caller frees the codes.
+#define OPTSP_NONE      0       // any other class, or not in the population
+#define OPTSP_LOCAL     1       // local(1)
+#define OPTSP_SPAN      2       // span
+#define OPTSP_CALL      3       // call(2): live across a call the unit makes
+unsigned char *optScratchPrivate(OptTableP tableP);
 
 // optguess.c: the heuristics -O2 uses in place of P5
 

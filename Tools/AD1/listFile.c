@@ -25,6 +25,8 @@ void printLines(MapEntryP linesP);
 bool printLine(int fileno, int line);
 bool printNextLine(void);
 static bool lineShown(MapEntryP entryP);
+static void printOrigin(FileInfoP infoP, OriginP originP);
+static char *sourceLine(FileInfoP infoP, char *fileP, int lineNo);
 
 extern bool isMemMapped(void);
 
@@ -61,7 +63,8 @@ MapEntryP entryP;
 }
 
 // The line an overlay's symbol is defined on: its overlay's line at its address, whichever
-// overlay is in the window.  Sets the current file to the symbol's.  -1 if there is none.
+// overlay is in the window.
+// Sets the current file to the symbol's file,  -1 if there is none.
 int
 getLineOfSymbol(SymbolP symP)
 {
@@ -89,8 +92,8 @@ MapEntryP entryP;
 // If we have a mem->line map, get the line number.
 // If not, return -1.
 // Address is a full 16 bit address.
-// In a window, the lines are those of the overlay in it, or every overlay's if it holds none:
-// the first such entry is returned, and the walks below skip the others.
+// In a window, the lines are those of the overlay in it or every overlay's if it holds none.
+// The first such entry is returned, and the walks below skip the others.
 MapEntryP
 getLinesFromAddress(int address)
 {
@@ -181,8 +184,8 @@ printLines(MapEntryP linesP)
 }
 
 // Try to print a line given its file and line number.
-// Return true if it was printed, else false.
 // If successful, the current line is set to this line.
+// Return true if it was printed, else false.
 bool
 printLine(int fileno, int lineno)
 {
@@ -209,6 +212,11 @@ char linebuf[1024];
         // but they doesn't match the actual line numbers in the file, they're from the original file.
         // So, also show the line number in the listing file.
         printf("%-4d %s", lineno, linebuf);
+
+        if( infoP->originsPP && infoP->originsPP[lineno] )
+        {
+            printOrigin(infoP, infoP->originsPP[lineno]);
+        }
         return(true);
     }
     else
@@ -217,9 +225,136 @@ char linebuf[1024];
     }
 }
 
+// Under a word's listing line, a line for each macro expansion that created it, from the macro
+// the program used inward: the macro, the file and line of the body line, and its text.
+static void
+printOrigin(FileInfoP infoP, OriginP originP)
+{
+int i;
+char *textP;
+OriginLevelP levelP;
+
+    for( i = 0; i < originP->count; ++i )
+    {
+        levelP = &originP->levelsP[i];
+        printf("           %s at %s:%d", levelP->macroP, (levelP->fileP)?levelP->fileP:"?", levelP->lineNo);
+
+        if( (textP = sourceLine(infoP, levelP->fileP, levelP->lineNo)) )
+        {
+            printf(": %s", textP);
+        }
+
+        NEWLINE;
+    }
+}
+
+// A source file's lines, read once, for the body lines printOrigin() shows.
+typedef struct sourcetext
+{
+    struct sourcetext *nextP;
+    char *pathP;
+    char **linesPP;             // NIL if it could not be read
+    int numLines;
+} SourceText, *SourceTextP;
+
+static SourceTextP sourcesP;
+
+// The text of a line of a file the .map names, without its leading blanks and its newline,
+// or NIL if the file or the line cannot be read.
+// A relative name is relative to the directory of the .lst.
+static char *
+sourceLine(FileInfoP infoP, char *fileP, int lineNo)
+{
+char path[2048];
+char *cP;
+char *lineP = NIL;
+size_t lineSize = 0;
+ssize_t len;
+FILE *fP;
+SourceTextP srcP;
+
+    if( !fileP )
+    {
+        return( NIL );
+    }
+
+    if( (*fileP != '/') && (cP = strrchr(infoP->lstNameP, '/')) )
+    {
+        snprintf(path, sizeof(path), "%.*s/%s", (int)(cP - infoP->lstNameP), infoP->lstNameP, fileP);
+    }
+    else
+    {
+        snprintf(path, sizeof(path), "%s", fileP);
+    }
+
+    for( srcP = sourcesP; srcP && strcmp(srcP->pathP, path); srcP = srcP->nextP )
+    {
+        ;
+    }
+
+    if( !srcP )
+    {
+        srcP = (SourceTextP)calloc(1, sizeof(SourceText));
+        srcP->pathP = strdup(path);
+        srcP->nextP = sourcesP;
+        sourcesP = srcP;
+
+        if( (fP = fopen(path, "r")) )
+        {
+            while( (len = getline(&lineP, &lineSize, fP)) >= 0 )
+            {
+                while( (len > 0) && ((lineP[len - 1] == '\n') || (lineP[len - 1] == '\r')) )
+                {
+                    lineP[--len] = NUL;
+                }
+
+                srcP->linesPP = (char **)realloc(srcP->linesPP, (srcP->numLines + 1) * sizeof(char *));
+                srcP->linesPP[srcP->numLines++] = strdup(lineP);
+            }
+
+            free(lineP);
+            fclose(fP);
+        }
+    }
+
+    if( (lineNo < 1) || (lineNo > srcP->numLines) )
+    {
+        return( NIL );
+    }
+
+    for( cP = srcP->linesPP[lineNo - 1]; (*cP == ' ') || (*cP == '\t'); ++cP )
+    {
+        ;
+    }
+
+    return( cP );
+}
+
+// Forget the source text read, so that files loaded again are read again.
+void
+forgetSources(void)
+{
+int i;
+SourceTextP srcP;
+
+    while( (srcP = sourcesP) )
+    {
+        sourcesP = srcP->nextP;
+
+        for( i = 0; i < srcP->numLines; ++i )
+        {
+            free(srcP->linesPP[i]);
+        }
+
+        free(srcP->linesPP);
+        free(srcP->pathP);
+        free(srcP);
+    }
+}
+
 // Try to print the next line in the file, initially set by printLine().
-// Return true if it was printed, else false.
 // If successful, the current line is incremented.
+// Return true if it was printed, else false.
 bool
 printNextLine(void)
 {

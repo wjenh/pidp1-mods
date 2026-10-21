@@ -4,6 +4,8 @@
  *
 */
 #include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdbool.h>
 
 extern int lineno;
@@ -186,7 +188,7 @@ int ctr;
 // Returns a Type 340 code (0 is the blob, a real character), or one of the
 // TYPE340xxx markers above the 6-bit range.
 // TYPE340CONT means store nothing, and TYPE340PLAIN means the caller should
-// treat ch itself as an ordinary/ character so that it gets the same automatic
+// treat ch itself as an ordinary character so that it gets the same automatic
 // shift and ASCII conversion as one typed without a backslash.
 char
 processType340Escape(char ch)
@@ -318,4 +320,105 @@ int count;
     }
 
     return(count);
+}
+
+const struct PPOrigin *stmtOriginP = NULL;
+
+// A file name that is saved.
+// filenameP's buffer is rewritten at each marker. 
+// One copy of each name.
+// NULL for NULL.
+const char *
+internFileName(const char *nameP)
+{
+static struct internedname
+{
+    char *nameP;
+    struct internedname *nextP;
+} *namesP = NULL;
+struct internedname *nP;
+
+    if( !nameP )
+    {
+        return( NULL );
+    }
+
+    for( nP = namesP; nP; nP = nP->nextP )
+    {
+        if( !strcmp(nP->nameP, nameP) )
+        {
+            return( nP->nameP );
+        }
+    }
+
+    if( !(nP = malloc(sizeof(struct internedname))) || !(nP->nameP = strdup(nameP)) )
+    {
+        verror("out of memory recording a file name");
+    }
+
+    nP->nextP = namesP;
+    namesP = nP;
+    return( nP->nameP );
+}
+
+// Keep stmtOriginP for the statement being read.
+// The first token after a/ terminator, a file marker or the title starts a statement,
+// the ordinal-th on/ its line.
+// Separators and other comments start none.
+// A '//' comment takes its line's newline, it ends the line as a terminator does.
+// The statement's origin is what the preprocessor recorded for that statement of that line.
+static void
+noteStatement(int token)
+{
+static bool atStart = true;
+static const char *lastFileP = NULL;
+static int lastLine = -1;
+static int ordinal = 0;
+const char *fileP;
+int line;
+
+    switch( token )
+    {
+    case TERMINATOR:
+    case SEMI:
+    case EMPTYLINE:
+    case HEADER:
+    case COMMENT:
+        atStart = true;
+        break;
+
+    case FILENAME:
+        atStart = true;
+        lastLine = -1;      // a file read again is a new reading of its lines
+        break;
+
+    case CSCOMMENT:
+    case CSSTART:
+    case SEPARATOR:
+    case ENDCONST:
+        break;
+
+    default:
+        if( atStart )
+        {
+            atStart = false;
+
+            // after a ';' lineno already counts the line's end
+            line = (sawSemi)?(lineno - 1):lineno;
+            fileP = internFileName(filenameP);
+            if( (line == lastLine) && (fileP == lastFileP) )
+            {
+                ++ordinal;
+            }
+            else
+            {
+                ordinal = 0;
+                lastLine = line;
+                lastFileP = fileP;
+            }
+
+            stmtOriginP = ppStatementOrigin(fileP, line, ordinal);
+        }
+        break;
+    }
 }

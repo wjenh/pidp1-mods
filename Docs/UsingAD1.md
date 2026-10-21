@@ -2,9 +2,9 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 2.6 and covers up through ad1 version 2.6; it will be updated as needed.\
-Edit date 14-Oct-2026
-Rework to use a socket instead of shared memory
+This is version 2.7 and covers up through ad1 version 2.7; it will be updated as needed.\
+Edit date 20-Oct-2026
+Add overlay and new am1 cpp replacement handling
 
 ## What is **ad1**?
 
@@ -123,27 +123,27 @@ The **-y** option enables yacc/Bison debugging output, not generally useful.
 
 The **-x** option enables lex/Flex debugging output, not generally useful.
 
-The **-T** option starts in test mode. No connection to a running pidp-1 is made, an in-memory empty
-state container is used instead.
+The **-T** option starts in test mode.
+No connection to a running pidp-1 is made, an in-memory empty state container is used instead.
 An attempt is made to load the test memory with the last saved actual pidp-1 coremem save file from
 the */opt/pidp1-mods* directory.
-There is no processor in test mode, so *step* and *monitor* are not available, and *start*, *stop*
+There is no processor in test mode, *step* and *monitor* are not available and *start*, *stop*
 and *continue* only record what was asked.
 
 The **-h** option names the machine the pidp-1 is running on as a host name or address with an optional port.
 The default is the pidp-1 on this machine, port 1044.
-A host with no port gets 1044 if it is this machine (*localhost* or a loopback address) and 1045,
-the usual *ad1remoteport*, if it is another one.
+A host with no port defaults to 1044 if it is this machine, *localhost* or a loopback address and 1045,
+the usual *ad1remoteport*, if it is remote.
 The value can follow the option after a space or be attached to it, as in *-h 192.168.1.20:1045*.
 
 If **ad1** cannot connect, it says which host and port it tried and exits.
 If the connection is lost while **ad1** is running, it says so and exits.
 
-When **ad1** leaves, the breakpoints and watches are handled as before.
-The *exit* command keeps them but disables them, so they are still listed the next time.
+The *exit* command keeps them but disables them, they are still listed the next time ad1 connects.
 The *quit* command, end of input, or a signal deletes them.
 This is done by the pidp-1, so it also happens if **ad1** is killed or the network connection drops.
 A running pidp-1 is left running.
+If the pidp-1 is shut down, they are lost.
 
 If no filename is given, then no symbols or source will be available until a file is specified by the *file* command.
 
@@ -159,7 +159,9 @@ If a filename.sym file is found, then the symbols will be available for use.\
 If a filename.lst file is found, then the source list operations will be available for use.\
 If there is no .lst file but there is a .am1 file, then source can be listed by line number only.\
 If filename.ovl and filename.osym are found, the program's drum overlays are known too; see
-*Programs with drum overlays* below.
+*Programs with drum overlays* below.\
+If a filename.map is found  the .lst, a location created by macros is listed with the lines that created it,
+see *Macro origins* below.
 
 Multiple filenames can be given.
 If so, the same information will be available for them.
@@ -234,6 +236,27 @@ See the section on **File switching**.
 
 Line numbers are always decimal.
 
+### Macro origins
+
+A listing shows a macro's expansion at the line where the macro was used. When **am1** wrote the program's
+origin map, *filename.map* (it does whenever it writes the listing), each listing line holding a word that
+macros made is followed by one more line for each macro, from the one the program used inward: the macro's
+name, the file and line of the body line the word came from, and that line's text, read from the file.
+With *three* a block macro in *main.am1* that uses *twice*, defined in *sub/defs.ah*:
+```
+12      16: 000103 400126 add y;
+           three at main.am1:10: twice(a)
+           twice at sub/defs.ah:2: #define twice(a) add a; add a
+```
+This happens wherever a listing line is shown: by *list*, at a breakpoint and after a *step*.
+A word from no macro has no extra line, since the listing already gives its file and line.
+If the file cannot be read, only its name and line are shown.
+A file named without a path starting with */* is looked for relative to the directory of the .lst file,
+where **am1** ran.
+
+Without a .map, nothing changes. A .map that does not match the listing, word for word, is not used, and
+**ad1** says so when the file is loaded.
+
 ## Ones complement, twos complement, oh my
 
 The PDP-1 used 1's complement math, which no modern computers use.
@@ -296,66 +319,58 @@ expression = (bank-ref << 12) | (expression & 07777)
 
 ## Programs with drum overlays
 
-A program assembled with drum overlays (see *UsingOverlays.md*) has two more files beside its *.sym*:
-*name.ovl* and *name.osym*. **ad1** reads both when it opens the program, and says how many overlays
-and windows it found. With neither, it behaves as for any other program. With only one of them, or
-a damaged one, it says so and treats the program as having no overlays.
+A program assembled with drum overlays, see *UsingOverlays.md*, has two additonal files:
+*name.ovl* and *name.osym*.
+**ad1** reads both when it opens the program and lists how many overlays and windows it found.
+With neither, it behaves as for a program wihtout overlays.
+With only one of them, or a damaged one, it reports that and treats the program as having no overlays.
 
 The overlays of a window share its addresses, so what **ad1** shows at one depends on which overlay is
-in the window now. It reads that from the overlay manager's table in the pidp-1's memory once for
-each command, whether the pidp-1 is running or stopped.
+in the window now.
+It reads that from the overlay manager's table in the pidp-1's memory once for each command,
+whether the pidp-1 is running or stopped.
 
 - An address in a window is shown as the symbol, if any, of the overlay in the window. With none in
   it, the address is shown as a number.
 - Listing by an address in a window lists the overlay in it. With none in it, the listing is as it
-  would be without overlays, from the first overlay's line.
+  would be without overlays.
 - A breakpoint or watch hit in a window names the overlay:
-  *Breakpoint 1 hit in overlay edit at line ...*. A breakpoint set by an address, or by a plain
-  symbol, is on that address, so it is hit whichever overlay is in the window. A watch always is.
+  *Breakpoint 1 hit in overlay edit at line ...*. A breakpoint set by an address or by a plain
+  symbol, is on that address, so it is hit whichever overlay is in the window.
 - A breakpoint set with an overlay qualifier, *break edGo@edit*, is *bound* to that overlay, and so
-  is one whose address expression uses one, *break edGo@edit+3*: it is hit only while that overlay
+  is one whose address expression uses one, *break edGo@edit+3*. It is hit only while that overlay
   is in its window. Its count counts only that overlay's passes, and like any count it starts again
-  once reached, so *break edGo@edit 3* is hit on every third entry to *edit*. An expression naming
-  two different overlays is refused.
-- A watch is bound the same way, *watch edCount@edit* or *watch edCount@edit 3*: it reports a
-  change of the word only while that overlay is in its window. Other overlays' writes to the same
-  address, and the overlay manager's loading of the window, are not reported. An expression naming
-  two different overlays is refused.
-- From v2.4, the pidp-1 keeps the binding: **ad1** sets the breakpoint or watch with a condition,
-  that the window's word in the overlay table holds the overlay's number. Passes for another
-  overlay do not halt the pidp-1 at all, and the count is the pidp-1's, of that overlay's passes
-  only. Two breakpoints at one address, bound to different overlays, each fire for their own.
-- A pidp-1 from before conditions (before 13-Oct-2026) cannot keep a binding. There **ad1** binds a
-  breakpoint itself, as v2.3 did: the pidp-1 halts at the address whichever overlay is there, and
-  **ad1** looks at the window and continues it at once when the overlay is another one, each such
-  pass costing a brief halt and a round trip over the link. **ad1** does the same when the program
-  in core is not the one its files describe, and says which and why when it sets the breakpoint:
-  *Breakpoint 1 is bound to overlay edit by ad1, halting the machine on every pass, because ...*.
-  A bound watch needs the pidp-1 to keep it, so on an older pidp-1 it is refused.
-- A *step* passes through a bound breakpoint while another overlay is in the window, as *continue*
-  does, when the pidp-1 keeps the binding. When **ad1** keeps it, the step stops there, as a step
-  stops at any breakpoint, and says why:
-  *Step stopped at breakpoint 1 (bound to overlay edit, overlay print is in the window)*.
-- The *break* and *watch* listings show a bound one as *edGo@edit* (or as its address when it is
-  not at the symbol), with its count, and *bound to overlay edit*.
-- Closing the files (*file name*) deletes the bound breakpoints and watches, and says so. *Exit*
-  leaves the ones the pidp-1 keeps there, disabled as always, with their conditions. Another
-  **ad1** started later that opens the same files finds them and says *Breakpoint 1 is bound to
-  overlay edit.*; one without the files lists the condition as it is, e.g.
-  *when 000442 = 000002*. A breakpoint **ad1** bound itself is left as a plain address breakpoint at
-  count 1, disabled, and named as **ad1** exits.
-- An overlay's symbol can be used by name whether its overlay is in its window or not, as long as only
-  one overlay has that name; the usual bank rules apply, its bank being its window's.
-- A name that several overlays define is refused, naming the overlays. Give it with an *overlay
-  qualifier*, *name@overlay*, e.g. *wk@print*. The overlay's window gives the bank, so no bank
-  qualifier is used with it.
+  once reached, e.g., *break edGo@edit 3* is hit on every third entry to *edit*. An expression naming
+  two different overlays gives an error.
+- A watch is bound the same way, *watch edCount@edit* or *watch edCount@edit 3*.
+  It reports a change of the word only while that overlay is in its window.
+  Other overlays' writes to the same address and the overlay manager's loading of the window are not reported.
+  An expression naming two different overlays is an error.
+- The pidp-1 keeps the binding, **ad1** sets the breakpoint or watch with a condition,
+  the window's word in the overlay table holds the overlay's number.
+  Passes for another overlay do not halt the pidp-1 and the count is of that overlay's passes only.
+  Two breakpoints at one address, bound to different overlays, each fire independently.
+- A *step* passes through a bound breakpoint while another overlay is in the window, as *continue* does.
+- The *break* and *watch* listings show a bound one as *edGo@edit* or as its address when it is
+  not at  symbol with its count and *bound to overlay edit*.
+- Closing the files deletes the bound breakpoints and watches.
+  *Exit* leaves them, disabled as always, with their conditions.
+  Another **ad1** started later that opens the same files finds them and says *Breakpoint 1 is bound to
+  overlay edit.*.
+  One without the files lists the condition as it is, e.g.
+  *when 000442 = 000002*.
+- An overlay's symbol can be used by name whether its overlay is in its window or not as long as only
+  one overlay has that name, the usual bank rules apply.
+- A name that several overlays define is refused, naming the overlays
+  Give it with an *overlay qualifier*, *name@overlay*, e.g. *wk@print*.
+  The overlay's window gives the bank, no bank qualifier is used with it.
 - *list* with an overlay's symbol lists that overlay's line, whichever overlay is in the window.
 
 If the build stamp at the start of the table in memory is not the one in the *.ovl*, the program in
-memory is not the one the files describe. **ad1** says so, once until the stamp changes again, and
-shows no overlay symbols at window addresses until the stamp matches. While it differs, no overlay
-counts as being in its window, so a bound breakpoint or watch is never reported. If the pidp-1
-halts on one, because the other program's word happens to hold the overlay's number, **ad1** says
+memory is not the one the files describe.
+**ad1** says so and shows no overlay symbols at window addresses until the stamp matches.
+While it differs, no overlay counts as being in its window so a bound breakpoint or watch is never reported.
+If the pidp-1 halts on one because the other program's word happens to hold the overlay's number, **ad1** says
 why, once for each, and continues the pidp-1.
 
 ## Expressions

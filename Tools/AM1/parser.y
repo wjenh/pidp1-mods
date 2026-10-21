@@ -29,22 +29,23 @@ BankContextP curBankP;
 static SymNodeP pendingLabelSymP;
 static int pendingLabelLocType;
 static int pendingLabelPC;
-// A label's own line.  The lexer sets labelTokenLine at the label's comma; the
+// A label's line.
+// The lexer sets labelTokenLine at the label's comma, the
 // ADDR rule copies it to pendingLabelLine because it records the line in its
-// final action, after a comma inside labelTrailer may have moved it on.
+// final action after a comma inside labelTrailer may have moved it on.
 int labelTokenLine;
 static int pendingLabelLine;
-// A var name's own line, set by the lexer as it scans the name, for the same
-// reason.  The varname rules record it; setVarsPC() placing the var later
-// leaves it alone.
+// A var name's line,set by the lexer as it scans the name, for the same reason
+// The varname rules record it, setVarsPC() placing the var later leaves it alone.
 int nameTokenLine;
 int nameTokenSrcLine;
 
 static char scratchStr[128];            // a scratch string
 
-// The optimizer directives.  Each kind of span is flat and independent of the
-// others, so one open span per kind is the whole state.  They emit nothing and
-// reserve no memory; what they mean is the optimizer's business.
+// The optimizer directives.
+// Each kind of span is flat and independent of the others,
+// one open span per kind is the whole state.
+// They emit nothing and reserve no memory.
 int optRegionTokenLine;                 // set by the lexer: the line the directive
 char *optRegionTokenFileP;              // it just scanned is on, and its file
 static int optRegionOpenLine;           // the open region's 'optimize' line, 0 when none
@@ -58,8 +59,8 @@ static char *speedOpenFileP;            // and the file it is in, NILP when none
 
 // Overlays.
 // Windows and overlays are kept in declaration order.
-// While an overlay is open, curBankP is its own context and curBank its window's bank;
-// the bank given before it is restored at its end.
+// While an overlay is open, curBankP is its own context and curBank its window's bank.
+// The bank given before it is restored at its end.
 WindowP windowsP;
 OverlayContextP overlaysP;
 OverlayContextP curOverlayP;            // the open overlay, NILP in the root
@@ -75,7 +76,7 @@ SymNodeP ovTableSymP;                   // and its label, NILP when none yet; th
 static PNodeListP ovCallsP;             // every %%ovcall's node, in source order
 
 extern PNodeListP wildcardsP;           // any wildcarded cross-bank refs
-extern SymNodeP permSymP;            // the instructions and other permanent values
+extern SymNodeP permSymP;               // the instructions and other permanent values
 extern SymListP constsListP;            // the list of all constant groups
 
 extern bool noWarn;
@@ -85,6 +86,7 @@ extern bool dropIncludeText;
 extern bool doSymtab;
 extern int lineno;
 extern char *filenameP;
+extern const char *internFileName(const char *nameP);  // lexfuncs.c: a file name that stays
 extern char *incroot;
 extern PNodeP rootP;
 
@@ -288,12 +290,12 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 
 %expect 2       // terminators
 
-// A node only optrelayout.c makes; no rule uses it and the lexer never returns
-// it.  Declared last so that every other token keeps its number.
+// A node only optrelayout.c makes; no rule uses it and the lexer never returns it.
+// Declared last so that every other token keeps its number.
 %token RELAYOUT
 
-// The overlay directives, declared after RELAYOUT for the same reason.  Each
-// is also the type of its node.
+// The overlay directives, declared after RELAYOUT for the same reason.
+// Each is also the type of its node.
 %token DRUMRESERVE
 %token WINDOWDECL
 %token OVERLAYDECL
@@ -584,6 +586,7 @@ one_stmt        : expr
                         pendingLabelSymP = sym_make($1, 0);
                         pendingLabelSymP->flags |= SYMF_RESOLVED | SYM_GLOB;
                         pendingLabelSymP->lineno = labelTokenLine;
+                        pendingLabelSymP->fileP = internFileName(filenameP);
                         pendingLabelSymP->value = curBankP->cur_pc;
                         pendingLabelSymP->bank = curBank;
                         sym_add(&(curBankP->globalSymP), pendingLabelSymP);
@@ -645,6 +648,7 @@ one_stmt        : expr
                         }
 
                         $1->lineno = pendingLabelLine;
+                        $1->fileP = internFileName(filenameP);
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = pendingLabelPC;
                         if( $4 && !($4->flags & PN_NOINC) )
@@ -1388,11 +1392,13 @@ symbol          : NAME
                 }
                 ;
 
-                /* The routine an 'inline' marking names.  The lexer returns NAME
-                   for a routine not yet defined and ADDR or LCLADDR for one that
-                   is; all three yield only the spelling, which optregion.c
-                   resolves against the call graph, so a marking may stand before
-                   or after its routine. */
+                /* The routine an 'inline' marking names.
+                 * The lexer returns NAME for a routine not yet defined and
+                 * ADDR or LCLADDR for one that is.
+                 * All three yield only the spelling, which optregion.c
+                 * resolves against the call graph, so a marking may be before
+                 * or after its routine.
+                 */
 inline_name     : NAME
                 {
                     $$ = $1;
@@ -1480,6 +1486,7 @@ varname         : NAME
                     sym_add(&(curBankP->globalSymP), symP);
                     symP->flags = SYM_GLOB | SYMF_VAR;
                     symP->lineno = nameTokenLine;
+                    symP->fileP = internFileName(filenameP);
                     $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = symP;
                 }
@@ -1500,6 +1507,7 @@ varname         : NAME
                     $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                     $1->lineno = nameTokenLine;
+                    $1->fileP = internFileName(filenameP);
                     $1->flags = SYM_GLOB | SYMF_VAR | ($1->flags & SYMF_EXPORTED);   // 'export' may come first
                 }
 %%
@@ -1537,8 +1545,8 @@ SymNodeP symP;
     }
 }
 
-// A literal, [expr, in the current bank's pool: literals of one value share a
-// slot.  endP is what ended it, a comment or NILP.
+// A literal, [expr, in the current bank's pool: literals of one value share a slot.
+// endP is what ended it, a comment or NILP.
 // Returns the CONSTANT node.
 PNodeP
 literalNode(int lineNo, int pc, PNodeP exprP, PNodeP endP)
@@ -1750,6 +1758,7 @@ char symbol[256];
 
         symP = sym_make(symbol, 0);
         symP->lineno = lineno;
+        symP->fileP = internFileName(filenameP);
         symP->flags |= SYMF_IMPORTED | SYMF_RESOLVED | SYM_GLOB;
         symP->value = address;
         symP->bank = bank;
@@ -1879,7 +1888,8 @@ BankContextP newP;
     return( newP );
 }
 
-// Moves the bank's counter to an origin.  Every other move of the counter places
+// Moves the bank's counter to an origin.
+// Every other move of the counter places
 // or reserves words, so the run of words since the last origin ends here, and
 // raises the bank's high-water mark if it holds anything; space an origin skips
 // is never counted.
@@ -1895,8 +1905,8 @@ bankOrigin(BankContextP bankP, int pc)
     bankP->runPC = pc;
 }
 
-// One past the bank's highest word, assembled or reserved, 0 for none; -S's
-// figure.  Includes the constants and variables placed at the end of the bank.
+// One past the bank's highest word, assembled or reserved, 0 for none; -S's figure.
+// Includes the constants and variables placed at the end of the bank.
 int
 bankTop(BankContextP bankP)
 {
@@ -1926,7 +1936,8 @@ BankContextP ctxP;
 }
 
 // Record where a BREF made from a name was written, for evalExpr's error if its
-// symbol never resolves. The node's lineNo will not do: the reference is
+// symbol never resolves.
+// The node's lineNo will not do: the reference is
 // reduced mid-line, before the terminator that newnode() allows for.
 void
 setRefSource(PNodeP nodeP)
@@ -1971,10 +1982,12 @@ yywrap()                /* tell lex to clean up */
     return(1);
 }
 
-// The optimize/endoptimize region directive.  A region declares its code
-// unmodified at run time, with no address taken and no timing requirement.  The
-// directives emit no word, reserve no memory and move no pc; their nodes are for
-// the optimizer.  A nested region, a close with none open and a region crossing
+// The optimize/endoptimize region directive.
+// A region declares its code
+// unmodified at run time, with no address taken and no timing requirement.
+// The directives emit no word, reserve no memory and move no pc; their nodes are for
+// the optimizer.
+// A nested region, a close with none open and a region crossing
 // a file boundary are refused here, one left open by checkOptRegionClosed().
 
 // Open a region at the 'optimize' the lexer has just scanned; regions are flat,
@@ -2013,9 +2026,10 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// Close the open region at the 'endoptimize' just scanned.  One with no region
-// open, or opened in another file (an include expands wherever it is used), is
-// refused.  Returns the ENDOPTIMIZE node, the opening line in value2.
+// Close the open region at the 'endoptimize' just scanned.
+// One with no region open, or opened in another file (an include expands wherever it is used)
+// is refused.
+// Returns the ENDOPTIMIZE node, the opening line in value2.
 PNodeP
 closeOptRegion(void)
 {
@@ -2029,7 +2043,8 @@ PNodeP nodeP;
 
     if( strcmp(optRegionOpenFileP, optRegionTokenFileP) )
     {
-        verror("%%%%endoptimize at line %d is in file %s and the region it closes was opened at line %d in file %s; a region may not cross a file boundary",
+        verror("%%%%endoptimize at line %d is in file %s and the region it closes"
+            "was opened at line %d in file %s; a region may not cross a file boundary",
             optRegionTokenLine, optRegionTokenFileP, optRegionOpenLine, optRegionOpenFileP);
     }
 
@@ -2080,7 +2095,8 @@ checkOptRegionClosed(void)
 // Refuse an optimize region, nooptimize span or speed region open at a
 // %%overlay or %%endoverlay, directiveP, at line: the optimizer reads the root
 // and each overlay in turns of their own, so a region on both sides of the
-// boundary would declare in neither.  With or without -O, as for a local scope.
+// boundary would declare in neither.
+// With or without -O, as for a local scope.
 static void
 checkRegionAtOverlay(const char *directiveP, const char *nameP, int line)
 {
@@ -2306,11 +2322,12 @@ int value;
 }
 
 // The nooptimize/endnooptimize hands-off span: code no optimization level may
-// rewrite, whatever the analysis or -O2's guess says.  The same errors as a
-// region; the nodes are OPTIMIZE and ENDOPTIMIZE carrying PN_HANDSOFF.
-
-// Open a span at the 'nooptimize' the lexer has just scanned.  Refuses a
-// second one while a span is open.  A span may open inside a region.
+// rewrite, whatever the analysis or -O2's guess says.
+// The same errors as a region
+// The nodes are OPTIMIZE and ENDOPTIMIZE carrying PN_HANDSOFF.
+// Open a span at the 'nooptimize' the lexer has just scanned.
+// Refuses a second one while a span is open.
+// A span may open inside a region.
 // Returns the new node; does not return if the span nests.
 PNodeP
 openHandsOff(void)
@@ -2383,10 +2400,11 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// The overlay directives.  An overlay is a section of the program assembled to
+// The overlay directives.
+// An overlay is a section of the program assembled to
 // run in a window, a range of one bank that several overlays share, and loaded
-// from the drum when it is called; Docs/UsingOverlays.md describes them.  The
-// nodes made here emit no word and move no pc, except the table's.
+// from the drum when it is called; Docs/UsingOverlays.md describes them.
+// The nodes made here emit no word and move no pc, except the table's.
 
 // A node for a directive that emits no word, on the directive's own line.
 PNodeP
@@ -2411,8 +2429,8 @@ refuseInOverlay(const char *whatP)
     }
 }
 
-// Whether a symbol the lexer returned is a root global seen from inside an
-// overlay.  An overlay may use such a name but never define it.
+// Whether a symbol the lexer returned is a root global seen from inside an overlay.
+// An overlay may use such a name but never define it.
 bool
 rootNameInOverlay(SymNodeP symP)
 {
@@ -2454,7 +2472,8 @@ OverlayContextP ovP;
 }
 
 // Add tracks first to last to those overlays may not use; a single track is a
-// range of one.  The numbers arrive in the current radix, as every number does.
+// range of one.
+// The numbers arrive in the current radix.
 void
 reserveTracks(long first, long last)
 {
@@ -2478,8 +2497,8 @@ long track;
     }
 }
 
-// One address of a window, reduced to the bank.  A bank tag, as in 2000:2,
-// must name the bank the window is declared in.
+// One address of a window, reduced to the bank.
+// A bank tag, as in 2000:2, must name the bank the window is declared in.
 static int
 windowAddress(char *nameP, PNodeP exprP, int line)
 {
@@ -2502,8 +2521,8 @@ int value;
 }
 
 // Declare a window: a range of the current bank that overlays run in and no
-// root word may use.  Its addresses must be known here, since each overlay of
-// it is assembled from its first address on.
+// root word may use.
+// Its addresses must be known here since each overlay of it is assembled from its first address.
 // Returns the WINDOWDECL node, the window in value.ptr.
 PNodeP
 declareWindow(char *nameP, PNodeP firstP, PNodeP lastP)
@@ -2596,9 +2615,9 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// Open an overlay of the named window, persistent when modeP says so.  Until
-// %%endoverlay every word, label, constant and variable goes into the
-// overlay's own context, in the window's bank, from the window's first address
+// Open an overlay of the named window, persistent when modeP says so.
+// Until %%endoverlay, every word, label, constant and variable goes into the
+// overlay's context, in the window's bank, from the window's first address
 // past the header words.
 // Returns the OVERLAYDECL node, the overlay in value.ptr.
 PNodeP
@@ -2688,9 +2707,8 @@ PNodeP nodeP;
 
 // Close the open overlay: place at its end the constants and variables it has
 // not placed itself, constants first as at the end of a bank, check that it
-// fits its window, and return to the bank its %%overlay was given in.  An
-// overlay may not end in another file than it began in, nor inside a local
-// scope.
+// fits its window, and return to the bank its %%overlay was given in.
+// An/ overlay may not end in another file than it began in, nor inside a local scope.
 // Returns the ENDOVERLAY node, the overlay in value.ptr; the node is the
 // overlay's last.
 PNodeP
@@ -2761,9 +2779,9 @@ PNodeP nodeP;
 }
 
 // Place the descriptor table here, labeled OVTABLENAME, a root global of this
-// bank: a word for the build stamp, one per window and OVENTRYWORDS per
-// overlay.  It must follow every window and overlay, so that its length is
-// known here; its words are made after the parse.
+// bank: a word for the build stamp, one per window and OVENTRYWORDS per overlay.
+// It must follow every window and overlay, so that its length is known here.
+// Its words are generated after the parse.
 // Returns the OVTABLE node, its length in value.ival.
 PNodeP
 placeOvTable(void)
@@ -2816,6 +2834,7 @@ PNodeP nodeP;
     symP->value = curBankP->cur_pc;
     symP->bank = curBank;
     symP->lineno = line;
+    symP->fileP = internFileName(filenameP);
     ovTableSymP = symP;
 
     nodeP = directiveNode(OVTABLE);
@@ -2826,8 +2845,8 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// Refuse an overlay still open at the end of the source.  Called before the
-// root's pools are placed, which would otherwise be placed in it.
+// Refuse an overlay still open at the end of the source.s
+// Called before the root's pools are placed, which would otherwise be placed in it.
 void
 checkOverlayClosed(void)
 {
@@ -3388,8 +3407,8 @@ char format[1024];
 }
 
 // Same as verrorl, with the file passed too, for a diagnostic given after the
-// parse, when filenameP is the last file read rather than the node's. A line
-// of 0 and a NILP file fall back to lineno and filenameP.
+// parse, when filenameP is the last file read rather than the node's.
+// A line of 0 and a NILP file fall back to lineno and filenameP.
 void
 verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...)
 {

@@ -27,6 +27,21 @@
  * pass lost sight of it.  Every hit in a block can be taken at once: a
  * redundant word changes neither register, a lai or lia counts as reading
  * the register it copies, and a swap's first word counts as read.
+ *
+ * The carried pass (-O=carry, task A52) is the same walk with what a block
+ * knows at its entry carried over the edges into it: a single predecessor's
+ * state, or at a merge what every predecessor agrees on, solved over loops by
+ * iterating until nothing changes.  Its values are named, not counted: a
+ * value is named by the word and slot that made it, a block's unknown entry
+ * value by the block and register.  Each name stands for the latest instance
+ * of its value, so making a value again first takes the name from every place
+ * that still holds the older one; a name that cannot mean one value on every
+ * path is never kept.  A call's return knows nothing (leg 1), what the callee's
+ * summary proves (leg 2, optpreserve.c), or what an oracle grants (leg 3); leg
+ * 0 resets every block and is A21's pass, the control.  optCarryBody() runs
+ * the same walk over one routine's body for its summary.  Each main leg also
+ * counts the words optscratch.c calls private that could be kept in IO
+ * instead of memory, and the stores its hits leave dead (parkLeg()).
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -255,6 +270,16 @@ static const VRow effectRows[] =
 // exactly when they hold the same number.
 #define VAL_FRESH   01000000L
 
+// The carried pass's names (task A52), in ranges no two kinds share.  They
+// need a 64-bit long, which every host am1 builds on has.
+#define VAL_CARRY   (1L << 32)      // a word's values: + index * VSLOTS + slot
+#define VAL_ENTRY   (1L << 44)      // a block's entry: + id * 2 + register
+#define VAL_SYM     (1L << 52)      // a summary run's symbols: + register
+#define VAL_LOST    (1L << 56)      // an older instance whose name was taken
+#define VSLOTS      8               // names one word can make; more are lost
+
+typedef char vLongHolds64Bits[(sizeof(long) >= 8)?1:-1];
+
 #define VR_AC       0
 #define VR_IO       1
 
@@ -450,6 +475,15 @@ typedef struct
     int blockMerge;         // blocks entered by more than one edge
     int blockEntry;         // blocks in the entry set
     int blockNone;          // blocks nothing enters
+
+    // The carried pass (-O=carry).  carry is 0 for -O=values, whose values
+    // are counted from nextFresh as they always were.
+    int carry;
+    int curIndex;           // the word being walked, whose values are named for it
+    int curSlot;            // the next of its names
+    long nextLost;
+    int iotFree;            // an unknown in-out transfer touches nothing
+    int borrowed;           // the handler set is another pass's: not freed here
 } VPass;
 
 // Which finding, if any, names a word: filled once from the finding lists.
@@ -487,11 +521,22 @@ isConst(long val)
     return( (val >= 0) && (val < VAL_FRESH) );
 }
 
-// A value no other place holds.
+// A value no other place holds.  The carried pass names it for the word being
+// walked and the slot; doWord() has already retired the word's older names.
 // Returns the new value number.
 static long
 freshVal(VPass *passP)
 {
+    if( passP->carry )
+    {
+        if( (passP->curIndex < 0) || (passP->curSlot >= VSLOTS) )
+        {
+            return( VAL_LOST + passP->nextLost++ );
+        }
+
+        return( VAL_CARRY + ((long)passP->curIndex * VSLOTS) + passP->curSlot++ );
+    }
+
     return( passP->nextFresh++ );
 }
 
@@ -648,6 +693,36 @@ OptDecodeP decodeP;
     }
 
     return(&effectRows[0]);
+}
+
+// Does a word make every memory fact die, and why (optpreserve.c's write
+// sets)?  An in-out transfer the table calls unknown, an xct or a spare code
+// does, and so does a code word the program writes whole (not just patches),
+// whose run-time word could be a store.
+// Returns OPTPW_NONE, OPTPW_IOT, OPTPW_XCT or OPTPW_SPARE.
+int
+optValueKills(OptWordP wordP)
+{
+const VRow *rowP;
+
+    if( (wordP->flags & OPTF_WRITTEN) && !(wordP->flags & OPTF_PATCHED) )
+    {
+        return(OPTPW_XCT);
+    }
+
+    rowP = findRow(wordP);
+
+    if( !(rowP->effects & VE_KILL) )
+    {
+        return(OPTPW_NONE);
+    }
+
+    if( wordP->decode.group == OPTG_IOT )
+    {
+        return(OPTPW_IOT);
+    }
+
+    return( (wordP->decode.group == OPTG_UNKNOWN)?OPTPW_SPARE:OPTPW_XCT );
 }
 
 // Spell a row's effect bits for the dump.
@@ -881,6 +956,55 @@ int i;
     passP->factsP[i].addr = addr;
     passP->factsP[i].val = val;
     passP->factsP[i].origin = origin;
+}
+
+// The carried pass: a name about to be made again stops meaning what the
+// places holding it hold.  Every name from first to first + count - 1 is
+// replaced, wherever it is, by a lost name of its own, one per name so that
+// places sharing an older instance still agree with each other.
+static void
+retireNames(VPass *passP, long first, int count)
+{
+long lost[VSLOTS];
+long *valP;
+int i;
+int k;
+
+    for( k = 0; k < count; ++k )
+    {
+        lost[k] = -1;
+    }
+
+    for( i = -3; i < passP->factCount; ++i )
+    {
+        if( i == -3 )
+        {
+            if( !passP->exch.active )
+            {
+                continue;
+            }
+
+            valP = &passP->exch.oldVal;
+        }
+        else
+        {
+            valP = (i < 0)?&passP->reg[i + 2].val:&passP->factsP[i].val;
+        }
+
+        if( (*valP < first) || (*valP >= (first + count)) )
+        {
+            continue;
+        }
+
+        k = (int)(*valP - first);
+
+        if( lost[k] < 0 )
+        {
+            lost[k] = VAL_LOST + passP->nextLost++;
+        }
+
+        *valP = lost[k];
+    }
 }
 
 // Is a memory word constant for the whole run, as far as the reference
@@ -1190,6 +1314,7 @@ int other;
 int memAddr;
 int origin;
 int constWord;
+int since;
 long val;
 long oldVal;
 VClass cls;
@@ -1202,9 +1327,12 @@ char spell[OPTMSG_SIZE];
 
     if( alreadyHolds(passP, reg, val) )
     {
-        makeHit(passP, VC_RLOAD, wordP, laterOf(passP->reg[reg].since, origin), wordP->addr, val, memAddr, "delete",
+        // Only a value carried into the block can be held since its entry
+        // and rest on a constant word.
+        since = laterOf(passP->reg[reg].since, origin);
+        makeHit(passP, VC_RLOAD, wordP, since, wordP->addr, val, memAddr, "delete",
             allocPrintf("%s already holds the value of %04o (since %04o)", regName(reg), memAddr,
-                laterOf(passP->reg[reg].since, origin)));
+                (since < 0)?passP->blockP->startAddr:since));
         return;
     }
 
@@ -1235,10 +1363,11 @@ char spell[OPTMSG_SIZE];
     else if( passP->reg[other].val == val )
     {
         cls = (reg == VR_AC)?VC_LAI:VC_LIA;
-        hitP = makeHit(passP, cls, wordP, laterOf(passP->reg[other].since, origin), wordP->addr, val, memAddr,
+        since = laterOf(passP->reg[other].since, origin);
+        hitP = makeHit(passP, cls, wordP, since, wordP->addr, val, memAddr,
             classTable[cls].nameP,
             allocPrintf("%s holds the value of %04o (since %04o)", regName(other), memAddr,
-                laterOf(passP->reg[other].since, origin)));
+                (since < 0)?passP->blockP->startAddr:since));
         useReg(passP, other);
     }
     else if( isConst(val) && constSpelling(reg, val, spell, sizeof(spell)) )
@@ -1507,6 +1636,15 @@ long val;
 
     decodeP = &wordP->decode;
 
+    // The carried pass names this word's values afresh, so whatever still
+    // holds its names from an earlier walk of it holds an older instance.
+    if( passP->carry )
+    {
+        passP->curIndex = wordP->index;
+        passP->curSlot = 0;
+        retireNames(passP, (VAL_CARRY + ((long)wordP->index * VSLOTS)), VSLOTS);
+    }
+
     // A word the program writes or patches is not the assembled word.
     if( wordP->flags & (OPTF_WRITTEN | OPTF_PATCHED) )
     {
@@ -1518,6 +1656,13 @@ long val;
 
     if( rowP->effects & VE_KILL )
     {
+        if( (decodeP->group == OPTG_IOT) && passP->iotFree )
+        {
+            useReg(passP, VR_AC);
+            useReg(passP, VR_IO);
+            return;
+        }
+
         if( (decodeP->group == OPTG_IOT) && passP->optimistic )
         {
             useReg(passP, VR_AC);
@@ -1557,6 +1702,13 @@ long val;
 
     default:
         break;
+    }
+
+    // jda and cal deposit AC in Y (cal in 0100) before they jump (F-15D p.18).
+    // The word ends its block, so only the carried pass sees the fact.
+    if( passP->carry && (decodeP->group == OPTG_MEMREF) && (decodeP->opcode == 016) )
+    {
+        setFact(passP, ((decodeP->indirect)?decodeP->address:0100), passP->reg[VR_AC].val, wordP->addr);
     }
 
     // Everything else follows its row: the reads, then the memory write,
@@ -1743,9 +1895,20 @@ int i;
 
     passP->blockP = blockP;
     passP->bank = blockP->bank;
-    passP->reg[VR_AC].val = freshVal(passP);
+
+    // The carried pass names a block's unknown entry values for the block.
+    if( passP->carry )
+    {
+        passP->reg[VR_AC].val = (VAL_ENTRY + ((long)blockP->id * 2) + VR_AC);
+        passP->reg[VR_IO].val = (VAL_ENTRY + ((long)blockP->id * 2) + VR_IO);
+    }
+    else
+    {
+        passP->reg[VR_AC].val = freshVal(passP);
+        passP->reg[VR_IO].val = freshVal(passP);
+    }
+
     passP->reg[VR_AC].since = -1;
-    passP->reg[VR_IO].val = freshVal(passP);
     passP->reg[VR_IO].since = -1;
     passP->factCount = 0;
     passP->pend[VR_AC].active = 0;
@@ -1976,12 +2139,16 @@ int bank;
         free(hitP);
     }
 
-    for( bank = 0; bank <= MAXBANK; ++bank )
+    if( !passP->borrowed )
     {
-        free(passP->handlerWrittenP[bank]);
+        for( bank = 0; bank <= MAXBANK; ++bank )
+        {
+            free(passP->handlerWrittenP[bank]);
+        }
+
+        free(passP->handlerBlockP);
     }
 
-    free(passP->handlerBlockP);
     free(passP->hitOfWordPP);
     free(passP->factsP);
     free(passP->blockHitsPP);
@@ -2437,6 +2604,2907 @@ char code[32];
 
     freePass(&pass);
     freePass(&optimisticPass);
+    free(knownOfWordP);
+    knownOfWordP = NILP;
+}
+
+// The carried pass (-O=carry, task A52).  The walk is the one above; what
+// changes is what a block knows at its entry.
+
+// The most rounds the solver makes before it calls a run unsettled.
+#define VMAXROUNDS  200
+
+// The rounds after which what a block starts from may only fall.  A walk is
+// not monotone: a register unknown at a block's entry leaves under the
+// block's own name, which disagrees at the next merge where a value would
+// not, so two merges in one loop can hand each other agreement and
+// disagreement in turn for ever (Sketchpad's wkClose and wkStep did).  Past
+// this many rounds a block starts from the meet of everything it has been
+// given since, which can only lose registers and facts, so the run ends; what
+// it finds is still true, only less.  Every run that settles sooner is
+// untouched.
+#define VWIDEN      40
+
+// The symbols a summary run starts with: IO at the entry, and the AC jda
+// deposited below it.
+#define SYM_AC      (VAL_SYM + VR_AC)
+#define SYM_IO      (VAL_SYM + VR_IO)
+
+// One edge into a block.
+typedef struct vpred
+{
+    struct vpred *nextP;
+    OptBlockP fromP;
+    OptFlowEdgeP edgeP;
+} VPred;
+
+// One carried run: a leg over every block, or a summary run over one body.
+typedef struct
+{
+    VPass *passP;
+    OptTableP tableP;
+    OptCarryMapsP mapsP;
+    OptPreserveP sumsP;
+    int leg;                // 0 to 3, or -1 for a summary run
+    unsigned int mode;      // OPTCM_ bits
+    OptRoutineP routineP;   // a summary run's routine
+    OptBodyRun *runP;       // and what its last walk finds
+    int count;              // blockCount
+    unsigned char *scopeP;  // by block id: the block is walked
+    unsigned char *fixedP;  // by block id: the block starts knowing nothing
+    unsigned char *outsideP;    // by block id: an edge arrives from outside the scope
+    VPred **predsPP;        // by block id
+    VPred *predPoolP;
+    OptCarryState *outP;    // by block id: what the block knows at its end
+    OptCarryState *preP;    // and just before its call word
+    OptCarryState *widenP;  // by block id: what it starts from once the run widens
+    OptCarryState seed;     // a summary run's entry
+    int rounds;
+    int settled;
+    int widened;            // the run went past VWIDEN rounds
+
+    // the blocks, for the dump
+    int walked;
+    int carried;
+    int fixedEntry;
+    int fixedUnreached;
+    int fixedTaken;
+    int fixedAfterCall;
+} VCarry;
+
+// The dump's own pass, whose handler set every carried run borrows.
+static VPass *carryHomeP;
+
+// Carried states.
+
+// Make room for need facts.
+static void
+stateRoom(OptCarryState *stateP, int need)
+{
+    if( need <= stateP->factCap )
+    {
+        return;
+    }
+
+    stateP->factCap = (need < 16)?16:(need * 2);
+
+    if( !(stateP->factsP = (OptCarryFact *)realloc(stateP->factsP, ((size_t)stateP->factCap * sizeof(OptCarryFact)))) )
+    {
+        fprintf(stderr, "am1: out of memory measuring values\n");
+        exit(1);
+    }
+}
+
+// Free a carried state's facts.
+void
+optCarryStateFree(OptCarryState *stateP)
+{
+    free(stateP->factsP);
+    stateP->factsP = NILP;
+    stateP->factCount = 0;
+    stateP->factCap = 0;
+    stateP->known = 0;
+}
+
+// Set a carried state to know nothing: both registers unknown, no facts.
+void
+optCarryStateUnknown(OptCarryState *stateP)
+{
+    stateP->known = 1;
+    stateP->reg[VR_AC] = OPTVAL_UNKNOWN;
+    stateP->reg[VR_IO] = OPTVAL_UNKNOWN;
+    stateP->factCount = 0;
+}
+
+// Record that a word holds a value, replacing any fact about it; an unknown
+// value removes the fact.
+void
+optCarryStateSetFact(OptCarryState *stateP, int addr, long val)
+{
+int i;
+
+    for( i = 0; i < stateP->factCount; ++i )
+    {
+        if( stateP->factsP[i].addr == addr )
+        {
+            break;
+        }
+    }
+
+    if( val == OPTVAL_UNKNOWN )
+    {
+        if( i < stateP->factCount )
+        {
+            stateP->factsP[i] = stateP->factsP[--stateP->factCount];
+        }
+
+        return;
+    }
+
+    if( i == stateP->factCount )
+    {
+        stateRoom(stateP, (stateP->factCount + 1));
+        ++stateP->factCount;
+    }
+
+    stateP->factsP[i].addr = addr;
+    stateP->factsP[i].val = val;
+}
+
+// Copy one carried state over another.
+void
+optCarryStateCopy(OptCarryState *toP, const OptCarryState *fromP)
+{
+    if( toP == fromP )
+    {
+        return;
+    }
+
+    stateRoom(toP, fromP->factCount);
+
+    if( fromP->factCount )
+    {
+        memcpy(toP->factsP, fromP->factsP, ((size_t)fromP->factCount * sizeof(OptCarryFact)));
+    }
+
+    toP->known = fromP->known;
+    toP->reg[VR_AC] = fromP->reg[VR_AC];
+    toP->reg[VR_IO] = fromP->reg[VR_IO];
+    toP->factCount = fromP->factCount;
+}
+
+// The value a state gives a word, OPTVAL_UNKNOWN for none.
+// Returns the value.
+static long
+stateFact(const OptCarryState *stateP, int addr)
+{
+int i;
+
+    for( i = 0; i < stateP->factCount; ++i )
+    {
+        if( stateP->factsP[i].addr == addr )
+        {
+            return(stateP->factsP[i].val);
+        }
+    }
+
+    return(OPTVAL_UNKNOWN);
+}
+
+// Do two states say the same, facts in any order?
+// Returns 1 when they do, 0 when they do not.
+static int
+stateEqual(const OptCarryState *aP, const OptCarryState *bP)
+{
+int i;
+
+    if( aP->known != bP->known )
+    {
+        return(0);
+    }
+
+    if( !aP->known )
+    {
+        return(1);
+    }
+
+    if( (aP->reg[VR_AC] != bP->reg[VR_AC]) || (aP->reg[VR_IO] != bP->reg[VR_IO])
+        || (aP->factCount != bP->factCount) )
+    {
+        return(0);
+    }
+
+    for( i = 0; i < aP->factCount; ++i )
+    {
+        if( stateFact(bP, aP->factsP[i].addr) != aP->factsP[i].val )
+        {
+            return(0);
+        }
+    }
+
+    return(1);
+}
+
+// The meet: what both states say.  A state not known yet adds nothing.
+static void
+stateMeet(OptCarryState *intoP, const OptCarryState *fromP)
+{
+int i;
+int at;
+
+    if( !fromP->known )
+    {
+        return;
+    }
+
+    if( !intoP->known )
+    {
+        optCarryStateCopy(intoP, fromP);
+        return;
+    }
+
+    if( intoP->reg[VR_AC] != fromP->reg[VR_AC] )
+    {
+        intoP->reg[VR_AC] = OPTVAL_UNKNOWN;
+    }
+
+    if( intoP->reg[VR_IO] != fromP->reg[VR_IO] )
+    {
+        intoP->reg[VR_IO] = OPTVAL_UNKNOWN;
+    }
+
+    for( i = 0, at = 0; i < intoP->factCount; ++i )
+    {
+        if( stateFact(fromP, intoP->factsP[i].addr) == intoP->factsP[i].val )
+        {
+            intoP->factsP[at++] = intoP->factsP[i];
+        }
+    }
+
+    intoP->factCount = at;
+}
+
+// What the walk holds now, as a carried state; a lost name is unknown, since
+// nothing past this block can tell its instances apart.
+static void
+captureState(VPass *passP, OptCarryState *stateP)
+{
+int r;
+int i;
+
+    optCarryStateUnknown(stateP);
+
+    for( r = VR_AC; r <= VR_IO; ++r )
+    {
+        stateP->reg[r] = (passP->reg[r].val >= VAL_LOST)?OPTVAL_UNKNOWN:passP->reg[r].val;
+    }
+
+    stateRoom(stateP, passP->factCount);
+
+    for( i = 0; i < passP->factCount; ++i )
+    {
+        if( passP->factsP[i].val < VAL_LOST )
+        {
+            stateP->factsP[stateP->factCount].addr = passP->factsP[i].addr;
+            stateP->factsP[stateP->factCount].val = passP->factsP[i].val;
+            ++stateP->factCount;
+        }
+    }
+}
+
+// Start a walk from a carried state: its facts, its registers, and the
+// block's entry names for a register it does not know.  The state may hold
+// the block's entry names from an earlier walk round a loop: older instances.
+static void
+applyIn(VPass *passP, OptBlockP blockP, const OptCarryState *inP)
+{
+long entry;
+int i;
+int r;
+
+    if( !inP->known )
+    {
+        return;
+    }
+
+    entry = (VAL_ENTRY + ((long)blockP->id * 2));
+
+    // A carried fact has held since the block's entry.
+    for( i = 0; i < inP->factCount; ++i )
+    {
+        setFact(passP, inP->factsP[i].addr, inP->factsP[i].val, blockP->startAddr);
+    }
+
+    passP->reg[VR_AC].val = inP->reg[VR_AC];
+    passP->reg[VR_IO].val = inP->reg[VR_IO];
+    retireNames(passP, entry, 2);
+
+    for( r = VR_AC; r <= VR_IO; ++r )
+    {
+        if( passP->reg[r].val == OPTVAL_UNKNOWN )
+        {
+            passP->reg[r].val = (entry + r);
+        }
+    }
+}
+
+// Does any register or fact hold a value?
+// Returns 1 when one does, 0 otherwise.
+static int
+holdsAnywhere(VPass *passP, long val)
+{
+int i;
+
+    if( (passP->reg[VR_AC].val == val) || (passP->reg[VR_IO].val == val) )
+    {
+        return(1);
+    }
+
+    for( i = 0; i < passP->factCount; ++i )
+    {
+        if( passP->factsP[i].val == val )
+        {
+            return(1);
+        }
+    }
+
+    return(0);
+}
+
+// Does a memory fact hold a value?
+// Returns 1 when one does, 0 otherwise.
+static int
+factHolds(VPass *passP, long val)
+{
+int i;
+
+    for( i = 0; i < passP->factCount; ++i )
+    {
+        if( passP->factsP[i].val == val )
+        {
+            return(1);
+        }
+    }
+
+    return(0);
+}
+
+// The value the walk gives a word, OPTVAL_UNKNOWN for none.
+// Returns the value.
+static long
+factOf(VPass *passP, int addr)
+{
+int i;
+
+    return( ((i = findFact(passP, addr)) >= 0)?passP->factsP[i].val:OPTVAL_UNKNOWN );
+}
+
+// A summary run's read check for one word that is not a call: is IO's entry
+// value (SYM_IO, wherever it has been moved) read other than to move it?
+// lac, lio, dac and dio direct, and lai, lia and swp alone, move it; a word
+// that may do anything reads it.
+// Returns 1 when the word reads it, 0 otherwise.
+static int
+readsEntryIo(VPass *passP, OptWordP wordP)
+{
+const VRow *rowP;
+OptDecodeP decodeP;
+unsigned int bits;
+int acSym;
+int ioSym;
+
+    decodeP = &wordP->decode;
+    acSym = (passP->reg[VR_AC].val == SYM_IO);
+    ioSym = (passP->reg[VR_IO].val == SYM_IO);
+
+    if( (wordP->flags & OPTF_WRITTEN) && !(wordP->flags & OPTF_PATCHED) )
+    {
+        return( holdsAnywhere(passP, SYM_IO) );
+    }
+
+    if( wordP->flags & OPTF_PATCHED )
+    {
+        // A patched jmp is a jmp to somewhere; anything else may be anything.
+        if( (decodeP->group == OPTG_MEMREF) && (decodeP->opcode == 060) )
+        {
+            return(0);
+        }
+
+        return( holdsAnywhere(passP, SYM_IO) );
+    }
+
+    rowP = findRow(wordP);
+
+    if( rowP->effects & VE_KILL )
+    {
+        if( (decodeP->group == OPTG_IOT) && passP->iotFree )
+        {
+            return(0);
+        }
+
+        return( holdsAnywhere(passP, SYM_IO) );
+    }
+
+    switch( rowP->sem )
+    {
+    case VS_LOADAC:
+    case VS_LOADIO:
+        if( !decodeP->memIndirect )
+        {
+            return(0);
+        }
+
+        // Through a pointer: the word read is not known.
+        return( factHolds(passP, SYM_IO) );
+
+    case VS_STOREAC:
+        return( decodeP->memIndirect && acSym );
+
+    case VS_STOREIO:
+        return( decodeP->memIndirect && ioSym );
+
+    case VS_OPERATE:
+        bits = (decodeP->microBits & OPTM_ALLBITS);
+
+        if( (bits == OPTM_LAI) || (bits == OPTM_LIA) || (bits == (OPTM_LAI | OPTM_LIA)) || (bits == OPTM_CLA)
+            || (bits == OPTM_CLI) || (bits == (OPTM_CLA | OPTM_CMA)) || (bits == (OPTM_CLI | OPTM_CMI)) || !bits )
+        {
+            return(0);
+        }
+
+        return( ((bits & (OPTM_LAT | OPTM_LAP | OPTM_CMA | OPTM_LIA | OPTM_HLT)) && acSym)
+                || ((bits & (OPTM_CMI | OPTM_LAI | OPTM_HLT)) && ioSym) );
+
+    case VS_SPECIAL:
+        bits = (decodeP->specialBits & OPTX_ALLBITS);
+        return( ((bits & (OPTX_IIF | OPTX_IFI)) && !(bits & OPTX_SCI) && ioSym) || ((bits & OPTX_IDA) && acSym) );
+
+    default:
+        break;
+    }
+
+    if( decodeP->group == OPTG_SKIP )
+    {
+        return( ((decodeP->skipConds & (OPTC_SZA | OPTC_SPA | OPTC_SMA)) && acSym)
+                || ((decodeP->skipConds & (OPTC_SPI | OPTC_SNI)) && ioSym) );
+    }
+
+    if( ((rowP->effects & VE_RAC) && acSym) || ((rowP->effects & VE_RIO) && ioSym) )
+    {
+        return(1);
+    }
+
+    if( rowP->effects & VE_RMEM )
+    {
+        if( decodeP->memIndirect )
+        {
+            return( factHolds(passP, SYM_IO) );
+        }
+
+        return( factOf(passP, decodeP->address) == SYM_IO );
+    }
+
+    return(0);
+}
+
+// A summary run's read check at a call word: IO's entry value passes to the
+// callee in IO, in a word the callee reads, or (jda) in the word below its
+// entry; a callee not known may read it anywhere.
+// Returns 1 when the callee may read it, 0 otherwise.
+static int
+callReadsEntryIo(VCarry *cP, OptBlockP blockP, OptWordP wordP)
+{
+VPass *passP;
+OptFlowEdgeP edgeP;
+OptRoutineP calleeP;
+OptPreserveP sumP;
+const OptWordSet *readsP;
+int freeSums;
+int i;
+
+    passP = cP->passP;
+
+    if( !holdsAnywhere(passP, SYM_IO) )
+    {
+        return(0);
+    }
+
+    freeSums = ((cP->mode & OPTCM_FREESUMS) != 0);
+
+    for( edgeP = blockP->succP; edgeP; edgeP = edgeP->nextP )
+    {
+        if( edgeP->kind != OPTFK_CALL )
+        {
+            continue;
+        }
+
+        calleeP = (edgeP->toP)?cP->mapsP->routineOfEntryPP[edgeP->toP->id]:NILP;
+
+        if( !calleeP || !cP->sumsP[calleeP->id].done || edgeP->crossbank )
+        {
+            return(1);
+        }
+
+        sumP = &cP->sumsP[calleeP->id];
+        readsP = (freeSums)?&sumP->freeReads:&sumP->reads;
+
+        if( (passP->reg[VR_IO].val == SYM_IO) && ((freeSums)?sumP->freeIoRead:sumP->ioRead) )
+        {
+            return(1);
+        }
+
+        for( i = 0; i < passP->factCount; ++i )
+        {
+            if( (passP->factsP[i].val == SYM_IO) && optWordSetHas(readsP, passP->bank, passP->factsP[i].addr) )
+            {
+                return(1);
+            }
+        }
+
+        if( (wordP->decode.opcode == 016) && (passP->reg[VR_AC].val == SYM_IO)
+            && optWordSetHas(readsP, passP->bank, ((wordP->decode.indirect)?wordP->decode.address:0100)) )
+        {
+            return(1);
+        }
+    }
+
+    return(0);
+}
+
+// A summary run's last walk, before each word: a return word checks the
+// symbols, any other word whether it reads IO's entry value.
+static void
+bodyHooks(VCarry *cP, OptBlockP blockP, OptWordP wordP)
+{
+VPass *passP;
+OptBodyRun *runP;
+
+    passP = cP->passP;
+    runP = cP->runP;
+
+    if( optPreserveIsReturn(cP->routineP, wordP) )
+    {
+        ++runP->returns;
+
+        if( passP->reg[VR_IO].val != SYM_IO )
+        {
+            runP->ioKept = 0;
+        }
+
+        if( passP->reg[VR_AC].val != SYM_AC )
+        {
+            runP->acKept = 0;
+        }
+
+        return;
+    }
+
+    if( (wordP == blockP->lastP) && (blockP->endKind == OPTBE_CALL) )
+    {
+        if( callReadsEntryIo(cP, blockP, wordP) )
+        {
+            runP->ioRead = 1;
+        }
+
+        return;
+    }
+
+    if( readsEntryIo(passP, wordP) )
+    {
+        runP->ioRead = 1;
+    }
+}
+
+// Drop a walk's hits without counting them: a round of the solver.
+static void
+discardBlock(VPass *passP)
+{
+VHitP hitP;
+int i;
+
+    for( i = 0; i < passP->blockP->wordCount; ++i )
+    {
+        if( (hitP = passP->blockHitsPP[i]) )
+        {
+            free(hitP->replaceP);
+            free(hitP->whyP);
+            free(hitP);
+            passP->blockHitsPP[i] = NILP;
+        }
+    }
+}
+
+// Walk one block from a carried state.  last is the final walk: a leg's hits
+// are kept, a summary run's hooks run.
+static void
+carryWalk(VCarry *cP, OptBlockP blockP, const OptCarryState *inP, int last, OptCarryState *outP,
+          OptCarryState *preP)
+{
+VPass *passP;
+OptWordP wordP;
+int addr;
+
+    passP = cP->passP;
+    beginBlock(passP, blockP);
+    applyIn(passP, blockP, inP);
+
+    for( addr = blockP->startAddr; addr <= blockP->endAddr; ++addr )
+    {
+        if( !(wordP = wordAt(cP->tableP, blockP->bank, addr)) || (wordP->blockP != blockP) )
+        {
+            continue;
+        }
+
+        if( (wordP == blockP->lastP) && (blockP->endKind == OPTBE_CALL) )
+        {
+            captureState(passP, preP);
+        }
+
+        if( last && cP->runP )
+        {
+            bodyHooks(cP, blockP, wordP);
+        }
+
+        doWord(passP, wordP);
+    }
+
+    if( last && (cP->leg >= 0) )
+    {
+        endBlock(passP);
+    }
+    else
+    {
+        discardBlock(passP);
+    }
+
+    captureState(passP, outP);
+}
+
+// What a call returns to the word after it: the meet over the call word's
+// callees of optCarryCall()'s answer.
+static void
+callReturn(VCarry *cP, OptBlockP fromP, OptCarryState *stateP)
+{
+OptFlowEdgeP edgeP;
+OptRoutineP calleeP;
+OptCarryState one;
+int any;
+
+    memset(&one, 0, sizeof(one));
+    stateP->known = 0;
+    stateP->factCount = 0;
+    any = 0;
+
+    for( edgeP = fromP->succP; edgeP; edgeP = edgeP->nextP )
+    {
+        if( edgeP->kind != OPTFK_CALL )
+        {
+            continue;
+        }
+
+        calleeP = (edgeP->toP)?cP->mapsP->routineOfEntryPP[edgeP->toP->id]:NILP;
+        optCarryCall(cP->tableP, cP->sumsP, ((cP->leg > 0)?cP->leg:0), cP->mode, cP->routineP, fromP->lastP,
+            calleeP, &cP->preP[fromP->id], &one);
+
+        // A jda into another bank deposits AC somewhere these facts do not name.
+        if( edgeP->crossbank )
+        {
+            one.factCount = 0;
+        }
+
+        stateMeet(stateP, &one);
+        any = 1;
+    }
+
+    if( !any )
+    {
+        optCarryStateUnknown(stateP);
+    }
+
+    optCarryStateFree(&one);
+}
+
+// Does a summary run take a block's call as harmless: every call, or (for the
+// call test) one whose every callee is in the caller's own component?
+// Returns 1 when it does, 0 otherwise.
+static int
+harmlessCall(VCarry *cP, OptBlockP fromP)
+{
+OptFlowEdgeP edgeP;
+OptRoutineP calleeP;
+int any;
+
+    if( cP->leg >= 0 )
+    {
+        return(0);
+    }
+
+    if( cP->mode & OPTCM_CALLSOPT )
+    {
+        return(1);
+    }
+
+    if( !(cP->mode & OPTCM_SCCOPT) || !cP->routineP->scc )
+    {
+        return(0);
+    }
+
+    any = 0;
+
+    for( edgeP = fromP->succP; edgeP; edgeP = edgeP->nextP )
+    {
+        if( edgeP->kind != OPTFK_CALL )
+        {
+            continue;
+        }
+
+        calleeP = (edgeP->toP)?cP->mapsP->routineOfEntryPP[edgeP->toP->id]:NILP;
+
+        if( !calleeP || (calleeP->scc != cP->routineP->scc) )
+        {
+            return(0);
+        }
+
+        any = 1;
+    }
+
+    return(any);
+}
+
+// What one edge brings into its block.
+static void
+edgeState(VCarry *cP, VPred *predP, OptCarryState *stateP)
+{
+OptFlowEdgeP edgeP;
+int id;
+
+    edgeP = predP->edgeP;
+    id = predP->fromP->id;
+
+    switch( edgeP->kind )
+    {
+    case OPTFK_FALL:
+    case OPTFK_SKIP:
+    case OPTFK_JUMP:
+    case OPTFK_CALL:
+        optCarryStateCopy(stateP, &cP->outP[id]);
+
+        // Facts name words of the bank they were made in.
+        if( edgeP->crossbank )
+        {
+            stateP->factCount = 0;
+        }
+
+        return;
+
+    case OPTFK_RETURN:
+        // Leg 1 knows nothing after a call, and an assumed return may land
+        // elsewhere, but for a summary run's tests that take the call as
+        // harmless (a call within the component is always assumed: the
+        // recursion clobbers its return word).
+        if( (cP->leg == 1) || (edgeP->assumed && !harmlessCall(cP, predP->fromP)) )
+        {
+            optCarryStateUnknown(stateP);
+            return;
+        }
+
+        if( !cP->preP[id].known )
+        {
+            stateP->known = 0;
+            stateP->factCount = 0;
+            return;
+        }
+
+        callReturn(cP, predP->fromP, stateP);
+        return;
+
+    default:
+        // A resumed hlt: the operator may have changed anything.
+        optCarryStateUnknown(stateP);
+        return;
+    }
+}
+
+// What a block knows at its entry, from what is known now.
+static void
+computeIn(VCarry *cP, OptBlockP blockP, OptCarryState *inP)
+{
+OptCarryState edge;
+VPred *predP;
+
+    if( cP->fixedP[blockP->id] )
+    {
+        optCarryStateUnknown(inP);
+        return;
+    }
+
+    inP->known = 0;
+    inP->factCount = 0;
+
+    if( cP->routineP && (blockP == cP->routineP->entryBlockP) )
+    {
+        optCarryStateCopy(inP, &cP->seed);
+    }
+
+    memset(&edge, 0, sizeof(edge));
+
+    for( predP = cP->predsPP[blockP->id]; predP; predP = predP->nextP )
+    {
+        edgeState(cP, predP, &edge);
+        stateMeet(inP, &edge);
+    }
+
+    optCarryStateFree(&edge);
+
+    if( cP->outsideP[blockP->id] )
+    {
+        if( !inP->known )
+        {
+            optCarryStateUnknown(inP);
+        }
+        else
+        {
+            inP->reg[VR_AC] = OPTVAL_UNKNOWN;
+            inP->reg[VR_IO] = OPTVAL_UNKNOWN;
+            inP->factCount = 0;
+        }
+    }
+}
+
+// Set a run up: every array by block id, nothing in scope yet.
+static void
+carryInit(VCarry *cP, VPass *passP, OptTableP tableP, OptCarryMapsP mapsP, OptPreserveP sumsP, int leg,
+          unsigned int mode, OptRoutineP routineP, OptBodyRun *runP)
+{
+size_t n;
+
+    memset(cP, 0, sizeof(*cP));
+    cP->passP = passP;
+    cP->tableP = tableP;
+    cP->mapsP = mapsP;
+    cP->sumsP = sumsP;
+    cP->leg = leg;
+    cP->mode = mode;
+    cP->routineP = routineP;
+    cP->runP = runP;
+    cP->count = tableP->blockCount;
+    n = (size_t)(cP->count + 1);
+    cP->scopeP = (unsigned char *)vAlloc(n, 1);
+    cP->fixedP = (unsigned char *)vAlloc(n, 1);
+    cP->outsideP = (unsigned char *)vAlloc(n, 1);
+    cP->predsPP = (VPred **)vAlloc(n, sizeof(VPred *));
+    cP->outP = (OptCarryState *)vAlloc(n, sizeof(OptCarryState));
+    cP->preP = (OptCarryState *)vAlloc(n, sizeof(OptCarryState));
+    cP->widenP = (OptCarryState *)vAlloc(n, sizeof(OptCarryState));
+}
+
+// Release a run.
+static void
+carryFree(VCarry *cP)
+{
+int id;
+
+    for( id = 0; id <= cP->count; ++id )
+    {
+        optCarryStateFree(&cP->outP[id]);
+        optCarryStateFree(&cP->preP[id]);
+        optCarryStateFree(&cP->widenP[id]);
+    }
+
+    optCarryStateFree(&cP->seed);
+    free(cP->scopeP);
+    free(cP->fixedP);
+    free(cP->outsideP);
+    free(cP->predsPP);
+    free(cP->predPoolP);
+    free(cP->outP);
+    free(cP->preP);
+    free(cP->widenP);
+}
+
+// List the edges into each block in scope from blocks in scope.  A summary
+// run ignores call edges (the callee's entry is not in the body) and marks a
+// block entered from outside the body, but for the entry, whose callers the
+// seed stands for.
+static void
+carryPreds(VCarry *cP)
+{
+OptBlockP blockP;
+OptFlowEdgeP edgeP;
+VPred *predP;
+int *insideP;
+int id;
+int n;
+int pass;
+
+    insideP = (int *)vAlloc((size_t)(cP->count + 1), sizeof(int));
+    predP = NILP;
+
+    for( pass = 0; pass < 2; ++pass )
+    {
+        n = 0;
+
+        for( id = 1; id <= cP->count; ++id )
+        {
+            if( !cP->scopeP[id] || !(blockP = cP->mapsP->blockOfIdPP[id]) )
+            {
+                continue;
+            }
+
+            for( edgeP = blockP->succP; edgeP; edgeP = edgeP->nextP )
+            {
+                if( !edgeP->toP || !cP->scopeP[edgeP->toP->id] )
+                {
+                    continue;
+                }
+
+                if( pass )
+                {
+                    ++insideP[edgeP->toP->id];
+                }
+
+                if( (cP->leg < 0) && (edgeP->kind == OPTFK_CALL) )
+                {
+                    continue;
+                }
+
+                if( pass )
+                {
+                    predP = &cP->predPoolP[n];
+                    predP->fromP = blockP;
+                    predP->edgeP = edgeP;
+                    predP->nextP = cP->predsPP[edgeP->toP->id];
+                    cP->predsPP[edgeP->toP->id] = predP;
+                }
+
+                ++n;
+            }
+        }
+
+        if( !pass )
+        {
+            cP->predPoolP = (VPred *)vAlloc((size_t)n, sizeof(VPred));
+        }
+    }
+
+    if( cP->leg < 0 )
+    {
+        for( id = 1; id <= cP->count; ++id )
+        {
+            if( cP->scopeP[id] && (blockP = cP->mapsP->blockOfIdPP[id]) && (blockP != cP->routineP->entryBlockP)
+                && (blockP->predCount > insideP[id]) )
+            {
+                cP->outsideP[id] = 1;
+            }
+        }
+    }
+
+    free(insideP);
+}
+
+// Which blocks of a leg start knowing nothing.  Leg 0 resets every block,
+// as A21's pass does.  The others reset a block the program may enter other
+// than by an edge: an entry, an unreached block, one whose address is taken
+// or may be jumped to through a pointer, and one starting a word or three
+// after a call whose return could not be decided.
+static void
+carryFixed(VCarry *cP)
+{
+OptBlockP blockP;
+OptWordP callP;
+OptWordP wordP;
+unsigned char *afterP;
+int k;
+
+    afterP = (unsigned char *)vAlloc((size_t)(cP->count + 1), 1);
+
+    for( blockP = cP->tableP->blocksP; blockP; blockP = blockP->nextP )
+    {
+        callP = blockP->lastP;
+
+        if( (blockP->endKind != OPTBE_CALL) || !callP || !callP->isCallSite || (callP->returnCase != OPTRC_UNKNOWN) )
+        {
+            continue;
+        }
+
+        for( k = 1; k <= 3; ++k )
+        {
+            if( (wordP = wordAt(cP->tableP, blockP->bank, ((callP->addr + k) & ADDRMASK))) && wordP->blockP
+                && (wordP->blockP->firstP == wordP) )
+            {
+                afterP[wordP->blockP->id] = 1;
+            }
+        }
+    }
+
+    for( blockP = cP->tableP->blocksP; blockP; blockP = blockP->nextP )
+    {
+        ++cP->walked;
+
+        if( cP->leg == 0 )
+        {
+            cP->fixedP[blockP->id] = 1;
+            continue;
+        }
+
+        if( blockP->isEntry )
+        {
+            ++cP->fixedEntry;
+        }
+        else if( !blockP->reached )
+        {
+            ++cP->fixedUnreached;
+        }
+        else if( blockP->firstP->flags & (OPTF_TAKEN | OPTF_MAYBE_ENTERED) )
+        {
+            ++cP->fixedTaken;
+        }
+        else if( afterP[blockP->id] )
+        {
+            ++cP->fixedAfterCall;
+        }
+        else
+        {
+            ++cP->carried;
+            continue;
+        }
+
+        cP->fixedP[blockP->id] = 1;
+    }
+
+    free(afterP);
+}
+
+// What a block starts from in a round: what its predecessors give now, or,
+// once the run has widened, the meet of that with everything given since.
+// Returns the state to walk from.
+static const OptCarryState *
+startState(VCarry *cP, OptBlockP blockP, OptCarryState *inP)
+{
+    computeIn(cP, blockP, inP);
+
+    if( !cP->widened )
+    {
+        return(inP);
+    }
+
+    stateMeet(&cP->widenP[blockP->id], inP);
+    return(&cP->widenP[blockP->id]);
+}
+
+// Solve a run: walk every block in scope, in id order, from what its
+// predecessors last gave, until no block's end changes; then walk them once
+// more for the answer.  A block no predecessor has reached yet is not walked:
+// it gives nothing, as the meet expects, where a walk would hand on its own
+// names as if they were known.  Past VWIDEN rounds the run widens.
+static void
+carrySolve(VCarry *cP)
+{
+OptBlockP blockP;
+OptCarryState in;
+OptCarryState out;
+OptCarryState pre;
+const OptCarryState *fromP;
+int changed;
+int id;
+int i;
+
+    memset(&in, 0, sizeof(in));
+    memset(&out, 0, sizeof(out));
+    memset(&pre, 0, sizeof(pre));
+    changed = 1;
+
+    for( cP->rounds = 0; changed && (cP->rounds < VMAXROUNDS); ++cP->rounds )
+    {
+        changed = 0;
+
+        if( cP->rounds == VWIDEN )
+        {
+            cP->widened = 1;
+        }
+
+        for( id = 1; id <= cP->count; ++id )
+        {
+            if( !cP->scopeP[id] || !(blockP = cP->mapsP->blockOfIdPP[id]) )
+            {
+                continue;
+            }
+
+            if( !(fromP = startState(cP, blockP, &in))->known )
+            {
+                continue;
+            }
+
+            carryWalk(cP, blockP, fromP, 0, &out, &pre);
+
+            if( !stateEqual(&out, &cP->outP[id]) )
+            {
+                optCarryStateCopy(&cP->outP[id], &out);
+                changed = 1;
+            }
+
+            if( (blockP->endKind == OPTBE_CALL) && !stateEqual(&pre, &cP->preP[id]) )
+            {
+                optCarryStateCopy(&cP->preP[id], &pre);
+                changed = 1;
+            }
+        }
+    }
+
+    cP->settled = !changed;
+
+    // The answer.  A leg counts only what this walk finds.
+    for( i = 0; i < VK_COUNT; ++i )
+    {
+        cP->passP->kills[i] = 0;
+    }
+
+    cP->passP->swpDead = 0;
+
+    for( id = 1; id <= cP->count; ++id )
+    {
+        if( !cP->scopeP[id] || !(blockP = cP->mapsP->blockOfIdPP[id]) )
+        {
+            continue;
+        }
+
+        if( cP->leg >= 0 )
+        {
+            cP->passP->bankUsed[blockP->bank] = 1;
+            countEntry(cP->passP, blockP);
+        }
+
+        if( cP->widened )
+        {
+            fromP = &cP->widenP[id];
+        }
+        else
+        {
+            computeIn(cP, blockP, &in);
+            fromP = &in;
+        }
+
+        carryWalk(cP, blockP, fromP, 1, &out, &pre);
+    }
+
+    optCarryStateFree(&in);
+    optCarryStateFree(&out);
+    optCarryStateFree(&pre);
+}
+
+// Set a carried pass up: the handler set is the dump's, when there is one.
+static void
+initCarryPass(VPass *passP, OptTableP tableP, int iotFree)
+{
+int bank;
+
+    memset(passP, 0, sizeof(*passP));
+    passP->tableP = tableP;
+    passP->carry = 1;
+    passP->curIndex = -1;
+    passP->iotFree = iotFree;
+    passP->nextFresh = VAL_FRESH;
+    passP->swpAddr = -1;
+    passP->hitOfWordPP = (VHitP *)vAlloc((size_t)tableP->count, sizeof(VHitP));
+
+    if( !carryHomeP )
+    {
+        findHandlerSet(passP);
+        return;
+    }
+
+    passP->borrowed = 1;
+    passP->handlerBlockP = carryHomeP->handlerBlockP;
+
+    for( bank = 0; bank <= MAXBANK; ++bank )
+    {
+        passP->handlerWrittenP[bank] = carryHomeP->handlerWrittenP[bank];
+    }
+
+    passP->handlerWords = carryHomeP->handlerWords;
+    passP->handlerIndirect = carryHomeP->handlerIndirect;
+}
+
+// Run the value pass over one routine's body, IO (and AC deposited by jda)
+// holding a symbol at the entry, and say what every return word sees.  A run
+// that does not settle proves nothing and counts as reading IO.
+void
+optCarryBody(OptTableP tableP, OptCarryMapsP mapsP, OptPreserveP sumsP, OptRoutineP routineP,
+             unsigned int mode, OptBodyRun *runP)
+{
+VPass pass;
+VCarry carry;
+int i;
+
+    runP->returns = 0;
+    runP->ioKept = 1;
+    runP->acKept = 1;
+    runP->ioRead = 0;
+
+    if( !routineP->entryBlockP )
+    {
+        runP->ioKept = 0;
+        runP->acKept = 0;
+        runP->ioRead = 1;
+        return;
+    }
+
+    initCarryPass(&pass, tableP, ((mode & OPTCM_IOTFREE) != 0));
+    carryInit(&carry, &pass, tableP, mapsP, sumsP, -1, mode, routineP, runP);
+
+    for( i = 0; i < routineP->blockCount; ++i )
+    {
+        if( (routineP->bodyIdsP[i] > 0) && (routineP->bodyIdsP[i] <= carry.count) )
+        {
+            carry.scopeP[routineP->bodyIdsP[i]] = 1;
+        }
+    }
+
+    carryPreds(&carry);
+    optCarryStateUnknown(&carry.seed);
+    carry.seed.reg[VR_IO] = SYM_IO;
+
+    if( routineP->form == OPTRF_JDA )
+    {
+        optCarryStateSetFact(&carry.seed, ((routineP->entryAddr - 1) & ADDRMASK), SYM_AC);
+    }
+
+    carrySolve(&carry);
+
+    if( !carry.settled )
+    {
+        runP->ioKept = 0;
+        runP->acKept = 0;
+        runP->ioRead = 1;
+    }
+
+    carryFree(&carry);
+    freePass(&pass);
+}
+
+// The legs and their variants, in dump order.  base is the leg a leg's hit
+// lines are against.
+static const struct
+{
+    const char *nameP;
+    int leg;
+    unsigned int mode;
+    int iotFree;
+    int base;
+} carryLegs[] =
+{
+    { "0",  0, 0, 0, -1 },
+    { "1",  1, 0, 0, 0 },
+    { "2",  2, 0, 0, 1 },
+    { "3",  3, OPTCM_ORACLE, 0, 2 },
+    { "2i", 2, (OPTCM_IOTFREE | OPTCM_FREESUMS), 1, 2 },
+    { "3i", 3, (OPTCM_IOTFREE | OPTCM_ORACLE), 1, 3 },
+    { "2w", 2, OPTCM_NOWRITES, 0, 2 },
+    { "3w", 3, (OPTCM_ORACLE | OPTCM_NOWRITES), 0, 3 }
+};
+
+#define VLEG_MAIN   4       // legs 0 to 3; the rest are variants
+#define VLEG_COUNT  ((int)(sizeof(carryLegs) / sizeof(carryLegs[0])))
+
+// Print a leg's hits that its base lacks or has in another class, and the
+// base's hits it lacks, in emission order.
+static void
+writeLegDiff(FILE *fP, OptTableP tableP, int l, VPass *passesP)
+{
+VHitP hitP;
+VHitP baseP;
+OptWordP wordP;
+const char *kindP;
+int base;
+int i;
+int k;
+int at;
+char spell[OPTMSG_SIZE];
+char flagText[OPTMSG_SIZE];
+
+    base = carryLegs[l].base;
+    kindP = (l < VLEG_MAIN)?"":"v";
+
+    for( i = 0; i < tableP->count; ++i )
+    {
+        hitP = passesP[l].hitOfWordPP[i];
+        baseP = passesP[base].hitOfWordPP[i];
+
+        if( hitP && (!baseP || (baseP->cls != hitP->cls)) )
+        {
+            wordP = hitP->wordP;
+            spellWord(wordP, spell, sizeof(spell));
+            at = 0;
+            flagText[0] = '\0';
+
+            for( k = 0; k < VF_COUNT; ++k )
+            {
+                if( hitP->flags & (1u << k) )
+                {
+                    at += snprintf((flagText + at), (sizeof(flagText) - (size_t)at), "%s%s", (at)?",":"", flagNames[k]);
+                }
+            }
+
+            fprintf(fP, "%shit %s %s %04o | b%d %s => %s | was %s | %s | %s\n", kindP, carryLegs[l].nameP,
+                classTable[hitP->cls].nameP, wordP->addr, wordP->bank, spell, hitP->replaceP,
+                (baseP)?classTable[baseP->cls].nameP:"-", (at)?flagText:"-", hitP->whyP);
+        }
+        else if( !hitP && baseP )
+        {
+            wordP = baseP->wordP;
+            spellWord(wordP, spell, sizeof(spell));
+            fprintf(fP, "%slost %s %s %04o | b%d %s\n", kindP, carryLegs[l].nameP, classTable[baseP->cls].nameP,
+                wordP->addr, wordP->bank, spell);
+        }
+    }
+}
+
+// The hits, words and microseconds of a leg, over every bank.
+static void
+legTotals(VPass *passP, int *hitsP, int *wordsP, int *usP)
+{
+int bank;
+int i;
+
+    *hitsP = 0;
+    *wordsP = 0;
+    *usP = 0;
+
+    for( bank = 0; bank <= MAXBANK; ++bank )
+    {
+        for( i = 0; i < VC_COUNT; ++i )
+        {
+            *hitsP += passP->classHits[bank][i];
+            *wordsP += passP->classWords[bank][i];
+            *usP += passP->classUs[bank][i];
+        }
+    }
+}
+
+// The parking and dead-store counts (sections 3.3 and 3.4 of task A52).
+//
+// The candidates are the words optscratch.c classes local or span: private
+// to their unit, live neither into it nor across a call, so every read sees a
+// store the unit made.  Its call(2) words, live across a call, are counted
+// apart, since only they can park across one.
+//
+// IO parking keeps a word t in IO: every write of t a direct dac t, made lia,
+// and every read a direct lac t, made lai.  A leg allows it when IO is dead
+// just after every store, and at every reload no word has written IO since
+// the last store on every path into it: a must-solve over the leg's edges, in
+// which a block the leg resets knows nothing and a call's return keeps IO
+// when the leg's summary (leg 2) or oracle (leg 3) does and the callee does not
+// write t.  The twin, dio t ... lio t kept in AC, is the same with the
+// registers exchanged; no call keeps it, since every call word writes AC.  A
+// program with a sequence-break handler has its candidates counted apart: no
+// handler is proved to restore IO.  Each candidate is judged alone: two whose
+// parked values are live at one word cannot both park and are counted as
+// overlapping, and a swp pair is that overlap in the shape "dac u; lac t".
+//
+// IO's liveness is over the whole program.  A call reads IO in legs 0 and 1,
+// and in legs 2 and 3 when the callee's summary says it reads IO's entry
+// value; a return word is live as its callers' return points are; every other
+// exit to the sink, an undecided return and a word of unknown effect is live.
+//
+// A dead store: a word whose every read is a hit of the leg that deletes it
+// (rload, swap, dload) needs none of its stores, and so does one whose reads
+// are each deleted or rewritten not to read memory (lai, lia, law, lawk).
+
+// What a candidate parks.
+#define VP_IO       1           // dac t ... lac t, kept in IO
+#define VP_AC       2           // dio t ... lio t, kept in AC
+
+// The parking flags.
+#define VPF_CALL    0x01        // a reload is reached only across a call's return
+#define VPF_OVERLAP 0x02        // another candidate's parked value is live at one of its words
+#define VPF_HANDLER 0x04        // the program has a sequence-break handler
+
+// What a dead store's reads become.
+#define VD_DELETED      1       // every one is deleted
+#define VD_REWRITTEN    2       // every one is deleted or no longer reads memory
+
+// The microseconds one rewritten word saves: dac and lac take 10, lia and lai 5.
+#define VPARK_US    5
+
+// One link of a list.
+typedef struct vlink
+{
+    struct vlink *nextP;
+    void *itemP;
+} VLink;
+
+// One word the counts consider.
+typedef struct
+{
+    OptWordP wordP;
+    int cls;                    // OPTSP_LOCAL, OPTSP_SPAN or OPTSP_CALL
+    int usable;                 // every reference is a plain read or write
+    int kind;                   // VP_IO or VP_AC when its references have that shape, else 0
+    OptWordP *readsPP;          // the words that read it
+    int readCount;
+    OptWordP *writesPP;         // and that write it
+    int writeCount;
+} VCand;
+
+// What one leg found for one candidate.
+typedef struct
+{
+    int park;                   // VP_IO, VP_AC or 0
+    unsigned int flags;         // VPF_ bits, when it parks
+    int dead;                   // VD_ code, or 0
+} VCandLeg;
+
+// The counts' state, over every leg.
+typedef struct
+{
+    OptTableP tableP;
+    OptCarryMapsP mapsP;
+    OptPreserveP sumsP;
+    VCand *candsP;
+    int candCount;
+    int *candOfIndexP;          // by emission index: the candidate the word reads or
+                                // writes, -1 for none
+    unsigned int *effP;         // by emission index: regEffects()
+    VLink **retOfPP;            // by block id: the routines whose return word ends it
+    VLink **sitesOfPP;          // by routine id: the blocks that call it
+    int handler;                // the program has a sequence-break handler
+    int spelled1D;              // the program spells a PDP-1D mnemonic
+    VCandLeg *legsP[VLEG_MAIN]; // by candidate, per main leg
+    int lost[VLEG_MAIN];        // candidates a leg lost from its base
+
+    // the leg being counted
+    int leg;
+    VCarry *cP;
+    unsigned char *liveP[2];    // by block id: AC, IO live at the block's entry
+    unsigned char *retP[2];     // by routine id: live at its callers' return points
+    unsigned char *inRP;        // by block id: a store reaches it
+    unsigned char *pOutP;       // by block id: the parked value holds at its end
+    unsigned char *tLiveP;      // by block id: t is live at its entry
+    int *listP;                 // the blocks inRP marks
+    int listCount;
+    int *ownerP[2];             // by emission index: the candidate parked in AC, IO there
+} VPark;
+
+// Allocate one link and push it on a list.
+static void
+pushLink(VLink **headPP, void *itemP)
+{
+VLink *linkP;
+
+    linkP = (VLink *)vAlloc(1, sizeof(VLink));
+    linkP->itemP = itemP;
+    linkP->nextP = *headPP;
+    *headPP = linkP;
+}
+
+// Free a list.
+static void
+freeLinks(VLink *linkP)
+{
+VLink *nextP;
+
+    for( ; linkP; linkP = nextP )
+    {
+        nextP = linkP->nextP;
+        free(linkP);
+    }
+}
+
+// What a word does to the registers, as doWord() walks it: VE_RAC, VE_RIO,
+// VE_WAC and VE_WIO, with VE_KILL for a word whose effect is unknown, which
+// reads and writes both.  A patched jmp is a jmp to somewhere, as
+// readsEntryIo() takes it.
+// Returns the bits.
+static unsigned int
+regEffects(OptWordP wordP)
+{
+const VRow *rowP;
+OptDecodeP decodeP;
+unsigned int bits;
+unsigned int eff;
+int acSrc;
+int ioSrc;
+int newAcSrc;
+int newIoSrc;
+int writesAc;
+int writesIo;
+
+    decodeP = &wordP->decode;
+
+    if( (wordP->flags & OPTF_PATCHED) && (decodeP->group == OPTG_MEMREF) && (decodeP->opcode == 060) )
+    {
+        return(0);
+    }
+
+    if( wordP->flags & (OPTF_WRITTEN | OPTF_PATCHED) )
+    {
+        return(VE_KILL | VE_RAC | VE_RIO | VE_WAC | VE_WIO);
+    }
+
+    rowP = findRow(wordP);
+
+    if( rowP->effects & VE_KILL )
+    {
+        return(VE_KILL | VE_RAC | VE_RIO | VE_WAC | VE_WIO);
+    }
+
+    switch( rowP->sem )
+    {
+    case VS_OPERATE:
+        // doOperate()'s phase order; a source is 1 for AC, 2 for IO, 0 for neither.
+        bits = (decodeP->microBits & OPTM_ALLBITS);
+        acSrc = 1;
+        ioSrc = 2;
+        writesAc = 0;
+        writesIo = 0;
+
+        if( bits & OPTM_CLA )
+        {
+            acSrc = 0;
+            writesAc = 1;
+        }
+
+        if( bits & OPTM_CLI )
+        {
+            ioSrc = 0;
+            writesIo = 1;
+        }
+
+        if( bits & (OPTM_CMI) )
+        {
+            writesIo = 1;
+        }
+
+        if( bits & (OPTM_LAT | OPTM_LAP | OPTM_CMA) )
+        {
+            writesAc = 1;
+        }
+
+        newAcSrc = acSrc;
+        newIoSrc = ioSrc;
+
+        if( bits & OPTM_LAI )
+        {
+            newAcSrc = ioSrc;
+            writesAc = 1;
+        }
+
+        if( bits & OPTM_LIA )
+        {
+            newIoSrc = acSrc;
+            writesIo = 1;
+        }
+
+        eff = 0;
+
+        if( writesAc )
+        {
+            eff |= VE_WAC;
+        }
+
+        if( writesIo )
+        {
+            eff |= VE_WIO;
+        }
+
+        if( (writesAc && (newAcSrc & 1)) || (writesIo && (newIoSrc & 1)) )
+        {
+            eff |= VE_RAC;
+        }
+
+        if( (writesAc && (newAcSrc & 2)) || (writesIo && (newIoSrc & 2)) )
+        {
+            eff |= VE_RIO;
+        }
+
+        if( bits & OPTM_HLT )
+        {
+            eff |= (VE_RAC | VE_RIO);
+        }
+
+        return(eff);
+
+    case VS_SPECIAL:
+        bits = (decodeP->specialBits & OPTX_ALLBITS);
+        eff = 0;
+
+        if( (bits & (OPTX_IIF | OPTX_IFI)) && !(bits & OPTX_SCI) )
+        {
+            eff |= VE_RIO;
+        }
+
+        if( bits & (OPTX_IIF | OPTX_SCI) )
+        {
+            eff |= VE_WIO;
+        }
+
+        if( bits & OPTX_IDA )
+        {
+            eff |= (VE_RAC | VE_WAC);
+        }
+
+        return(eff);
+
+    case VS_LAW:
+    case VS_LOADAC:
+        return(VE_WAC);
+
+    case VS_LOADIO:
+        return(VE_WIO);
+
+    default:
+        break;
+    }
+
+    if( decodeP->group == OPTG_SKIP )
+    {
+        eff = 0;
+
+        if( decodeP->skipConds & (OPTC_SZA | OPTC_SPA | OPTC_SMA) )
+        {
+            eff |= VE_RAC;
+        }
+
+        if( decodeP->skipConds & (OPTC_SPI | OPTC_SNI) )
+        {
+            eff |= VE_RIO;
+        }
+
+        return(eff);
+    }
+
+    return( rowP->effects & (VE_RAC | VE_RIO | VE_WAC | VE_WIO) );
+}
+
+// The read and write bits for a register.
+#define VREADS(reg)     (((reg) == VR_IO)?VE_RIO:VE_RAC)
+#define VWRITES(reg)    (((reg) == VR_IO)?VE_WIO:VE_WAC)
+
+// Is a word a direct memory reference with one operation code?
+// Returns 1 when it is, 0 otherwise.
+static int
+directOp(OptWordP wordP, int opcode)
+{
+    return( (wordP->decode.group == OPTG_MEMREF) && (wordP->decode.opcode == opcode) && !wordP->decode.memIndirect );
+}
+
+// Is a word one the parking rewrite could change: in the graph, its run-time
+// word the assembled one, and not executed out of line?
+// Returns 1 when it is, 0 otherwise.
+static int
+plainWord(OptWordP wordP)
+{
+    return( (wordP->blockP != NILP) && !(wordP->flags & (OPTF_WRITTEN | OPTF_PATCHED | OPTF_XCTTARGET)) );
+}
+
+// Add a word to a list of words, once.
+static void
+addCandRef(OptWordP **listPPP, int *countP, OptWordP wordP)
+{
+int i;
+
+    for( i = 0; i < *countP; ++i )
+    {
+        if( (*listPPP)[i] == wordP )
+        {
+            return;
+        }
+    }
+
+    if( !(*listPPP = (OptWordP *)realloc(*listPPP, ((size_t)(*countP + 1) * sizeof(OptWordP)))) )
+    {
+        fprintf(stderr, "am1: out of memory measuring values\n");
+        exit(1);
+    }
+
+    (*listPPP)[(*countP)++] = wordP;
+}
+
+// The shape a candidate's references have: VP_IO when every write is a
+// direct dac and every read a direct lac, VP_AC for dio and lio, else 0.
+// Returns the shape.
+static int
+candKind(VCand *candP)
+{
+static const int stores[2] = { 024, 032 };
+static const int loads[2] = { 020, 022 };
+static const int kinds[2] = { VP_IO, VP_AC };
+int k;
+int i;
+int ok;
+
+    if( !candP->usable || !candP->readCount || !candP->writeCount )
+    {
+        return(0);
+    }
+
+    for( k = 0; k < 2; ++k )
+    {
+        ok = 1;
+
+        for( i = 0; ok && (i < candP->writeCount); ++i )
+        {
+            ok = (directOp(candP->writesPP[i], stores[k]) && plainWord(candP->writesPP[i]));
+        }
+
+        for( i = 0; ok && (i < candP->readCount); ++i )
+        {
+            ok = (directOp(candP->readsPP[i], loads[k]) && plainWord(candP->readsPP[i]));
+        }
+
+        if( ok )
+        {
+            return(kinds[k]);
+        }
+    }
+
+    return(0);
+}
+
+// Set the counts up: the candidates and their references, the word effects,
+// the return words and call sites, and the program's handler and 1D facts.
+static void
+parkInit(VPark *pkP, OptTableP tableP, OptCarryMapsP mapsP, OptPreserveP sumsP, VPass *homeP)
+{
+unsigned char *codesP;
+OptWordP wordP;
+OptEdgeP edgeP;
+OptBlockP blockP;
+OptRoutineP routineP;
+OptRoutineP calleeP;
+OptFlowEdgeP flowP;
+VCand *candP;
+size_t n;
+int i;
+int k;
+int l;
+int id;
+
+    memset(pkP, 0, sizeof(*pkP));
+    pkP->tableP = tableP;
+    pkP->mapsP = mapsP;
+    pkP->sumsP = sumsP;
+    codesP = optScratchPrivate(tableP);
+    pkP->candOfIndexP = (int *)vAlloc(((size_t)tableP->count + 1), sizeof(int));
+    pkP->effP = (unsigned int *)vAlloc(((size_t)tableP->count + 1), sizeof(unsigned int));
+
+    for( i = 0; i < tableP->count; ++i )
+    {
+        pkP->candOfIndexP[i] = -1;
+        wordP = tableP->entriesPP[i];
+        pkP->effP[wordP->index] = regEffects(wordP);
+
+        if( codesP[wordP->index] != OPTSP_NONE )
+        {
+            ++pkP->candCount;
+        }
+
+        if( inGraph(wordP) && wordP->decode.spelled1D )
+        {
+            pkP->spelled1D = 1;
+        }
+    }
+
+    pkP->candsP = (VCand *)vAlloc((size_t)pkP->candCount, sizeof(VCand));
+    k = 0;
+
+    for( i = 0; i < tableP->count; ++i )
+    {
+        wordP = tableP->entriesPP[i];
+
+        if( codesP[wordP->index] == OPTSP_NONE )
+        {
+            continue;
+        }
+
+        candP = &pkP->candsP[k++];
+        candP->wordP = wordP;
+        candP->cls = codesP[wordP->index];
+        candP->usable = 1;
+
+        // The references, as optscratch.c's gatherRefs() reads them: an
+        // indirection reads the pointer word it lands on.
+        for( edgeP = wordP->inP; edgeP; edgeP = edgeP->nextInP )
+        {
+            if( edgeP->flags & OPTEF_PLACEHOLDER )
+            {
+                continue;
+            }
+
+            if( edgeP->flags & OPTEF_VIAPOINTER )
+            {
+                candP->usable = 0;
+            }
+            else if( (edgeP->flags & OPTEF_INDIRECT) || (edgeP->role == OPTR_READ) )
+            {
+                addCandRef(&candP->readsPP, &candP->readCount, edgeP->fromP);
+            }
+            else if( (edgeP->role == OPTR_WRITE) && !(edgeP->flags & OPTEF_PATCH) )
+            {
+                addCandRef(&candP->writesPP, &candP->writeCount, edgeP->fromP);
+            }
+            else
+            {
+                candP->usable = 0;
+            }
+        }
+
+        if( (candP->kind = candKind(candP)) )
+        {
+            for( l = 0; l < candP->readCount; ++l )
+            {
+                pkP->candOfIndexP[candP->readsPP[l]->index] = (k - 1);
+            }
+
+            for( l = 0; l < candP->writeCount; ++l )
+            {
+                pkP->candOfIndexP[candP->writesPP[l]->index] = (k - 1);
+            }
+        }
+    }
+
+    free(codesP);
+
+    // The return words, and who calls each routine.
+    n = (size_t)(tableP->blockCount + 1);
+    pkP->retOfPP = (VLink **)vAlloc(n, sizeof(VLink *));
+    pkP->sitesOfPP = (VLink **)vAlloc(((size_t)tableP->routineCount + 1), sizeof(VLink *));
+
+    for( routineP = tableP->routinesP; routineP; routineP = routineP->nextP )
+    {
+        for( i = 0; i < routineP->blockCount; ++i )
+        {
+            id = routineP->bodyIdsP[i];
+
+            if( (id > 0) && (id <= tableP->blockCount) && (blockP = mapsP->blockOfIdPP[id])
+                && optPreserveIsReturn(routineP, blockP->lastP) )
+            {
+                pushLink(&pkP->retOfPP[id], routineP);
+            }
+        }
+    }
+
+    for( blockP = tableP->blocksP; blockP; blockP = blockP->nextP )
+    {
+        for( flowP = blockP->succP; flowP; flowP = flowP->nextP )
+        {
+            if( (flowP->kind == OPTFK_CALL) && flowP->toP && (calleeP = mapsP->routineOfEntryPP[flowP->toP->id]) )
+            {
+                pushLink(&pkP->sitesOfPP[calleeP->id], blockP);
+            }
+        }
+
+        if( homeP->handlerBlockP && homeP->handlerBlockP[blockP->id] )
+        {
+            pkP->handler = 1;
+        }
+    }
+
+    for( l = 0; l < VLEG_MAIN; ++l )
+    {
+        pkP->legsP[l] = (VCandLeg *)vAlloc((size_t)pkP->candCount, sizeof(VCandLeg));
+    }
+
+    pkP->liveP[VR_AC] = (unsigned char *)vAlloc(n, 1);
+    pkP->liveP[VR_IO] = (unsigned char *)vAlloc(n, 1);
+    pkP->retP[VR_AC] = (unsigned char *)vAlloc(((size_t)tableP->routineCount + 1), 1);
+    pkP->retP[VR_IO] = (unsigned char *)vAlloc(((size_t)tableP->routineCount + 1), 1);
+    pkP->inRP = (unsigned char *)vAlloc(n, 1);
+    pkP->pOutP = (unsigned char *)vAlloc(n, 1);
+    pkP->tLiveP = (unsigned char *)vAlloc(n, 1);
+    pkP->listP = (int *)vAlloc(n, sizeof(int));
+    pkP->ownerP[VR_AC] = (int *)vAlloc(((size_t)tableP->count + 1), sizeof(int));
+    pkP->ownerP[VR_IO] = (int *)vAlloc(((size_t)tableP->count + 1), sizeof(int));
+}
+
+// Release the counts.
+static void
+parkFree(VPark *pkP)
+{
+int i;
+
+    for( i = 0; i < pkP->candCount; ++i )
+    {
+        free(pkP->candsP[i].readsPP);
+        free(pkP->candsP[i].writesPP);
+    }
+
+    free(pkP->candsP);
+
+    for( i = 0; i <= pkP->tableP->blockCount; ++i )
+    {
+        freeLinks(pkP->retOfPP[i]);
+    }
+
+    for( i = 0; i <= pkP->tableP->routineCount; ++i )
+    {
+        freeLinks(pkP->sitesOfPP[i]);
+    }
+
+    for( i = 0; i < VLEG_MAIN; ++i )
+    {
+        free(pkP->legsP[i]);
+    }
+
+    free(pkP->retOfPP);
+    free(pkP->sitesOfPP);
+    free(pkP->candOfIndexP);
+    free(pkP->effP);
+    free(pkP->liveP[VR_AC]);
+    free(pkP->liveP[VR_IO]);
+    free(pkP->retP[VR_AC]);
+    free(pkP->retP[VR_IO]);
+    free(pkP->inRP);
+    free(pkP->pOutP);
+    free(pkP->tLiveP);
+    free(pkP->listP);
+    free(pkP->ownerP[VR_AC]);
+    free(pkP->ownerP[VR_IO]);
+}
+
+// Does a call edge's callee read a register's entry value, as the leg sees it?
+// AC is always taken as read: jda and cal read it at the call word, and jsp
+// overwrites it there, so the answer never matters.
+// Returns 1 when it may, 0 when it does not.
+static int
+callReadsReg(VPark *pkP, OptFlowEdgeP flowP, int reg)
+{
+OptRoutineP calleeP;
+OptPreserveP sumP;
+
+    if( (reg == VR_AC) || (pkP->leg < 2) || !flowP->toP || flowP->crossbank
+        || !(calleeP = pkP->mapsP->routineOfEntryPP[flowP->toP->id]) )
+    {
+        return(1);
+    }
+
+    sumP = &pkP->sumsP[calleeP->id];
+    return( !sumP->done || sumP->ioRead );
+}
+
+// Is a register live at a call block's return points?
+// Returns 1 when it is or the return is not decided, 0 otherwise.
+static int
+returnPointLive(VPark *pkP, OptBlockP blockP, int reg)
+{
+OptFlowEdgeP flowP;
+int any;
+
+    if( !blockP->lastP || (blockP->lastP->returnCase == OPTRC_UNKNOWN) )
+    {
+        return(1);
+    }
+
+    any = 0;
+
+    for( flowP = blockP->succP; flowP; flowP = flowP->nextP )
+    {
+        if( flowP->kind != OPTFK_RETURN )
+        {
+            continue;
+        }
+
+        any = 1;
+
+        if( !flowP->toP || flowP->assumed || pkP->liveP[reg][flowP->toP->id] )
+        {
+            return(1);
+        }
+    }
+
+    return(!any);
+}
+
+// Is a register live just after a block's last word?
+// Returns 1 when it is, 0 otherwise.
+static int
+blockLiveOut(VPark *pkP, OptBlockP blockP, int reg)
+{
+OptFlowEdgeP flowP;
+VLink *linkP;
+int isReturn;
+int out;
+
+    isReturn = (pkP->retOfPP[blockP->id] != NILP);
+    out = (!blockP->succP && !isReturn);
+
+    for( linkP = pkP->retOfPP[blockP->id]; linkP; linkP = linkP->nextP )
+    {
+        out |= pkP->retP[reg][((OptRoutineP)linkP->itemP)->id];
+    }
+
+    for( flowP = blockP->succP; flowP && !out; flowP = flowP->nextP )
+    {
+        switch( flowP->kind )
+        {
+        case OPTFK_CALL:
+            out = callReadsReg(pkP, flowP, reg);
+            break;
+
+        case OPTFK_RETURN:
+            out = (!flowP->toP || flowP->assumed || pkP->liveP[reg][flowP->toP->id]);
+            break;
+
+        default:
+            if( flowP->toP )
+            {
+                out = pkP->liveP[reg][flowP->toP->id];
+            }
+            else if( !isReturn )
+            {
+                out = 1;
+            }
+            break;
+        }
+    }
+
+    return(out);
+}
+
+// Walk a block backward from a liveness at its end, down to (not through) a
+// word, or through the whole block when stopP is NILP.
+// Returns the liveness there.
+static int
+liveBack(VPark *pkP, OptBlockP blockP, int reg, int live, OptWordP stopP)
+{
+OptWordP wordP;
+unsigned int eff;
+int addr;
+
+    for( addr = blockP->endAddr; addr >= blockP->startAddr; --addr )
+    {
+        if( !(wordP = wordAt(pkP->tableP, blockP->bank, addr)) || (wordP->blockP != blockP) )
+        {
+            continue;
+        }
+
+        if( wordP == stopP )
+        {
+            break;
+        }
+
+        eff = pkP->effP[wordP->index];
+        live = ((eff & VREADS(reg)) || (live && !(eff & VWRITES(reg))));
+    }
+
+    return(live);
+}
+
+// Solve a register's liveness over the program, as the leg sees calls.
+static void
+solveLive(VPark *pkP, int reg)
+{
+OptTableP tableP;
+OptRoutineP routineP;
+OptBlockP blockP;
+VLink *linkP;
+int changed;
+int id;
+int live;
+int any;
+
+    tableP = pkP->tableP;
+    memset(pkP->liveP[reg], 0, ((size_t)tableP->blockCount + 1));
+
+    do
+    {
+        changed = 0;
+
+        // A return word is live as its callers' return points are; a routine
+        // the program may run outside a call returns anywhere.
+        for( routineP = tableP->routinesP; routineP; routineP = routineP->nextP )
+        {
+            live = ((routineP->flags & (OPTRT_FALLIN | OPTRT_OPENBODY)) != 0);
+            any = 0;
+
+            for( linkP = pkP->sitesOfPP[routineP->id]; linkP && !live; linkP = linkP->nextP )
+            {
+                any = 1;
+                live = returnPointLive(pkP, (OptBlockP)linkP->itemP, reg);
+            }
+
+            pkP->retP[reg][routineP->id] = (unsigned char)(live || !any);
+        }
+
+        for( id = tableP->blockCount; id >= 1; --id )
+        {
+            if( !(blockP = pkP->mapsP->blockOfIdPP[id]) )
+            {
+                continue;
+            }
+
+            live = liveBack(pkP, blockP, reg, blockLiveOut(pkP, blockP, reg), NILP);
+
+            if( live != pkP->liveP[reg][id] )
+            {
+                pkP->liveP[reg][id] = (unsigned char)live;
+                changed = 1;
+            }
+        }
+    }
+    while( changed );
+}
+
+// Does a call block's every callee keep a register and leave a word alone, as
+// the leg says: the summary (leg 2) or the oracle (leg 3)?
+// Returns 1 when it does, 0 otherwise.
+static int
+callKeeps(VPark *pkP, OptBlockP fromP, OptWordP tP)
+{
+OptFlowEdgeP flowP;
+OptRoutineP calleeP;
+OptPreserveP sumP;
+int any;
+
+    any = 0;
+
+    for( flowP = fromP->succP; flowP; flowP = flowP->nextP )
+    {
+        if( flowP->kind != OPTFK_CALL )
+        {
+            continue;
+        }
+
+        any = 1;
+
+        if( !flowP->toP || flowP->crossbank || !(calleeP = pkP->mapsP->routineOfEntryPP[flowP->toP->id]) )
+        {
+            return(0);
+        }
+
+        sumP = &pkP->sumsP[calleeP->id];
+
+        if( pkP->leg == 3 )
+        {
+            if( optWordSetHas(&sumP->direct, tP->bank, tP->addr) )
+            {
+                return(0);
+            }
+        }
+        else if( !sumP->done || (sumP->io != OPTPR_YES) || optWordSetHas(&sumP->writes, tP->bank, tP->addr) )
+        {
+            return(0);
+        }
+    }
+
+    return(any);
+}
+
+// Does a word store a candidate, as its parking shape counts a store?
+// Returns 1 when it does, 0 otherwise.
+static int
+isCandStore(VPark *pkP, int c, OptWordP wordP)
+{
+    return( (pkP->candOfIndexP[wordP->index] == c)
+            && directOp(wordP, (pkP->candsP[c].kind == VP_IO)?024:032) );
+}
+
+// Does a word reload a candidate?
+// Returns 1 when it does, 0 otherwise.
+static int
+isCandLoad(VPark *pkP, int c, OptWordP wordP)
+{
+    return( (pkP->candOfIndexP[wordP->index] == c)
+            && directOp(wordP, (pkP->candsP[c].kind == VP_IO)?020:022) );
+}
+
+// Walk a block forward: the parked value holds from a store until a word
+// writes its register.  Stops before stopP when it is not NILP.
+// Returns whether it holds there.
+static int
+holdForward(VPark *pkP, int c, OptBlockP blockP, int reg, int hold, OptWordP stopP)
+{
+OptWordP wordP;
+int addr;
+
+    for( addr = blockP->startAddr; addr <= blockP->endAddr; ++addr )
+    {
+        if( !(wordP = wordAt(pkP->tableP, blockP->bank, addr)) || (wordP->blockP != blockP) )
+        {
+            continue;
+        }
+
+        if( wordP == stopP )
+        {
+            break;
+        }
+
+        if( isCandStore(pkP, c, wordP) )
+        {
+            hold = 1;
+        }
+        else if( pkP->effP[wordP->index] & VWRITES(reg) )
+        {
+            hold = 0;
+        }
+    }
+
+    return(hold);
+}
+
+// Does the parked value hold at a block's entry: on every edge into it from
+// a block a store reaches?  A block the leg resets knows nothing, and a call's
+// return holds it only when calls may (acrossCalls) and callKeeps() says so.
+// Returns 1 when it holds, 0 otherwise.
+static int
+holdIn(VPark *pkP, int c, OptBlockP blockP, int acrossCalls)
+{
+VPred *predP;
+int any;
+
+    if( pkP->cP->fixedP[blockP->id] )
+    {
+        return(0);
+    }
+
+    any = 0;
+
+    for( predP = pkP->cP->predsPP[blockP->id]; predP; predP = predP->nextP )
+    {
+        any = 1;
+
+        if( !pkP->inRP[predP->fromP->id] || !pkP->pOutP[predP->fromP->id] )
+        {
+            return(0);
+        }
+
+        switch( predP->edgeP->kind )
+        {
+        case OPTFK_FALL:
+        case OPTFK_SKIP:
+        case OPTFK_JUMP:
+            break;
+
+        case OPTFK_RETURN:
+            if( !acrossCalls || predP->edgeP->assumed || !callKeeps(pkP, predP->fromP, pkP->candsP[c].wordP) )
+            {
+                return(0);
+            }
+            break;
+
+        default:
+            return(0);
+        }
+    }
+
+    return(any);
+}
+
+// The must-solve for one candidate: the blocks its stores reach, and whether
+// its value is still in the register at every reload.
+// Returns 1 when it is at every one, 0 otherwise.
+static int
+holdSolve(VPark *pkP, int c, int reg, int acrossCalls)
+{
+VCand *candP;
+OptBlockP blockP;
+OptFlowEdgeP flowP;
+OptWordP wordP;
+int changed;
+int hold;
+int i;
+int k;
+
+    candP = &pkP->candsP[c];
+
+    for( k = 0; k < pkP->listCount; ++k )
+    {
+        pkP->inRP[pkP->listP[k]] = 0;
+    }
+
+    pkP->listCount = 0;
+
+    for( i = 0; i < candP->writeCount; ++i )
+    {
+        blockP = candP->writesPP[i]->blockP;
+
+        if( !pkP->inRP[blockP->id] )
+        {
+            pkP->inRP[blockP->id] = 1;
+            pkP->listP[pkP->listCount++] = blockP->id;
+        }
+    }
+
+    for( k = 0; k < pkP->listCount; ++k )
+    {
+        blockP = pkP->mapsP->blockOfIdPP[pkP->listP[k]];
+
+        for( flowP = blockP->succP; flowP; flowP = flowP->nextP )
+        {
+            if( !flowP->toP || pkP->inRP[flowP->toP->id] || pkP->cP->fixedP[flowP->toP->id]
+                || (flowP->kind == OPTFK_CALL) || (flowP->kind == OPTFK_RESUME)
+                || ((flowP->kind == OPTFK_RETURN) && !acrossCalls) )
+            {
+                continue;
+            }
+
+            pkP->inRP[flowP->toP->id] = 1;
+            pkP->listP[pkP->listCount++] = flowP->toP->id;
+        }
+    }
+
+    for( k = 0; k < pkP->listCount; ++k )
+    {
+        pkP->pOutP[pkP->listP[k]] = 1;
+    }
+
+    do
+    {
+        changed = 0;
+
+        for( k = 0; k < pkP->listCount; ++k )
+        {
+            blockP = pkP->mapsP->blockOfIdPP[pkP->listP[k]];
+            hold = holdForward(pkP, c, blockP, reg, holdIn(pkP, c, blockP, acrossCalls), NILP);
+
+            if( hold != pkP->pOutP[blockP->id] )
+            {
+                pkP->pOutP[blockP->id] = (unsigned char)hold;
+                changed = 1;
+            }
+        }
+    }
+    while( changed );
+
+    for( i = 0; i < candP->readCount; ++i )
+    {
+        wordP = candP->readsPP[i];
+        blockP = wordP->blockP;
+
+        if( !pkP->inRP[blockP->id]
+            || !holdForward(pkP, c, blockP, reg, holdIn(pkP, c, blockP, acrossCalls), wordP) )
+        {
+            return(0);
+        }
+    }
+
+    return(1);
+}
+
+// Mark the words at which a parked candidate's value is live, over the blocks
+// holdSolve() last reached; a word another candidate holds makes both overlap.
+static void
+markParked(VPark *pkP, int c, int reg, int acrossCalls, VCandLeg *resP)
+{
+OptBlockP blockP;
+OptFlowEdgeP flowP;
+OptWordP wordP;
+int *ownerP;
+int changed;
+int live;
+int k;
+int addr;
+int pass;
+
+    ownerP = pkP->ownerP[reg];
+
+    for( k = 0; k < pkP->listCount; ++k )
+    {
+        pkP->tLiveP[pkP->listP[k]] = 0;
+    }
+
+    // Pass 0 solves t's liveness backward over the reached blocks; pass 1 marks.
+    for( pass = 0; pass < 2; ++pass )
+    {
+        do
+        {
+            changed = 0;
+
+            for( k = (pkP->listCount - 1); k >= 0; --k )
+            {
+                blockP = pkP->mapsP->blockOfIdPP[pkP->listP[k]];
+                live = 0;
+
+                for( flowP = blockP->succP; flowP; flowP = flowP->nextP )
+                {
+                    if( flowP->toP && pkP->inRP[flowP->toP->id] && (flowP->kind != OPTFK_CALL)
+                        && (flowP->kind != OPTFK_RESUME) && ((flowP->kind != OPTFK_RETURN) || acrossCalls) )
+                    {
+                        live |= pkP->tLiveP[flowP->toP->id];
+                    }
+                }
+
+                for( addr = blockP->endAddr; addr >= blockP->startAddr; --addr )
+                {
+                    if( !(wordP = wordAt(pkP->tableP, blockP->bank, addr)) || (wordP->blockP != blockP) )
+                    {
+                        continue;
+                    }
+
+                    if( pass && live )
+                    {
+                        if( ownerP[wordP->index] < 0 )
+                        {
+                            ownerP[wordP->index] = c;
+                        }
+                        else if( ownerP[wordP->index] != c )
+                        {
+                            resP[c].flags |= VPF_OVERLAP;
+                            resP[ownerP[wordP->index]].flags |= VPF_OVERLAP;
+                        }
+                    }
+
+                    if( isCandLoad(pkP, c, wordP) )
+                    {
+                        live = 1;
+                    }
+                    else if( isCandStore(pkP, c, wordP) )
+                    {
+                        live = 0;
+                    }
+                }
+
+                if( !pass && (live != pkP->tLiveP[blockP->id]) )
+                {
+                    pkP->tLiveP[blockP->id] = (unsigned char)live;
+                    changed = 1;
+                }
+            }
+        }
+        while( changed && !pass );
+    }
+}
+
+// Count one leg: each candidate's parking and dead stores.  passP is the
+// leg's own pass, whose hits the dead stores read.
+static void
+parkLeg(VPark *pkP, VCarry *cP, int l, VPass *passP)
+{
+VCand *candP;
+VCandLeg *resP;
+VHitP hitP;
+OptWordP wordP;
+int c;
+int i;
+int reg;
+int ok;
+int deleted;
+int calls;
+
+    pkP->leg = l;
+    pkP->cP = cP;
+    pkP->listCount = 0;
+    memset(pkP->inRP, 0, ((size_t)pkP->tableP->blockCount + 1));
+    resP = pkP->legsP[l];
+    solveLive(pkP, VR_IO);
+    solveLive(pkP, VR_AC);
+
+    for( i = 0; i < pkP->tableP->count; ++i )
+    {
+        pkP->ownerP[VR_AC][i] = -1;
+        pkP->ownerP[VR_IO][i] = -1;
+    }
+
+    for( c = 0; c < pkP->candCount; ++c )
+    {
+        candP = &pkP->candsP[c];
+
+        // A dead store: local and span words only, as the task counts them.
+        if( candP->usable && candP->readCount && (candP->cls != OPTSP_CALL) )
+        {
+            ok = 1;
+            deleted = 1;
+
+            for( i = 0; ok && (i < candP->readCount); ++i )
+            {
+                wordP = candP->readsPP[i];
+
+                if( !(directOp(wordP, 020) || directOp(wordP, 022)) || !(hitP = passP->hitOfWordPP[wordP->index]) )
+                {
+                    ok = 0;
+                    break;
+                }
+
+                switch( hitP->cls )
+                {
+                case VC_RLOAD:
+                case VC_SWAP:
+                case VC_DLOAD:
+                    break;
+
+                case VC_LAI:
+                case VC_LIA:
+                case VC_LAW:
+                case VC_LAWK:
+                    deleted = 0;
+                    break;
+
+                default:
+                    ok = 0;
+                    break;
+                }
+            }
+
+            resP[c].dead = (ok)?((deleted)?VD_DELETED:VD_REWRITTEN):0;
+        }
+
+        if( !candP->kind )
+        {
+            continue;
+        }
+
+        // Parking: the value holds at every reload, and the register is dead
+        // after every store.
+        reg = (candP->kind == VP_IO)?VR_IO:VR_AC;
+        calls = 0;
+        ok = holdSolve(pkP, c, reg, 0);
+
+        if( !ok && (l >= 2) && (reg == VR_IO) && holdSolve(pkP, c, reg, 1) )
+        {
+            ok = 1;
+            calls = 1;
+        }
+
+        for( i = 0; ok && (i < candP->writeCount); ++i )
+        {
+            wordP = candP->writesPP[i];
+            ok = !liveBack(pkP, wordP->blockP, reg, blockLiveOut(pkP, wordP->blockP, reg), wordP);
+        }
+
+        if( !ok )
+        {
+            continue;
+        }
+
+        resP[c].park = candP->kind;
+        resP[c].flags |= (((calls)?VPF_CALL:0) | ((pkP->handler)?VPF_HANDLER:0));
+
+        // The last holdSolve() is the one that passed, so its reach is the one
+        // markParked() walks.
+        markParked(pkP, c, reg, calls, resP);
+    }
+}
+
+// The name of a scratch class.
+// Returns the name.
+static const char *
+candClassName(int cls)
+{
+    return( (cls == OPTSP_LOCAL)?"local":(cls == OPTSP_SPAN)?"span":"call" );
+}
+
+// Print a leg's parking and dead-store lines against the leg before it, and
+// its tallies.
+static void
+writePark(FILE *fP, VPark *pkP, int l, const char *nameP)
+{
+static const char *parkNames[3] = { "-", "io", "ac" };
+static const char *deadNames[3] = { "-", "deleted", "rewritten" };
+VCand *candP;
+VCandLeg *resP;
+VCandLeg none;
+const VCandLeg *baseP;
+OptWordP wordP;
+OptWordP nextP;
+int c;
+int i;
+int t;
+int at;
+int words;
+int counts[12];
+char flagText[64];
+
+    memset(&none, 0, sizeof(none));
+    memset(counts, 0, sizeof(counts));
+    resP = pkP->legsP[l];
+
+    for( c = 0; c < pkP->candCount; ++c )
+    {
+        candP = &pkP->candsP[c];
+        baseP = (l > 0)?&pkP->legsP[l - 1][c]:&none;
+        wordP = candP->wordP;
+        words = (candP->readCount + candP->writeCount);
+
+        if( resP[c].park && (resP[c].park != baseP->park) )
+        {
+            at = 0;
+            flagText[0] = '\0';
+
+            if( resP[c].flags & VPF_CALL )
+            {
+                at += snprintf((flagText + at), (sizeof(flagText) - (size_t)at), "%scall", (at)?",":"");
+            }
+
+            if( resP[c].flags & VPF_OVERLAP )
+            {
+                at += snprintf((flagText + at), (sizeof(flagText) - (size_t)at), "%soverlap", (at)?",":"");
+            }
+
+            if( resP[c].flags & VPF_HANDLER )
+            {
+                at += snprintf((flagText + at), (sizeof(flagText) - (size_t)at), "%shandler", (at)?",":"");
+            }
+
+            fprintf(fP, "park %s %s %04o | b%d %s %s stores %d reloads %d | was %s | %s\n", nameP,
+                parkNames[resP[c].park], wordP->addr, wordP->bank, firstLabelName(wordP), candClassName(candP->cls),
+                candP->writeCount, candP->readCount, parkNames[baseP->park], (at)?flagText:"-");
+        }
+        else if( !resP[c].park && baseP->park )
+        {
+            fprintf(fP, "unpark %s %s %04o | b%d %s\n", nameP, parkNames[baseP->park], wordP->addr, wordP->bank,
+                firstLabelName(wordP));
+            ++pkP->lost[l];
+        }
+
+        if( resP[c].dead && (resP[c].dead != baseP->dead) )
+        {
+            fprintf(fP, "dead %s %s %04o | b%d %s %s stores %d reads %d | was %s\n", nameP, deadNames[resP[c].dead],
+                wordP->addr, wordP->bank, firstLabelName(wordP), candClassName(candP->cls), candP->writeCount,
+                candP->readCount, deadNames[baseP->dead]);
+        }
+        else if( !resP[c].dead && baseP->dead )
+        {
+            fprintf(fP, "undead %s %s %04o | b%d %s\n", nameP, deadNames[baseP->dead], wordP->addr, wordP->bank,
+                firstLabelName(wordP));
+        }
+
+        // The tallies: 0-3 and 5 IO parking, 6-7 the twin, 8-9 and 4 call(2),
+        // 10 handler.  Only a call(2) word can park across a call: local and
+        // span words are live across none.
+        if( resP[c].park && (resP[c].flags & VPF_HANDLER) )
+        {
+            ++counts[10];
+        }
+        else if( (resP[c].park == VP_IO) && (candP->cls == OPTSP_CALL) )
+        {
+            ++counts[8];
+            counts[9] += words;
+            counts[4] += ((resP[c].flags & VPF_CALL) != 0);
+        }
+        else if( resP[c].park == VP_IO )
+        {
+            ++counts[0];
+            counts[(candP->cls == OPTSP_LOCAL)?1:2] += 1;
+            counts[3] += words;
+            counts[5] += ((resP[c].flags & VPF_OVERLAP) != 0);
+        }
+        else if( resP[c].park == VP_AC )
+        {
+            ++counts[6];
+            counts[7] += words;
+        }
+    }
+
+    // A swp pair: "dac u; lac t", u and t both parked in IO.
+    counts[11] = 0;
+
+    for( c = 0; c < pkP->candCount; ++c )
+    {
+        if( resP[c].park != VP_IO )
+        {
+            continue;
+        }
+
+        candP = &pkP->candsP[c];
+
+        for( i = 0; i < candP->writeCount; ++i )
+        {
+            wordP = candP->writesPP[i];
+
+            if( (nextP = wordAt(pkP->tableP, wordP->bank, ((wordP->addr + 1) & ADDRMASK))) && (nextP->blockP == wordP->blockP)
+                && ((t = pkP->candOfIndexP[nextP->index]) >= 0) && (t != c) && (resP[t].park == VP_IO)
+                && isCandLoad(pkP, t, nextP) )
+            {
+                ++counts[11];
+            }
+        }
+    }
+
+    fprintf(fP, "leg %s park io: %d words (local %d, span %d), %d words rewritten, %d us; overlapping %d\n", nameP,
+        counts[0], counts[1], counts[2], counts[3], (counts[3] * VPARK_US), counts[5]);
+    fprintf(fP, "leg %s park ac: %d words, %d words rewritten, %d us; swp pairs %d\n", nameP, counts[6], counts[7],
+        (counts[7] * VPARK_US), counts[11]);
+    fprintf(fP, "leg %s park apart: call(2) %d words, %d words rewritten, %d across a call; handler %d words;"
+        " program %s a 1D mnemonic\n", nameP, counts[8], counts[9], counts[4], counts[10],
+        (pkP->spelled1D)?"spells":"does not spell");
+
+    memset(counts, 0, sizeof(counts));
+
+    for( c = 0; c < pkP->candCount; ++c )
+    {
+        if( resP[c].dead == VD_DELETED )
+        {
+            ++counts[0];
+            counts[1] += pkP->candsP[c].writeCount;
+        }
+        else if( resP[c].dead == VD_REWRITTEN )
+        {
+            ++counts[2];
+            counts[3] += pkP->candsP[c].writeCount;
+        }
+    }
+
+    fprintf(fP, "leg %s dead: reads deleted %d words, %d stores; reads rewritten %d words, %d stores\n", nameP,
+        counts[0], counts[1], counts[2], counts[3]);
+}
+
+// Print the carry dump (-O=carry).  The format:
+//
+//   carry: ...                               what the dump is
+//   routine NAME io X ac Y ioread Z writes W free io X ac Y writes W | ...
+//   summary: ...                             the routine counts
+//   hit L CLASS ADDR | bB spelling => replacement | was BASE | FLAGS | evidence
+//   lost L CLASS ADDR | bB spelling          a hit of leg L's base that leg L lacks
+//   vhit, vlost                              the same for a variant leg
+//   leg L bank N: CLASS n ... = H hits, W words, U us
+//   leg L total: ...
+//   leg L flags: ...                         -O=values's safety flags, over the leg's hits
+//   leg L blocks: ...                        what was carried and what reset
+//   park L io|ac ADDR | bB NAME CLASS stores S reloads R | was K | FLAGS
+//                                            a word main leg L parks and the leg before does not
+//   unpark L ...                             one the leg before parks and leg L does not
+//   dead L deleted|rewritten ADDR | ...      a word whose stores leg L's hits leave dead; undead
+//   leg L park io:, park ac:, park apart:, dead:   the main leg's parking and dead-store tallies
+//   gain:, a55:, writes:                     the differences between legs
+//   control: ...                             leg 0 against -O=values's pass
+//   reconcile: ok|FAILED
+//
+// Leg 0 resets every block (A21's pass); leg 1 carries over every edge but a
+// call's return; leg 2 carries over a return what the callee's summary
+// proves; leg 3 what an oracle grants: IO kept, AC kept for jda and cal, only
+// the words the callee names directly written.  2i and 3i take an unknown
+// in-out transfer to touch nothing (A55's ceiling); 2w and 3w apply no
+// callee's writes (what a marker for writes could buy at most).
+void
+optDumpCarry(FILE *fP, OptTableP tableP)
+{
+VPass home;
+VPass values;
+VPass *passesP;
+VCarry carry;
+VPark park;
+OptCarryMaps maps;
+OptPreserveP sumsP;
+VHitP aP;
+VHitP bP;
+int hits[VLEG_COUNT];
+int words[VLEG_COUNT];
+int us[VLEG_COUNT];
+int l;
+int bank;
+int i;
+int sum;
+int diffs;
+int reconciled;
+char prefix[64];
+
+    markKnown(tableP);
+    initCarryPass(&home, tableP, 0);
+    carryHomeP = &home;
+    optCarryMapsBuild(tableP, &maps);
+    sumsP = optPreserveBuild(tableP, &maps);
+
+    fprintf(fP, "carry: what AC and IO hold across blocks and calls (task A52); a measurement, nothing is rewritten\n");
+    fprintf(fP, "carry: leg 0 resets every block (A21's pass), 1 carries every edge but a call's return,\n");
+    fprintf(fP, "carry: 2 carries a return by the callee's summary, 3 by an oracle; 2i 3i in-out transfers touch nothing,\n");
+    fprintf(fP, "carry: 2w 3w a callee's writes are not applied\n");
+    optPreserveDump(fP, tableP, sumsP);
+
+    passesP = (VPass *)vAlloc((size_t)VLEG_COUNT, sizeof(VPass));
+    parkInit(&park, tableP, &maps, sumsP, &home);
+    reconciled = 1;
+
+    for( l = 0; l < VLEG_COUNT; ++l )
+    {
+        initCarryPass(&passesP[l], tableP, carryLegs[l].iotFree);
+        carryInit(&carry, &passesP[l], tableP, &maps, sumsP, carryLegs[l].leg, carryLegs[l].mode, NILP, NILP);
+
+        for( i = 1; i <= carry.count; ++i )
+        {
+            carry.scopeP[i] = (maps.blockOfIdPP[i] != NILP);
+        }
+
+        carryPreds(&carry);
+        carryFixed(&carry);
+        carrySolve(&carry);
+
+        if( l > 0 )
+        {
+            writeLegDiff(fP, tableP, l, passesP);
+        }
+
+        sum = 0;
+
+        for( bank = 0; bank <= MAXBANK; ++bank )
+        {
+            if( !passesP[l].bankUsed[bank] )
+            {
+                continue;
+            }
+
+            snprintf(prefix, sizeof(prefix), "leg %s bank %d", carryLegs[l].nameP, bank);
+            writeTally(fP, prefix, passesP[l].classHits[bank], passesP[l].classWords[bank], passesP[l].classUs[bank]);
+            sum += passesP[l].bankHits[bank];
+        }
+
+        legTotals(&passesP[l], &hits[l], &words[l], &us[l]);
+        fprintf(fP, "leg %s total: %d hits, %d words, %d us\n", carryLegs[l].nameP, hits[l], words[l], us[l]);
+        fprintf(fP, "leg %s flags:", carryLegs[l].nameP);
+
+        for( i = 0; i < VF_COUNT; ++i )
+        {
+            fprintf(fP, "%s %s %d", (i)?",":"", flagNames[i], passesP[l].flagHits[i]);
+        }
+
+        fprintf(fP, "\n");
+        fprintf(fP, "leg %s blocks: %d, carried %d, reset %d (entry %d, unreached %d, taken %d, after an undecided call %d);"
+            " rounds %d, %s%s\n", carryLegs[l].nameP, carry.walked, carry.carried,
+            (carry.walked - carry.carried), carry.fixedEntry,
+            carry.fixedUnreached, carry.fixedTaken, carry.fixedAfterCall, carry.rounds,
+            (carry.settled)?"settled":"UNSETTLED", (carry.widened)?", widened":"");
+
+        if( !carry.settled || (sum != passesP[l].totalHits) || (hits[l] != passesP[l].totalHits) )
+        {
+            reconciled = 0;
+            fprintf(fP, "reconcile: leg %s banks %d, classes %d, hits %d, %s\n", carryLegs[l].nameP, sum, hits[l],
+                passesP[l].totalHits, (carry.settled)?"settled":"unsettled");
+        }
+
+        if( l < VLEG_MAIN )
+        {
+            parkLeg(&park, &carry, l, &passesP[l]);
+            writePark(fP, &park, l, carryLegs[l].nameP);
+        }
+
+        carryFree(&carry);
+    }
+
+    fprintf(fP, "gain: leg 1 %+d hits %+d words %+d us over leg 0; leg 2 %+d hits %+d words %+d us over leg 1;"
+        " leg 3 %+d hits %+d words %+d us over leg 2\n",
+        (hits[1] - hits[0]), (words[1] - words[0]), (us[1] - us[0]), (hits[2] - hits[1]), (words[2] - words[1]),
+        (us[2] - us[1]), (hits[3] - hits[2]), (words[3] - words[2]), (us[3] - us[2]));
+    fprintf(fP, "a55: leg 2i %+d hits %+d us over leg 2; leg 3i %+d hits %+d us over leg 3\n",
+        (hits[4] - hits[2]), (us[4] - us[2]), (hits[5] - hits[3]), (us[5] - us[3]));
+    fprintf(fP, "writes: leg 2w %+d hits %+d us over leg 2; leg 3w %+d hits %+d us over leg 3\n",
+        (hits[6] - hits[2]), (us[6] - us[2]), (hits[7] - hits[3]), (us[7] - us[3]));
+
+    // The parking legs nest: each finds every candidate of the leg before it.
+    for( l = 1; l < VLEG_MAIN; ++l )
+    {
+        if( park.lost[l] )
+        {
+            reconciled = 0;
+            fprintf(fP, "reconcile: park leg %s loses %d of leg %s's candidates\n", carryLegs[l].nameP, park.lost[l],
+                carryLegs[l - 1].nameP);
+        }
+    }
+
+    parkFree(&park);
+
+    // The control: leg 0 must be A21's pass, hit for hit.
+    initPass(&values, tableP, NILP, 0);
+    runPass(&values);
+    diffs = 0;
+
+    for( i = 0; i < tableP->count; ++i )
+    {
+        aP = values.hitOfWordPP[i];
+        bP = passesP[0].hitOfWordPP[i];
+
+        if( (!aP != !bP) || (aP && ((aP->cls != bP->cls) || (aP->firstCls != bP->firstCls))) )
+        {
+            ++diffs;
+            fprintf(fP, "control: differs at b%d %04o: values %s, leg 0 %s\n", (aP)?aP->wordP->bank:bP->wordP->bank,
+                (aP)?aP->wordP->addr:bP->wordP->addr, (aP)?classTable[aP->cls].nameP:"-",
+                (bP)?classTable[bP->cls].nameP:"-");
+        }
+    }
+
+    fprintf(fP, "control: leg 0 equals -O=values on %d hits: %s\n", values.totalHits, (diffs)?"DIFFERS":"ok");
+    fprintf(fP, "reconcile: %s\n", (reconciled)?"ok":"FAILED");
+
+    freePass(&values);
+
+    for( l = 0; l < VLEG_COUNT; ++l )
+    {
+        freePass(&passesP[l]);
+    }
+
+    free(passesP);
+    optPreserveFree(tableP, sumsP);
+    optCarryMapsFree(&maps);
+    carryHomeP = NILP;
+    freePass(&home);
     free(knownOfWordP);
     knownOfWordP = NILP;
 }

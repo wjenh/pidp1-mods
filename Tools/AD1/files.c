@@ -1,5 +1,6 @@
 // Process various combinations of filenames and try to set up the list/source and symbol data.
 // 24-Jun-2026 wje remove clearing of filename in openSourceFile(), no idea why it was done
+// 20-Aug-2026 wje updae for new cpp replacement
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,9 +27,13 @@ bool loadFileMap(FileInfoP infoP);
 bool findRim(FileInfoP infoP, char *rsltP);
 FileInfoP getFileInfoP(int fileNo);
 static bool isEndOverlay(char *lineP);
+static bool isWordEntry(char *lineP, int *addressP);
+static void loadOrigins(FileInfoP infoP, int *wordLinesP, int *wordAddrsP, int numWords);
+static void freeOrigins(FileInfoP infoP);
 
 extern bool loadSymbols(FileInfoP infoP);
 extern void clearSymbols(void);
+extern void forgetSources(void);
 
 // Have we mapped a file and is it still open?
 bool
@@ -278,12 +283,14 @@ MapEntryP entryP, nextP;;
             free( infoP->symNameP );
         }
 
+        freeOrigins(infoP);
         free(infoP);
         files[i] = NIL;
     }
 
     numFiles = 0;
     memMapped = false;
+    forgetSources();
     ovlClear();
     clearSymbols();     // the next file is number 0 again, so no old symbol may stay
 
@@ -330,9 +337,9 @@ char *cP;
 // Try to load line mappings from a source file.
 // If it's a .lst file, we can construct the memory->line mapping also.
 // Otherwise, all we have is the line number mapping.
-// Return true if something loaded, else false.
 // In a listing of a program with overlays, the lines from an overlay's heading,
 // "// Overlay NAME, number N, ...", to its %%endoverlay line are tagged with N.
+// Return true if something loaded, else false.
 bool
 loadFileMap(FileInfoP infoP)
 {
@@ -348,12 +355,17 @@ MapEntryP memP, newP;
 MapEntryPP bankP;
 char *cP, *cP2;
 char tmpbuf[1024];
+int *wordLinesP = NIL;      // the listing lines that hold a word, and their addresses, for the .map
+int *wordAddrsP = NIL;
+int numWords = 0;
+int wordsSize = 0;
+struct stat statBuf;
 
     if( !infoP->fP )
     {
         return(false);
     }
-    
+
     // if the file is the list file, the name will have a ptr.
     fromLst = (infoP->lstNameP)?true:false;
 
@@ -385,6 +397,24 @@ char tmpbuf[1024];
 
         if( fromLst )
         {
+            // Each word a line holds is noted for the .map, whose records pair with them in order.
+            // A line can hold two: a label and the first word of a type340 string on the same line.
+            for( cP = tmpbuf; *cP; ++cP )
+            {
+                if( ((cP == tmpbuf) || (cP[-1] == ' ')) && isWordEntry(cP, &address) )
+                {
+                    if( numWords >= wordsSize )
+                    {
+                        wordsSize = (wordsSize)?(wordsSize * 2):1024;
+                        wordLinesP = (int *)realloc(wordLinesP, wordsSize * sizeof(int));
+                        wordAddrsP = (int *)realloc(wordAddrsP, wordsSize * sizeof(int));
+                    }
+
+                    wordLinesP[numWords] = numLines;
+                    wordAddrsP[numWords++] = address;
+                }
+            }
+
             // Pick up the address for building the memory map.
             // Line will be of the form:
             // [ ]+lineno: address (rest of line)
@@ -445,8 +475,264 @@ char tmpbuf[1024];
     
     infoP->numLines = numLines;
 
+    // The origins, only when the file read is the .lst itself.
+    // penSourceFile() uses the .am1 when there is no .lst, though the name is kept either way.
+    if( fromLst && (stat(infoP->lstNameP, &statBuf) == 0) )
+    {
+        loadOrigins(infoP, wordLinesP, wordAddrsP, numWords);
+    }
+
+    free(wordLinesP);
+    free(wordAddrsP);
+
     curLine = -1;
     return(true);
+}
+
+// Does a word's entry in the listing start here: "lineno: address word ", the line number
+// decimal, the address and the word, six octal digits each.
+// An entry with an address and no word, such as an origin, does not have a data word.
+static bool
+isWordEntry(char *lineP, int *addressP)
+{
+char *cP;
+int i;
+
+    cP = lineP;
+    if( !isdigit((unsigned char)*cP) )
+    {
+        return( false );
+    }
+
+    while( isdigit((unsigned char)*cP) )
+    {
+        ++cP;
+    }
+
+    if( (cP[0] != ':') || (cP[1] != ' ') )
+    {
+        return( false );
+    }
+
+    cP += 2;
+    for( i = 0; i < 14; ++i )
+    {
+        if( (i == 6) || (i == 13) )
+        {
+            if( cP[i] != ' ' )
+            {
+                return( false );
+            }
+        }
+        else if( (cP[i] < '0') || (cP[i] > '7') )
+        {
+            return( false );
+        }
+    }
+
+    *addressP = (int)strtol(cP, NIL, 8);
+    return( true );
+}
+
+// Read the .map am1 wrote with the .lst, if there is one, and give each listing line the
+// macro chain of its word.
+// Its W and P records pair, in order, with the listing's word entries whose lines and addresses
+// wordLinesP and wordAddrsP hold.
+// If they do not pair address for address, the .map is not this listing's and nothing is taken from it.
+static void
+loadOrigins(FileInfoP infoP, int *wordLinesP, int *wordAddrsP, int numWords)
+{
+FILE *fP;
+char *lineP = NIL;
+size_t lineSize = 0;
+char mapName[1024];
+char *cP, *tokP, *endP;
+char *whyP = NIL;
+int recNo, fileNo, address, level, len, nameAt, n;
+OriginP *originsPP;
+OriginP originP;
+
+    strncpy(mapName, infoP->lstNameP, sizeof(mapName) - 5);
+    mapName[sizeof(mapName) - 5] = NUL;
+    if( (cP = strrchr(mapName, '.')) && !strcmp(cP, ".lst") )
+    {
+        *cP = NUL;
+    }
+    strcat(mapName, ".map");
+
+    if( !(fP = fopen(mapName, "r")) )
+    {
+        return;
+    }
+
+    originsPP = (OriginP *)calloc(infoP->numLines + 1, sizeof(OriginP));
+    infoP->originsPP = originsPP;
+
+    // The header: the label, the version, the source.
+    if( (getline(&lineP, &lineSize, fP) < 0) || strcmp(lineP, "%%am1 origin map%%\n") ||
+        (getline(&lineP, &lineSize, fP) < 0) || strcmp(lineP, "V1\n") ||
+        (getline(&lineP, &lineSize, fP) < 0) )
+    {
+        whyP = "not an origin map of a version ad1 reads";
+    }
+
+    for( recNo = 0; !whyP && (getline(&lineP, &lineSize, fP) >= 0); )
+    {
+        if( (len = strlen(lineP)) && (lineP[len - 1] == '\n') )
+        {
+            lineP[--len] = NUL;
+        }
+
+        switch( lineP[0] )
+        {
+        case 'F':
+            // F <n> <file>: the numbers come 0 up
+            if( (sscanf(lineP, "F %d %n", &fileNo, &nameAt) != 1) || (fileNo != infoP->numMapFiles) ||
+                (nameAt >= len) )
+            {
+                whyP = "a bad file record";
+                break;
+            }
+
+            infoP->mapFilesPP = (char **)realloc(infoP->mapFilesPP, (fileNo + 1) * sizeof(char *));
+            infoP->mapFilesPP[fileNo] = strdup(lineP + nameAt);
+            ++infoP->numMapFiles;
+            break;
+
+        case 'P':
+        case 'W':
+            // W <address> <overlay> <file n> <line> [<macro> <file n> <line>]...
+            // P <address>
+            if( recNo >= numWords )
+            {
+                whyP = "more words than the listing";
+                break;
+            }
+
+            tokP = strtok(lineP + 1, " ");
+            address = (tokP)?(int)strtol(tokP, &endP, 8):-1;
+            if( !tokP || *endP || (address != wordAddrsP[recNo]) )
+            {
+                whyP = "a word at an address the listing does not have there";
+                break;
+            }
+
+            // the overlay, file and line: the listing shows them already
+            for( n = 0; (lineP[0] == 'W') && (n < 3) && strtok(NIL, " "); ++n )
+            {
+                ;
+            }
+
+            if( (lineP[0] == 'W') && (n < 3) )
+            {
+                whyP = "a bad word record";
+                break;
+            }
+
+            originP = NIL;
+            for( level = 0; (lineP[0] == 'W') && (tokP = strtok(NIL, " ")); ++level )
+            {
+                if( !originP )
+                {
+                    originP = (OriginP)calloc(1, sizeof(Origin));
+                }
+
+                originP->levelsP = (OriginLevelP)realloc(originP->levelsP, (level + 1) * sizeof(OriginLevel));
+                originP->levelsP[level].macroP = strdup(tokP);
+                originP->count = level + 1;
+
+                cP = strtok(NIL, " ");
+                endP = strtok(NIL, " ");
+                if( !cP || !endP )
+                {
+                    whyP = "a bad macro chain";
+                    break;
+                }
+
+                fileNo = atoi(cP);
+                originP->levelsP[level].fileP = ((fileNo >= 0) && (fileNo < infoP->numMapFiles))?
+                    infoP->mapFilesPP[fileNo]:NIL;
+                originP->levelsP[level].lineNo = atoi(endP);
+            }
+
+            // a line's first word with a chain gives the line its chain
+            if( originP && !originsPP[wordLinesP[recNo]] )
+            {
+                originsPP[wordLinesP[recNo]] = originP;
+            }
+            else if( originP )
+            {
+                for( level = 0; level < originP->count; ++level )
+                {
+                    free(originP->levelsP[level].macroP);
+                }
+
+                free(originP->levelsP);
+                free(originP);
+            }
+
+            ++recNo;
+            break;
+
+        case 'S':
+            // the symbols' files: not used yet
+            break;
+
+        default:
+            whyP = "a record ad1 does not know";
+            break;
+        }
+    }
+
+    if( !whyP && (recNo != numWords) )
+    {
+        whyP = "fewer words than the listing";
+    }
+
+    free(lineP);
+    fclose(fP);
+
+    if( whyP )
+    {
+        printf("Macro origins from '%s' not used: %s.\n", mapName, whyP);
+        freeOrigins(infoP);
+    }
+}
+
+// Free what loadOrigins() kept.
+static void
+freeOrigins(FileInfoP infoP)
+{
+int i, j;
+
+    if( infoP->originsPP )
+    {
+        for( i = 0; i <= infoP->numLines; ++i )
+        {
+            if( infoP->originsPP[i] )
+            {
+                for( j = 0; j < infoP->originsPP[i]->count; ++j )
+                {
+                    free(infoP->originsPP[i]->levelsP[j].macroP);
+                }
+
+                free(infoP->originsPP[i]->levelsP);
+                free(infoP->originsPP[i]);
+            }
+        }
+
+        free(infoP->originsPP);
+        infoP->originsPP = NIL;
+    }
+
+    for( i = 0; i < infoP->numMapFiles; ++i )
+    {
+        free(infoP->mapFilesPP[i]);
+    }
+
+    free(infoP->mapFilesPP);
+    infoP->mapFilesPP = NIL;
+    infoP->numMapFiles = 0;
 }
 
 // See if there ia a FileInfo for the given file number.

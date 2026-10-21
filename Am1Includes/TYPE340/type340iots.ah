@@ -16,8 +16,8 @@
 #warning "dra and will now be undefined, you might also need to use t23dra and t23dss."
 #undef dra
 #undef dss
-#define dra _Pragma("GCC error \"dra has been disabled, use t340dra and t23dra instead.\"")
-#define dss _Pragma("GCC error \"dss has been disabled, use t340dss and t23dss instead.\"")
+#define dra #error "dra has been disabled, use t340dra and t23dra instead."
+#define dss #error "dss has been disabled, use t340dss and t23dss instead."
 #else
 #define dra iot 016
 #define dss iot 0217

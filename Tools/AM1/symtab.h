@@ -28,6 +28,7 @@ typedef struct symnode      // a node in a symbol tree
     void *ptr;
     struct symnode *symP;
     int serialNumber;       // creation-order serial number, used for the constant pool hash
+    const char *fileP;      // the file lineno is in, as the markers name it; NULL if not known
 } SymNode, *SymNodeP, **SymNodePP;
 
 void sym_init( SymNodePP );

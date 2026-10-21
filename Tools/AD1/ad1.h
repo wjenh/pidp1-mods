@@ -5,7 +5,7 @@
 #include "ad1link.h"
 #include "target.h"
 
-#define VERSION "2.6 14-Oct-2026"
+#define VERSION "2.7 20-Oct-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    10000 // max number of lines in a file
@@ -111,6 +111,19 @@ typedef struct MapEntry_t {
     struct MapEntry_t *nextP;
 } MapEntry, *MapEntryP, **MapEntryPP;
 
+// A word's origin, from am1's .map: one level per macro expansion that created its statement,
+// from the macro the program used inward, each with the body line it came from.
+typedef struct {
+    char *macroP;
+    char *fileP;                // as the .map names it, NIL if not known
+    int lineNo;                 // the body line in fileP
+} OriginLevel, *OriginLevelP;
+
+typedef struct {
+    int count;
+    OriginLevelP levelsP;
+} Origin, *OriginP;
+
 // For file information
 typedef struct {
     int fileNo;                 // index in files table
@@ -120,10 +133,12 @@ typedef struct {
     FILE *fP;
     int numLines;               // lines in the file
     long lineMap[MAXLINES];     // map line numbers in file into file offsets in file
+    OriginP *originsPP;         // by listing line, the macro chain from the .map.
+                                // NIL for a table without a .map, NIL for a line with no chain
+    char **mapFilesPP;          // the .map's file names, by its number for them
+    int numMapFiles;
 } FileInfo, *FileInfoP;
 
-// Drum overlays, overlays.c: what a program's .ovl and .osym say, and which overlay each window
-// holds now, read from the overlay manager's table in core once per command.
 void ovlLoad(FileInfoP infoP);
 void ovlClear(void);
 void ovlForget(void);
@@ -133,7 +148,7 @@ int ovlNumber(int fileNo, char *nameP);
 char *ovlName(int fileNo, int overlay);
 char *ovlResidentNameAt(u32 address);
 
-// The overlay a command's address named with name@overlay, which break binds its breakpoint to.
+// An address named with name@overlay which break binds its breakpoint to.
 typedef struct {
     int count;                  // name@overlay references in the command, 0 for none
     bool mixed;                 // they name more than one overlay
@@ -147,9 +162,7 @@ void ovlRefClear(void);
 void ovlRefNote(SymbolP symP);
 OverlayRefP ovlRef(void);
 
-// Breakpoints and watches bound to an overlay, overlays.c.  An emulator with conditions holds the
-// binding as one; with one from before conditions, a bound breakpoint is an ordinary one at
-// count 1 and ad1 keeps the binding, and a watch cannot be bound.
+// Breakpoints and watches bound to an overlay.
 typedef struct {
     bool fires[AD1_NUM_BREAKPOINTS];    // by number less one, the bound ones that fire
     int unfired;                // a bound breakpoint at the address that did not fire, 0 if none

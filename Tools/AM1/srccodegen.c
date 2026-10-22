@@ -67,6 +67,7 @@
 #include "y.tab.h"
 #include "type340chars.h"
 #include "optimizer.h"
+#include "flexoConversion.h"
 
 #define SRC_FMT         256     // the longest piece written through putf()
 #define SRC_DEFINES     2048    // the -D set, as given, for the header
@@ -204,8 +205,6 @@ extern char pfilename[];            // cpp's output file, from am1.c
 extern bool doCpp;                  // cpp was run: false under -n
 extern char *origFilenameP;         // the source named on the command line
 
-extern char asciiToFlexo(char ac, int *shiftP);
-extern int flexoToAscii(char fc, int *shiftP);
 extern char asciiToType340(char ch);
 extern int type340Shift(char ch);
 extern int evalExpr(PNodeP nodeP);
@@ -3685,6 +3684,7 @@ bool first;
         putNum(winP->first);
         put(", ");
         putNum(winP->last);
+        put((winP->twopass)?", twopass":"");
         break;
 
     case OVERLAYDECL:

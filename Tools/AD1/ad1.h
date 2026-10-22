@@ -5,7 +5,7 @@
 #include "ad1link.h"
 #include "target.h"
 
-#define VERSION "2.8 21-Oct-2026"
+#define VERSION "2.9 22-Oct-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    10000 // max number of lines in a file

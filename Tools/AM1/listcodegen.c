@@ -11,6 +11,7 @@
 #include "am1.h"
 #include "y.tab.h"
 #include "type340chars.h"
+#include "flexoConversion.h"
 
 static bool doOutput;
 
@@ -41,7 +42,6 @@ extern Word ovStamp;
 extern Word *ovTableWordsP;
 extern void ovlPrintLayout(FILE *outfP, const char *prefixP);
 extern void ovlTableWordName(int index, char *bufP, size_t size);
-extern char flexoToAscii(char fchar, int *shift);
 extern void verror(char *msgP, ...);
 extern void mapFile(const char *nameP);
 extern void mapStatement(PNodeP stmtP);
@@ -364,8 +364,9 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
         case WINDOWDECL:
             // Listed at the window's first address, not the root's pc.
             winP = (WindowP)(nodeP->value.ptr);
-            output(outfP, doOutput, "%4d: %02o%04o        %%%%window %s, %o, %o",
-                nodeP->lineNo, winP->bank, winP->first, winP->nameP, winP->first, winP->last);
+            output(outfP, doOutput, "%4d: %02o%04o        %%%%window %s, %o, %o%s",
+                nodeP->lineNo, winP->bank, winP->first, winP->nameP, winP->first, winP->last,
+                (winP->twopass)?", twopass":"");
             break;
 
         case OVERLAYDECL:

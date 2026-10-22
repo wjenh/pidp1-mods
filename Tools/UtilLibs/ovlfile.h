@@ -5,6 +5,7 @@
  * 13-Oct-2026 wje/Claude moved out of ovlload.c
  * 18-Oct-2026 wje cleanup
  * 21-Oct-2026 Claude the drum writer moved out of ovlload.c
+ * 22-Oct-2026 Claude V2 files, each overlay's drum address and span
  */
 
 #ifndef OVLFILE_H
@@ -54,6 +55,9 @@ typedef struct
     int first;
     int last;
     int track;
+    int drum;                       // the drum address of the span's first word
+    int span;                       // the words of the track that are the overlay's own;
+                                    // a V1 file's are the window's range at its addresses
     int length;
     bool persistent;
     int lineNo;

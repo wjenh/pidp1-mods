@@ -43,6 +43,7 @@
  * 14-Oct-26 wje production cleanup
  * 21-Oct-26 Claude - v2.8, load writes a program's drum overlays; -i names the drum file
  * 21-Oct-26 wje cleanup
+ * 22-Oct-26 Claude - v2.9, reads am1 v5.2's V2 .ovl, the packed drum layout, as well as V1 (overlays.c)
 */
 #include <stdlib.h>
 #include <stdio.h>

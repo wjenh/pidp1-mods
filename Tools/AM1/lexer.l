@@ -10,6 +10,7 @@
 #include "y.tab.h"
 #include "type340chars.h"
 #include "preprocess.h"
+#include "flexoConversion.h"
 
 #define STRBUF 1024        // maximum literal string length
 #define MAXCCOMMENT 4096   // maximum c-style comment length
@@ -49,7 +50,6 @@ void gdbtarget(void);    // this is a do-nothing just to add as a gdb breakpoint
 extern int processEscape(char);
 extern int type340Shift(char);
 extern char processType340Escape(char ch);
-extern char asciiToFlexo(char, int *);    // in parsefns.c
 extern char asciiToType340(char);
 extern void reset_line(void);
 extern void verror(char *msgP, ...);

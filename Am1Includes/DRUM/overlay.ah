@@ -19,8 +19,8 @@
 #define OV_ENT_RES      3       // the window's resident word, and OV_PERSIST
 #define OV_ENT_WORDS    4
 
-// The dia word: the read bit, the overlay's track, its drum address, which is
-// the window's first core address.
+// The dia word: the read bit, the overlay's track, its drum address, where am1
+// placed it on the track, not necessarily the window's first core address.
 #define OV_DIA_READ     0400000
 #define OV_DIA_TRACK    0370000
 #define OV_DIA_ADDR     07777
@@ -37,9 +37,12 @@
 #define OV_BANK_SHIFT   014
 
 // The resident-word word: the full address of the window's word in the table,
-// with OV_PERSIST set for an overlay written back when it is evicted.  An
-// indirect under eem takes its low 16 bits only, so it is a pointer as it is.
+// with OV_PERSIST set for an overlay written back when it is evicted, and
+// OV_TWOPASS for an overlay of a twopass window, which is written back in a
+// transfer of its own rather than swapped.  An indirect under eem takes its low
+// 16 bits only, so it is a pointer as it is.
 #define OV_PERSIST      0400000
+#define OV_TWOPASS      0200000
 #define OV_RES_ADDR     0177777
 
 // The header, the first OV_HDR_WORDS words of the window: the stamp, the same
@@ -53,7 +56,7 @@
 #define OV_ERR_NEST     1       // an %%ovcall while an overlay runs
 #define OV_ERR_STAMP    2       // the header read is not this build's
 #define OV_ERR_DRUM     3       // a transfer failed OV_TRIES times
-#define OV_ERR_SWAP     4       // a swap failed, OV_SINGLE_PASS only
+#define OV_ERR_SWAP     4       // a swap failed; never in a twopass window
 
 // Transfers tried before OV_ERR_DRUM, the first included.  A program may
 // define its own before the first include of this file.

@@ -238,6 +238,7 @@
  * 21-Oct-2026 claude - v5.1, add %%ovload
  * 21-Oct-2026 claude - the optimizer report is no longer closed twice when a fatal error follows it under -O
  * 21-Oct-2026 wje - more cleanup
+ * 22-Oct-2026 wje - fixes for various signal catching and a null pointer during them
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -272,6 +273,10 @@ Warning warnings[] = {
 
 FILE *outfP;                   // where we put our code
 FILE *mapoutfP;                // the origin map, written with the listing
+
+// The signals leave() catches, those that ask a process to end; see main()
+static int leaveSigs[] = {SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGALRM, SIGUSR1, SIGUSR2,
+                          SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF};
 
 char *origFilenameP;            // command line input am1 file
 char *filenameP;                // current input am1 file
@@ -365,16 +370,20 @@ int top;                    // -S: one past a bank's highest word
     testMode = false;
     doMacro = doBinary = false;
 
-    for(i = 1; i < NSIG;)
+    // Only the signals that ask am1 to end are caught so leave() can remove what it
+    // was writing, every other keeps its default.
+    // A reader gone from a pipe would call leave() inside exit()'s flush of stdout and
+    // delete the file just written.
+    // After a fault leave() can't run safely and catching SIGABRT made one abort into two.
+    // Also, a resized window, a ^Z, or a SIGCONT whose default is to do nothing or to stop
+    // should not stop am1.
+    for(i = 0; i < (int)(sizeof(leaveSigs) / sizeof(leaveSigs[0])); ++i)
     {
-        if(signal(i++, leave) == SIG_IGN)
+        if(signal(leaveSigs[i], leave) == SIG_IGN)
         {
-            /* catch all sigs */
-            signal(i - 1, SIG_IGN);                       /* unless ignored */
+            signal(leaveSigs[i], SIG_IGN);                /* unless ignored */
         }
     }
-
-    signal(SIGCHLD, SIG_DFL);                             /* special case */
 
     doCpp = true;
 
@@ -752,6 +761,7 @@ int top;                    // -S: one past a bank's highest word
         i = macCodegen(outfP, rootP);
 
         fclose(outfP);
+        outfP = NILP;             // a later signal must not have leave() close it again
 
         if(!i)                    // codegen failed
         {
@@ -772,6 +782,7 @@ int top;                    // -S: one past a bank's highest word
 
         testCodegen(outfP, rootP);
         fclose(outfP);      // we don't unlink even if it fails
+        outfP = NILP;
     }
 
     if( doBinary )
@@ -788,6 +799,7 @@ int top;                    // -S: one past a bank's highest word
         i = binCodegen(outfP, rootP);
 
         fclose(outfP);
+        outfP = NILP;
 
         if(!i)                    // codegen failed
         {
@@ -808,6 +820,7 @@ int top;                    // -S: one past a bank's highest word
 
             ovlWriteOvl(outfP, (cP = strrchr(origFilenameP, '/'))?(cP + 1):origFilenameP);
             fclose(outfP);
+            outfP = NILP;
         }
     }
 
@@ -838,6 +851,7 @@ int top;                    // -S: one past a bank's highest word
         mapClose();
 
         fclose(outfP);
+        outfP = NILP;
         fclose(mapoutfP);
 
         if(!i)                    // codegen failed
@@ -860,6 +874,7 @@ int top;                    // -S: one past a bank's highest word
 
         listSymtab(outfP, filenameP, banksP);
         fclose(outfP);
+        outfP = NILP;
 
         // The overlays' symbols, which the .sym file leaves out.
         if( overlaysP )
@@ -875,6 +890,7 @@ int top;                    // -S: one past a bank's highest word
 
             ovlWriteOsym(outfP, filenameP);
             fclose(outfP);
+            outfP = NILP;
         }
     }
 

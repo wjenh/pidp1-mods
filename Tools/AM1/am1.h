@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v5.1 21-Oct-2026"
-#define AM1SHORTVERSION "am1 v5.1"
+#define AM1VERSION "am1 v5.2 22-Oct-2026"
+#define AM1SHORTVERSION "am1 v5.2"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -198,6 +198,8 @@ typedef struct window
     int index;              // 0 up, in declaration order
     int lineNo;             // where it was declared
     char *fileP;
+    bool twopass;           // a persistent overlay is written back in a transfer of its
+                            // own, not swapped, so its overlays are placed one by one
 } Window, *WindowP;
 
 // An overlay.
@@ -220,11 +222,15 @@ typedef struct overlaycontext
                             // its pools, -1 for none
     int lineNo;             // its %%overlay line, and file
     char *fileP;
-    // The overlay words, header included.
-    // ovlcodegen.c sets these three after the parse.
+    // The overlay words, header included, and their place on the drum.
+    // ovlcodegen.c sets these after the parse.
     int length;
     Word *imageP;
     int track;              // drum track they go on
+    int drum;               // the drum address of the span's first word
+    int span;               // the words of the track that are the overlay's own: its
+                            // length, or in a swap window, for a persistent overlay,
+                            // the window's longest overlay's
 } OverlayContext, *OverlayContextP;
 
 // list of symtabs

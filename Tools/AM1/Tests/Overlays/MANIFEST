@@ -72,17 +72,18 @@ f2_ovcallin|fail||%%ovcall small, smallRun is inside overlay edit; only the root
 f2_ovcallearly|fail||%%ovcall print, printAll comes before ovEnter, the overlay manager's entry, is defined
 f2_noovtable|fail||this program has overlays and no %%ovtable
 f3_ovcall|refsub||
-f4_layout|outgrep|-S|^overlay a, number 1: track 21, drum 2000-2777, window w1 in bank 2, 3 words, read-only$
-f4_layout|outgrep|-S|^overlay b, number 2: track 23, drum 2000-2777, window w1 in bank 2, 3 words, read-only$
-f4_layout|outgrep|-S|^overlay c, number 3: track 21, drum 3000-3077, window w2 in bank 2, 3 words, read-only$
-f4_layout|outgrep|-S|^overlay d, number 4: track 24, drum 2000-2777, window w3 in bank 3, 3 words, read-only$
-f4_layout|lstgrep|bin -l|^// overlay d, number 4: track 24, drum 2000-2777, window w3 in bank 3
+f4_layout|outgrep|-S|^overlay a, number 1: track 21, drum 0000-0002, window w1 in bank 2, 3 words, read-only$
+f4_layout|outgrep|-S|^overlay b, number 2: track 21, drum 0003-0005, window w1 in bank 2, 3 words, read-only$
+f4_layout|outgrep|-S|^overlay c, number 3: track 21, drum 0006-0010, window w2 in bank 2, 3 words, read-only$
+f4_layout|outgrep|-S|^overlay d, number 4: track 21, drum 0011-0013, window w3 in bank 3, 3 words, read-only$
+f4_layout|lstgrep|bin -l|^// overlay d, number 4: track 21, drum 0011-0013, window w3 in bank 3
 f4_layout|outgrep|-S|^Bank 2, none$
 f4_layout|outgrep|-S|^Bank 3, none$
 f4_layout|outgrep|-S|^Bank 0, 00124 \(84 decimal\)$
-f4_fit|outgrep|-S|^overlay o32, number 32: track 37, drum 2000-2777
-f4_full|fail||overlay o33 has no drum track
-f4_full|fail|-O|overlay o33 has no drum track
+f4_fit|outgrep|-S|^overlay o1, number 1: track 37, drum 0000-0177,
+f4_fit|outgrep|-S|^overlay o32, number 32: track 37, drum 7600-7777,
+f4_full|fail||overlay o33 has nowhere on the drum: no track %%drumreserve leaves free has its span of 200 words free
+f4_full|fail|-O|overlay o33 has nowhere on the drum
 f5_table|refsub||
 f5_word|refsub||
 f5_track|refsub||
@@ -112,7 +113,7 @@ f10_pins|okgrep||^000102 760200$
 f10_pins|okgrep||^001003 200117 ov1$
 f10_pins|okgrep||^000110 000123$
 f10_pins|okgrep||^000126 000122$
-f10_pins|ovlgrep|bin|stamp 203350 table 000121$
+f10_pins|ovlgrep|bin|stamp 044350 table 000121$
 f10_pins|okgrep|-O1|^000101 340115$
 f10_pins|okgrep|-O1|^000102 200114$
 f10_pins|okgrep|-O1|^000103 650100$
@@ -123,10 +124,10 @@ f10_pins|okgrep|-O1|^001003 200114 ov1$
 f10_pins|okgrep|-O1|^001004 200115 ov1$
 f10_pins|okgrep|-O1|^001010 000114 ov1$
 f10_pins|okgrep|-O1|^001006 620111 ov1$
-f10_pins|okgrep|-O1|^001000 333652 ov1$
+f10_pins|okgrep|-O1|^001000 174652 ov1$
 f10_pins|okgrep|-O1|^000123 000117$
-f10_pins|ovlgrep|bin -O1|stamp 333652 table 000116$
-f10_pins|ovlgrep|bin -O1|^333652 000001 261007 200114 200115 201010 620111 601007$
+f10_pins|ovlgrep|bin -O1|stamp 174652 table 000116$
+f10_pins|ovlgrep|bin -O1|^174652 000001 261007 200114 200115 201010 620111 601007$
 f10_pins|optgrep|-O1|^This program has drum overlays
 f10_pins|nooptgrep|-O1|^Apparently unreached
 f10_pins|optgrep|-O1|^  span 1 .* line 13, %%ovcall$
@@ -237,3 +238,57 @@ f11_roomy|optgrep|-O1 -O=inline=reserve:0|^    S2   bank  0 1005@ov1  .*f11_room
 f11_roomy|okgrep|-O1 -O=inline=reserve:0|^001020 000001 ov1$
 f11_roomy|okgrep|-O1 -O=inline=reserve:0|^001003 201017 ov1$
 f11_roomy|okgrep||^001016 000001 ov1$
+f12_example|outgrep|-S|^overlay o1000, number 5: track 0, drum 0000-1747, window w1 in bank 2, 1750 words, read-only$
+f12_example|outgrep|-S|^overlay o700, number 4: track 0, drum 1750-3243, window w1 in bank 2, 1274 words, read-only$
+f12_example|outgrep|-S|^overlay o600, number 3: track 0, drum 3244-4373, window w1 in bank 2, 1130 words, read-only$
+f12_example|outgrep|-S|^overlay o450, number 2: track 0, drum 4374-5275, window w1 in bank 2, 702 words, read-only$
+f12_example|outgrep|-S|^overlay o300, number 1: track 0, drum 5276-5751, window w1 in bank 2, 454 words, read-only$
+f12_example|lstgrep|bin -l|^// overlay o300, number 1: track 0, drum 5276-5751, window w1 in bank 2
+f12_example|ovlgrep|bin|^V2$
+f12_example|ovlgrep|bin|^overlay o300 window w1 bank 2 first 2000 last 3777 track 0 drum 5276 span 454 length 454 mode ro$
+f12_example|ovlgrep|bin|^overlay o1000 window w1 bank 2 first 2000 last 3777 track 0 drum 0 span 1750 length 1750 mode ro$
+f12_example|okgrep||^000103 405276$
+f12_reserve|outgrep|-S|^overlay o1000, number 5: track 4, drum 0000-1747,
+f12_reserve|outgrep|-S|^overlay o300, number 1: track 4, drum 5276-5751,
+f12_swap|outgrep|-S|^overlay p, number 1: track 0, drum 0000-0177, window w1 in bank 2, 200 words, persistent$
+f12_swap|outgrep|-S|^overlay q, number 2: track 1, drum 0000-0177, window w1 in bank 2, 100 words, persistent$
+f12_swap|outgrep|-S|^overlay r, number 3: track 2, drum 0000-0037, window w1 in bank 2, 40 words, read-only$
+f12_swap|outgrep|-S|^overlay s, number 4: track 0, drum 0200-7577, window w2 in bank 3, 7400 words, read-only$
+f12_swap|outgrep|-S|^overlay t, number 5: track 1, drum 0200-0477, window w2 in bank 3, 300 words, read-only$
+f12_swap|ovlgrep|bin|^overlay q window w1 bank 2 first 2000 last 2777 track 1 drum 0 span 200 length 100 mode rw$
+f12_swap|okgrep||^000104 400000$
+f12_swap|okgrep||^000110 410000$
+f12_swap|okgrep||^000114 420000$
+f12_swap|okgrep||^000120 400200$
+f12_swap|okgrep||^000124 410200$
+f12_swap|okgrep||^000107 400102$
+f12_swap|okgrep||^000113 400102$
+f12_swap|okgrep||^000117 000102$
+f12_swap|okgrep||^000123 000103$
+f12_swapd|outgrep|-S|^overlay u, number 4: track 0, drum 0200-0237, window w3 in bank 3, 40 words, persistent$
+f12_swapd|outgrep|-S|^overlay v, number 5: track 1, drum 0200-0237, window w3 in bank 3, 40 words, persistent$
+f12_swapfull|fail||overlay r has nowhere on the drum: window w1's 3 overlays share one drum address
+f12_swapfull|fail|-O|overlay r has nowhere on the drum
+f12_twopass|outgrep|-S|^overlay p, number 1: track 0, drum 0200-0277, window w1 in bank 2, 100 words, persistent, two-pass$
+f12_twopass|outgrep|-S|^overlay q, number 2: track 0, drum 0000-0177, window w1 in bank 2, 200 words, persistent, two-pass$
+f12_twopass|outgrep|-S|^overlay r, number 3: track 0, drum 0300-0337, window w1 in bank 2, 40 words, read-only$
+f12_twopass|ovlgrep|bin|^overlay p window w1 bank 2 first 2000 last 2777 track 0 drum 200 span 100 length 100 mode rw$
+f12_twopass|okgrep||^000103 400200$
+f12_twopass|okgrep||^000107 400000$
+f12_twopass|okgrep||^000113 400300$
+f12_twopass|okgrep||^000106 600102$
+f12_twopass|okgrep||^000112 600102$
+f12_twopass|okgrep||^000116 200102$
+f12_twopass|lstgrep|bin -l|%%window w1, 2000, 2777, twopass$
+f12_twopass|nowarn||has no persistent overlay
+f12_twopassro|warn||window w1, declared at line 3 in file
+f12_twopassro|warn||is twopass and has no persistent overlay; twopass changes nothing for read-only overlays
+f12_twopassro|outgrep|-S|^overlay s, number 2: track 0, drum 0000-0077,
+f12_badmode|fail||window w1: 'swap' is not a valid mode; the one mode is twopass
+f12_trackend|outgrep|-S|^overlay e1, number 1: track 36, drum 0000-2777,
+f12_trackend|outgrep|-S|^overlay e2, number 2: track 36, drum 3000-5777,
+f12_trackend|outgrep|-S|^overlay e3, number 3: track 37, drum 0000-2777,
+f12_trackend|outgrep|-S|^overlay e4, number 4: track 36, drum 6000-7777,
+f12_twopassdef|fail||OV_TWO_PASS is no longer used
+f12_manager|ok||
+f12_manager|ok|bin|

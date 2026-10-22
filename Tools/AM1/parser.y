@@ -112,7 +112,7 @@ PNodeP openSpeedRegion(void);
 PNodeP closeSpeedRegion(void);
 PNodeP markInline(char *nameP);
 PNodeP markCeiling(PNodeP exprP);
-PNodeP declareWindow(char *nameP, PNodeP firstP, PNodeP lastP);
+PNodeP declareWindow(char *nameP, PNodeP firstP, PNodeP lastP, char *modeP);
 PNodeP openOverlay(char *nameP, char *windowNameP, char *modeP);
 PNodeP closeOverlay(void);
 PNodeP placeOvTable(void);
@@ -798,7 +798,11 @@ one_stmt        : expr
                 }
                 | WINDOWDECL ovIdent LOCATION simple_expr LOCATION simple_expr
                 {
-                    $$ = declareWindow($2, $4, $6);
+                    $$ = declareWindow($2, $4, $6, NILP);
+                }
+                | WINDOWDECL ovIdent LOCATION simple_expr LOCATION simple_expr LOCATION ovIdent
+                {
+                    $$ = declareWindow($2, $4, $6, $8);
                 }
                 | OVERLAYDECL ovIdent LOCATION ovIdent
                 {
@@ -826,7 +830,7 @@ one_stmt        : expr
                 }
                 ;
 
-                // A window's or overlay's name, or an overlay's mode.
+                // A window's or overlay's name, or a window's or overlay's mode.
                 // They are names of their own, not symbols.
                 // One spelled like a symbol already seen arrives as ADDR,
                 // the symbol name is used.
@@ -2529,11 +2533,11 @@ int value;
 }
 
 // Declare a window: a range of the current bank that overlays run in and no
-// root word may use.
+// root word may use.  A two-pass window when modeP says so.
 // Its addresses must be known here since each overlay of it is assembled from its first address.
 // Returns the WINDOWDECL node, the window in value.ptr.
 PNodeP
-declareWindow(char *nameP, PNodeP firstP, PNodeP lastP)
+declareWindow(char *nameP, PNodeP firstP, PNodeP lastP, char *modeP)
 {
 int line;
 int first;
@@ -2561,6 +2565,11 @@ PNodeP nodeP;
     {
         verrorl(line, "window %s is already declared, at line %d in file %s",
             nameP, winP->lineNo, winP->fileP);
+    }
+
+    if( modeP && strcmp(modeP, "twopass") )
+    {
+        verrorl(line, "window %s: '%s' is not a valid mode; the one mode is twopass", nameP, modeP);
     }
 
     if( (unknownP = ceilingUnknown(firstP)) || (unknownP = ceilingUnknown(lastP)) )
@@ -2610,6 +2619,7 @@ PNodeP nodeP;
     winP->last = last;
     winP->index = windowCount++;
     winP->lineNo = line;
+    winP->twopass = (modeP != NILP);
 
     for( tailPP = &windowsP; *tailPP; tailPP = &((*tailPP)->nextP) )
     {
@@ -2798,6 +2808,8 @@ int line;
 int length;
 SymNodeP symP;
 PNodeP nodeP;
+WindowP winP;
+OverlayContextP ovP;
 
     line = optRegionTokenLine;
 
@@ -2817,6 +2829,24 @@ PNodeP nodeP;
     }
 
     length = 1 + windowCount + (OVENTRYWORDS * overlayCount);
+
+    // Every window and overlay is known here.  twopass chooses how a persistent
+    // overlay is written back, so a window with none gains nothing by it.
+    for( winP = windowsP; winP; winP = winP->nextP )
+    {
+        for( ovP = overlaysP; ovP && !((ovP->windowP == winP) && ovP->persistent); ovP = ovP->nextP )
+        {
+            ;
+        }
+
+        if( winP->twopass && !ovP )
+        {
+            vwarnl(WARN_OVERLAY, line,
+                "window %s, declared at line %d in file %s, is twopass and has no persistent overlay;"
+                " twopass changes nothing for read-only overlays",
+                winP->nameP, winP->lineNo, winP->fileP);
+        }
+    }
 
     // A forward reference to the table made it already, unresolved.
     if( (symP = sym_find(&(curBankP->globalSymP), OVTABLENAME)) )

@@ -4,14 +4,17 @@
  *
  * file.ovl is text: a label line, a version line, a stamp line giving the build stamp
  * and the full address of the program's overlay table, then for each overlay a line
- * naming its window, bank, first and last address, drum track, length and mode,
- * followed by its words, the two header words (the stamp and the overlay's number)
- * included.
+ * naming its window, bank, first and last address, drum track, drum address and span,
+ * length and mode, followed by its words, the two header words (the stamp and the
+ * overlay's number) included.
  * Every number is octal.
+ * A V2 file's overlay line has drum and span. A V1 file's has neither: am1 put each
+ * overlay at the drum addresses of its window's core addresses, its span the window.
  *
  * 13-Oct-2026 wje/Claude moved out of ovlload.c
  * 21-Oct-2026 Claude the drum writer moved out of ovlload.c, for ad1 and fastload too
  * 21-Oct-2026 wje cleanup
+ * 22-Oct-2026 Claude V2, the packed drum layout: each overlay's drum address and span
  */
 
 #include <unistd.h>
@@ -25,12 +28,13 @@
 #include "ovlfile.h"
 
 #define OVLFILELABEL "%%am1 overlay file%%"
-#define OVLFILEVERSION "V1"
+#define OVLFILEV1 "V1"
+#define OVLFILEV2 "V2"
 
 static bool ovlFault(char *errP, const char *pathP, int lineNo, const char *msgP, const char *argP);
 
 // Read the .ovl at pathP into *ofP and check all of it: the label and version, the
-// stamp line, each overlay's fields, its words and header, and no two overlays
+// stamp line, each overlay's fields, its words and header, and no two overlays' spans
 // overlapping on one track.
 // Returns true, or false with *ofP empty and the first
 // fault in errP (OVL_ERRSIZE bytes), as "path line n: what", with no final period.
@@ -48,6 +52,8 @@ int consumed;
 int have;
 int i;
 int j;
+int fields;
+bool v2;
 long word;
 Overlay *ovP;
 Overlay *otherP;
@@ -65,6 +71,7 @@ Overlay *grownP;
     lineNo = 0;
     ovP = NULL;
     have = 0;
+    v2 = false;
 
     while( getline(&lineP, &len, fP) != -1 )
     {
@@ -84,7 +91,11 @@ Overlay *grownP;
 
         if( lineNo == 2 )
         {
-            if( strcmp(lineP, OVLFILEVERSION) != 0 )
+            if( strcmp(lineP, OVLFILEV2) == 0 )
+            {
+                v2 = true;
+            }
+            else if( strcmp(lineP, OVLFILEV1) != 0 )
             {
                 ovlFault(errP, pathP, lineNo, "version '%s' is not one this tool knows", lineP);
                 goto failed;
@@ -133,9 +144,23 @@ Overlay *grownP;
             memset(ovP, 0, sizeof(Overlay));
             ovP->lineNo = lineNo;
             consumed = -1;
-            if( (sscanf(lineP, "overlay %63s window %63s bank %o first %o last %o track %o length %o mode %7s%n",
+            if( v2 )
+            {
+                fields = sscanf(lineP,
+                    "overlay %63s window %63s bank %o first %o last %o track %o drum %o span %o length %o mode %7s%n",
+                    ovP->name, ovP->window, &ovP->bank, &ovP->first, &ovP->last, &ovP->track, &ovP->drum,
+                    &ovP->span, &ovP->length, mode, &consumed) - 2;
+            }
+            else
+            {
+                fields = sscanf(lineP, "overlay %63s window %63s bank %o first %o last %o track %o length %o mode %7s%n",
                     ovP->name, ovP->window, &ovP->bank, &ovP->first, &ovP->last, &ovP->track,
-                    &ovP->length, mode, &consumed) != 8) || (lineP[consumed] != 0) )
+                    &ovP->length, mode, &consumed);
+                ovP->drum = ovP->first;
+                ovP->span = (ovP->last - ovP->first) + 1;
+            }
+
+            if( (fields != 8) || (lineP[consumed] != 0) )
             {
                 ovlFault(errP, pathP, lineNo, "the overlay line is not in the form am1 writes", NULL);
                 goto failed;
@@ -151,6 +176,15 @@ Overlay *grownP;
             if( (ovP->length <= OVL_HEADERWORDS) || (ovP->length > ((ovP->last - ovP->first) + 1)) )
             {
                 ovlFault(errP, pathP, lineNo, "overlay %s's length does not fit its window", ovP->name);
+                goto failed;
+            }
+
+            // The span is written from the window's first core address by the PDP-1's own
+            // writer, so it fits the window as well as the track.
+            if( (ovP->span < ovP->length) || (ovP->span > ((ovP->last - ovP->first) + 1)) ||
+                (ovP->drum < 0) || ((ovP->drum + ovP->span) > OVL_TRACKWORDS) )
+            {
+                ovlFault(errP, pathP, lineNo, "overlay %s's drum address or span is out of range", ovP->name);
                 goto failed;
             }
 
@@ -250,7 +284,8 @@ Overlay *grownP;
         for( j = 0; j < i; ++j )
         {
             otherP = &ofP->overlaysP[j];
-            if( (otherP->track == ovP->track) && (otherP->first <= ovP->last) && (ovP->first <= otherP->last) )
+            if( (otherP->track == ovP->track) && (otherP->drum < (ovP->drum + ovP->span)) &&
+                (ovP->drum < (otherP->drum + otherP->span)) )
             {
                 ovlFault(errP, pathP, ovP->lineNo, "overlay %s overlaps another overlay on its track", ovP->name);
                 goto failed;
@@ -302,7 +337,7 @@ int n;
     return(false);
 }
 
-// Compare one overlay with the drum: a read-only one word for word over its window, the
+// Compare one overlay with the drum: a read-only one word for word over its span, the
 // padding included; a persistent one by its header only, since the overlay manager
 // writes its words back.
 // Returns OVL_CURRENT, or OVL_STAMP_DIFFERS or OVL_DIFFERS with
@@ -316,14 +351,14 @@ int span;
 int32_t want;
 int32_t got;
 
-    span = (ovP->persistent) ? OVL_HEADERWORDS : ((ovP->last - ovP->first) + 1);
+    span = (ovP->persistent) ? OVL_HEADERWORDS : ovP->span;
     for( a = 0; a < span; ++a )
     {
         want = (a < ovP->length) ? ovP->wordsP[a] : 0;
-        got = drumP[(ovP->track * OVL_TRACKWORDS) + ovP->first + a];
+        got = drumP[(ovP->track * OVL_TRACKWORDS) + ovP->drum + a];
         if( got != want )
         {
-            *addrP = ovP->first + a;
+            *addrP = ovP->drum + a;
             *gotP = got;
             *wantP = want;
             return( (a < OVL_HEADERWORDS) ? OVL_STAMP_DIFFERS : OVL_DIFFERS );
@@ -501,7 +536,8 @@ ovlStampMatches(const OvlFile *ofP, const char *tapeP, bool haveWord, uint32_t w
     return(true);
 }
 
-// Write each overlay's window range on its track: its words, then zeros to the window's end.
+// Write each overlay's span on its track at its drum address: its words, then zeros to the
+// span's end.
 // fileWords is what ovlReadDrum() found.
 // With eachOverlay, a line for each overlay says what was written.
 // Without, one line for them all.
@@ -538,17 +574,17 @@ const Overlay *ovP;
     for( i = 0; i < ofP->count; ++i )
     {
         ovP = &ofP->overlaysP[i];
-        span = (ovP->last - ovP->first) + 1;
-        if( ((long)(ovP->track * OVL_TRACKWORDS) + ovP->last + 1) > end )
+        span = ovP->span;
+        if( ((long)(ovP->track * OVL_TRACKWORDS) + ovP->drum + span) > end )
         {
-            end = (long)(ovP->track * OVL_TRACKWORDS) + ovP->last + 1;
+            end = (long)(ovP->track * OVL_TRACKWORDS) + ovP->drum + span;
         }
         memset(buffer, 0, sizeof(buffer));
         memcpy(buffer, ovP->wordsP, ovP->length * sizeof(int32_t));
         bytes = span * sizeof(int32_t);
 
         // Past the file's end, the write extends it and the gap reads as zeros.
-        if( pwrite(fd, buffer, bytes, (off_t)((ovP->track * OVL_TRACKWORDS) + ovP->first) * sizeof(int32_t))
+        if( pwrite(fd, buffer, bytes, (off_t)((ovP->track * OVL_TRACKWORDS) + ovP->drum) * sizeof(int32_t))
             != (ssize_t)bytes )
         {
             fprintf(errFile(), "%s: writing overlay %s to '%s' failed: %s\n", progNameP, ovP->name, pathP,
@@ -562,7 +598,7 @@ const Overlay *ovP;
         if( eachOverlay )
         {
             printf("overlay %s: track %o, drum %04o-%04o, %o words, %s\n", ovP->name, ovP->track,
-                ovP->first, ovP->last, ovP->length, (ovP->persistent) ? "rw" : "ro");
+                ovP->drum, ovP->drum + span - 1, ovP->length, (ovP->persistent) ? "rw" : "ro");
         }
     }
 
@@ -590,8 +626,8 @@ const Overlay *ovP;
             (ofP->count == 1) ? "" : "s", (nTracks == 1) ? "" : "s", tracks, pathP);
     }
 
-    // Only a file that ended before the last overlay's window was extended; the file
-    // then ends there, not at a whole drum.
+    // Only a file that ended before the last overlay's span was extended; the file then
+    // ends there, not at a whole drum.
     if( (fileWords >= 0) && (fileWords < end) )
     {
         printf("Drum file %s was %ld words long; the overlays past its end extended it with zeros.\n",

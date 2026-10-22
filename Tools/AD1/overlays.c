@@ -18,12 +18,14 @@
 
 #define OVLHEADER       "%%am1 overlay file%%"
 #define OSYMHEADER      "%%am1 overlay symtab file%%"
-#define OVLVERSION      "V1"
+#define OVLV1           "V1"        // a .ovl from before am1 v5.2
+#define OVLV2           "V2"        // its overlay lines add drum and span, which ad1 does not read
+#define OSYMVERSION     "V1"
 
 #define ENTRYWORDS      4           // words in an overlay's table entry
 #define ENTRYRESIDENT   3           // the entry word holding its window's resident-word address
 #define PERSISTENT      0400000     // set in that word for a persistent overlay
-#define ADDRMASK        0177777
+#define ADDRMASK        0177777     // also drops 0200000, set for an overlay of a twopass window
 
 typedef struct {
     char *nameP;
@@ -823,8 +825,8 @@ int n;
     }
 }
 
-// The .ovl: its header, the stamp line, and an "overlay" line for each overlay, in source order.
-// The lines of words between them are the loader's, not ours.
+// The .ovl, V1 or V2: its header, the stamp line, and an "overlay" line for each overlay, in source
+// order. The lines of words between them, and an overlay line's drum place, are the loader's, not ours.
 static bool
 readOvl(FileOverlaysP foP, FILE *fP)
 {
@@ -837,7 +839,7 @@ char ovName[256];
 char winName[256];
 
     if( !fgets(line, sizeof(line), fP) || (dropNewline(line), strcmp(line, OVLHEADER)) ||
-        !fgets(line, sizeof(line), fP) || (dropNewline(line), strcmp(line, OVLVERSION)) ||
+        !fgets(line, sizeof(line), fP) || (dropNewline(line), (strcmp(line, OVLV1) && strcmp(line, OVLV2))) ||
         !fgets(line, sizeof(line), fP) ||
         (sscanf(line, "%*s stamp %o table %o", &stamp, &table) != 2) )
     {
@@ -912,7 +914,7 @@ char name[256];
 char ovName[256];
 
     if( !fgets(line, sizeof(line), fP) || (dropNewline(line), strcmp(line, OSYMHEADER)) ||
-        !fgets(line, sizeof(line), fP) || (dropNewline(line), strcmp(line, OVLVERSION)) ||
+        !fgets(line, sizeof(line), fP) || (dropNewline(line), strcmp(line, OSYMVERSION)) ||
         !fgets(line, sizeof(line), fP) )
     {
         return( false );

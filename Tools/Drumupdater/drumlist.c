@@ -8,8 +8,8 @@
  * file.ovl - name each overlay of the file on its track, and say whether the drum
  *            holds it, as ovlload -c would
  *
- * The .ovl reader and the recognizers of other tools' data are ovlload's,
- * ../Ovlload/ovlfile.c, compiled in.
+ * The .ovl reader and the recognizers of other tools' data are shared with ovlload,
+ * ../UtilLibs/ovlfile.c, compiled in.
  *
  * Original author: Bill Ezell (wje), pdp1@quackers.net
  *
@@ -19,6 +19,7 @@
  * 14/01/2026 wje - fix usage check
  * 22/09/2026 wje - add ppporch's adventure check
  * 13/10/2026 Claude - Z-machine stories, and the overlays of .ovl files
+ * 22/10/2026 Claude - an overlay's drum range is its span; a track's overlays in drum address order
  *
  */
 #include <stdlib.h>
@@ -221,7 +222,8 @@ OvlFile *filesP;
     exit(0);
 }
 
-// Print a line for each overlay of the .ovl files on a track: where it is, and what
+// Print a line for each overlay of the .ovl files on a track, in drum address order,
+// ties in the order of the files and then of each file's overlays: where it is, and what
 // ovlload -c would find for it.  *listedP says whether there was one.
 static void
 listOverlays(int trackNo, OvlFile *filesP, char **namesP, int fileCount, bool *listedP)
@@ -229,42 +231,80 @@ listOverlays(int trackNo, OvlFile *filesP, char **namesP, int fileCount, bool *l
 int f;
 int i;
 int addr;
+int lastF;
+int lastI;
+int nextF;
+int nextI;
 int32_t got;
 int32_t want;
 const char *stateP;
 Overlay *ovP;
+Overlay *nextP;
+Overlay *lastP;
 
     *listedP = false;
-    for( f = 0; f < fileCount; ++f )
+    lastP = NULL;
+    lastF = -1;
+    lastI = -1;
+
+    // Each pass prints the first overlay after the last one printed, in that order.
+    for( ;; )
     {
-        for( i = 0; i < filesP[f].count; ++i )
+        nextP = NULL;
+        nextF = -1;
+        nextI = -1;
+        for( f = 0; f < fileCount; ++f )
         {
-            ovP = &filesP[f].overlaysP[i];
-            if( ovP->track != trackNo )
+            for( i = 0; i < filesP[f].count; ++i )
             {
-                continue;
+                ovP = &filesP[f].overlaysP[i];
+                if( ovP->track != trackNo )
+                {
+                    continue;
+                }
+
+                if( lastP && ((ovP->drum < lastP->drum) ||
+                    ((ovP->drum == lastP->drum) && ((f < lastF) || ((f == lastF) && (i <= lastI))))) )
+                {
+                    continue;
+                }
+
+                if( !nextP || (ovP->drum < nextP->drum) )
+                {
+                    nextP = ovP;
+                    nextF = f;
+                    nextI = i;
+                }
             }
-
-            switch( ovlCompare(ovP, drum, &addr, &got, &want) )
-            {
-            case OVL_CURRENT:
-                stateP = "current";
-                break;
-
-            case OVL_DIFFERS:
-                stateP = "differs";
-                break;
-
-            default:
-                stateP = "stamp differs";
-                break;
-            }
-
-            printf("Track %d: overlay %s of %s, drum %04o-%04o, window %s in bank %o, %o words, %s, %s\n",
-                trackNo, ovP->name, namesP[f], ovP->first, ovP->last, ovP->window, ovP->bank, ovP->length,
-                (ovP->persistent) ? "persistent" : "read-only", stateP);
-            *listedP = true;
         }
+
+        if( !nextP )
+        {
+            break;
+        }
+
+        switch( ovlCompare(nextP, drum, &addr, &got, &want) )
+        {
+        case OVL_CURRENT:
+            stateP = "current";
+            break;
+
+        case OVL_DIFFERS:
+            stateP = "differs";
+            break;
+
+        default:
+            stateP = "stamp differs";
+            break;
+        }
+
+        printf("Track %d: overlay %s of %s, drum %04o-%04o, window %s in bank %o, %o words, %s, %s\n",
+            trackNo, nextP->name, namesP[nextF], nextP->drum, nextP->drum + nextP->span - 1, nextP->window,
+            nextP->bank, nextP->length, (nextP->persistent) ? "persistent" : "read-only", stateP);
+        *listedP = true;
+        lastP = nextP;
+        lastF = nextF;
+        lastI = nextI;
     }
 }
 

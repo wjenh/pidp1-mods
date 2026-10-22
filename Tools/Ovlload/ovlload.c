@@ -6,12 +6,14 @@
  * It contains a heading whose stamp line gives the build stamp and the
  * full address of the program's overlay table,
  * then for each overlay a line giving its window, bank, first and last address,
- * drum track, length and mode, followed by its code words,
+ * drum track, drum address and span, length and mode, followed by its code words,
  * the two header words, the overlay stamp and the overlay's number.
  * All numbers are octal.
  *
- * Each overlay goes on its track at drum addresses equal to its window's core
- * addresses and the rest of the window's range padded with zeros.
+ * Each overlay goes on its track at its drum address, and the rest of its span is padded
+ * with zeros. Its span is the words of the track that am1 gave it. A V1 file, from an am1
+ * before v5.2, has neither field: its overlays go at drum addresses equal to their window's
+ * core addresses, each span the window's range.
  * The overlay manager in the program loads it with one transfer.
  * Nothing else on the drum is touched.
  *
@@ -43,6 +45,7 @@
  * 21-Oct-2026 Claude the drum writer moved to ovlfile.c for ad1 and fastload; says when it
  *   halted a running pdp-1
  * 21-Oct-2026 Claude a failed -m load leaves the memory file as it was
+ * 22-Oct-2026 Claude each overlay at its drum address, over its span, from a V2 .ovl
  * 21-Oct-2026 wje cleanup
  */
 
@@ -466,7 +469,7 @@ Ad1Link link;
     exit(EXIT_DONE);
 }
 
-// Compare the drum with the .ovl: a read-only overlay word for word over its window,
+// Compare the drum with the .ovl: a read-only overlay word for word over its span,
 // the padding included; a persistent one by its header only, since the overlay manager
 // writes its words back.  Returns EXIT_DONE if all agree, else EXIT_DIFFERS.
 static int
@@ -492,7 +495,7 @@ Overlay *ovP;
         else
         {
             printf("overlay %s is current: track %o, drum %04o-%04o, %s\n", ovP->name, ovP->track,
-                ovP->first, (ovP->persistent) ? (ovP->first + 1) : ovP->last,
+                ovP->drum, (ovP->persistent) ? (ovP->drum + 1) : (ovP->drum + ovP->span - 1),
                 (ovP->persistent) ? "rw, header only" : "ro");
         }
     }
@@ -542,7 +545,7 @@ size_t base;
 
 // Punch the tape for -p to pathP.
 // It punches the leader and label, am1's loader in RIM format, the drum writer, the survey's track bits,
-// each overlay's window and parameters, the end, and unless drumOnly the program's blocks from rootTapeP.
+// each overlay's span and parameters, the end, and unless drumOnly the program's blocks from rootTapeP.
 // Returns EXIT_DONE, or EXIT_ERROR after saying why.
 static int
 punchTape(const char *pathP, const char *rootTapeP, bool drumOnly)
@@ -572,7 +575,7 @@ Overlay *ovP;
     {
         if( (ovl.overlaysP[i].bank == 0) && (ovl.overlaysP[i].last >= LDR_START_ADDR) )
         {
-            fprintf(stderr, "ovlload: the window %s, %04o-%04o, owrwrites the loader at %04o.  Nothing was"
+            fprintf(stderr, "ovlload: the window %s, %04o-%04o, overwrites the loader at %04o.  Nothing was"
                 " punched.\n", ovl.overlaysP[i].window, ovl.overlaysP[i].first, ovl.overlaysP[i].last,
                 LDR_START_ADDR);
             return(EXIT_ERROR);
@@ -643,14 +646,15 @@ Overlay *ovP;
     punchWord(TAPE_START | (uint32_t)(origin + OVW_SURVEY));
     punchBlank(2);
 
-    // Each overlay's window range, its words then zeros as on the drum, and its parameters,
-    // the checksum the sum the writer makes with add.
+    // Each overlay's span, its words then zeros as on the drum, punched at its window's first
+    // core address, and its parameters: the drum address and the span as the count, and the
+    // checksum the sum the writer makes with add.
     printf("Tape %s: the writer is at %04lo-%04lo, the %s loader.\n", pathP, origin, origin + OVW_SIZE - 1,
         (eem) ? "eem" : "nop");
     for( i = 0; i < ovl.count; ++i )
     {
         ovP = &ovl.overlaysP[i];
-        span = (ovP->last - ovP->first) + 1;
+        span = ovP->span;
         memset(words, 0, sizeof(words));
         memcpy(words, ovP->wordsP, ovP->length * sizeof(int32_t));
         sum = 0;
@@ -661,7 +665,7 @@ Overlay *ovP;
 
         params[0] = (uint32_t)((ovP->bank << 12) | ovP->first);
         params[1] = (uint32_t)ovP->track;
-        params[2] = (uint32_t)ovP->first;
+        params[2] = (uint32_t)ovP->drum;
         params[3] = (uint32_t)span;
         params[4] = (uint32_t)sum;
         punchBlock(params[0], words, (uint32_t)span);
@@ -669,7 +673,7 @@ Overlay *ovP;
         punchWord(TAPE_START | (uint32_t)(origin + OVW_WRITE));
         punchBlank(2);
         printf("overlay %s: track %o, drum %04o-%04o, %o words, %s, checksum %06o\n", ovP->name, ovP->track,
-            ovP->first, ovP->last, ovP->length, (ovP->persistent) ? "rw" : "ro", (unsigned int)sum);
+            ovP->drum, ovP->drum + span - 1, ovP->length, (ovP->persistent) ? "rw" : "ro", (unsigned int)sum);
     }
 
     punchWord(TAPE_START | (uint32_t)(origin + ((drumOnly) ? OVW_END : OVW_END_RUN)));

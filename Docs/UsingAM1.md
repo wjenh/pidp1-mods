@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.00 and covers up through am1 version 5.1; it will be updated as needed.\
-Edit date 21-Oct-2026
-Add %%ovload.
+This is version 3.1 and covers up through am1 version 5.2; it will be updated as needed.\
+Edit date 22-Oct-2026
+Update for new twopass support
 
 ## What is **am1**?
 
@@ -1481,8 +1481,10 @@ bank 0
         start go
 ```
 
-- *%%drumreserve list* names drum tracks, 0 to 37, that overlays may not use.
-- *%%window name, first, last* declares a range of the current bank that no root word may use.
+- *%%drumreserve list* names drum tracks, 0 to 37 octal, that overlays may not use.
+- *%%window name, first, last* declares memory in the current bank for the overlays it owns to reside.
+  *%%window name, first, last, twopass* makes the swapping of its persistent overlays a write
+  and then a read, not one swap.
 - *%%overlay name, window* and *%%endoverlay* bracket an overlay, assembled at its window's first
   address plus 2 in the window's bank.
   *export* inside it names the symbols the root can reach, entries or data.

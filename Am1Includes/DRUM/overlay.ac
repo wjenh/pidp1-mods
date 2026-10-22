@@ -15,16 +15,20 @@
 //
 // Defines ovEnter, ovFetch, ovInit, the in-an-overlay flag ovActive, the retry count
 // ovRetries, the error hook ovErrHook, and the error halts ovErrNest,
-// ovErrStamp and ovErrDrum, each stopping with its OV_ERR_ number in AC.
+// ovErrStamp, ovErrDrum and ovErrSwap, each stopping with its OV_ERR_ number in AC.
 // A program that must not halt sets ovErrHook to a full address and on an error
 // the manager jumps there instead of halting.
 // See Docs/UsingOverlays.md, "When the manager halts".
 //
-// Every persistent eviction is made as one transfer, a swap, which reads the incoming
-// overlay as it writes the outgoing one using the drum's simultaneous read/write capability.
-//
-// A program that defines OV_TWO_PASS before including this file instead uses 2 separate drum accesss.
-// However, there is really no reason to do this, it just takes longer to do a swap.
+// A persistent overlay is written back when it is evicted, in one of two ways, chosen
+// per window by its %%window line:
+// - a swap, the default: one transfer reads the incoming overlay as it writes the
+//   outgoing one, using the drum's simultaneous read and write;
+// - in a window declared twopass: the outgoing overlay is written back in a transfer of
+//   its own, then the incoming one is read.  Slower, but each transfer is made again
+//   after a halt, so a stop mid-eviction loses nothing.
+// The outgoing overlay's table entry says which, by OV_TWOPASS.
+// OV_TWO_PASS, which once chose two passes for a whole program, is an error.
 //
 // 12-Oct-2026 Claude: written, with am1's drum overlays.
 // 12-Oct-2026 Claude: the error hook, ovErrHook.
@@ -32,9 +36,14 @@
 // 19-Oct-2026 wje rework to deal with the Type 340 display dra overlap.
 // 19-Oct-2026 wje single pass, i.e. simultaneous read/write, now the default.
 // 21-Oct-2026 Claude: ovFetch, for am1's %%ovload.
+// 22-Oct-2026 Claude: both evictions, chosen per window by twopass; OV_TWO_PASS is an error.
 
 #ifndef OVERLAY_AC
 #define OVERLAY_AC
+
+#ifdef OV_TWO_PASS
+#error OV_TWO_PASS is no longer used: a window's persistent overlays are written back in two passes when its window is declared twopass, the fourth operand of its window directive
+#endif
 
 // Transparently handle the drum/type340 dra conflict.
 #define _OVL_dia iot 61
@@ -54,9 +63,7 @@
         ovXfer, ovXferStart, ovXferIdle, ovXferBusy, ovXferX, ovXferBad, \
         ovXDia, ovXDwc, ovXDcl, ovStatus, ovTries, \
         ovFailNest, ovFailStamp, ovFailDrum, ovErrTo, ovErrToX
-#ifndef OV_TWO_PASS
-    addlocal ovFailSwap, ovSwapN
-#endif
+    addlocal ovFailSwap, ovSwapN, ovWriteBack
 
 // The %%ovcall entry: makes the overlay resident if it is not, then calls the
 // entry point.
@@ -165,12 +172,15 @@ ovEvict,
     lac i ovPtr
     sma                     // skip if persistent
     jmp ovLoad
-#ifndef OV_TWO_PASS
+    ral 1s                  // OV_TWOPASS, bit 1, to the sign
+    spa                     // skip unless its window is twopass
+    jmp ovWriteBack
+
     // The swap: one transfer reads the incoming overlay into the window as it
-    // writes the outgoing one to its track.  Every overlay of a window is at
-    // the same drum address, and ovXDcl, the outgoing one's dcl word, is the
-    // window's, as ovDcl is.  The count is the longer length, a whole track,
-    // 0, the longest: each length less one, 07777 for a whole track, the
+    // writes the outgoing one to its track.  am1 puts every overlay of a swap
+    // window at the same drum address, and ovXDcl, the outgoing one's dcl word,
+    // is the window's, as ovDcl is.  The count is the longer length, a whole
+    // track, 0, the longest: each length less one, 07777 for a whole track, the
     // larger kept, and one added back.
     lac ovXDwc
     and [OV_DWC_LENGTH]
@@ -199,9 +209,12 @@ ovEvict,
     dzm i ovRes
     jsp ovXfer
     jmp ovLoaded
-#else
+
+    // A twopass window's: the outgoing overlay written back alone, at its own
+    // drum address, its words still whole in core and the window's word still
+    // naming it, so a failed write is made again as a read is.
+ovWriteBack,
     jsp ovXfer
-#endif
 
     // Read it.  The window holds nothing whole until the header is checked, so
     // a halt from here on leaves none resident.
@@ -248,9 +261,9 @@ ovFetched,
     jmp i ovRtn
 
 // One drum transfer of ovXDia, ovXDwc and ovXDcl.
-// It is made when the drum is idle, it wll be waited for.
+// It is made when the drum is idle, it will be waited for.
 // One that ends in error is made again counting each in ovRetries, OV_TRIES in all before ovErrDrum.
-// A swap that ends in an error when OV_TWO_PASS is defined goes to ovFailSwap instead.
+// A swap that ends in error goes to ovFailSwap instead, and is never made again.
 // AC and IO are not preserved.
 // Called via jsp, from this bank only.
 ovXfer,
@@ -284,13 +297,11 @@ ovXferBusy,
 ovXferX,
     jmp .
 ovXferBad,
-#ifndef OV_TWO_PASS
     // A swap is the one transfer that both reads and writes.
     lac ovXDia
     and ovXDwc
     spa                     // skip unless a swap
     jmp ovFailSwap
-#endif
     isp ovTries             // skip after the last try
     jmp .+2
     jmp ovFailDrum
@@ -358,7 +369,6 @@ ovErrDrum,
     law OV_ERR_DRUM
     hlt
     jmp ovXferStart
-#ifndef OV_TWO_PASS
 // A swap ended in error, after a halt part-way: the outgoing overlay's words
 // are lost, its track holding new words up to where the transfer stopped and
 // those of its last eviction after.  Continue reads the incoming overlay alone,
@@ -370,7 +380,6 @@ ovErrSwap,
     law OV_ERR_SWAP
     hlt
     jmp ovLoad
-#endif
 
 // The in-an-overlay flag, and every transfer made again since ovInit.
 ovActive, 0
@@ -397,9 +406,7 @@ ovXDwc, 0
 ovXDcl, 0
 ovStatus, 0
 ovTries, 0
-#ifndef OV_TWO_PASS
 ovSwapN, 0
-#endif
     endloc
 
 #undef _OVL_dia

@@ -22,12 +22,13 @@
 #include "y.tab.h"
 
 #define OVLFILELABEL    "%%am1 overlay file%%"
-#define OVLFILEVERSION  "V1"
+#define OVLFILEVERSION  "V2"
 #define OSYMFILELABEL   "%%am1 overlay symtab file%%"
 #define OSYMFILEVERSION "V1"
 
 #define OVL_DRUMREAD    0400000     // the dia word's read bit, drmrd; OV_DIA_READ in overlay.ah
 #define OVL_PERSISTENT  0400000     // set in an entry's resident-word address; OV_PERSIST
+#define OVL_TWOPASS     0200000     // and for an overlay of a twopass window; OV_TWOPASS
 #define OVL_WORDSPERLINE 8          // words on a line of the .ovl file
 
 extern int lineno;
@@ -53,6 +54,10 @@ static void imageAscii(PNodeP nodeP, char *strP);
 static int imageConstants(PNodeP nodeP, int addr, SymNodeP symP);
 static void imageVars(PNodeListP listP);
 static void layOut(void);
+static bool isSwapWindow(WindowP winP);
+static int windowOverlays(WindowP winP);
+static bool spanFree(int track, int drum, int span, WindowP winP);
+static int endsOn(int *triesP, int track);
 static void makeTable(void);
 static Word stampOf(void);
 static Word hashWord(Word hash, Word word);
@@ -377,55 +382,292 @@ PNodeP nodeP;
     }
 }
 
-// Give each overlay a drum track: its window's whole range goes on the track at
-// drum addresses equal to the window's core addresses, so overlays whose windows
-// overlap in address, in any bank, need different tracks.  First fit, in source
-// order, skipping the tracks %%drumreserve names.
+// Place every overlay on the drum: its track, its drum address and its span, the
+// words of the track that are its own (DESIGN-AM1-OVERLAYS.md section 6).  First
+// fit, so the same source gives the same layout, never on a track %%drumreserve
+// names and never across a track's end.
+// 1. Each swap window, in source order: its overlays at one drum address D, each on
+//    a track of its own, since a swap reads one and writes another at one address.
+//    A persistent overlay's span is the window's longest overlay's length, the
+//    swap's count; a read-only one's is its own length.  D is the lowest of 0 and
+//    the ends of the spans already placed at which all of them fit.
+// 2. Every other overlay, longest first, ties in source order: its span its own
+//    length, at the lowest free drum address on the lowest track that has room.
 static void
 layOut(void)
 {
+int i;
+int j;
+int n;
+int tries;
 int track;
-bool clash;
+int drum;
+int longest;
+int *triesP;
+bool fits;
+WindowP winP;
 OverlayContextP ovP;
-OverlayContextP placedP;
+OverlayContextP failedP;
+OverlayContextP *orderPP;
 
-    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    for( n = 0, ovP = overlaysP; ovP; ovP = ovP->nextP )
     {
-        for( track = 0; track < DRUMTRACKS; ++track )
+        ovP->track = -1;
+        ++n;
+    }
+
+    // 0 and the end of each span: every drum address a placement tries.
+    if( !(triesP = (int *)calloc(n + 1, sizeof(int))) ||
+        !(orderPP = (OverlayContextP *)calloc(n, sizeof(OverlayContextP))) )
+    {
+        verror("out of memory laying out the overlays");
+    }
+
+    for( winP = windowsP; winP; winP = winP->nextP )
+    {
+        if( !isSwapWindow(winP) )
         {
-            if( drumReserved & (UINT32_C(1) << track) )
+            continue;
+        }
+
+        for( longest = 0, ovP = overlaysP; ovP; ovP = ovP->nextP )
+        {
+            if( (ovP->windowP == winP) && (ovP->length > longest) )
             {
-                continue;
+                longest = ovP->length;
             }
+        }
 
-            clash = false;
-
-            for( placedP = overlaysP; placedP != ovP; placedP = placedP->nextP )
+        for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+        {
+            if( ovP->windowP == winP )
             {
-                if( (placedP->track == track) &&
-                    (placedP->windowP->first <= ovP->windowP->last) &&
-                    (ovP->windowP->first <= placedP->windowP->last) )
+                ovP->span = (ovP->persistent)?longest:ovP->length;
+            }
+        }
+
+        tries = endsOn(triesP, -1);
+        fits = false;
+        failedP = NILP;
+
+        for( i = 0; (i < tries) && !fits; ++i )
+        {
+            drum = triesP[i];
+            fits = true;
+
+            for( ovP = overlaysP; ovP && fits; ovP = ovP->nextP )
+            {
+                if( ovP->windowP != winP )
                 {
-                    clash = true;
-                    break;
+                    continue;
+                }
+
+                // spanFree() keeps a track the window holds at this D from another of its overlays.
+                for( track = 0; (track < DRUMTRACKS) && !spanFree(track, drum, ovP->span, winP); ++track )
+                {
+                    ;
+                }
+
+                if( track < DRUMTRACKS )
+                {
+                    ovP->track = track;
+                    ovP->drum = drum;
+                }
+                else
+                {
+                    fits = false;
+                    failedP = ovP;
                 }
             }
 
-            if( !clash )
+            if( !fits )
             {
+                // Not at this D, so none of the window's overlays is placed.
+                for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+                {
+                    if( ovP->windowP == winP )
+                    {
+                        ovP->track = -1;
+                    }
+                }
+            }
+        }
+
+        if( !fits )
+        {
+            verrorlf(failedP->lineNo, failedP->fileP,
+                "overlay %s has nowhere on the drum: window %s's %d overlays share one drum address, each on a"
+                " track of its own, and at no drum address do they find room, its span of %o words among them,"
+                " on tracks %%%%drumreserve leaves free",
+                failedP->nameP, winP->nameP, windowOverlays(winP), failedP->span);
+        }
+    }
+
+    // Longest first, ties in source order: an insertion sort keeps them.
+    for( n = 0, ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( isSwapWindow(ovP->windowP) )
+        {
+            continue;
+        }
+
+        ovP->span = ovP->length;
+
+        for( i = n++; (i > 0) && (orderPP[i - 1]->length < ovP->length); --i )
+        {
+            orderPP[i] = orderPP[i - 1];
+        }
+
+        orderPP[i] = ovP;
+    }
+
+    for( i = 0; i < n; ++i )
+    {
+        ovP = orderPP[i];
+
+        // A free run begins at 0 or where a span ends, so the first of those that
+        // fits is the lowest free drum address.
+        for( drum = -1, track = 0; track < DRUMTRACKS; ++track )
+        {
+            tries = endsOn(triesP, track);
+
+            for( j = 0; (j < tries) && !spanFree(track, triesP[j], ovP->span, NILP); ++j )
+            {
+                ;
+            }
+
+            if( j < tries )
+            {
+                drum = triesP[j];
                 break;
             }
         }
 
-        if( track >= DRUMTRACKS )
+        if( drum < 0 )
         {
             verrorlf(ovP->lineNo, ovP->fileP,
-                "overlay %s has no drum track: every track %%%%drumreserve leaves free already holds an overlay at drum addresses %04o-%04o",
-                ovP->nameP, ovP->windowP->first, ovP->windowP->last);
+                "overlay %s has nowhere on the drum: no track %%%%drumreserve leaves free has its span of %o"
+                " words free",
+                ovP->nameP, ovP->span);
         }
 
         ovP->track = track;
+        ovP->drum = drum;
     }
+
+    free(triesP);
+    free(orderPP);
+}
+
+// Whether a window's overlays are swapped: it has a persistent overlay and is not twopass.
+static bool
+isSwapWindow(WindowP winP)
+{
+OverlayContextP ovP;
+
+    if( winP->twopass )
+    {
+        return(false);
+    }
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( (ovP->windowP == winP) && ovP->persistent )
+        {
+            return(true);
+        }
+    }
+
+    return(false);
+}
+
+// How many overlays a window has.
+static int
+windowOverlays(WindowP winP)
+{
+int n;
+OverlayContextP ovP;
+
+    for( n = 0, ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( ovP->windowP == winP )
+        {
+            ++n;
+        }
+    }
+
+    return(n);
+}
+
+// Whether span words from drum address drum are free on a track: inside the track, on
+// one %%drumreserve leaves free, and clear of every span placed.  With winP, a track
+// that holds one of that window's overlays is not free either.
+static bool
+spanFree(int track, int drum, int span, WindowP winP)
+{
+OverlayContextP ovP;
+
+    if( (drumReserved & (UINT32_C(1) << track)) || ((drum + span) > BANKSIZE) )
+    {
+        return(false);
+    }
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( ovP->track != track )
+        {
+            continue;
+        }
+
+        if( (winP && (ovP->windowP == winP)) ||
+            ((ovP->drum < (drum + span)) && (drum < (ovP->drum + ovP->span))) )
+        {
+            return(false);
+        }
+    }
+
+    return(true);
+}
+
+// 0 and the end of every span placed on a track, or on any track when track is -1,
+// ascending and each once, into triesP, which has room for one more than there are
+// overlays.  Returns how many.
+static int
+endsOn(int *triesP, int track)
+{
+int i;
+int n;
+int end;
+OverlayContextP ovP;
+
+    triesP[0] = 0;
+    n = 1;
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( (ovP->track < 0) || ((track >= 0) && (ovP->track != track)) )
+        {
+            continue;
+        }
+
+        end = ovP->drum + ovP->span;
+
+        for( i = n; triesP[i - 1] > end; --i )
+        {
+            ;
+        }
+
+        if( triesP[i - 1] == end )
+        {
+            continue;
+        }
+
+        memmove(&triesP[i + 1], &triesP[i], (n - i) * sizeof(int));
+        triesP[i] = end;
+        ++n;
+    }
+
+    return(n);
 }
 
 // The table's words but the stamp, which is worked out over them: one word per
@@ -448,17 +690,18 @@ OverlayContextP ovP;
 
     for( ovP = overlaysP; ovP; ovP = ovP->nextP )
     {
-        // OV_ENT_DIA: a read from the overlay's track, at the window's first
-        // address on the drum.
-        ovTableWordsP[i++] = OVL_DRUMREAD | (ovP->track << 12) | ovP->windowP->first;
+        // OV_ENT_DIA: a read from the overlay's track, at its drum address.
+        ovTableWordsP[i++] = OVL_DRUMREAD | (ovP->track << 12) | ovP->drum;
         // OV_ENT_DWC: the overlay's length, header included; a whole-bank
         // window's 4096 is 0, a whole track, as dwc takes it.
         ovTableWordsP[i++] = ovP->length & ADDRMASK;
         // OV_ENT_DCL: the window's first core address.
         ovTableWordsP[i++] = (ovP->windowP->bank << 12) | ovP->windowP->first;
-        // OV_ENT_RES: the full address of the window's resident word, and the
-        // persistent bit.
-        ovTableWordsP[i++] = (tableAddr + 1 + ovP->windowP->index) | ((ovP->persistent)?OVL_PERSISTENT:0);
+        // OV_ENT_RES: the full address of the window's resident word, the
+        // persistent bit, and the two-pass bit, from which the manager chooses how
+        // to write the overlay back.
+        ovTableWordsP[i++] = (tableAddr + 1 + ovP->windowP->index) | ((ovP->persistent)?OVL_PERSISTENT:0) |
+            ((ovP->windowP->twopass)?OVL_TWOPASS:0);
     }
 }
 
@@ -512,9 +755,9 @@ OverlayContextP ovP;
     for( ovP = overlaysP; ovP; ovP = ovP->nextP )
     {
         fprintf(outfP, "%soverlay %s, number %d: track %o, drum %04o-%04o, window %s in bank %d, %o words, %s\n",
-            prefixP, ovP->nameP, ovP->number, ovP->track, ovP->windowP->first, ovP->windowP->last,
+            prefixP, ovP->nameP, ovP->number, ovP->track, ovP->drum, ovP->drum + ovP->span - 1,
             ovP->windowP->nameP, ovP->windowP->bank, ovP->length,
-            (ovP->persistent)?"persistent":"read-only");
+            (!ovP->persistent)?"read-only":((ovP->windowP->twopass)?"persistent, two-pass":"persistent"));
     }
 }
 
@@ -558,8 +801,8 @@ static const char *entryNamesP[OVENTRYWORDS] = { "dia, read", "dwc, length", "dc
 // Write the .ovl file: a heading, whose stamp line gives the table's full address
 // so that a loader can find the stamp on the tape, then each overlay's line and
 // its words, the header included, in octal, OVL_WORDSPERLINE to a line.  The
-// loader puts each on its track and pads the window's rest with zeros.  sourceP
-// is the source's name, without its directory.
+// loader puts each on its track at its drum address and pads the rest of its span
+// with zeros.  sourceP is the source's name, without its directory.
 void
 ovlWriteOvl(FILE *outfP, const char *sourceP)
 {
@@ -573,9 +816,9 @@ OverlayContextP ovP;
 
     for( ovP = overlaysP; ovP; ovP = ovP->nextP )
     {
-        fprintf(outfP, "overlay %s window %s bank %o first %o last %o track %o length %o mode %s\n",
+        fprintf(outfP, "overlay %s window %s bank %o first %o last %o track %o drum %o span %o length %o mode %s\n",
             ovP->nameP, ovP->windowP->nameP, ovP->windowP->bank, ovP->windowP->first,
-            ovP->windowP->last, ovP->track, ovP->length, (ovP->persistent)?"rw":"ro");
+            ovP->windowP->last, ovP->track, ovP->drum, ovP->span, ovP->length, (ovP->persistent)?"rw":"ro");
 
         for( i = 0; i < ovP->length; ++i )
         {

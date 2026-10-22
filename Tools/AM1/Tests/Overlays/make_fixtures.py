@@ -1,4 +1,4 @@
-"""make_fixtures.py -- writes the F1 to F11 fixtures of the overlay suite, run by run_tests.sh.
+"""make_fixtures.py -- writes the F1 to F12 fixtures of the overlay suite, run by run_tests.sh.
 
 Every F1 and F8 fixture is f1_valid.am1 with one change, and every F2 fixture
 f2_valid.am1 with one, so that each fails, warns or passes for the one reason
@@ -23,6 +23,10 @@ another overlay's pin on a root word, and f11_nopin, without it, is the control.
 f11_shrink deletes a word in an overlay, its files checked against
 hand/f11_shrink.am1, the deletion made by hand; f11_full's unroll does not
 fit its window, and f11_roomy's, with a window two words longer, does.
+F12 is the packed drum layout and the twopass window (am1 v5.2): the design's
+example, a swap window and the drum address it shares, a twopass window, a
+track's end, %%drumreserve and the errors and warning, each place worked out
+by hand above F12.
 
 Run it from anywhere: it writes beside itself.  The fixtures are regenerated,
 not edited: change the base or a variant here and run it again.
@@ -370,12 +374,12 @@ F3_LINES = [
     "refsub||",
 ]
 
-# F4: the drum layout.  First fit in source order, skipping reserved tracks;
-# overlays whose windows share drum addresses, in any bank, need different
-# tracks, and windows with disjoint ranges share them.  Reserved: 0-20 and 22.
-# a (w1) takes 21; b (w1) finds 21 taken by a and 22 reserved, so 23; c (w2,
-# disjoint from w1) shares 21; d (w3, bank 3, w1's range) finds 21 and 23
-# taken, 22 reserved, so 24.  Each overlay is its header and one word, 3 words.
+# F4: the drum layout, packed (am1 v5.2).  Read-only overlays go longest first,
+# ties in source order, each at the lowest free drum address on the lowest track
+# with room, whatever its window's core addresses.  Reserved: 0-20 and 22.  Each
+# overlay is its header and one word, 3 words, so a, b, c and d, in source order,
+# all take track 21, at drum 0000, 0003, 0006 and 0011; before v5.2, a window's
+# range on a track, they took tracks 21, 23, 21 and 24.
 F4 = """\
 f4_layout: two windows at one range in two banks, a disjoint window, reserved tracks
 %%drumreserve 0-17, 20
@@ -405,11 +409,11 @@ go,     hlt
 """
 
 F4_LINES = [
-    "outgrep|-S|^overlay a, number 1: track 21, drum 2000-2777, window w1 in bank 2, 3 words, read-only$",
-    "outgrep|-S|^overlay b, number 2: track 23, drum 2000-2777, window w1 in bank 2, 3 words, read-only$",
-    "outgrep|-S|^overlay c, number 3: track 21, drum 3000-3077, window w2 in bank 2, 3 words, read-only$",
-    "outgrep|-S|^overlay d, number 4: track 24, drum 2000-2777, window w3 in bank 3, 3 words, read-only$",
-    "lstgrep|bin -l|^// overlay d, number 4: track 24, drum 2000-2777, window w3 in bank 3",
+    "outgrep|-S|^overlay a, number 1: track 21, drum 0000-0002, window w1 in bank 2, 3 words, read-only$",
+    "outgrep|-S|^overlay b, number 2: track 21, drum 0003-0005, window w1 in bank 2, 3 words, read-only$",
+    "outgrep|-S|^overlay c, number 3: track 21, drum 0006-0010, window w2 in bank 2, 3 words, read-only$",
+    "outgrep|-S|^overlay d, number 4: track 21, drum 0011-0013, window w3 in bank 3, 3 words, read-only$",
+    "lstgrep|bin -l|^// overlay d, number 4: track 21, drum 0011-0013, window w3 in bank 3",
     # Banks 2 and 3 hold windows and no root word: "none", not -1 as an octal
     # 037777777777, which v3.5 printed; bank 0's line is the control.
     "outgrep|-S|^Bank 2, none$",
@@ -419,19 +423,24 @@ F4_LINES = [
 
 
 def many_overlays(name, count):
-    """count overlays of one window and no reserved track: 32 fit, the 33rd does not."""
-    text = "%s: %d overlays of one window, no track reserved\nbank 2\n%%%%window w1, 2000, 2777\n" % (name, count)
+    """count overlays of one window, each 0200 words, every track but 37 reserved: 32
+    fill track 37 to its last word, 07777, and the 33rd has no room."""
+    text = ("%s: %d overlays of 0200 words, one track free\n%%%%drumreserve 0-36\nbank 2\n"
+            "%%%%window w1, 2000, 2777\n" % (name, count))
     for n in range(1, count + 1):
-        text += "%%%%overlay o%d, w1\no%dGo,   hlt\n%%%%endoverlay\n" % (n, n)
+        text += "%%%%overlay o%d, w1\no%dGo,   hlt\n        table 175\n%%%%endoverlay\n" % (n, n)
     text += "bank 0\n100/\ngo,     hlt\n%%ovtable\n        start go\n"
     return text
 
 
 F4_MANY = [
-    ("f4_fit", 32, ["outgrep|-S|^overlay o32, number 32: track 37, drum 2000-2777"]),
+    # o32 is the last: 31 * 0200 = 07600 to 07777.
+    ("f4_fit", 32, ["outgrep|-S|^overlay o1, number 1: track 37, drum 0000-0177,",
+                    "outgrep|-S|^overlay o32, number 32: track 37, drum 7600-7777,"]),
     # -O too: the error comes after the optimizer's report is closed
-    ("f4_full", 33, ["fail||overlay o33 has no drum track",
-                     "fail|-O|overlay o33 has no drum track"]),
+    ("f4_full", 33, ["fail||overlay o33 has nowhere on the drum: no track %%drumreserve leaves free has its"
+                     " span of 200 words free",
+                     "fail|-O|overlay o33 has nowhere on the drum"]),
 ]
 
 # F5 and F6: the table, the headers, the stamp and the files, worked out by hand
@@ -479,11 +488,16 @@ F5_OVERLAYS = [
     ("three", 3, ("wb", 3, 0o400, 0o417), False, [0o7, 0o200404, 0o55]),
 ]
 
-# The tracks, by hand.  Reserved 0 and 2: one takes 1; two (wa) finds 1 taken
-# and 2 reserved, so 3; three (wb, bank 3, overlapping wa's range) finds 1 and
-# 3 taken, so 4.  f5_track reserves 0-2: 3, 4 and 5, every dia word changed
-# and no overlay word.
-F5_TRACKS = {"f5_table": [1, 3, 4], "f5_word": [1, 3, 4], "f5_track": [3, 4, 5]}
+# The places, by hand: (track, drum address, span) for one, two and three.  wa has
+# a persistent overlay, so it is a swap window and is placed first: its overlays
+# share one drum address, 0, each on a track of its own, two's span the longest of
+# them, one's 4.  Reserved 0 and 2: one takes 1, span 4; two finds 1 held by wa and
+# 2 reserved, so 3, span 4.  Then three, read-only in wb, its span its length 5:
+# track 1 is free from 4, past one, so 1 at 4.  f5_track reserves 0-2: one 3, two
+# 4, three 3 at 4; every dia word changed and no overlay word.
+F5_PLACES = {"f5_table": [(1, 0, 4), (3, 0, 4), (1, 4, 5)],
+             "f5_word": [(1, 0, 4), (3, 0, 4), (1, 4, 5)],
+             "f5_track": [(3, 0, 4), (4, 0, 4), (3, 4, 5)]}
 
 F5_VARIANTS = [
     # One overlay word changed: 123 becomes 124.
@@ -507,11 +521,11 @@ def stamp_hash(words):
     return h if h else 1
 
 
-def f5_model(overlays, tracks):
+def f5_model(overlays, places):
     """The table and each overlay's whole image, header included, and the stamp."""
     table = [0] + [0] * len(F5_WINDOWS)
-    for (name, number, (wname, bank, first, last), persistent, words), track in zip(overlays, tracks):
-        table.append(0o400000 | (track << 12) | first)                 # dia, read
+    for (name, number, (wname, bank, first, last), persistent, words), (track, drum, span) in zip(overlays, places):
+        table.append(0o400000 | (track << 12) | drum)                  # dia, read
         table.append((len(words) + 2) & 0o7777)                         # dwc, length
         table.append((bank << 12) | first)                              # dcl
         resident = F5_TABLE_ADDR + 1 + F5_WINDOWS.index(wname)          # the window's word, bank 0
@@ -525,9 +539,9 @@ def f5_model(overlays, tracks):
     return stamp, table, images
 
 
-def f5_ref(overlays, tracks):
+def f5_ref(overlays, places):
     """The dump lines of the table and of every overlay word, header included."""
-    stamp, table, images = f5_model(overlays, tracks)
+    stamp, table, images = f5_model(overlays, places)
     lines = ["%06o %06o" % (F5_TABLE_ADDR + i, w) for i, w in enumerate(table)]
     for ov, image in zip(overlays, images):
         bank, first = ov[2][1], ov[2][2]
@@ -536,14 +550,14 @@ def f5_ref(overlays, tracks):
     return stamp, "\n".join(lines) + "\n"
 
 
-def f6_ovl(source, overlays, tracks):
+def f6_ovl(source, overlays, places):
     """The .ovl file Docs/UsingOverlays.md describes, as ovlcodegen.c writes it."""
-    stamp, table, images = f5_model(overlays, tracks)
-    out = ["%%am1 overlay file%%", "V1", "%s stamp %06o table %06o" % (source, stamp, F5_TABLE_ADDR)]
-    for ov, track, image in zip(overlays, tracks, images):
+    stamp, table, images = f5_model(overlays, places)
+    out = ["%%am1 overlay file%%", "V2", "%s stamp %06o table %06o" % (source, stamp, F5_TABLE_ADDR)]
+    for ov, (track, drum, span), image in zip(overlays, places, images):
         wname, bank, first, last = ov[2]
-        out.append("overlay %s window %s bank %o first %o last %o track %o length %o mode %s"
-                   % (ov[0], wname, bank, first, last, track, len(image), "rw" if ov[3] else "ro"))
+        out.append("overlay %s window %s bank %o first %o last %o track %o drum %o span %o length %o mode %s"
+                   % (ov[0], wname, bank, first, last, track, drum, span, len(image), "rw" if ov[3] else "ro"))
         for i in range(0, len(image), 8):
             out.append(" ".join("%06o" % w for w in image[i:i + 8]))
     return "\n".join(out) + "\n"
@@ -577,8 +591,8 @@ def f6_sym(text, source):
 # F7: overlay.ah's defines agree with am1's table and headers.  The F5 program
 # with overlay.ah included and, in bank 0, the table again at F7TBL and the three
 # headers at F7HDR, each word placed by the defines' offsets and made from their
-# fields and F5's layout by hand (tracks 1, 3, 4; windows wa and wb; the table
-# at 0101).  The stamp is a number here, stamp_hash()'s: the root's words are
+# fields and F5's layout by hand (tracks 1, 3, 1 at drum 0, 0, 4; windows wa and
+# wb; the table at 0101).  The stamp is a number here, stamp_hash()'s: the root's words are
 # not in it, so it is F5's.  The pairs checks hold am1's words against these;
 # f7_swapped, the control, swaps two entry offsets and the two header offsets,
 # and its pairs must disagree.
@@ -587,7 +601,7 @@ F7HDR = 0o240
 
 
 def f7_source(title, swaps):
-    stamp, table, images = f5_model(F5_OVERLAYS, F5_TRACKS["f5_table"])
+    stamp, table, images = f5_model(F5_OVERLAYS, F5_PLACES["f5_table"])
     body = F5.split("\n", 1)[1].replace("        start go\n", "")
     out = [title, "#include <DRUM/overlay.ah>"]
     for name, value in swaps:
@@ -596,11 +610,11 @@ def f7_source(title, swaps):
     out += ["#define F7TBL %04o" % F7TBL, "#define F7HDR %04o" % F7HDR,
             "F7TBL+OV_TBL_STAMP/", "        %06o" % stamp,
             "F7TBL+OV_TBL_WINDOWS/", "        0", "        0"]
-    for k, ((name, number, (wname, bank, first, last), persistent, words), track) in \
-            enumerate(zip(F5_OVERLAYS, F5_TRACKS["f5_table"])):
+    for k, ((name, number, (wname, bank, first, last), persistent, words), (track, drum, span)) in \
+            enumerate(zip(F5_OVERLAYS, F5_PLACES["f5_table"])):
         at = "F7TBL+OV_TBL_WINDOWS+%d+(%d*OV_ENT_WORDS)+" % (len(F5_WINDOWS), k)
         out += [at + "OV_ENT_DIA/",
-                "        OV_DIA_READ | (%o << OV_TRACK_SHIFT) | (%o & OV_DIA_ADDR)" % (track, first),
+                "        OV_DIA_READ | (%o << OV_TRACK_SHIFT) | (%o & OV_DIA_ADDR)" % (track, drum),
                 at + "OV_ENT_DWC/",
                 "        %o & OV_DWC_LENGTH" % (len(words) + 2),
                 at + "OV_ENT_DCL/",
@@ -787,8 +801,8 @@ rootFwd, 0
 
 def f10_table(table_addr, image):
     """ovTable's words and the stamp, as f5_model() works them out: window w is
-    the one window, ov1 on track 0, read-only."""
-    table = [0, 0, 0o400000 | 0o1000, len(image) + 2, 0o1000, table_addr + 1]
+    the one window, ov1 on track 0 at drum address 0, read-only."""
+    table = [0, 0, 0o400000, len(image) + 2, 0o1000, table_addr + 1]
     stamp = stamp_hash(image + table[1:])
     table[0] = stamp
     return stamp, table
@@ -1173,6 +1187,162 @@ F11_FULL_VARIANTS = [
 ]
 
 
+# F12: the packed drum layout and the twopass window (DESIGN-AM1-OVERLAYS.md
+# sections 6 and 9, am1 v5.2).  Every length below is an overlay's whole length,
+# its two header words included, in octal; f12_overlay() makes it a hlt and a
+# table.  Every place is worked out by hand in the comment above its fixture.
+
+def f12_overlay(name, window, length, mode=""):
+    """An overlay of window, length words in all: the header, a hlt, a table."""
+    text = "%%%%overlay %s, %s%s\n%sGo, hlt\n" % (name, window, (", " + mode) if mode else "", name)
+    if length > 3:
+        text += "        table %o\n" % (length - 3)
+    return text + "%%endoverlay\n"
+
+
+def f12_program(title, head, windows):
+    """A program: title, head lines, then each (bank, window line, overlays) in
+    turn, then bank 0's go and the table."""
+    text = title + "\n" + head
+    for bank, window, overlays in windows:
+        text += "bank %d\n%s\n" % (bank, window)
+        for args in overlays:
+            text += f12_overlay(*args)
+    return text + "bank 0\n100/\ngo,     hlt\n%%ovtable\n        start go\n"
+
+
+# The design's example: a window at 02000-03777 and five read-only overlays of
+# 300, 450, 600, 700 and 1,000 words (decimal), in that source order.  Longest
+# first, all on track 0: 1,000 at 0000-1747, 700 at 1750-3243, 600 at 3244-4373,
+# 450 at 4374-5275 and 300 at 5276-5751.  In octal the lengths are 0454, 0702,
+# 01130, 01274 and 01750.  am1 v5.1, the control, used tracks 0 to 4, each at
+# 2000-3777.
+F12_EXAMPLE = [("o300", "w1", 0o454), ("o450", "w1", 0o702), ("o600", "w1", 0o1130),
+               ("o700", "w1", 0o1274), ("o1000", "w1", 0o1750)]
+
+# A swap window and read-only overlays of another window packed after it.  w1 has
+# persistent p (0200) and q (0100) and read-only r (040), so it is a swap window
+# and is placed first, all at one drum address, 0, on tracks 0, 1 and 2: p's span
+# and q's are the longest's, 0200, r's its own 040.  Then w2's s (07400) and t
+# (0300), longest first: s on track 0 at 0200, past p, to 07577; t does not fit
+# in track 0's last 0200 words, so track 1 at 0200, past q's span, to 0477.
+# The table at 0101: the stamp, w1's word 0102, w2's 0103, then p's entry at
+# 0104, q's 0110, r's 0114, s's 0120, t's 0124.  The dia words: p 400000, q
+# 410000, r 420000, s 400200, t 410200; the resident words: p and q 400102,
+# r 000102, s and t 000103.
+F12_SWAP = [(2, "%%window w1, 2000, 2777", [("p", "w1", 0o200, "persistent"), ("q", "w1", 0o100, "persistent"),
+                                            ("r", "w1", 0o40)]),
+            (3, "%%window w2, 0, 7777", [("s", "w2", 0o7400), ("t", "w2", 0o300)])]
+
+# A swap window whose drum address is not 0.  f12_swap's w1 again, then w3 with
+# persistent u and v of 040 each, every track but 0-2 reserved.  The drum
+# addresses tried are 0, then the ends of the spans placed, 040 (r's) and 0200
+# (p's and q's).  At 0 tracks 0-2 are taken; at 040, u finds track 2 free past r
+# but v finds no other; at 0200, u takes track 0 and v track 1, 0200-0237 each.
+F12_SWAPD = [(2, "%%window w1, 2000, 2777", [("p", "w1", 0o200, "persistent"), ("q", "w1", 0o100, "persistent"),
+                                             ("r", "w1", 0o40)]),
+             (3, "%%window w3, 1000, 1777", [("u", "w3", 0o40, "persistent"), ("v", "w3", 0o40, "persistent")])]
+
+# A twopass window: persistent p (0100) and q (0200) and read-only r (040), all
+# placed one by one, longest first, on track 0: q at 0000-0177, p at 0200-0277,
+# r at 0300-0337.  The table at 0101: the stamp, w1's word 0102, p's entry at
+# 0103, q's 0107, r's 0113.  The dia words: p 400200, q 400000, r 400300; the
+# resident words carry the two-pass bit, 200000: p and q 600102, r 200102.
+F12_TWOPASS = [(2, "%%window w1, 2000, 2777, twopass", [("p", "w1", 0o100, "persistent"),
+                                                        ("q", "w1", 0o200, "persistent"), ("r", "w1", 0o40)])]
+
+# A track's end: every track but 36 and 37 reserved, a whole-bank window, and
+# three overlays of 03000 and one of 02000.  Longest first: the three 03000 at
+# 0000-2777 and 3000-5777 of track 36, then 37 at 0000-2777, since 36's last
+# 02000 words are too few; then the 02000 fills track 36 to its last word,
+# 6000-7777.
+F12_TRACKEND = [(2, "%%window w1, 0, 7777", [("e1", "w1", 0o3000), ("e2", "w1", 0o3000), ("e3", "w1", 0o3000),
+                                            ("e4", "w1", 0o2000)])]
+
+F12 = [
+    ("f12_example", f12_program("f12_example: design section 6's five read-only overlays, packed", "",
+                                [(2, "%%window w1, 2000, 3777", F12_EXAMPLE)]),
+     ["outgrep|-S|^overlay o1000, number 5: track 0, drum 0000-1747, window w1 in bank 2, 1750 words, read-only$",
+      "outgrep|-S|^overlay o700, number 4: track 0, drum 1750-3243, window w1 in bank 2, 1274 words, read-only$",
+      "outgrep|-S|^overlay o600, number 3: track 0, drum 3244-4373, window w1 in bank 2, 1130 words, read-only$",
+      "outgrep|-S|^overlay o450, number 2: track 0, drum 4374-5275, window w1 in bank 2, 702 words, read-only$",
+      "outgrep|-S|^overlay o300, number 1: track 0, drum 5276-5751, window w1 in bank 2, 454 words, read-only$",
+      "lstgrep|bin -l|^// overlay o300, number 1: track 0, drum 5276-5751, window w1 in bank 2",
+      "ovlgrep|bin|^V2$",
+      "ovlgrep|bin|^overlay o300 window w1 bank 2 first 2000 last 3777 track 0 drum 5276 span 454 length 454 mode ro$",
+      "ovlgrep|bin|^overlay o1000 window w1 bank 2 first 2000 last 3777 track 0 drum 0 span 1750 length 1750 mode ro$",
+      # The table at 0101: the stamp, w1's word 0102, then o300's entry at 0103,
+      # its dia word a read of track 0 at 5276.
+      "okgrep||^000103 405276$"]),
+    # The example with tracks 0-3 reserved: track 4.
+    ("f12_reserve", f12_program("f12_reserve: the example, tracks 0-3 reserved", "%%drumreserve 0-3\n",
+                                [(2, "%%window w1, 2000, 3777", F12_EXAMPLE)]),
+     ["outgrep|-S|^overlay o1000, number 5: track 4, drum 0000-1747,",
+      "outgrep|-S|^overlay o300, number 1: track 4, drum 5276-5751,"]),
+    ("f12_swap", f12_program("f12_swap: a swap window at one drum address, and another window's overlays after it",
+                             "", F12_SWAP),
+     ["outgrep|-S|^overlay p, number 1: track 0, drum 0000-0177, window w1 in bank 2, 200 words, persistent$",
+      "outgrep|-S|^overlay q, number 2: track 1, drum 0000-0177, window w1 in bank 2, 100 words, persistent$",
+      "outgrep|-S|^overlay r, number 3: track 2, drum 0000-0037, window w1 in bank 2, 40 words, read-only$",
+      "outgrep|-S|^overlay s, number 4: track 0, drum 0200-7577, window w2 in bank 3, 7400 words, read-only$",
+      "outgrep|-S|^overlay t, number 5: track 1, drum 0200-0477, window w2 in bank 3, 300 words, read-only$",
+      "ovlgrep|bin|^overlay q window w1 bank 2 first 2000 last 2777 track 1 drum 0 span 200 length 100 mode rw$",
+      "okgrep||^000104 400000$", "okgrep||^000110 410000$", "okgrep||^000114 420000$",
+      "okgrep||^000120 400200$", "okgrep||^000124 410200$",
+      "okgrep||^000107 400102$", "okgrep||^000113 400102$", "okgrep||^000117 000102$",
+      "okgrep||^000123 000103$"]),
+    ("f12_swapd", f12_program("f12_swapd: a swap window placed at drum address 0200", "%%drumreserve 3-37\n",
+                              F12_SWAPD),
+     ["outgrep|-S|^overlay u, number 4: track 0, drum 0200-0237, window w3 in bank 3, 40 words, persistent$",
+      "outgrep|-S|^overlay v, number 5: track 1, drum 0200-0237, window w3 in bank 3, 40 words, persistent$"]),
+    # w1 with three persistent overlays and two tracks free: at 0, the only drum
+    # address tried, since no span is placed before it, p and q take 36 and 37 and
+    # r has none.
+    ("f12_swapfull", f12_program("f12_swapfull: a swap window's overlays need more tracks than are free",
+                                 "%%drumreserve 0-35\n",
+                                 [(2, "%%window w1, 2000, 2777", [("p", "w1", 0o200, "persistent"),
+                                                                  ("q", "w1", 0o100, "persistent"),
+                                                                  ("r", "w1", 0o40, "persistent")])]),
+     ["fail||overlay r has nowhere on the drum: window w1's 3 overlays share one drum address",
+      "fail|-O|overlay r has nowhere on the drum"]),
+    ("f12_twopass", f12_program("f12_twopass: a twopass window's overlays placed one by one", "", F12_TWOPASS),
+     ["outgrep|-S|^overlay p, number 1: track 0, drum 0200-0277, window w1 in bank 2, 100 words, persistent, two-pass$",
+      "outgrep|-S|^overlay q, number 2: track 0, drum 0000-0177, window w1 in bank 2, 200 words, persistent, two-pass$",
+      "outgrep|-S|^overlay r, number 3: track 0, drum 0300-0337, window w1 in bank 2, 40 words, read-only$",
+      "ovlgrep|bin|^overlay p window w1 bank 2 first 2000 last 2777 track 0 drum 200 span 100 length 100 mode rw$",
+      "okgrep||^000103 400200$", "okgrep||^000107 400000$", "okgrep||^000113 400300$",
+      "okgrep||^000106 600102$", "okgrep||^000112 600102$", "okgrep||^000116 200102$",
+      "lstgrep|bin -l|%%window w1, 2000, 2777, twopass$",
+      "nowarn||has no persistent overlay"]),
+    # twopass on a window with read-only overlays only: a warning, and the same
+    # layout as without it.
+    ("f12_twopassro", f12_program("f12_twopassro: a twopass window with no persistent overlay", "",
+                                  [(2, "%%window w1, 2000, 2777, twopass", [("r", "w1", 0o40), ("s", "w1", 0o100)])]),
+     ["warn||window w1, declared at line 3 in file",
+      "warn||is twopass and has no persistent overlay; twopass changes nothing for read-only overlays",
+      "outgrep|-S|^overlay s, number 2: track 0, drum 0000-0077,"]),
+    ("f12_badmode", f12_program("f12_badmode: a window's fourth operand that is not twopass", "",
+                                [(2, "%%window w1, 2000, 2777, swap", [("r", "w1", 0o40)])]),
+     ["fail||window w1: 'swap' is not a valid mode; the one mode is twopass"]),
+    ("f12_trackend", f12_program("f12_trackend: overlays that do not fit a track's rest, and one that fills it",
+                                 "%%drumreserve 0-35\n", F12_TRACKEND),
+     ["outgrep|-S|^overlay e1, number 1: track 36, drum 0000-2777,",
+      "outgrep|-S|^overlay e2, number 2: track 36, drum 3000-5777,",
+      "outgrep|-S|^overlay e3, number 3: track 37, drum 0000-2777,",
+      "outgrep|-S|^overlay e4, number 4: track 36, drum 6000-7777,"]),
+    # The manager with OV_TWO_PASS defined: am1 stops at the #error.  f7_manager,
+    # the same program without the define, is the control that assembles.
+    ("f12_twopassdef", "f12_twopassdef: OV_TWO_PASS defined before overlay.ac\n#define OV_TWO_PASS\n"
+                       + F7_MANAGER.split("\n", 1)[1],
+     ["fail||OV_TWO_PASS is no longer used"]),
+    # The manager with a twopass window: it assembles, both evictions in it.
+    ("f12_manager", F7_MANAGER.replace("f7_manager: overlay.ac in bank 1, called from bank 1 and bank 0",
+                                       "f12_manager: f7_manager with a twopass window")
+                              .replace("%%window wb, 2000, 2777", "%%window wb, 2000, 2777, twopass"),
+     ["ok||", "ok|bin|"]),
+]
+
+
 def write(name, text):
     with open(os.path.join(HERE, name), "w", encoding="utf-8", newline="") as f:
         f.write(text)
@@ -1234,7 +1404,7 @@ def main():
             overlays[0][4] = [0o760400, 0o124]
         title = name + ": " + F5.split("\n", 1)[0].split(": ", 1)[1]
         text = title + "\n" + text.split("\n", 1)[1]
-        stamps[name], ref = f5_ref([tuple(ov) for ov in overlays], F5_TRACKS[name])
+        stamps[name], ref = f5_ref([tuple(ov) for ov in overlays], F5_PLACES[name])
         write(name + ".am1", text)
         write(name + ".ref", ref)
         manifest.append(name + "|refsub||")
@@ -1243,7 +1413,7 @@ def main():
     # F6: the files, from the F5 program under its own name.
     text = "f6_files: the .ovl, .osym and .sym files, worked out by hand\n" + F5.split("\n", 1)[1]
     write("f6_files.am1", text)
-    write("f6_files.ovl.ref", f6_ovl("f6_files.am1", F5_OVERLAYS, F5_TRACKS["f5_table"]))
+    write("f6_files.ovl.ref", f6_ovl("f6_files.am1", F5_OVERLAYS, F5_PLACES["f5_table"]))
     write("f6_files.osym.ref", f6_osym(text, "f6_files.am1"))
     write("f6_files.sym.ref", f6_sym(text, "f6_files.am1"))
     for ext in ("ovl", "osym", "sym"):
@@ -1287,13 +1457,20 @@ def main():
         manifest.append("f11_shrink|" + line)
     family(F11_FULL, F11_FULL_VARIANTS, F11_FULL_LINES, manifest, names)
 
+    # F12: the packed layout and the twopass window.
+    for name, text, lines in F12:
+        assert text.startswith(name + ": "), name
+        write(name + ".am1", text)
+        for line in lines:
+            manifest.append(name + "|" + line)
+
     write("MANIFEST", "\n".join(manifest) + "\n")
 
     print("wrote f1_valid.am1, f2_valid.am1, f1_endoverlay.ah, %d variants, f3_ovcall.am1 and .ref, "
           "f4_layout, f4_fit, f4_full, f5_table, f5_word and f5_track with .ref, f6_files with "
           "three .ref, f7_defines, f7_swapped, f7_manager, %s, f10_pins, f10_window, "
-          "f10_windowhigh, f11_twins, f11_pins, f11_shrink and its hand build, f11_full, MANIFEST"
-          % (len(names), ", ".join(name for name, _, _ in F9)))
+          "f10_windowhigh, f11_twins, f11_pins, f11_shrink and its hand build, f11_full, %s, MANIFEST"
+          % (len(names), ", ".join(name for name, _, _ in F9), ", ".join(name for name, _, _ in F12)))
     print("F5 stamps: " + ", ".join("%s %06o" % (k, v) for k, v in sorted(stamps.items())))
 
 

@@ -6,9 +6,9 @@ It covers the directives, the overlay manager the program includes, the loader *
 each costs.
 *UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-This is version 1.3 and covers up through am1 version 5.1; it will be updated as needed.\
+This is version 1.4 and covers up through am1 version 5.1; it will be updated as needed.\
 Edit date 21-Oct-2026
-Add %%ovload
+Fix some typos
 
 ## What are overlays?
 
@@ -365,7 +365,7 @@ A **persistent** overlay, *%%overlay name, window, persistent*, is written back 
 when another overlay is going to to be loaded into its window.
 Any changes made while in memory are preserved.
 
-A halt during the swapping can leave both the memory version and the drum version in an incosistent state.
+A halt during the swapping can leave both the memory version and the drum version in an inconsistent state.
 
 ### The single-pass swap
 
@@ -406,9 +406,9 @@ The outgoing overlay's next load gets its track as the swap left it, part new an
 Starting the program again from its start address after such a halt instead of continuing loses the
 outgoing overlay's words the same way.
 
-Use persistend overlays for a program you will not stop while it is swapping, or whose
+Use persistent overlays for a program you will not stop while it is swapping, or whose
 persistent overlays can stand losing their words after a stop.
-Take carw while debugging with ad1.
+Take care while debugging with ad1.
 
 ## The drum layout
 
@@ -423,7 +423,7 @@ Take carw while debugging with ad1.
 - A window can have as many overlays as there are tracks allowed, up to 32.
   If no more can be assigned, **am1** reports which one failed.
 
-*-S* prints the drum layout after the per-bank high-water marks; the listing has it aft3er *%%ovtable*:
+*-S* prints the drum layout after the per-bank high-water marks; the listing has it after *%%ovtable*:
 
 ```
 Overlays on the drum, stamp 110524:
@@ -478,7 +478,7 @@ At the recovery point:
 
 A later *%%ovcall* reads the overlay again when it needs to.
 A recovery point that retries the same call after a stamp error will fail again.
-So count the tries and giv up, or tell the user to run **ovlload**.
+So count the tries and give up, or tell the user to run **ovlload**.
 Setting *ovErrHook* back to 0 restores the halts.
 
 ## What it costs
@@ -499,7 +499,7 @@ Setting *ovErrHook* back to 0 restores the halts.
 - the transfer, n x 8.5 us: 1,024 words take 8.7 ms, a whole bank 34.8 ms.
 
 A 1,024-word read-only overlay loads in about 26 ms on average and at most about 44 ms.
-Swappng a persistent overlay in *OV_TWO_PASS* mode  adds its write-back and most of a
+Swapping a persistent overlay in *OV_TWO_PASS* mode  adds its write-back and most of a
 revolution between the two transfers, about 61 ms in all for 1,024 words.
 
 Without *OV_TWO_PASS* it is only one transfer of the longer overlay's length, the time is about
@@ -519,7 +519,7 @@ With overlays:
 
 - **The tape**, *file.rim* or *file.bin*, holds the root only, not any overlay code.
 - ***file.ovl*** is created along with the primary rim or bin file.
-- ***file.osym*** is created in additon to the *.sym* file when *-s* is given.
+- ***file.osym*** is created in addition to the *.sym* file when *-s* is given.
 - **The listing**, *-l*, lists each overlay under its own heading with its two header words.
   Its addresses use its window's address.
   Each *%%ovcall* and *%%ovload* is listed with the table with what it holds.
@@ -680,8 +680,8 @@ ovlload -p tapefile [-n | -t tape] file.ovl
 ```
 
 *-p* punches a paper tape instead of writing a drum file.
-The pdp-1 reads it in and writes the overlays to the drum, then, withut -n, loads the program and starts it.
-The tape holds am1's loader, a small durm writer program, each overlay with its window's range and a
+The pdp-1 reads it in and writes the overlays to the drum, then, without -n, loads the program and starts it.
+The tape holds am1's loader, a small drum writer program, each overlay with its window's range and a
 checksum, and then, unless *-n* is given, the program tape.
 The *.ovl* is checked as always and, without *-n* the stamp is also checked.
 *-i*, *-c*, *-h*, *-y*, *-m* and *-M* mean nothing for a tape and are refused.

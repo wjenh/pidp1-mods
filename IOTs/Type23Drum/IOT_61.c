@@ -30,12 +30,12 @@
  *    with a sequence break on the drum's channel.
  * 27-Sep-2026 claude - the drum is held in memory and written back through a write-behind queue,
  *    so a slow write no longer holds the emulator thread (up to 0.8 s was measured on a Pi 4 with
- *    a busy SD card). A failed write is reported on stderr: the transfer has ended by then, so it
+ *    a busy SD card). A failed write is logged (LOG_WRITE_ERROR): the transfer has ended by then, so it
  *    can no longer set the transfer error.
  * 29-Sep-2026 claude - a change another program makes to the drum file is seen at the next
  *    transfer, with the machine running, as it was before the drum was held in memory, not only
  *    after a halt. inotify reports the other program's close or rename, which the drum's own
- *    writes never raise. A reload that changes the drum is reported on stderr.
+ *    writes never raise. A reload that changes the drum is logged (LOG_FILE_WATCH).
  * 29-Sep-2026 claude - with a dba armed, dcl polls in time for the break as well as for the
  *    transfer. Now that each enablePolling() starts a fresh count, polling for the transfer
  *    alone made the break up to 7 us late in the DBA, DWC, DCL sequence.
@@ -45,6 +45,7 @@
  * 10-Oct-2026 - dcl's 250 us settle delay as noted in H-23 2-19 added.
  *    A full track waits for its address like any other transfer.
  *    A dba break clears busy.
+ * 22-Oct-2026 wje - replace stderr output with proper logging
  */
 
 #include <errno.h>
@@ -73,6 +74,8 @@
 #define LOG_BREAK 0
 #define LOG_READ 0
 #define LOG_WRITE 0
+#define LOG_FILE_WATCH 0         // the drum file changed on disk, or cannot be resolved or watched
+#define LOG_WRITE_ERROR 1        // a failed write-back; LOG_WRITE is the write path's debug lines
 
 // Flag for busy for the cks instruction.
 // DRP set is busy, cleared by operation completion, dia, or dba,
@@ -887,7 +890,7 @@ static Word oldImage[DRUMWORDS];
     loadImage();
     if( memcmp(oldImage, drumImage, sizeof(drumImage)) != 0 )
     {
-        fprintf(stderr, "drum: %s changed on disk; read it again\n", DRUMFILE);
+        iotCondLog(LOG_FILE_WATCH, "drum: %s changed on disk; read it again\n", DRUMFILE);
     }
 }
 
@@ -907,7 +910,7 @@ char *slashP;
     watchTried = true;
     if( !realpath(DRUMFILE, path) )
     {
-        fprintf(stderr, "drum: cannot resolve %s (%s); a change to it is seen only after a halt\n",
+        iotCondLog(LOG_FILE_WATCH, "drum: cannot resolve %s (%s); a change to it is seen only after a halt\n",
             DRUMFILE, strerror(errno));
         return;
     }
@@ -926,7 +929,7 @@ char *slashP;
     watchFd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if( (watchFd < 0) || (inotify_add_watch(watchFd, path, (IN_CLOSE_WRITE | IN_MOVED_TO)) < 0) )
     {
-        fprintf(stderr, "drum: cannot watch %s (%s); a change to %s is seen only after a halt\n",
+        iotCondLog(LOG_FILE_WATCH, "drum: cannot watch %s (%s); a change to %s is seen only after a halt\n",
             path, strerror(errno), drumName);
         if( watchFd >= 0 )
         {
@@ -1083,7 +1086,7 @@ ssize_t n;
 }
 
 // A queued write is done, normally on the writer thread.
-// A failure is reported on stderr once until a write succeeds again.
+// A failure is logged (LOG_WRITE_ERROR) once until a write succeeds again.
 // A success notes the file's state for fileChanged(), unless the write was to a file the drum has
 // since closed.
 static void
@@ -1096,7 +1099,7 @@ struct stat st;
     {
         if( !writeFailReported )
         {
-            fprintf(stderr, "drum: writing %s failed: %s; the file is out of date\n", DRUMFILE, strerror(errno));
+            iotCondLog(LOG_WRITE_ERROR, "drum: writing %s failed: %s; the file is out of date\n", DRUMFILE, strerror(errno));
             writeFailReported = true;
         }
         return;

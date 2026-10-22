@@ -33,7 +33,7 @@
  *
  * 24-Sep-2026 Claude written.
  * 14-Oct-2026 wje allow modifiying room and onset via the IOT, not just the config file
- * 30-Oct-2026 wje use iotCondlong, not stderr
+ * 20-Oct-2026 wje use iotCondlong, not stderr
  */
 
 #include <math.h>

@@ -59,7 +59,7 @@ Those marked with an * are core features, don't replace them.
 70 Stanford-ish 4 channel D/A, implemented
 71 Stanford-ish 4 channel D/A
 72
-73
+73 CalComp incremental plotter, implemented; the code is this project's choice, DEC lists 73 for the Type 51 tape control
 74 * lem/eem
 75
 76

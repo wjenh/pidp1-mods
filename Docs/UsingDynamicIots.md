@@ -205,7 +205,7 @@ If you have any special initialization to do before your IOT is called, implemen
 It will be called whenever the pidp1 goes into run state, or after your IOT is first loaded but
 before iotHandler() is called.
 
-If you have any special cleanup to do, as the fclose() in the example IOT_57, implement `iotStop()`.
+If you have any special cleanup to do, such as the fclose() in the example IOT_57, implement `iotStop()`.
 It will be called whenever the pidp1 is halted either by the `hlt` instruction or by the front panel switch.
 
 ## Interrupts aka Sequence Breaks

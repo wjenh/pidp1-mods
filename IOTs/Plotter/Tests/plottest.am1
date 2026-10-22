@@ -1,0 +1,324 @@
+Plotter emulator test
+// Draws a test figure on the plotter, times its steps and pen changes with the timesharing
+// clock, and counts the plotter's breaks.
+// Built with -DNODRAW it only loads the IOT, which must leave a blank sheet.
+//
+// It halts at 130 when done.
+// The results, at 6000 (octal):
+//   6000 done      1 when the program finished
+//   6001 flag0     cks before any plotter IOT
+//   6002 flag1     cks after plnop: pltcks must be set
+//   6003 busy      cks just after a command with no wait: pltcks must be clear
+//   6004 pen0      the clock before 10 pen-down, pen-up pairs (20 pen changes)
+//   6005 pen1      and after
+//   6006 step0     the clock before 1000 steps
+//   6007 step1     and after
+//   6010 ctl0      the clock before a delay loop of 60,000 passes of 25 us, 1.5 s
+//   6011 ctl1      and after
+//   6012 polls     passes of the flag-polling loop over a 30-step line
+//   6013 breaks    breaks during 10 steps with no wait, with the break system on
+// The clock reads milliseconds, modulo 60,000.
+//
+// The figure, in steps from the pen's start (the left edge, drum 0; drum up is +):
+//   a square, corners (50, 50) and (150, 150);
+//   a star of eight 20-step rays from (200, 100), pen left with drum down as a staircase;
+//   a dot at (300, 100), where the pen goes down and up ten times;
+//   a line from (301, 150) to (331, 150), drawn while polling the flag.
+// The 1000 timed steps and the 10 break steps are pen-up.
+#include <PLOTTER/plotterdefs.ah>
+
+#define rck iot 32
+
+// Single-channel break system: every break comes here.
+0/
+    0
+    0
+    0
+    jmp brk
+
+100/
+    jmp main
+
+130/
+    hlt
+
+200/
+main, lsm
+    dzm brkcnt
+    dzm polls
+    lac [2000               // turn the clock on
+    iot 2032
+    cks
+    dio rflag0
+    plnop
+    cks
+    dio rflag1
+
+#ifndef NODRAW
+    // To the square's corner, pen up.
+    lio [0d50]
+    lac [plpr i]
+    jda rep
+    lio [0d50]
+    lac [pldu i]
+    jda rep
+
+    // The square.
+    plpd i
+    lio [0d100]
+    lac [plpr i]
+    jda rep
+    lio [0d100]
+    lac [pldu i]
+    jda rep
+    lio [0d100]
+    lac [plpl i]
+    jda rep
+    lio [0d100]
+    lac [pldd i]
+    jda rep
+    plpu i
+
+    // To the star's center, (200, 100).
+    lio [0d150]
+    lac [plpr i]
+    jda rep
+    lio [0d50]
+    lac [pldu i]
+    jda rep
+
+    // The star: each ray drawn out and returned over with the pen up.
+    plpd i                  // right
+    lio [0d20]
+    lac [plpr i]
+    jda rep
+    plpu i
+    lio [0d20]
+    lac [plpl i]
+    jda rep
+
+    plpd i                  // right and drum up
+    lio [0d20]
+    lac [plpr pldu i]
+    jda rep
+    plpu i
+    lac [pldd i]
+    dac rc2
+    lio [0d20]
+    lac [plpl i]
+    jda rep2
+
+    plpd i                  // drum up
+    lio [0d20]
+    lac [pldu i]
+    jda rep
+    plpu i
+    lio [0d20]
+    lac [pldd i]
+    jda rep
+
+    plpd i                  // left and drum up
+    lio [0d20]
+    lac [plpl plud i]
+    jda rep
+    plpu i
+    lio [0d20]
+    lac [plpr pldd i]
+    jda rep
+
+    plpd i                  // left
+    lio [0d20]
+    lac [plpl i]
+    jda rep
+    plpu i
+    lio [0d20]
+    lac [plpr i]
+    jda rep
+
+    plpd i                  // left and drum down: two instructions a step
+    lac [pldd i]
+    dac rc2
+    lio [0d20]
+    lac [plpl i]
+    jda rep2
+    plpu i
+    lio [0d20]
+    lac [plpr pldu i]
+    jda rep
+
+    plpd i                  // drum down
+    lio [0d20]
+    lac [pldd i]
+    jda rep
+    plpu i
+    lio [0d20]
+    lac [pldu i]
+    jda rep
+
+    plpd i                  // right and drum down
+    lio [0d20]
+    lac [plpr pldd i]
+    jda rep
+    plpu i
+    lio [0d20]
+    lac [plpl plud i]
+    jda rep
+
+    // The dot at (300, 100), and the pen timed: 10 pairs of pen down, pen up.
+    lio [0d100]
+    lac [plpr i]
+    jda rep
+    rck
+    dio rpen0
+    lac [plpu i]
+    dac rc2
+    lio [0d10]
+    lac [plpd i]
+    jda rep2
+    rck
+    dio rpen1
+
+    // The clock checked against a loop of known length: idx 10 us, sas 10, jmp 5.
+    rck
+    dio rctl0
+    dzm k
+dly, idx k
+    sas [0d60000]
+    jmp dly
+    rck
+    dio rctl1
+
+    // 1000 steps timed, pen up: 500 right, 500 back.
+    rck
+    dio rstep0
+    lio [0d500]
+    lac [plpr i]
+    jda rep
+    lio [0d500]
+    lac [plpl i]
+    jda rep
+    rck
+    dio rstep1
+
+    // To (300, 150); one step with no wait, the flag read at once, then waited for.
+    lio [0d50]
+    lac [pldu i]
+    jda rep
+    plpr
+    cks
+    dio rbusy
+    PLT_WAIT_READY
+
+    // The polled line, (301, 150) to (331, 150).
+    plpd i
+    lio [0d30]
+    lac [plpr]
+    jda repp
+    plpu i
+    lac polls
+    dac rpolls
+
+    // Breaks: 10 steps with no wait, the break system on; then time for a late one to land.
+    cbs
+    esm
+    lio [0d10]
+    lac [plpr]
+    jda repp
+    dzm k
+bw, idx k
+    sas [0d200]
+    jmp bw
+    lsm
+    lac brkcnt
+    dac rbrk
+#endif
+
+    lac [1
+    dac rdone
+    jmp 130
+
+// Issues the plotter command in AC, which carries i so each waits, IO times. Called by jda.
+// AC and IO not preserved.
+rep, 0
+    dap rpx
+    lac rep
+    dac rpc
+    dio rpn
+    dzm rpk
+rpc, 0
+    idx rpk
+    sas rpn
+    jmp rpc
+rpx, jmp .
+
+// Issues the command in AC and then the one in rc2, both carrying i, IO times. Called by jda.
+// AC and IO not preserved.
+rep2, 0
+    dap r2x
+    lac rep2
+    dac r2a
+    lac rc2
+    dac r2b
+    dio r2n
+    dzm r2k
+r2a, 0
+r2b, 0
+    idx r2k
+    sas r2n
+    jmp r2a
+r2x, jmp .
+
+// Issues the plotter command in AC, which has no wait, IO times, polling the cks flag after
+// each until the plotter is free; the polling passes are added to polls. Called by jda.
+// AC and IO not preserved.
+repp, 0
+    dap rppx
+    lac repp
+    dac rppc
+    dio rppn
+    dzm rppk
+rppc, 0
+rppw, idx polls
+    cks
+    ril 7s
+    spi i
+    jmp rppw
+    idx rppk
+    sas rppn
+    jmp rppc
+rppx, jmp .
+
+// The break: counts it. AC and IO are restored from the break frame.
+brk, idx brkcnt
+    lio 2
+    lac 0
+    jmp i 1
+
+rc2, 0
+rpn, 0
+rpk, 0
+r2n, 0
+r2k, 0
+rppn, 0
+rppk, 0
+k, 0
+polls, 0
+brkcnt, 0
+
+constants
+
+6000/
+rdone, 0
+rflag0, 0
+rflag1, 0
+rbusy, 0
+rpen0, 0
+rpen1, 0
+rstep0, 0
+rstep1, 0
+rctl0, 0
+rctl1, 0
+rpolls, 0
+rbrk, 0
+
+start 100

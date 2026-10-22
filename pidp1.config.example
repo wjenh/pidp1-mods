@@ -258,6 +258,33 @@ fasttyo=false
 # The default is 2.
 #microtapesbs=2
 
+# Settings for the IOT 73 CalComp plotter, see Docs/UsingThePlotter.md.
+# The values shown are the defaults.
+# The model, 560, 563 or 565: its step time and paper width.
+# The 560 and 563 step in 5 ms, the 565 in 3.33 ms; the 563's paper is 2950 steps wide, the others 1100.
+#plottermodel=560
+# The step time in microseconds, overriding the default.
+# A fraction is allowed, 3333.3.
+#plotterstep=5000
+# The pen's down and up times in milliseconds.
+#plotterpendown=100
+#plotterpenup=100
+# The PNG the paper is written to, in the pip1-mods directory unless a path is given.
+# A %d in the name numbers the sheets, one per power-on: sheet%d.png.
+# At most 63 characters.
+#plotterfile=plotter.png
+# Seconds the plotter is idle after drawing before the sheet is written, 0 for never.
+# The sheet is also written at a halt and at power clear.
+#plotteridle=5
+# The pen's width in steps, 1 to 50.
+#plotterpen=1
+# The sequence break channel, 1 to 15, when each command finishes; off or 0 for none.
+#plottersbs=off
+# The cks bit that is 1 when the plotter is free, 0 to 17.
+#plottercks=7
+# Where the pen starts, in steps from the left edge.
+#plotterorigin=0
+
 # These settings are for the 4 channel D/A used by dacmusic.
 # The converter output level, a number, 1.0 is the default and normally shouldn't be changed.
 #dacgain=1.0

@@ -1,0 +1,47 @@
+#ifndef PLOTTERDEFS_AH
+#define PLOTTERDEFS_AH
+/*
+ * The CalComp incremental drum plotter, device 73. Docs/UsingThePlotter.md has the details.
+ *
+ * The names are those of DEC's Type 350 plotter control for the PDP-7, in lower case. The
+ * Type 350 used three device codes; here they are one, 73, with the Type 350's code in bits 7-8
+ * and its pulses in bits 9-11. As on the Type 350, pulses in the same group combine in one
+ * instruction, and since a space is OR in am1, writing two names together does it:
+ *   plpr pldu    pen right and drum up, one diagonal step
+ *   plpr pldd    pen right and drum down
+ *   plpl plud    pen left and drum up
+ *   plpl plpd    pen down, then a step left
+ *   plud plpd    pen down, then a step drum up
+ * Pen left with drum down is two instructions, plpl then pldd. Names from different groups
+ * must not be combined: plpl pldd is plpl plpd, pen down and a step left.
+ *
+ * Each command starts the plotter and returns; i waits for it to finish, C asks for the
+ * completion that a later ioh waits for. The cks flag pltcks is 1 when the plotter can take a
+ * command, 0 while one is under way. A command given while the plotter is busy is lost, as on
+ * the real plotter.
+ *
+ * The plugin loads at the first plotter IOT; until then pltcks reads 0. plnop, which does
+ * nothing, loads it.
+ */
+
+// Group 1, the Type 350's code 24.
+#define plpu iot 1473
+// Group 2, its code 25.
+#define plpr iot 2173
+#define pldu iot 2273
+#define pldd iot 2473
+// Group 3, its code 26.
+#define plpl iot 3173
+#define plud iot 3273
+#define plpd iot 3473
+// No operation: loads the plugin and completes at once.
+#define plnop iot 0073
+
+// The cks bit that is 1 when the plotter is free (cks bit 7), and a wait for it. The wait
+// rotates bit 7 into IO's sign, so it leaves AC alone; IO is not preserved. Both assume the
+// flag is on bit 7, the plottercks default.
+// NOTE this is a multi-instruction macro, DON'T jmp .-x to a location before it!
+#define pltcks 002000
+#define PLT_WAIT_READY cks;ril 7s;spi i;jmp .-3
+
+#endif

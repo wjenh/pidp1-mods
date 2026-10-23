@@ -3,8 +3,9 @@
 This document describes the emulated CalComp incremental drum plotter on device 73, and how a
 program draws with it.
 
-This is version 1.0\
-Edit date 22-Oct-2026
+This is version 1.1\
+Edit date 24-Oct-2026
+Fix typos
 
 ## What is it?
 
@@ -32,7 +33,7 @@ inch; it prints at the paper's true size.
 ## Where the design comes from
 
 What is DEC's, CalComp's or IBM's:
-- the three models, their speeds and the paper widths fromDEC's price list, CalComp's 565 and 566
+- the three models, their speeds and the paper widths from DEC's price list, CalComp's 565 and 566
   manuals, IBM's 1627 manual, which was IBM's name for the 565 and 563, for the plotting widths, the Type
   350's description for the 563's paper, which DEC's price list calls 29-inch;
 - the timing: a step in 5 ms or 3.33 ms, a diagonal in the same time, a pen change in 100 ms
@@ -47,7 +48,7 @@ CalComp's 566 manual says DEC supplied the PDP-1's interface,
 and the DECUS library had a PDP-1 CalComp plotting package, No. 81, so the hardware existed.
 If its IOTs turn up, the plugin will follow them.
 
-DEC lists IOT 73 ast the Type 51 magnetic tape control, which is not supported.
+DEC lists IOT 73 as the Type 51 magnetic tape control, which is not supported.
 The 560's step, 0.01 inch, is inferred too, no source found gives it but every other
 12,000-step-a-minute CalComp model has that step size.
 
@@ -91,7 +92,7 @@ The group 1 pulses 01 and 02 (the Type 350's skip and clear flag) are reserved a
 
 ## Is the plotter free?
 
-`cks` bit 7 (`002000`, `pltcks` in the include file) is 1 when the plotter is ready fir a command,
+`cks` bit 7 (`002000`, `pltcks` in the include file) is 1 when the plotter is ready for a command,
 0 from the start of each command until it has finished.
 The include file has `PLT_WAIT_READY`, which waits for completion, leaves AC alone and changes IO.
 

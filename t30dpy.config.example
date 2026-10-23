@@ -1,6 +1,6 @@
 # This allows overriding various parameters for the t30dpy display.
 # It is NOT installed by default, copy and edit it.
-# It is searched for in the user home directory, ~/.t3odpy.config, then in /opt/pidp1-mods/t30dpy.config and
+# It is searched for in the user home directory, ~/.t30dpy.config, then in /opt/pidp1-mods/t30dpy.config and
 # takes precedence over the builtin values.
 # However, command line overrides take precedence over this for settings that have command line settings.
 # The example values below are the builtin values.
@@ -64,6 +64,11 @@ cutoff=5
 
 # Read the documentation for this one.
 mikecmode=false
+
+# The mouse cursor drawn as a lightpen, dim with the pen off the screen and bright with it on.
+# Set it to no to keep the system's arrow, for a remote viewer or window system that draws
+# color cursors badly.
+pencursor=yes
 
 # Fade on the GPU instead of the CPU, see the documentation.
 # It uses much less CPU, about a quarter for t30dpy3 on a Raspberry Pi 4.

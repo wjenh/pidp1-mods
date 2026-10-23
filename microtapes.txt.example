@@ -11,8 +11,8 @@
 #            A read-only image file is always mounted locked.
 #
 # A missing image is created as a blank tape unless the line is locked.
-# Tts directory must already exist, /opt/pidp1-mods/Microtapes will already be created.
-# A drive with no # line has no tape, mlc on it gives tape unable.
+# Its directory must already exist, /opt/pidp1-mods/Microtapes will already be created.
+# A drive with no line has no tape, mlc on it gives tape unable.
 # Blank lines and lines starting with # are ignored.
 #
 # After editing, a SIGHUP to pidp1 remounts the drives whose lines

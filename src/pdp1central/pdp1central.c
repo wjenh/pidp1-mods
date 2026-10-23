@@ -25,6 +25,8 @@
 //     emulator, saved to pidp1.config on request, and multiply and divide read and set.
 // 18-Oct-2026 wje (Claude) - fast load runs ovlload for a tape with a .ovl of the same name beside
 //     it, or for a .ovl chosen, once their dates agree.
+// 23-Oct-2026 wje (Claude) - a relative microtape name is relative to Microtapes/, as the plugin
+//     takes it, with . and .. taken out; the write lock keeps the tape of a ./ or ../ line.
 
 #include <errno.h>
 #include <limits.h>
@@ -1002,18 +1004,89 @@ char *argv[4];
     startCommand(argv, CMD_SAVEPUNCH, 0, "saving the punch");
 }
 
+// The absolute path inP with its . and .. components taken out, into outP (PATH_MAX bytes),
+// lexically as mtp does: a .. takes off the component before it, and stops at /. Lexically, not
+// with realpath, so it works for a tape that does not exist yet.
+static void
+collapseDots(const char *inP, char *outP)
+{
+const char *cP;
+const char *endP;
+size_t outLen;
+size_t len;
+
+    // The result is never longer than inP, so it always fits.
+    outLen = 0;
+    for( cP = inP; *cP; cP = endP )
+    {
+        while( *cP == '/' )
+        {
+            ++cP;
+        }
+
+        for( endP = cP; *endP && (*endP != '/'); ++endP )
+        {
+            // to the end of this component
+        }
+
+        len = (size_t)(endP - cP);
+        if( (len == 0) || ((len == 1) && (cP[0] == '.')) )
+        {
+            continue;
+        }
+
+        if( (len == 2) && (strncmp(cP, "..", 2) == 0) )
+        {
+            while( (outLen > 0) && (outP[outLen - 1] != '/') )
+            {
+                --outLen;
+            }
+
+            if( outLen > 0 )
+            {
+                --outLen;
+            }
+            continue;
+        }
+
+        outP[outLen++] = '/';
+        memcpy(outP + outLen, cP, len);
+        outLen += len;
+    }
+
+    if( outLen == 0 )
+    {
+        outP[outLen++] = '/';
+    }
+    outP[outLen] = 0;
+}
+
 // A tape path as the Microtape plugin resolves it, into outP (PATH_MAX bytes): a relative one is
-// relative to the root.
+// relative to the root's Microtapes/. With . and .. taken out, so two spellings of one file
+// compare equal.
 // Returns false if it does not fit.
 static bool
 tapeFullPath(const char *pathP, char *outP)
 {
+char joined[PATH_MAX];
+int len;
+
     if( pathP[0] == '/' )
     {
-        return( snprintf(outP, PATH_MAX, "%s", pathP) < PATH_MAX );
+        len = snprintf(joined, sizeof(joined), "%s", pathP);
+    }
+    else
+    {
+        len = snprintf(joined, sizeof(joined), "%s/%s", microtapeDir, pathP);
     }
 
-    return( snprintf(outP, PATH_MAX, "%s/%s", rootPath, pathP) < PATH_MAX );
+    if( (len < 0) || (len >= (int)sizeof(joined)) )
+    {
+        return(false);
+    }
+
+    collapseDots(joined, outP);
+    return(true);
 }
 
 // The drive, other than drive, whose microtapes.txt entry names the same file as pathP: the
@@ -1102,6 +1175,29 @@ int other;
     argv[4] = spec;
     argv[5] = NULL;
     startCommand(argv, CMD_MOUNT, drive, label);
+}
+
+// Mount a drive's tape again, write-locked if locked is true. A ./ or ../ name is relative
+// to Microtapes/ in the list but to the current directory for mtp, so it is passed as its full
+// path, which keeps the tape; any other name is passed as the list has it.
+static void
+remountMicrotape(int drive, bool locked)
+{
+char full[PATH_MAX];
+const char *nameP;
+
+    nameP = mtList.path[drive];
+    if( (strncmp(nameP, "./", 2) == 0) || (strncmp(nameP, "../", 3) == 0) )
+    {
+        if( !tapeFullPath(nameP, full) )
+        {
+            appError("drive %d: not mounted: the full path of \"%s\" is too long", drive, nameP);
+            return;
+        }
+        nameP = full;
+    }
+
+    mountMicrotape(drive, nameP, locked, false);
 }
 
 // Unmount a microtape drive with mtp, which removes the drive's line from microtapes.txt.
@@ -2820,7 +2916,7 @@ int d;
         {
             if( has )
             {
-                mountMicrotape(d, mtList.path[d], lock, false);
+                remountMicrotape(d, lock);
             }
             else
             {

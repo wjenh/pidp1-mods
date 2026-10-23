@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.6\
-Edit date 18-Oct-2026\
-Updated for loading programs with drum overlays
+This is version 1.7\
+Edit date 23-Oct-2026\
+Updated for relative microtape names
 
 ## What is pdp1central?
 
@@ -14,7 +14,7 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - it keeps the start-time choices: the interface, the t30dpy display, the front panel and the USB
   paper tape;
 - it mounts paper tapes in the reader and saves what the punch punches;
-- it fast loads a tape straight into the running pdp-1's memory, with fastload, or with ovlload
+- it fast loads a tape straight into the running pdp-1's memory, with fastload or with ovlload
   for a program with drum overlays;
 - it mounts and unmounts microtapes on the Type 550 drives, with mtp;
 - it turns the emulator's sound on and off;
@@ -25,20 +25,20 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 
 It runs on the machine that runs the emulator.
 The scripts stay, and can still be used on a system without a desktop.
-Pdp1central starts, stops, ans reloads the emulator and starts t30doy by running bin/pdp1control.sh,
+Pdp1central starts, stops, ans reloads the emulator and starts t30doy by running bin/pdp1control.sh
 so the two always do the same thing.
 
 ## Starting it
 
-Use the pdp1central desktop icon, or type
+Use the pdp1central desktop icon or type
 
 ```
 pdp1central
 ```
 
-Exit, or closing the window, leaves pdp1central and does not stop the emulator or anything it started.
-If a start, stop or file dialog is still running, pdp1central waits for it to finish
-first, so it is not cut short; Exit again to leave at once.
+Exit or closing the window leaves pdp1central and does not stop the emulator or anything it started.
+If a start, stop, or file dialog is still running, pdp1central waits for it to finish first.
+Exit again to leave immediately.
 
 Options:
 - -r *root*: the install directory, /opt/pidp1-mods by default.
@@ -54,7 +54,7 @@ Holding the right mouse button down in the window allows moving it, the same fun
 
 ### The top strip
 
-A lamp for each program the chosen start-time choices run, green when it is running:
+A light for each program the chosen start-time choices run, green when it is running:
 - pdp1, the emulator;
 - the panel driver: panel_pidp1 for the PiDP-1 hardware, vpanel_pdp1 for the on-screen panel;
 - the front end: pdp1_periphES for gui, pdpsrv for web, t30dpy for apps;
@@ -68,10 +68,10 @@ Then the buttons:
 - Exit leaves pdp1central.
 
 While one of these runs, the buttons are disabled and the strip shows what is running and for how long.
-An error is shown under the strip, until another occurs.
+An error is shown under the strip, staying until another occurs.
 
 Stop ends the emulator first, then the t30dpy display, which normally closes by itself when the
-emulator goes.
+emulator stops.
 Either still open after 3 seconds is ended.
 
 ### The Control tab
@@ -80,15 +80,15 @@ Either still open after 3 seconds is ended.
 Front panel (PiDP-1 hardware or virtual) and USB paper tape (yes or no).
 A click saves the choice at once, and it is used at the next start or restart.
 
-Also start t30dpy starts the t30dpy display beside the gui or web front end.
-Apps starts t30dpy anyway, so with apps the box is shown checked and cannot be changed.
+*Also start t30dpy* starts the t30dpy display beside the gui or web front end.
+Apps always starts t30dpy,the box is shown checked and cannot be changed.
 The emulator sends the display to one window at a time, the last one to connect:
-- with gui, t30dpy starts once pdp1_periphES has connected, so t30dpy has the display and the
+- with gui, t30dpy starts once pdp1_periphES has connected; t30dpy has the display and the
   gui's display window stays blank;
 - with web, t30dpy has the display until the browser's display panel is opened; the browser
-  then has it, and t30dpy closes.
+  then has it and t30dpy closes.
 
-t30dpy starts only once the emulator is ready for it,(at most 5 seconds after the emulator
+t30dpy starts only once the emulator is ready for it, at most 5 seconds after the emulator
 starts, it closes if it cannot connect.
 The line beside the box says which.
 
@@ -97,28 +97,29 @@ straight into the running pdp-1's memory with fastload, then starts it without t
 paper tape read takes.
 A running program is stopped first.
 A tape whose am1 source has a stop directive is loaded and not started.
-The line beside the button says what the last load did, or why Load... cannot be used:
-the emulator is not running, or ad1port is off in pidp1.config.
-Only one client can be connected, so with ad1 attached the load fails, and the reason is shown under the strip.
+The line beside the button says what the last load did or why Load... cannot be used:
+the emulator is not running or ad1port is off in pidp1.config.
+Only one client can be connected.
+With ad1 attached the load fails and the reason is shown.
 
 A program with drum overlays (UsingOverlays.md) is loaded with ovlload which then writes the overlays
 to the drum and loads the root tape.
-This happens when the tape chosen also has a .ovl with it in the same directory, or when
-prog.ovl itself is chosen which will load prog.rim or prog.bin.
-The tape and the .ovl must have been made together.
-If their modification times are more than 5 seconds apart nothing is loaded and an error given.
-Assemble again, or remove a .ovl left from an older build of a program that no longer has
+This happens when the tape chosen also has a .ovl with it in the same directory or when
+prog.ovl itself is chosen.
+The tape and the .ovl must have been assembled together.
+If their modification times are more than 5 seconds apart, nothing is loaded and an error given.
+Assemble again or remove an .ovl file left from an older build of a program that no longer has
 overlays.
-The line beside the button then says "with overlays" and if ovlload wrote over another tool's
-data on the drum it reports this.
-The Log tab names the tracks.
+The line beside the button then says "with overlays" and reports if ovlload wrote over another tool's
+data on the drum.
+The Log tab list the tracks.
 
 **Paper tape reader.**
 - Mount... opens a file dialog, and mounts the chosen tape.
 - Remount last mounts the last tape again, causing a read from the start.
 - Unmount takes the tape out of the mount file.
 
-The emulator cannot be asked what is mounted, so pdp1central shows only what it mounted itself.
+The emulator cannot be asked what is mounted, pdp1central shows only what it mounted itself.
 Pdp1central remembers the tape only while it runs.
 
 **Paper tape punch.** Save punch to... opens a file dialog, punch punches to the chosen file.
@@ -134,8 +135,8 @@ A path with a space in it cannot be sent, since the command ports split at space
 **Audio.** The button turns the emulator's sound on or off, as pdp1audio on and off do.
 The audio enabled setting only allows audio; this is what starts it.
 
-The indicator shows what the last click set: "is on" or "is off", or "not set here yet" before the
-first click and after pdp1central starts, stops or restarts the emulator.
+The indicator shows what the last click set: "is on", "is off", or "not set here yet" before the
+first click and after pdp1central starts, stops, or restarts the emulator.
 A change made elsewhere, with pdp1audio or the desktop audio icons, is not shown.
 When the emulator is not running the lamp reads "pidp1 not running".
 
@@ -191,7 +192,7 @@ A start, stop or restart starts the emulator with the config file's values and t
 
 This shows whether the emulator has the type 10 multiply and divide option on.
 It is read every 2 seconds while this tab is shown so a change made elsewhere such as  at the console, with Ctrl-F2
-in pdp1_periphES, or by a reload is tracked.
+in pdp1_periphES or by a reload is tracked.
 The button turns it off or on until the next reload.
 
 The CPU tab's muldiv setting under Settings is the saved value.
@@ -199,23 +200,28 @@ The CPU tab's muldiv setting under Settings is the saved value.
 ### The Microtape tab
 
 A row for each Type 550 drive, 1 to 8, as /opt/pidp1-mods/microtapes.txt lists them,
-the tape's file, or "empty", and:
-- write lock: the drive's WRITE LOCK switch. On a drive with a tape a click mounts the same tape
-  again with the lock on or off, which also rewinds it. On an empty drive it sets the lock for the
-  next mount.
-- Mount... opens a file dialog. Choose an existing tape, or type a new name. A new tape is
-  blank when it is mounted. A tape already on another drive is
-  refused, since each drive would write back to the same file.
-- Unmount takes the drive's tape out out of the mount list.
+the tape's file or "empty", and:
+- write lock: the drive's WRITE LOCK switch.
+  On a drive with a tape a click mounts the same tape
+  again with the lock on or off and rewinds it.
+  On an empty drive it sets the lock for the next mount.
+  A line whose name starts with ./ or ../ is written back with the tape's full path, since mtp
+  would take such a name from its own current directory; any other line keeps its name.
+- Mount... opens a file dialog.
+  Choose an existing tape or type a new name.
+  A new tape is blank when it is mounted.
+  A tape already on another drive is refused.
+  The check resolves a tape rgardless of how its line lists it, a full path or a name relative to
+  /opt/pidp1-mods/Microtapes, with or without ./ or ../.
+- Unmount takes the drive's tape out of the mount list.
 
-Pdp1central makes each change with mtp which rewrites the drive's line in microtapes.txt and
-the emulator mounts tape at its next mse or unmounts it immediately.
-If mtp fails, the strip says the tape could not be mounted or unmounted and the Log tab has what mtp printed.
+Pdp1central makes each change with **mtp**.
+If mtp fails, the error is shown and the Log tab has what mtp printed.
 
-The table is read back from microtapes.txt so a change made in a terminal with mtp, or by
-editing the file, shows within a second or two.
-Comment lines are not shown, and a line that is not a valid entry is counted under the list.
-A tape a program mounts itself, with the mmt IOT, is not in the file and is not shown.
+The table is read back from microtapes.txt so a change made in a terminal with mtp or by
+editing the file shows within a second or two.
+Comment lines are not shown.
+A tape a program mounts itself with the mmt IOT is not in the file and is not shown.
 The tab works whether the emulator is running or not.
 
 ### The Settings tab
@@ -226,10 +232,11 @@ A tab for each group of settings, as in UsingTheConfigFile.md, then:
 Settings that nothing reads any more are not shown; UsingTheConfigFile.md lists them.
 
 Each row has:
-- the setting's name, hold the mouse over it for what it does. A few show a more understandable name, such
+- the setting's name, hold the mouse over it for what it does.
+  A few show a more understandable name, such
   as *audio enabled* for audio; the tooltip gives the name as used in the file.
 - its value, a checkbox for on and off, checked when on, with what a click does beside it,
-  "click to turn off" or "click to turn on", a number, or a text field.
+  "click to turn off" or "click to turn on", a number or a text field.
   Press Enter or leave the field to set it.
 - a default box:, checked means pidp1.config does not set it, so the program that reads it uses
   its own default, which is shown.
@@ -247,24 +254,26 @@ Changes that need a restart are named with a Restart now button when the emulato
 **Revert** drops the changes.
 
 When a change takes effect:
-- on save the emulator, or the hardware panel driver rereads the file at Save.
+- on save the emulator or the hardware panel driver rereads the file at Save.
 - at the next run after save the device's plugin rereads it the next time the machine goes to
   run, a START or CONTINUE.
 - needs a restart, the next time the emulator starts.
 - when pdp1_periph restarts, the next time the program that reads it starts.
 
 How pdp1central writes the file:
-- Only the edited value changes. Comments, the order of the lines and settings it does not know
-  are kept.
+- Only the edited value changes.
+  Comments, the order of the lines and settings it does not know are kept.
 - When a setting appears on more than one line, the last one is the one used, and pdp1central
-  changes that one. The earlier ones are commented out with a #, so every program reads the same value.
-- Checking the default box comments out the setting's line. Unchecking it restores a commented
+  changes that one.
+  The earlier ones are commented out with a #, so every program reads the same value.
+- Checking the default box comments out the setting's line.
+  Unchecking it restores a commented
   "#name=value" line if there is one.
-- On and off are written as on and off. A number with a fraction is always written with a decimal
-  point.
+- On and off are written as on and off.
+ A number with a fraction is always written with a decimal point.
 - The first save each time pdp1central runs keeps the old file as pidp1.config.bak.
-- If pidp1.config is changed by something else while pdp1central is open, it is read again. If
-  there are unsaved changes, pdp1central asks whether to read it again or keep the changes.
+- If pidp1.config is changed by something else while pdp1central is open, it is read again.
+  If there are unsaved changes, pdp1central asks whether to read it again or keep the changes.
 - If there is no pidp1.config, pdp1central offers to start from pidp1.config.example.
 
 ### The Log tab
@@ -283,12 +292,17 @@ frontpanel=virtual
 usbtape=n
 ```
 
-- interface: gui, web or apps. The default is web. apps starts the t30dpy display.
-- t30dpy: y or n, start t30dpy beside the gui or web front end. The default is n.
-- frontpanel: pidp or virtual. The default is virtual.
-- usbtape: y or n. The default is n.
+- interface: gui, web or apps.
+  The default is web. apps starts the t30dpy display.
+- t30dpy: y or n, start t30dpy beside the gui or web front end.
+  The default is n.
+- frontpanel: pidp or virtual.
+  The default is virtual.
+- usbtape: y or n.
+  The default is n.
 
-Lines starting with # are comments. A missing file or line uses the default.
+Lines starting with # are comments.
+  A missing file or line uses the default.
 
 Pdp1control.sh reads the file each time it runs.
 Its commands change it, as pdp1central does.
@@ -321,13 +335,14 @@ colorWindow=220,220,215
 colorLampOn=40,120,255
 ```
 
-- A missing file or scheme line uses light. A scheme name pdp1central does not know uses light
-  also, and is noted in the Log tab.
+- A missing file or scheme line uses light.
+  A scheme name pdp1central does not know uses light also and is noted in the Log tab.
 - The color lines apply to whichever scheme is chosen.
 - When a name appears on more than one line, the last one is used.
-- A name that is not a color, a value that is not three numbers from 0 to 255, or a line that is
+- A name that is not a color, a value that is not three numbers from 0 to 255 or a line that is
   not name=value is noted in the Log tab and ignored, the rest of the file still applies.
-- Picking a scheme in the window changes only the scheme line. Comments, color lines and their
+- Picking a scheme in the window changes only the scheme line.
+  Comments, color lines and their
   order are kept, and the first change each time pdp1central runs keeps the old file as
   pdp1central.config.bak.
 - An edit made to the file while pdp1central is open shows within a second or two.
@@ -358,7 +373,7 @@ pdp1central is C, using the Nuklear toolkit on SDL2 (2.0.18 or later).
 Nuklear is included in src/pdp1central, unmodified.
 
 Its file dialogs, for Mount..., Load..., Save punch to... and the Microtape tab, run bin/askfile,
-which needs Python 3, and shows zenity's file chooser, or Python's Tk one when zenity is missing.
+which needs Python 3, and shows zenity's file chooser or Python's Tk one when zenity is missing.
 Fast load and the Microtape tab run bin/fastload, bin/ovlload and bin/mtp, which the install builds.
 If zenity, Python 3 or its Tk is missing, use:
 ```

@@ -8,6 +8,8 @@
  * -u           - unmount: remove the drive's line(s) instead of mounting a tape
  * drive-number - the drive, 1-8 (decimal, as microtapes.txt numbers them)
  * filename     - the tape to mount, a relative name is relative to /opt/pidp1-mods/Microtapes,
+ *                but one starting ./ or ../ is relative to the current directory, and is written
+ *                as the absolute path it names, with no ., .. or empty components,
  *                appending ",locked" mounts it write-locked
  *
  * The drive's line in the mount file is replaced or added as needed.
@@ -29,6 +31,7 @@
  * 17-Sep-2026 wje minor cleanup, no functionality change
  * 26-Sep-2026 wje change the default tape dir to /opt/pidp1-mod/Microtapes
  * 3-Oct-2026 wje clean up usage, use Microtape for the tape library directory, not microtape
+ * 23-Oct-2026 Claude a name starting ./ or ../ is taken from the current directory
  *
  */
 #include <stdlib.h>
@@ -49,6 +52,8 @@
 
 static char *readFile(const char *pathP, size_t *lenP, bool *existsP);
 static int lineDrive(const char *lineP, size_t len);
+static const char *expandName(const char *nameP, char *outP, size_t outSize);
+static bool currentDir(char *dirP, size_t size);
 static bool checkName(const char *nameP);
 static void noteImage(const char *nameP);
 static bool writeList(const char *listP, const char *textP, size_t len, mode_t mode);
@@ -61,6 +66,7 @@ const char *listArgP;
 const char *driveArgP;
 const char *nameP;
 char listPath[PATH_MAX];
+char fullName[(2 * PATH_MAX) + 16];
 char newLine[PATH_MAX_LEN + 64];
 char *oldP;
 char *newP;
@@ -84,6 +90,7 @@ FILE *fP;
 
     listArgP = DEFAULT_LIST;
     driveArgP = NULL;
+    nameP = NULL;
     list = unmount = false;
     while( (opt = getopt(argc, argv, "f:ul")) != -1 )
     {
@@ -157,7 +164,12 @@ FILE *fP;
 
     if( !unmount )
     {
-        nameP = argv[optind];
+        // Expanded first, so the checks apply to the name actually written.
+        if( (nameP = expandName(argv[optind], fullName, sizeof(fullName))) == NULL )
+        {
+            return(1);
+        }
+
         if( !checkName(nameP) )
         {
             return(1);
@@ -386,6 +398,147 @@ long drive;
     return( (int)drive );
 }
 
+// Expands a name starting ./ or ../ (or one that is just . or ..) into the absolute path it
+// names from the current directory, normalized: no ., .. or empty components; ",locked" is kept.
+// Returns nameP itself if it needs no expansion, else outP holding the expansion,
+// else reports why on stderr and returns NULL.
+static const char *
+expandName(const char *nameP, char *outP, size_t outSize)
+{
+char work[(2 * PATH_MAX) + 2];
+const char *commaP;
+const char *suffixP;
+const char *lastP;
+const char *cP;
+const char *endP;
+size_t pathLen;
+size_t dirLen;
+size_t outLen;
+size_t len;
+
+    suffixP = "";
+    pathLen = strlen(nameP);
+    if( ((commaP = strrchr(nameP, ',')) != NULL) && (strcmp(commaP, ",locked") == 0) )
+    {
+        suffixP = commaP;
+        pathLen = (size_t)(commaP - nameP);
+    }
+
+    // Any other name, plain relative ones included, means what it always has.
+    if( !(((pathLen >= 2) && (strncmp(nameP, "./", 2) == 0))
+        || ((pathLen >= 3) && (strncmp(nameP, "../", 3) == 0))
+        || ((pathLen == 1) && (nameP[0] == '.'))
+        || ((pathLen == 2) && (strncmp(nameP, "..", 2) == 0))) )
+    {
+        return(nameP);
+    }
+
+    // What is left after the last / must be a file, else the name is a directory.
+    for( lastP = (nameP + pathLen); (lastP > nameP) && (lastP[-1] != '/'); --lastP )
+    {
+        // back to the start of the last component
+    }
+
+    len = (size_t)((nameP + pathLen) - lastP);
+    if( (len == 0) || ((len == 1) && (lastP[0] == '.')) || ((len == 2) && (strncmp(lastP, "..", 2) == 0)) )
+    {
+        fprintf(stderr, "\"%.*s\" names a directory, not a tape image.\n", (int)pathLen, nameP);
+        return(NULL);
+    }
+
+    if( !currentDir(work, PATH_MAX) )
+    {
+        return(NULL);
+    }
+
+    dirLen = strlen(work);
+    if( (dirLen + 1 + pathLen) >= sizeof(work) )
+    {
+        fprintf(stderr, "The file name is too long.\n");
+        return(NULL);
+    }
+
+    work[dirLen] = '/';
+    memcpy(work + dirLen + 1, nameP, pathLen);
+    work[dirLen + 1 + pathLen] = 0;
+
+    // Lexically, as the shell's cd does: a .. takes off the component before it, and stops at /.
+    outLen = 0;
+    for( cP = work; *cP; cP = endP )
+    {
+        while( *cP == '/' )
+        {
+            ++cP;
+        }
+
+        for( endP = cP; *endP && (*endP != '/'); ++endP )
+        {
+            // to the end of this component
+        }
+
+        len = (size_t)(endP - cP);
+        if( (len == 0) || ((len == 1) && (cP[0] == '.')) )
+        {
+            continue;
+        }
+
+        if( (len == 2) && (strncmp(cP, "..", 2) == 0) )
+        {
+            while( (outLen > 0) && (outP[outLen - 1] != '/') )
+            {
+                --outLen;
+            }
+
+            if( outLen > 0 )
+            {
+                --outLen;
+            }
+            continue;
+        }
+
+        if( (outLen + 1 + len + strlen(suffixP)) >= outSize )
+        {
+            fprintf(stderr, "The file name is too long.\n");
+            return(NULL);
+        }
+
+        outP[outLen++] = '/';
+        memcpy(outP + outLen, cP, len);
+        outLen += len;
+    }
+
+    snprintf(outP + outLen, (outSize - outLen), "%s", suffixP);
+    return(outP);
+}
+
+// Puts the current directory in dirP, as pwd prints it: $PWD, the path the user cd'd through
+// with its symbolic links, when it really is this directory, else the physical path.
+// Returns true on success, else reports why on stderr and returns false.
+static bool
+currentDir(char *dirP, size_t size)
+{
+const char *pwdP;
+struct stat pwdSt;
+struct stat dotSt;
+
+    // $PWD can be stale or set by hand, so it is used only when it names the same directory as "."
+    pwdP = getenv("PWD");
+    if( (pwdP != NULL) && (pwdP[0] == '/') && (strlen(pwdP) < size) && (stat(pwdP, &pwdSt) == 0)
+        && (stat(".", &dotSt) == 0) && (pwdSt.st_dev == dotSt.st_dev) && (pwdSt.st_ino == dotSt.st_ino) )
+    {
+        snprintf(dirP, size, "%s", pwdP);
+        return(true);
+    }
+
+    if( getcwd(dirP, size) == NULL )
+    {
+        fprintf(stderr, "Can't get the current directory: %s\n", strerror(errno));
+        return(false);
+    }
+
+    return(true);
+}
+
 // Checks that nameP can be written as a line of the list and read back as the same name,
 // not empty, no line break, no white space at either end, and short enough for the IOT itself.
 // Returns true if valid, else reports why on stderr and returns false.
@@ -530,7 +683,8 @@ usage(void)
         "       mtp [-f mapfile] -l\n"
         "  Mounts filename on microtape drive drive-number (1-8),\n"
         "  updating %s unless -f names another.\n"
-        "  A relative filename is relative to /opt/pidp1-mods/Microtapes;\n"
+        "  A relative filename is relative to /opt/pidp1-mods/Microtapes,\n"
+        "      but one starting ./ or ../ is relative to the current directory;\n"
         "      \",locked\" on the end mounts it write-locked.\n"
         "  -u unmounts the drive instead, removing its line.\n"
         "  -l lists all mounted drives.\n"

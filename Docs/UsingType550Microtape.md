@@ -12,7 +12,7 @@ field-service memos.
 
 This is version 1.8\
 Edit date 24-Oct-2026\
-Edit for clarity.
+Add new relative path behavior for mtp.
 
 ## What is the Type 550 Microtape?
 
@@ -71,11 +71,15 @@ To change tapes while the emulator runs, edit *microtapes.txt*, or let *mtp* do 
 bin/mtp 1 tape2.img
 bin/mtp 2 /home/pi/tapes/system.img,locked
 bin/mtp -f /some/other/list.txt 3 scratch.img
+bin/mtp 4 ../work.img
 ```
 *mtp* replaces the drive's line or adds one.
 The image name is written into the list as given, so a relative name is relative to
-*/opt/pidp1-mods/Microtapes*,
-`-f` names a list other than */opt/pidp1-mods/microtapes.txt*.
+*/opt/pidp1-mods/Microtapes*.
+A name starting with `./` or `../` is the exception: it is taken from the current directory,
+as with any other command, and written as the absolute path it resolves to with  `.` or `..`.
+Run in */home/pi/work*, the last example writes `4 /home/pi/work.img`.
+`-f` names a list file other than */opt/pidp1-mods/microtapes.txt*.
 
 The change takes effect at the program's next `mse`.
 An unchanged file does nothing, so a program's `mse` never rewinds a tape or undoes its `mmt`.

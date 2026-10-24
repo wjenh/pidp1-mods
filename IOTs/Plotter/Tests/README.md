@@ -37,14 +37,18 @@ and its Adler-32, the `pHYs` density, the size and every pixel.
 
 A manifest line is `png pbm ppm`, or `png pbm ppm fail` for a control
 that must not match.
-`--selftest` proves the checker can fail: a pixel flipped, a byte of the image data changed (the CRC fails)
-and the same with the CRC repaired (the Adler-32 fails), and a wrong density.
+`--selftest` proves the checker can fail: a pixel flipped, a byte of the image data changed (the CRC fails),
+the Adler-32 changed with the CRC repaired (the Adler-32 fails),
+a byte of the deflate data changed with the CRC repaired (some check must fail), and a wrong density.
 
 ## What pngtest covers
 
 A blank sheet, one pixel, a diagonal, a width that is not a multiple of 8,
-and the 560's and 563's widths over several deflate blocks,
+the 560's and 563's widths, a long 563 sheet over many deflate blocks,
+a sheet of noise that deflate cannot shrink,
+that the line-art sheets are compressed to at most an eighth of their image data,
 and the encoder's refusals (a zero width or height, a picture too big).
+The encoder links with zlib (`-lz`, the `zlib1g-dev` package).
 
 ## What plugintest covers
 

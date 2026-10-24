@@ -4,10 +4,11 @@
  *
  * Each case is written as NAME.png with the bitmap it came from as NAME.pbm (plain PBM, 1 for
  * ink), and listed in OUTDIR/manifest.txt as "png pbm pixelsPerMeter". The cases: a blank
- * sheet, one pixel, a diagonal, a width that is not a multiple of 8, and two sheets large
- * enough that the zlib stream needs several stored blocks, with block boundaries inside rows.
- * It also checks here that pngEncode() refuses a zero width, a zero height and a file over
- * PNG_MAX_BYTES.
+ * sheet, one pixel, a diagonal, a width that is not a multiple of 8, the 560's and 563's
+ * widths, a long 563 sheet of many deflate blocks, and a sheet of noise that deflate cannot
+ * shrink. It also checks here that the line-art sheets are compressed, at most an eighth of
+ * their raw image data, and that pngEncode() refuses a zero width, a zero height and a file
+ * over PNG_MAX_BYTES.
  *
  * Usage: pngtest OUTDIR. Exit status 0 if every file was written and every refusal came.
  */
@@ -69,8 +70,8 @@ uint32_t x;
 }
 
 // Encodes b as NAME.png, writes NAME.pbm, and lists the pair. Counts a failure if anything
-// could not be written.
-static void
+// could not be written. Returns the PNG's size, 0 if there is none.
+static size_t
 writeCase(const char *nameP, Bitmap *bP)
 {
 char path[512];
@@ -83,7 +84,7 @@ size_t i;
     {
         printf("FAIL %s: pngEncode() refused it\n", nameP);
         ++failures;
-        return;
+        return(0);
     }
 
     snprintf(path, sizeof(path), "%s/%s.png", outDirP, nameP);
@@ -92,7 +93,7 @@ size_t i;
         printf("FAIL %s: cannot write %s\n", nameP, path);
         ++failures;
         free(pngP);
-        return;
+        return(0);
     }
 
     free(pngP);
@@ -102,7 +103,7 @@ size_t i;
     {
         printf("FAIL %s: cannot write %s\n", nameP, path);
         ++failures;
-        return;
+        return(0);
     }
 
     fprintf(fP, "P1\n%u %u\n", bP->width, bP->height);
@@ -119,6 +120,26 @@ size_t i;
     fclose(fP);
     fprintf(manifestP, "%s.png %s.pbm %d\n", nameP, nameP, PPM);
     printf("wrote %s (%u x %u, %zu bytes)\n", nameP, bP->width, bP->height, size);
+    return(size);
+}
+
+// Checks that a line-art case was compressed: its file at most an eighth of its raw image data,
+// a filter byte and the packed pixels a row. A stored, uncompressed, file is larger than that
+// data, so this fails against an encoder that does not compress.
+static void
+expectCompressed(const char *nameP, Bitmap *bP, size_t size)
+{
+size_t raw;
+
+    raw = (size_t)bP->height * ((((size_t)bP->width + 7) / 8) + 1);
+    if( (size == 0) || (size > (raw / 8)) )
+    {
+        printf("FAIL size %s: %zu bytes for %zu of image data, more than an eighth\n", nameP, size, raw);
+        ++failures;
+        return;
+    }
+
+    printf("PASS size %s: %zu bytes for %zu of image data\n", nameP, size, raw);
 }
 
 // Checks that pngEncode() refuses a size. Counts a failure if it does not.
@@ -152,6 +173,9 @@ char path[512];
 Bitmap b;
 uint32_t x;
 uint32_t y;
+uint32_t seed;
+size_t size;
+size_t i;
 
     if( argc != 2 )
     {
@@ -195,8 +219,7 @@ uint32_t y;
     b.inkP[(4 * 13) + 12] = 1;
     writeCase("width13", &b);
 
-    // The 560's sheet width, 600 rows: 83,400 bytes, so two stored blocks, the boundary
-    // inside row 471.
+    // The 560's sheet width, 600 rows: 83,400 bytes of image data.
     b = newBitmap(1100, 600);
     for( y = 0; y < 600; ++y )
     {
@@ -210,16 +233,47 @@ uint32_t y;
             }
         }
     }
-    writeCase("sheet560", &b);
+    size = writeCase("sheet560", &b);
+    expectCompressed("sheet560", &b, size);
 
-    // The 563's width, 2950 (369 bytes a row, 6 padding bits), 500 rows: three blocks.
+    // The 563's width, 2950 (369 bytes a row, 6 padding bits), 500 rows.
     b = newBitmap(2950, 500);
     for( y = 0; y < 500; ++y )
     {
         b.inkP[((size_t)y * 2950) + ((y * 5) % 2950)] = 1;
         b.inkP[((size_t)y * 2950) + 2949] = (uint8_t)(y & 1);
     }
-    writeCase("sheet563", &b);
+    size = writeCase("sheet563", &b);
+    expectCompressed("sheet563", &b, size);
+
+    // A long 563 sheet of line art, 740,000 bytes of image data: many deflate blocks. A grid
+    // every 100 steps, a diagonal, and a ray at a slope of 1/3.
+    b = newBitmap(2950, 2000);
+    for( y = 0; y < 2000; ++y )
+    {
+        for( x = 0; x < 2950; ++x )
+        {
+            if( ((y % 100) == 0) || ((x % 100) == 0) || (x == y) || (x == (3 * y) % 2950) )
+            {
+                b.inkP[((size_t)y * 2950) + x] = 1;
+            }
+        }
+    }
+    size = writeCase("long563", &b);
+    expectCompressed("long563", &b, size);
+    free(b.inkP);
+
+    // Noise, which deflate cannot shrink: the file is at its largest for its size, so this
+    // proves the encoder's buffer holds the worst case. A fixed LCG, so every run is the same.
+    b = newBitmap(1100, 400);
+    seed = 12345;
+    for( i = 0; i < ((size_t)1100 * 400); ++i )
+    {
+        seed = (seed * 1103515245U) + 12345U;
+        b.inkP[i] = (uint8_t)((seed >> 16) & 1);
+    }
+    writeCase("dense", &b);
+    free(b.inkP);
 
     fclose(manifestP);
 

@@ -13,8 +13,8 @@ Usage:
                                                 match
     checkpng.py --selftest FILE.png FILE.pbm N  check that a good file passes, and that a
                                                 flipped pixel, a changed IDAT byte, a changed
-                                                byte with its CRC repaired, and a wrong pHYs
-                                                each fail as they should
+                                                Adler-32 or deflate byte with the CRC repaired,
+                                                and a wrong pHYs each fail as they should
 
 Each check prints PASS or FAIL with the reason; the exit status is 0 only if all passed.
 """
@@ -197,7 +197,8 @@ def selftest(png, pbm, ppm):
             kind = None
         except PngError as e:
             kind = e.kind
-        passed = kind == want_kind
+        # want_kind "any" is a control that must fail, whichever check catches it.
+        passed = (kind is not None) if want_kind == "any" else (kind == want_kind)
         ok = ok and passed
         outcome = "passed" if kind is None else f"failed ({kind})"
         print(f"{'PASS' if passed else 'FAIL'} selftest {name}: {outcome}, "
@@ -217,12 +218,18 @@ def selftest(png, pbm, ppm):
     bad = good[:mid] + bytes([good[mid] ^ 0x01]) + good[mid + 1:]
     leg("IDAT byte changed", bad, expected, ppm, "crc")
 
-    # The same change with the CRC repaired: Adler-32 must catch it. The byte is the last data
-    # byte of the stream (just before the Adler-32), always image data in a stored block.
-    last = pos + 8 + length - 5
+    # The Adler-32 itself changed, the CRC repaired: the Adler-32 check must catch it. In a
+    # deflated stream a changed data byte is code, not a pixel, so it may end anywhere.
+    last = pos + 8 + length - 1
     bad = good[:last] + bytes([good[last] ^ 0x01]) + good[last + 1:]
     bad = repair_crc(bad, pos, length)
-    leg("IDAT byte changed, CRC repaired", bad, expected, ppm, "adler")
+    leg("Adler-32 changed, CRC repaired", bad, expected, ppm, "adler")
+
+    # A byte in the middle of the deflate data changed, the CRC repaired: whichever check
+    # catches it (zlib, adler, size or pixels), the file must not pass.
+    bad = good[:mid] + bytes([good[mid] ^ 0x01]) + good[mid + 1:]
+    bad = repair_crc(bad, pos, length)
+    leg("deflate byte changed, CRC repaired", bad, expected, ppm, "any")
 
     # The right file read against the wrong density.
     leg("wrong pHYs expected", good, expected, ppm + 1, "phys")

@@ -12,7 +12,7 @@ pngWrite.o: pngWrite.c pngWrite.h
 	gcc $(CFLAGS) -fPIC -c $< -o $@
 
 IOT_73.so: IOT_73.o pngWrite.o ../Lib/iotLogger.o ../Lib/writeBehind.o
-	gcc -shared IOT_73.o pngWrite.o ../Lib/iotLogger.o ../Lib/writeBehind.o -lpthread -lm -o $@
+	gcc -shared IOT_73.o pngWrite.o ../Lib/iotLogger.o ../Lib/writeBehind.o -lz -lpthread -lm -o $@
 
 install: all
 	cp IOT_73.so ..

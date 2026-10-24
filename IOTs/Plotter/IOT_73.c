@@ -2,35 +2,37 @@
  * IOT_73.c -- a CalComp incremental drum plotter on device 73, drawing to a PNG file.
  *
  * DEC sold a "Graph Plotter and Control" for the PDP-1 with the CalComp 560, 563 and 565 (PDP-1
- * price list, June 1964), but no document giving its IOTs has been found.
- * The command set here* is DEC's Type 350 Incremental Plotter Control for the PDP-7
+ * price list, June 1964), but no reliable document giving its IOTs has been found.
+ * The command set here is DEC's Type 350 Incremental Plotter Control for the PDP-7
  * (PDP-7 User Handbook F-75, page 106) as one IOT.
- * Bits 7-8 of the IOT select the Type 350's pulse group, its * device codes 24, 25 and 26.
+ * Bits 7-8 of the IOT select the Type 350's pulse group and its device codes 24, 25 and 26.
  * Bits 9-11 are that group's three pulses.
- * Pulses in one group combine, so one IOT can step diagonally.
- * The plotter's done flag is a cks bit, 1 when it can  take a command.
- * Docs/UsingThePlotter.md has the instruction table.
+ * Pulses in one group combine,one IOT can step diagonally.
+ * The plotter's done flag is a cks bit, 1 when it is ready for a command.
+ * Docs/UsingThePlotter.md has the IOT bits table.
  *
  * Timing is the plotter's authentic timing: a step takes 5 ms on the 560 and 563 (12,000 steps a minute) and
  * 3.33 ms on the 565, a diagonal the same (IBM 1627 manual, A26-5710),
  * a pen change 100 ms (CalComp 565 manual, "5 up and 5 down per second").
- * The plotter cannot detect a pulse that comes too soon loses it (CalComp 565 manual: its one-shot does not
+ * The plotter cannot detect a pulse that comes too soon, it loses it (CalComp 565 manual: its one-shot does not
  * accept another step signal), so a command while the plotter is busy is ignored.
  *
  * The paper is a bitmap of one pixel per step, 0.01 inch.
  * The carriage axis is the paper's width and stops at its edges.
  * The drum axis is a roll, unbounded both ways, kept in bands allocated as the pen reaches them.
- * The sheet is written as a PNG after the plotter has been idle a while,
+ * The sheet is written as a PNG after the plotter has been idle for a configurable time, 5 seconds by default,
  * at every halt, a hlt or the STOP switch, and at power clear.
- * A new sheet starts at the first plotter IOT after the power comes on.
+ * A new sheet starts at the first plotter IOT after the power is on.
  * The PNG is encoded here and written to a .tmp file by a write-behind thread
- * then renamed over the old one  the emulator thread never waits on the disk and a viewer never sees half a file.
+ * then renamed over the old one.t
+ * The emulator thread never waits on the disk and a viewer never sees half a file.
  *
  * Execution model: everything runs on the emulator thread except the end of each file write,
  * writeDone(), which runs on the write-behind thread and touches only what it was handed.
  *
  * 22-Oct-2026 Claude initial version.
  * 22-Oct-2026 wje cleanup
+ * 24-Oct-2026 wje now uses zlib to create a compressed png, much smaller
  */
 
 #include <fcntl.h>

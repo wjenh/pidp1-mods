@@ -1,8 +1,6 @@
-// pngWrite.h -- a minimal PNG encoder for 1-bit grayscale images, no library needed.
+// pngWrite.h -- a minimal PNG encoder for 1-bit grayscale images, using zlib (link with -lz).
 //
-// The image goes into a buffer in memory,
-// The zlib stream holds stored, uncompressed, deflate blocks so the file is about the size of the bitmap,
-// an eighth of a byte a pixel.
+// The image goes into a buffer in memory, deflated by zlib.
 
 #ifndef PNGWRITE_H
 #define PNGWRITE_H
@@ -18,7 +16,8 @@ typedef void (*PngRowFn)(void *ctxP, uint32_t row, uint8_t *rowP);
 // Encodes a width by height 1-bit grayscale image, its rows from rowFn, with a pHYs chunk of
 // pixelsPerMeter (0 leaves pHYs out). Returns a malloc'd buffer holding the whole file and sets
 // *sizeP to its length; the caller frees it. Returns NULL if width or height is 0, the file
-// would be larger than PNG_MAX_BYTES, or memory runs out.
+// could be larger than PNG_MAX_BYTES (judged by the worst case, an image that does not
+// compress), or memory runs out.
 uint8_t *pngEncode(uint32_t width, uint32_t height, uint32_t pixelsPerMeter, PngRowFn rowFn, void *ctxP, size_t *sizeP);
 
 // The largest file pngEncode() makes: a PNG chunk's length is limited to 2^31 - 1, and a sheet

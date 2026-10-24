@@ -2,7 +2,7 @@ A CalComp incremental drum plotter, the 560, 563 or 565 that DEC sold with a PDP
 The paper is written as a PNG file at one pixel per step, 100 dots an inch.
 See Docs/UsingThePlotter.md for the IOT, the timing, the settings and an example.
 
-IOT_73.c is the plugin, pngWrite.c the PNG encoder it uses, uncompressed, no library needed.
+IOT_73.c is the plugin, pngWrite.c the PNG encoder it uses, compressed with zlib (zlib1g-dev).
 
 A make builds IOT_73.so, make install copies it to the IOTs directory.
 IOTs/install.sh does both.

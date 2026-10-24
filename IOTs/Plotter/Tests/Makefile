@@ -24,7 +24,7 @@ AM1INC  ?= ../../../Am1Includes
 test: pngtest plugintest
 
 pngtest: pngtest.c ../pngWrite.c ../pngWrite.h
-	$(CC) $(CFLAGS) -I.. -o $@.bin pngtest.c ../pngWrite.c
+	$(CC) $(CFLAGS) -I.. -o $@.bin pngtest.c ../pngWrite.c -lz
 	rm -rf t1.d
 	./$@.bin t1.d
 	$(PYTHON) -B checkpng.py --manifest t1.d/manifest.txt
@@ -34,7 +34,7 @@ pngtest: pngtest.c ../pngWrite.c ../pngWrite.h
 # Built with logging on, so the busy report reaches /tmp/iot.dbg, which T4 reads. The logger is
 # Lib's object: iotLogger.c defines DOLOGGING itself, and -DDOLOGGING would redefine it.
 plugintest: plugintest.c $(PLUGIN_HDRS) ../pngWrite.c ../../Lib/iotLogger.o ../../Lib/writeBehind.o
-	$(CC) $(PLUGIN_INC) $(CFLAGS) -DDOLOGGING -o $@.bin plugintest.c ../pngWrite.c ../../Lib/iotLogger.o ../../Lib/writeBehind.o -lpthread -lm
+	$(CC) $(PLUGIN_INC) $(CFLAGS) -DDOLOGGING -o $@.bin plugintest.c ../pngWrite.c ../../Lib/iotLogger.o ../../Lib/writeBehind.o -lz -lpthread -lm
 	rm -rf plugintest.d
 	./$@.bin
 	$(PYTHON) -B checkpng.py --manifest plugintest.d/manifest.txt

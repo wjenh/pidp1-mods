@@ -5,7 +5,7 @@ program draws with it.
 
 This is version 1.1\
 Edit date 24-Oct-2026
-Fix typos
+Update for compression
 
 ## What is it?
 
@@ -149,7 +149,8 @@ The picture is the paper as you would read it off the plotter: the carriage acro
 to the right; the drum down the page, drum up moving the pen toward the bottom.
 It is the plotting width wide, and as tall as the drawing plus 10 rows above and below.
 A sheet with nothing drawn is one blank row so you can tell "drew nothing" from "never ran".
-It is 1 bit a pixel, black ink on white, uncompressed, about 14 KB for each inch of 560 paper.
+It is 1 bit per pixel, black ink on white, compressed.
+Its size depends on the drawing, but compression reduces the bitmap to roughly 10-20% of its original size.
 
 The sheet is written:
 - when the plotter has been idle 5 seconds after drawing (`plotteridle`) so you can watch a long
@@ -181,7 +182,7 @@ In pidp1.config, read when the IOT loads and again if a reload command is given.
 | plottercks | the `cks` bit of the plotter's free flag, 0-17 | 7 |
 | plotterorigin | where the pen starts, in steps from the left edge | 0 |
 
-A new `plottermodel` changes the paper width beginning wi the next sheet.
+A new `plottermodel` changes the paper width beginning with the next sheet.
 
 ## An example
 

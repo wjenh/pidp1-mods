@@ -813,7 +813,7 @@ progInterrupt, halt interrupt
 
 // ---------------------------------------------------------------------------
 // secLightpen -- the one section needing real (non-panel) user interaction: a mouse action in
-// the display GUI. Prompts over the typewriter, polls dsp with a bounded timeout, reports FAIL
+// the display GUI. Prompts over the typewriter, polls dsp with a bounded timeout, reports SKIP
 // if nothing happens within the timeout.
 // ---------------------------------------------------------------------------
 secLightpen,
@@ -838,7 +838,7 @@ lpCheck,
     lai
     and [cctcks             // will be nonzero if the timer expired
     sza
-    jmp lpCheckFail         // expired
+    jmp lpCheckSkip         // expired
     jmp lpCheck
 
 lpCheckPass,
@@ -846,9 +846,9 @@ lpCheckPass,
     lio [REPORT_PASS
     jda reportResult
     jmp done
-lpCheckFail,
+lpCheckSkip,
     lac [lblLightpen
-    lio [REPORT_FAIL
+    lio [REPORT_SKIP
     jda reportResult
 done, cla; cct              // disable the clock
     lio [progStop           // be sure the 340 is stopped

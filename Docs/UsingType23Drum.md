@@ -5,8 +5,8 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-Updated 10-Oct-2026\
-Changes for some timing specifications
+Updated 24-Oct-2026\
+minor corrections
 
 ## What is the Type 23 Parallel Drum?
 
@@ -160,8 +160,8 @@ The define *drmsch* is 020, bit 13.
 
 ## How do I know it's done?
 
-If you aren't using the interrupt mode, the only indication is that
-bit 17 in IO will be set if a cks, check status, instruction is executed.
+If you aren't using the interrupt mode, execute a cks, check status, instruction and test bit 17 of IO.
+Bit 17 is the drum's busy flag: it is 1 while a transfer is in progress, and 0 once the last word has moved.
 
 The define *CKSDRM* is 01, bit 17.
 

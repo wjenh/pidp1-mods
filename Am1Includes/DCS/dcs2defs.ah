@@ -148,8 +148,8 @@
 #define dseep 12
 #define dsenc 13
 
-// check status bit in IO reg
-#define dcfcks 000200
+// check status bit in IO reg: bit 16, a channel is locked
+#define dcfcks 000002
 
 // special flex characters
 #define flxerr 076

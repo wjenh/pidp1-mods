@@ -4,8 +4,8 @@ This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
 This is version 1.10
 
-Edit date 15-Oct--2026\
-Add new lightpen cursor
+Updated 24-Oct-2026\
+minor corrections
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 
@@ -479,15 +479,19 @@ If reloadable, a SIGHUP will reset the running t30dpy to use the new values.
 
 | Setting     | Changes          | Default   | Reloadable? |
 |-------------|------------------|-----------|-------------|
-| hostname    | host name        | localhost | no |
+| host        | host name        | localhost | no |
 | port        | port             | 3400      | no |
 | size        | window size      | 1024      | no |
+| renderer    | the SDL renderer, t30dpy3 only | auto | no |
+| gpufade     | the GPU fade     | true      | no |
+| nice        | priority lowered by | 5      | no |
 | border      | bordered window  | true      | yes |
 | vsync       | vsync            | false     | yes |
 | linear      | scaling method   | false     | yes |
 | gamma       | gamma            | 0.4545    | yes |
 | whitebias   | whitebias        | 180       | yes |
 | cutoff      | cutoff threshold | 5         | yes |
+| tail        | GPU fade time, seconds | 1.3 | yes |
 | mikecmode   | read the docs    | false     | yes |
 | pencursor   | custom cursor    | true      | yes |
 

@@ -2,8 +2,8 @@
 
 This document describes the funcionality and how to create your own IOTs.
 
-Updated 11-Oct-2026
-Add note on IOTs that skip.
+Updated 24-Oct-2026\
+minor corrections
 
 ## What is a dynamic IOT?
 
@@ -206,7 +206,8 @@ It will be called whenever the pidp1 goes into run state, or after your IOT is f
 before iotHandler() is called.
 
 If you have any special cleanup to do, such as the fclose() in the example IOT_57, implement `iotStop()`.
-It will be called whenever the pidp1 is halted either by the `hlt` instruction or by the front panel switch.
+It will be called whenever the pidp1 enters stop state via the front panel halt switch or power off switch.
+A `hlt` instruction does not call it.
 
 ## Interrupts aka Sequence Breaks
 

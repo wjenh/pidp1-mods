@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 29-Sep-2026\
-polling is every 5 ms while no channel is connected, and goes on while halted
+Updated 24-Oct-2026\
+minor corrections
 
 ## What is DCS2?
 
@@ -836,8 +836,8 @@ These are included:
 #define dseep 12
 #define dsenc 13
 
-// check status bit in IO reg
-#define dcfcks 000200
+// check status bit in IO reg: bit 16, a channel is locked
+#define dcfcks 000002
 
 // special flex characters
 #define flxerr 076

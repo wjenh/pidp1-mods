@@ -2,6 +2,9 @@
 
 This document describes the drumupdater and how to use it
 
+Updated 24-Oct-2026\
+minor corrections
+
 ## What is drumupdater?
 
 Drumupdater is a program that will load a PDP-1 rim/bin program tape into a given Type 23 parallel drum track.
@@ -38,9 +41,10 @@ The contents of the input 'tape' are read just as would be loaded into core by r
 
 Locations 07751 - 07777 are then overwritten with the following contents.
 ```
-07751-07772 the label
+07751-07771 the label
 07773       the program start address from the tape
-07774-07777 the bit pattern 0707070, which indicates the track has been loaded with a program
+07774       1 if a label is present, else 0
+07775-07777 the bit pattern 0707070, which indicates the track has been loaded with a program
 ```
 
 These locations are where the usual loader is placed, and so are not needed in the image.

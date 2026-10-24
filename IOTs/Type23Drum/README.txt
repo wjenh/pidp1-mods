@@ -11,12 +11,15 @@ The listing for the diagnostic routine is missing some defines and has several t
 
 It simulates the timing of the real drum, more or less.
 Transfer times will be correct, 8.5 us per word transferred.
-The drum count, 0-4095, which is the current word location for the drum, is not timed exactly.
-The real drum increments the count once every 8.5 us, but the emulator calls the poll method once ever 5 us.
-So, the count increments faster than the original. This might affect the timing of some programs.
+The drum count, 0-4095, which is the current word location for the drum, follows the emulator's
+simulated time.
+It advances once every 8.5 us of simulated time, as the real drum does.
 
-A transfer request is done immediately on execution of dcl, but the completion will appear to be delayed for
-the proper time, 8.5 us per drum location needed to reach the start address plus 8.5 us per word transferred.
+A transfer request is accepted on execution of dcl and, as on the real drum, the drum first waits 250 us for
+its field selects to settle.
+The completion is then delayed for the proper time, 8.5 us per drum location
+needed to reach the start address plus 8.5 us per word transferred.
+See Docs/UsingType23Drum.md for the details.
 
 Some sample programs and tests are included.
 Just make to assemble them, make clean to clean up.
@@ -76,7 +79,7 @@ rotate.mac is a fairly useless cute special loader that rotates thru up to 3 dif
 switching every minute.
 Readin the rim file. It will halt so you can set the test switches to the programs you want to run.
 Each 6 bits specify a drum track, 000000-011111, or 0 - 31. The high bit is ignored.
-So, switches 0-5 are one prog, 6-11 another, and 12-17 the last.
+Switches 0-5 are one prog, 6-11 another, and 12-17 the last.
 The programs are actually cycled from low selection to high.
 Naturally, the selected program can't halt, although if it does it can be continued.
 However, that kind of spoils the effect. If it does halt, press continue and it will cycle every minute.

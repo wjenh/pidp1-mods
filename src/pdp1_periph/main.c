@@ -18,6 +18,10 @@
  * Claude 14-Oct-26 no audio command at start, which started the sound; Ctrl-F1 and Ctrl-F2
  *     send the bare command, which the emulator toggles, and read every reply form;
  *     no crash when the emulator does not answer.
+ * Claude 21-Oct-26 F3 copies the current layout and switches to the copy, and refuses at
+ *     10 layouts; F5 onto a file with fewer layouts goes to the first.
+ * Claude 24-Oct-26 each layout keeps its own window and font size: F6 saves them, and
+ *     switching to a layout applies them; F5 starts the first layout from the built-in one.
  *
 */
 #include <stdlib.h>
@@ -131,20 +135,21 @@ typedef struct
     int fontsize;
     Color bgcol;
 } Layout;
+// Every layout's regions are kept in the current window's pixels (resize() rescales them all);
+// a layout's w and h are its own window size, which pdp1_layout.txt's regions are relative to.
 int nlayouts = 1;
-Layout layouts[10] =
+const Layout builtinLayout =
 {
     {
-        {
-            { 595, 155, 330, 330, 1, 0 },
-            { 15,  45, 480, 80, 0, 0 },
-            { 15, 155, 480, 80, 0, 0 },
-            { 15, 275, 480, 300, 0, 0 },
-        },
-        1024, 640, 0, 16,
-        { 0x6e, 0x8b, 0x8e, 255 }
-    }
+        { 595, 155, 330, 330, 1, 0 },
+        { 15,  45, 480, 80, 0, 0 },
+        { 15, 155, 480, 80, 0, 0 },
+        { 15, 275, 480, 300, 0, 0 },
+    },
+    1024, 640, 0, 16,
+    { 0x6e, 0x8b, 0x8e, 255 }
 };
+Layout layouts[10];
 
 typedef struct
 {
@@ -807,6 +812,37 @@ void resize(int w, int h);
 
 const char *confname = "pdp1_layout.txt";
 
+// Move a layout's regions from one window size to another.
+void
+scaleRegions(Layout *l, int fromW, int fromH, int toW, int toH)
+{
+    if(fromW <= 0 || fromH <= 0)
+    {
+        return;
+    }
+
+    for(int j = 0; j < NUM_REGIONS; j++)
+    {
+        Region *r = &l->regions[j];
+        r->x = r->x * toW / fromW;
+        r->y = r->y * toH / fromH;
+        r->w = r->w * toW / fromW;
+        r->h = r->h * toH / fromH;
+    }
+}
+
+// The current layout takes the window's size, unless it is fullscreen,
+// which keeps the windowed size it had.
+void
+keepLayoutSize(void)
+{
+    if(!fullscreen)
+    {
+        layouts[lay].w = winW;
+        layouts[lay].h = winH;
+    }
+}
+
 void
 saveLayout(void)
 {
@@ -825,18 +861,15 @@ saveLayout(void)
         [ID_PUNCH] "punch",
         [ID_TYPEWRITER] "typewriter",
     };
-    int oldW = winW;
-    int oldH = winH;
-
-    if(winW != realW || winH != realH)
-    {
-        resize(realW, realH);
-    }
+    keepLayoutSize();
 
     for(int i = 0; i < nlayouts; i++)
     {
-        Layout *l = &layouts[i];
-        fprintf(f, "layout %d %d %d ", winW, winH, fontsize);
+        // Each layout's regions are written relative to its own window size.
+        Layout lw = layouts[i];
+        Layout *l = &lw;
+        scaleRegions(l, winW, winH, l->w, l->h);
+        fprintf(f, "layout %d %d %d ", l->w, l->h, l->fontsize);
 
         if(l->fullscreen)
         {
@@ -865,11 +898,6 @@ saveLayout(void)
     }
 
     fclose(f);
-
-    if(winW != oldW || winH != oldH)
-    {
-        resize(oldW, oldH);
-    }
 }
 
 void
@@ -880,7 +908,9 @@ readRegion(char *line, Region *r)
     r->hidden = 0;
 }
 
-void
+// Returns 1 if the file was read; its regions are then relative to each layout's own size,
+// for fitLayouts() to bring to the window's.
+int
 readLayout(void)
 {
     FILE *f = fopen(confname, "r");
@@ -888,7 +918,7 @@ readLayout(void)
     if(f == nil)
     {
         fprintf(stderr, "couldn't open file '%s'\n", confname);
-        return;
+        return(0);
     }
 
     char line[1024];
@@ -896,11 +926,17 @@ readLayout(void)
     nlayouts = 0;
     Region *r = nil;
 
+    // At F5 as at start, the first layout starts from the built-in one.
+    layouts[0] = builtinLayout;
+
     while(fgets(line, sizeof(line) - 1, f) != nil)
     {
         // Lines before the first layout line apply to the built-in layout.
         Layout *l = &layouts[(nlayouts > 0) ? (nlayouts - 1) : 0];
-        sscanf(line, "%s", cmd);
+
+        // A blank line must not repeat the line before it.
+        cmd[0] = '\0';
+        sscanf(line, "%63s", cmd);
 
         if(strcmp(cmd, "layout") == 0)
         {
@@ -922,7 +958,12 @@ readLayout(void)
             l = &layouts[nlayouts - 1];
             l->fullscreen = strstr(line, "fullscreen") != nil;
             l->fontsize = 16;
-            sscanf(line, "%s %d %d %d", cmd, &l->w, &l->h, &l->fontsize);
+
+            // Regions this layout leaves out keep their place in proportion to its size.
+            int fromW = l->w;
+            int fromH = l->h;
+            sscanf(line, "%63s %d %d %d", cmd, &l->w, &l->h, &l->fontsize);
+            scaleRegions(l, fromW, fromH, l->w, l->h);
             l->bgcol.r = 0x6e;
             l->bgcol.g = 0x8b;
             l->bgcol.b = 0x8e;
@@ -977,6 +1018,18 @@ readLayout(void)
     if(nlayouts == 0)
     {
         nlayouts = 1;
+    }
+
+    return(1);
+}
+
+// Bring every layout's regions from its own size to the window's, after readLayout().
+void
+fitLayouts(void)
+{
+    for(int i = 0; i < nlayouts; i++)
+    {
+        scaleRegions(&layouts[i], layouts[i].w, layouts[i].h, winW, winH);
     }
 }
 
@@ -1106,6 +1159,7 @@ setfontsize(int sz)
     }
 
     fontsize = sz;
+    layouts[lay].fontsize = sz;
     font = TTF_OpenFont(fontpath, fontsize);
 
     if(font == nil)
@@ -1123,6 +1177,13 @@ setlayout(int l)
 {
     lay = l;
     setFullscreen(layouts[lay].fullscreen);
+
+    // The main loop's size check rescales the regions once the window has its new size.
+    if(!fullscreen && (layouts[lay].w != winW || layouts[lay].h != winH))
+    {
+        SDL_SetWindowSize(window, layouts[lay].w, layouts[lay].h);
+    }
+
     setfontsize(layouts[lay].fontsize);
 }
 
@@ -1234,6 +1295,7 @@ keydown(SDL_Keysym keysym)
         }
         else
         {
+            keepLayoutSize();
             setlayout((lay + 1) % nlayouts);
         }
 
@@ -1252,9 +1314,19 @@ keydown(SDL_Keysym keysym)
         break;
 
     case SDL_SCANCODE_F3:
-        layouts[nlayouts] = layouts[nlayouts - 1];
-        nlayouts++;
-        nlayouts %= nelem(layouts);
+        // layouts[] is fixed; at the limit the copy has nowhere to go.
+        if(nlayouts >= (int)nelem(layouts))
+        {
+            fprintf(stderr, "already %d layouts, F3 makes no copy\n", (int)nelem(layouts));
+        }
+        else
+        {
+            keepLayoutSize();
+            layouts[nlayouts] = layouts[lay];
+            nlayouts++;
+            setlayout(nlayouts - 1);
+        }
+
         break;
 
     case SDL_SCANCODE_SPACE:
@@ -1286,7 +1358,17 @@ keydown(SDL_Keysym keysym)
         break;
 
     case SDL_SCANCODE_F5:
-        readLayout();
+        if(readLayout())
+        {
+            fitLayouts();
+        }
+
+        // A file with fewer layouts than before can leave lay past them.
+        if(lay >= nlayouts)
+        {
+            lay = 0;
+        }
+
         setlayout(lay);
         break;
 
@@ -1706,9 +1788,11 @@ main(int argc, char *argv[])
 
     initGL();
 
+    layouts[0] = builtinLayout;
     readLayout();
     winW = layouts[lay].w;
     winH = layouts[lay].h;
+    fitLayouts();
     SDL_SetWindowSize(window, winW, winH);
     setlayout(lay);
 

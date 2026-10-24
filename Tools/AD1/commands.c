@@ -851,7 +851,7 @@ char tmpstr[128];
     bank = curBank;
     addr = FULLADDR(bank, word);
     defP = &codeDef;
-    decodeInstr(word, addr, false, " ", findNameByAddr(addr), instr, defP);
+    decodeInstr(word, ADDRESSOF(word), false, " ", findNameByAddr(addr), instr, defP);
 
     if( defP->flags & (INSTR_READS | INSTR_WRITES) )
     {

@@ -47,11 +47,13 @@ int word;
         }
 
         // next is a word count to load
-        if( (endAddr = curAddr + nextWord(fP)) < 0 )
+        if( (word = nextWord(fP)) < 0 )
         {
             state = LOADER_ERROR;
             return( LOADER_ERROR );
         }
+
+        endAddr = (curAddr + word);
 
         // checksum of start and count, ignore it
         if( (word = nextWord(fP)) < 0 )
@@ -81,6 +83,7 @@ int word;
 
         // Back to start condition and keep going
         state = LOADER_CMD_START;
+        return( LOADER_AGAIN );
     }
     else
     {

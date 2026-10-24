@@ -18,7 +18,7 @@
 #define LOADER_DONE     1   // the terminating condition was seen, start address returned in addrP or -1 if none
 #define LOADER_MORE     2   // more words to come
 #define LOADER_AGAIN    3   // more words to come, but ignore this result, call again
-#define LOADER_STOP     4   // am1 loader saw a stop, not a regular start
+#define LOADER_STOP     4   // no start address: an am1 stop, or a tape that ends without one
 
 #define LOADER_ERROR    -1   // bad format, eof, etc
 

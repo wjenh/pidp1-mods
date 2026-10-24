@@ -4,10 +4,11 @@
  * address:value
  *
  * If args are supplied during INIT, they will be interpreted as:
- * start-address
- * end-address
+ * begin-address, the first address listed
+ * end-address, the last
+ * start-address, for the start directive, the begin-address if not given
  *
- * The default is 0, 7751 and either none, start-address, or both can be given.
+ * The default is 0, 07750 and any leading part of the three can be given.
  * They can be given in any base that strtol() recognizes, 0bnnn, 0nnn, nnn, 0xnnn.
  * The addresses are full 16 bit address space values.
  */
@@ -102,11 +103,10 @@ int i;
 bool
 readMem(FILE *fileP, int start, int end, int *addrP, int *dataP)
 {
-bool didOne = false;
 char *strP;
 char buf[128];
 
-    while( strP = fgets(buf, 100, fileP) )
+    while( (strP = fgets(buf, 100, fileP)) )
     {
         *addrP = strtol(strP, &strP, 8);
         if( *addrP > end )
@@ -125,7 +125,11 @@ char buf[128];
             {
                 // assume it's old format and the next line is the data
                 // If it's not a valid file, will fail next read after this one also
-                fgets(buf, 100, fileP);
+                if( !fgets(buf, 100, fileP) )
+                {
+                    return(false);
+                }
+
                 *dataP = strtol(buf, 0, 8);
             }
             else

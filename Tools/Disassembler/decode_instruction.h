@@ -1,5 +1,7 @@
 #ifndef DECODE_INSTR_H
 #define DECODE_INSTR_H
+#include <stdbool.h>
+
 // This provides definitions for the CodeDef.flags field.
 // A valid instruction that doesn't modify memory or change location such as law, cla, etc. just sets VALID.
 

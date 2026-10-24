@@ -92,9 +92,10 @@ int word;
     // Reading data
     if( curAddr == endAddr )
     {
-        // End of block, next one or a start/stop
+        // End of block, next one or a start/stop.
+        // No word comes with this, so it must not be LOADER_MORE.
         state = LOADER_CMD_START;
-        return( LOADER_MORE );
+        return( LOADER_AGAIN );
     }
     else
     {

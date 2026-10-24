@@ -29,6 +29,8 @@
  * 29/03/2026 wje - Exclude symbolic name for iots and 1D instructions not supported by macro if in macro mode
  * 31/03/2026 wje - Add instruction type flags
  * 27/05/2026 wje - Fix extraneous comments about decimal in am1 output
+ * 24/10/2026 Claude - Fix the skip text overflow, szi, 740000, cls and the am1 comment on unknown
+ *                  iots; add lap, cmi, ioh C and the SBS16 iots; mul, div read and jsp calls
  *
  */
 #include <stdlib.h>
@@ -57,6 +59,7 @@
 #define OPR_MASK_CMA 01000
 #define OPR_MASK_HLT 00400
 #define OPR_MASK_LAT 02200
+#define OPR_MASK_LAP 00100  // lap is 0300, this bit with cla
 #define OPR_MASK_NOP 017777
 #define OPR_MASK_LAI 00040
 #define OPR_MASK_LIA 00020
@@ -85,7 +88,7 @@
 #define SKP_MASK_SZS 00070
 
 // IOT and other instructions have a number of special behaviors
-typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, IS_SZI, HAS_ID} SpecialMods;
+typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, IS_SZI, HAS_ID, IOH_CMD} SpecialMods;
 
 // This is used to handle instructions that aren't standard, such as the IOT, OPR, etc. instructions
 typedef struct
@@ -124,15 +127,16 @@ static CodeDef opcodes[] =                 // we don't use the indirect bit, so 
         { "isp", CAN_INDIRECT, INSTR_WRITES},           // OP 46
         { "sad", CAN_INDIRECT, INSTR_SKIPS|INSTR_READS},    // OP 50
         { "sas", CAN_INDIRECT, INSTR_SKIPS|INSTR_READS},    // OP 52
-        { "mul", CAN_INDIRECT, INSTR_VALID},           // OP 54
-        { "div", CAN_INDIRECT, INSTR_VALID},           // OP 56
+        { "mul", CAN_INDIRECT, INSTR_READS},           // OP 54
+        { "div", CAN_INDIRECT, INSTR_READS},           // OP 56
         { "jmp", CAN_INDIRECT, INSTR_JUMPS|INSTR_READS},    // OP 60
-        { "jsp", CAN_INDIRECT, INSTR_JUMPS|INSTR_WRITES},   // OP 62
+        // jsp writes no memory; WRITES stays because ad1's trace takes it to mean an operand address
+        { "jsp", CAN_INDIRECT, INSTR_JUMPS|INSTR_CALLS|INSTR_WRITES},   // OP 62
         { "skp", IS_SKIP, INSTR_SKIPS},                // OP 64
         { "sft", IS_SHIFT, INSTR_VALID},               // OP 66
         { "law", IS_LAW, INSTR_VALID},                 // OP 70
         { "iot", IS_IOT, INSTR_VALID},                 // OP 72
-        { "opr1D", IS_OPR2, INSTR_VALID},              // OP 73, extended 1D instruction
+        { "opr1D", IS_OPR2, INSTR_VALID},              // OP 74, extended 1D instruction
         { "opr", IS_OPR, INSTR_VALID}                  // OP 76
     };
 
@@ -141,10 +145,11 @@ static CodeDef opcodes[] =                 // we don't use the indirect bit, so 
 // The more specific masks for the same IOT should come first
 static Special iots[] =
     {
-        {010000, "ioh", IS_IOH, 017777, false},
+        // The mask leaves out the completion bit so that ioh C is found here
+        {010000, "ioh", IOH_CMD, 013777, false},
 
         // BBN CLOCK
-        {02032, "cks", NORMAL, 07777, true},
+        {02032, "cls", NORMAL, 07777, true},
         {02132, "cct", CAN_WAIT, 07777, true},
         {00032, "rck", NORMAL, 07777, true},
 
@@ -156,8 +161,11 @@ static Special iots[] =
         {02063, "dss", CAN_WAIT, 07777, true},
         {00063, "dcl", CAN_WAIT, 07777, true},
 
-        // SBS
-        {00052, "isb", NORMAL, 07777, true},
+        // SBS; isb, asc and dsc take the channel in bits 0001700, shown as extra bits
+        {00052, "isb", NORMAL, 077, true},
+        {00050, "dsc", NORMAL, 077, true},
+        {00051, "asc", NORMAL, 077, true},
+        {00053, "cac", NORMAL, 07777, true},
         {00054, "lsm", NORMAL, 07777, false},
         {00055, "esm", NORMAL, 07777, false},
         {00056, "cbs", NORMAL, 07777, false},
@@ -213,11 +221,12 @@ int completion;
 int tmp, tmp2;
 int extra;
 int bits03;
+int hadCla;
 int flags;
 char *cP;
 char *operandStrP;
-char tmpstr[32];
-char tmpstr2[32];
+char tmpstr[128];           // a skip with every bit set is about 40 characters
+char tmpstr2[128];
 char addrStr[32];
 CodeDef *instructionP;
 Special *sP;
@@ -265,7 +274,7 @@ Special *sP;
     }
 
     // Just in case the operand is an addr field and matches the passed addr.
-    if( ((operand & 07777) == addr) && symbolP && *symbolP )
+    if( ((int)(operand & 07777) == addr) && symbolP && *symbolP )
     {
         operandStrP = symbolP;
     }
@@ -377,11 +386,7 @@ Special *sP;
         tmp = 0;                // set to 1 if we have printed one already
         tmpstr[0] = 0;          // be sure we start empty
 
-        if( indirect )
-        {
-            operand &= ~INDIRECT_BIT;
-        }
-
+        // szi is sni with the indirect bit, so it is tested before that bit is taken out
         if( (operand & SKP_MASK_SZI) == SKP_MASK_SZI )    // MUST come befoe SNI! Only 2 bit directive.
         {
             if( asMacro )       // not in macro
@@ -396,6 +401,11 @@ Special *sP;
                 operand &= ~SKP_MASK_SZI;
                 indirect = 0;
             }
+        }
+
+        if( indirect )
+        {
+            operand &= ~INDIRECT_BIT;
         }
 
         if( (operand & SKP_MASK_SNI) == SKP_MASK_SNI )
@@ -518,11 +528,21 @@ Special *sP;
         {
             bits03 = operand & 07;              // needed for a few ops
             operand &= 017770;
+            hadCla = (operand & OPR_MASK_CLA);   // lat takes the cla bit, lap needs it too
 
             if( (operand & OPR_MASK_LAT) == OPR_MASK_LAT )    // MUST come befoe CLA! Only 2 bit directive.
             {
                 operand &= ~OPR_MASK_LAT;
                 sprintf(tmpstr2,"%slat", tmp?((asMacro)?separatorP:"|"):"");
+                strcat(tmpstr, tmpstr2);
+                tmp = 1;
+            }
+
+            // macro1 has no lap
+            if( !asMacro && hadCla && (operand & OPR_MASK_LAP) )
+            {
+                operand &= ~(OPR_MASK_LAP | OPR_MASK_CLA);
+                sprintf(tmpstr2,"%slap", tmp?"|":"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
@@ -560,6 +580,15 @@ Special *sP;
             {
                 operand &= ~OPR_MASK_CLI;
                 sprintf(tmpstr2,"%scli", tmp?((asMacro)?separatorP:"|"):"");
+                strcat(tmpstr, tmpstr2);
+                tmp = 1;
+            }
+
+            // The PDP-1D's cmi is the indirect bit of an operate word; not in macro1
+            if( !asMacro && (operand & OPR_MASK_CMI) )
+            {
+                operand &= ~OPR_MASK_CMI;
+                sprintf(tmpstr2,"%scmi", tmp?"|":"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
@@ -659,7 +688,8 @@ Special *sP;
             tmp = 1;
         }
 
-        if( operand != 0 )                      // extra bits were left over, must be data
+        // Extra bits left over, or none set at all, must be data
+        if( (operand != 0) || !tmpstr[0] )
         {
             resultP += sprintf(resultP,"%06o", word);
         }
@@ -701,8 +731,9 @@ Special *sP;
 
                 if( operand )
                 {
+                    // am1 would read a lone / as division
                     resultP += sprintf(resultP,"%s%04o", (asMacro)?separatorP:" | ",  operand);
-                    resultP += sprintf(resultP,"\t/%06o", word);
+                    resultP += sprintf(resultP,"\t%s%06o", (asMacro)?"/":"// ", word);
                 }
             }
             else            // is ioh
@@ -781,10 +812,10 @@ Special *sP;
             extra = 0;              // dpy uses some of the special bits
             break;
 
-        case IS_IOH:            // special case for completion flag
+        case IOH_CMD:           // special case for completion flag
             if( completion )
             {
-                resultP += sprintf(resultP," %s",(asMacro)?"-i :4000":"C");
+                resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
                 extra &= ~COMPLETION_BIT;
             }
             break;
@@ -793,12 +824,19 @@ Special *sP;
             resultP += sprintf(resultP," 0%0o", (operand >> 6) & 0177);
             extra = 0;
             break;
+
+        default:
+            break;
         }
 
-        if( (sP->modifiers != UNKNOWN) && (extra != 0) )
+        // The UNKNOWN case has already shown every operand bit
+        if( !(sP->notMacro && asMacro) && (sP->modifiers != UNKNOWN) && (extra != 0) )
         {
             resultP += sprintf(resultP,"%s0%o", (asMacro)?separatorP:" | ",  extra);   // add extra bits
         }
+        break;
+
+    default:
         break;
     }
 
@@ -866,11 +904,11 @@ CodeDef *instructionP;
     return( (instructionP->flags & (INSTR_READS | INSTR_WRITES))?true:false );
 }
 
+// Find the entry of a Special table matching op.
+// Returns the matching entry, or the table's UNKNOWN end marker if none matches.
 Special *
 findSpecial(Special *specP, int op)
 {
-int i;
-
     for( ;; )
     {
         if( specP->modifiers == UNKNOWN )
@@ -878,7 +916,7 @@ int i;
             break;                          // should be end of list
         }
 
-        if( specP->value == (op & specP->mask) )   // found it
+        if( specP->value == (unsigned int)(op & specP->mask) )   // found it
         {
             break;
         }

@@ -1,11 +1,17 @@
 CC=gcc -O3
 #CC=gcc -g
 
+# make test writes everything the kit makes here, never into this directory
+TESTDIR ?= /tmp/disasmtest
+
 all: disassemble
 
 install: disassemble
 	cp disassemble ../../bin/disassemble
 	strip ../../bin/disassemble
+
+test: disassemble
+	Tests/run_tests.sh -d disassemble -w $(TESTDIR)
 
 disassemble: disassemble.o decode_instruction.o kloader.o am1loader.o binloader.o memloader.o
 	$(CC) -o disassemble disassemble.o decode_instruction.o kloader.o am1loader.o binloader.o memloader.o
@@ -30,3 +36,5 @@ memloader.o: memloader.c loader.h
 
 clean:
 	@rm disassemble *.o 2>/dev/null || true
+
+.PHONY: all install test clean

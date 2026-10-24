@@ -14,7 +14,7 @@ LoaderMap loaders[] = {
     {"am1", am1loader, "This loads tapes produced by am1 with its extended loader"},
     {"kalah", kloader, "This loads the kalah program with its unknown loader"},
     {"mem", memloader, "This loads from a memory file produced by pidp-1, -Lmem,begin,end,start"},
-    0
+    {0, 0, 0}
 };
 
 #endif

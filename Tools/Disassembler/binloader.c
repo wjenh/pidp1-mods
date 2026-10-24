@@ -43,11 +43,19 @@
 static int state = LOADER_CMD_START;    // what we're doing now
 static int curAddr;                 // next address to store in
 static int endAddr;                 // terminating condition
+static int blockStart;              // first address of the current block, for messages
+static int checksum;                // running checksum of the current block
+static int passes;                  // LOADER_CMD_STARTs seen, checksum errors are reported on the first only
 
 extern int tape_loc;
 
 extern int nextWord(FILE *fP);
 
+static int onesAdd(int a, int b);
+
+// The DDT BIN loader, see above.
+// Returns LOADER_MORE with a loaded word, LOADER_AGAIN between blocks, LOADER_DONE with the start
+// address from the closing jmp, LOADER_STOP if the tape ends with no jmp, or LOADER_ERROR.
 int
 binloader(FILE *fP, int directive, int *addressP, int *dataP, char *argsP[])
 {
@@ -60,15 +68,20 @@ int word;
     }
     else if( (directive == LOADER_CMD_START) || (state == LOADER_CMD_START) )
     {
-        state == LOADER_CMD_START;
+        if( directive == LOADER_CMD_START )
+        {
+            ++passes;
+        }
+
+        state = LOADER_CMD_START;
 
         // Expect a block start addr, DIO xxxx or a terminating JMP xxxx
-        // If none, we're done.
+        // If none, the tape has no start address.
         if( (curAddr = nextWord(fP)) < 0 )
         {
             state = LOADER_DONE;
             *addressP = *dataP = 0;
-            return( LOADER_DONE );
+            return( LOADER_STOP );
         }
 
         *addressP = curAddr & 07777;
@@ -99,6 +112,10 @@ int word;
             return( LOADER_ERROR );
         }
 
+        // The loader's checksum starts with both dio words, 7754 and 7767 above
+        checksum = onesAdd(*dataP, endAddr);
+        blockStart = curAddr;
+
         endAddr &= 07777;                       // bin loader only deals with bank 0
         state = LOADER_CMD_NEXT;
 
@@ -117,8 +134,15 @@ int word;
     // Reading data
     if( curAddr == endAddr )
     {
-        // End of block, drop checksum, back for a start or another block
+        // End of block: the real loader halts on a bad checksum, we warn and go on, so the rest
+        // of a damaged tape can still be seen.
         word = nextWord(fP);
+        if( (word != checksum) && (passes == 1) )
+        {
+            fprintf(stderr, "Checksum error in the block at %04o-%04o, tape %06o, computed %06o, "
+                "before tape position %d.\n", blockStart, (endAddr - 1), word, checksum, tape_loc);
+        }
+
         state = LOADER_CMD_START;
         return( LOADER_AGAIN );
     }
@@ -130,8 +154,24 @@ int word;
             return( LOADER_ERROR );
         }
 
+        checksum = onesAdd(checksum, word);
         *addressP = curAddr++;
         *dataP = word;
         return( LOADER_MORE );
     }
+}
+
+// 18-bit one's complement addition, as the add instruction the loader uses does it.
+static int
+onesAdd(int a, int b)
+{
+int sum;
+
+    sum = (a + b);
+    if( sum > 0777777 )
+    {
+        sum = ((sum + 1) & 0777777);       // end-around carry
+    }
+
+    return( sum );
 }

@@ -106,10 +106,13 @@
  * 06-Apr-2026 wje - Add -n flag to eliminate multiple outputs of an address
  * 09-Apr-2026 wje - Add deduction of more meaningful label names
  * 14-Jul-2026 wje - Am1 loader was not handling multi-block loads properly
+ * 24-Oct-2026 Claude - Version 2.5: am1 and macro output now assemble back to the tape's original words,
+ *                  labels follow the target's bank and use, the loader is found from the RIM block, and
+ *                  binloader.c checks checksums, am1loader.c and kloader.c end blocks correctly.
  *
  */
 
-#define VERSION "2.4"
+#define VERSION "2.5"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -153,6 +156,7 @@
 #define MEM_EMITTED  0x8       // this location's label has been printed
 #define MEM_MODIFIED 0x10      // at least one reference has written to this location
 #define MEM_START    0x20      // this location was the target of start
+#define MEM_EQUATED  0x40      // referenced but never loaded, its label is a definition at the top
 
 // convert a bank-relative address to an absolute address
 #define FULLADDR(x) ((curBank << 12) | (x))
@@ -184,7 +188,8 @@ bool extendedMem = false;
 
 int pass = 1;               // first pass
 int curBank = 0;            // used for am1
-int lastAddr = 0;;
+int lastAddr = 0;
+int emitNext = -1;          // where the assembler's location counter is in source modes, -1 before any word
 int jmpNumber = 1;          // used with memlocs and labels
 int xctNumber = 1;          // used with memlocs and labels
 int varNumber = 1;          // used with memlocs and labels
@@ -198,7 +203,11 @@ char separator[4];          // used in macro mode
 
 // This is a bitmap for tracking used memory locations.
 // Each bit represents one word in memory.
-uint64_t memMap[(BANKS * MEMSIZE) / sizeof(uint64_t)];
+uint64_t memMap[(BANKS * MEMSIZE) / 64];
+
+// Times pass one saw each address loaded. A tape can load an address twice and memory keeps the
+// last, so the source modes write only the last.
+unsigned short loadCount[BANKS * MEMSIZE];
 
 // This array is used for tracking labels.
 // The low 9 bits are the label number.
@@ -215,11 +224,12 @@ void pushbackWord(int);
 void formatInstr(int, int);
 void generateLabels(void);
 void printTapeLeader(int);
-void passOne(FILE *infP, FILE *outfP);
+void passOne(FILE *infP);
 LabelP markValid(int addr, int iFlags);
 LabelP markTarget(int addr, int creator, int flags);
 void markValidByInstruction(int addr, int word);
-void checkForVariables(FILE *outfP, int addr, int endAddr);
+void printEquates(FILE *outfP);
+LoaderP detectLoader(FILE *fP);
 void showLoaders();
 bool loadSymbols(char *filenameP);
 bool setBit(uint64_t map[], int addr);
@@ -232,7 +242,7 @@ main(int argc, char **argv)
 int opt;
 int word;
 int curAddr;
-int endAddr;               // for BIN loader
+bool loaderGiven;
 char *cP;
 FILE *fP;
 char filename[256];
@@ -243,13 +253,23 @@ char *ldrArgs[128];
     strcpy(separator, "!");         // is a logical or in macro1
     outfP = stdout;
     loaderP = binloader;
+    loaderGiven = false;
+    ldrArgs[0] = NULL;
+    opterr = 0;
 
     // parse our comd line args
-    while( (opt = getopt(argc, argv, "adklmnrv?L:s:o:")) != -1 )
+    // -? is not in the option string, so getopt reports it like any unknown option, with optopt set
+    while( (opt = getopt(argc, argv, "adklmnrvL:s:o:")) != -1 )
     {
         switch( opt )
         {
         case '?':
+            if( optopt != '?' )
+            {
+                fprintf(stderr, "Unknown option or missing argument: -%c\n", optopt);
+                usage();
+            }
+
             showLoaders();
             exit(0);
             break;
@@ -299,6 +319,8 @@ char *ldrArgs[128];
                 fprintf(stderr,"No such loader '%s' is known.\n", optarg);
                 exit(1);
             }
+
+            loaderGiven = true;
             break;
 
         case 's':
@@ -333,9 +355,14 @@ char *ldrArgs[128];
         usage();                // should only be the input filename
     }
 
+    if( !loaderGiven && !rawMode )
+    {
+        loaderP = detectLoader(fP);
+    }
+
     // Pass any loader initialization args to the loader.
     // Any word value is ignored.
-    if( (opt = (*loaderP)(outfP, LOADER_CMD_INIT, &word, &word, ldrArgs)) == LOADER_ERROR )
+    if( (opt = (*loaderP)(fP, LOADER_CMD_INIT, &word, &word, ldrArgs)) == LOADER_ERROR )
     {
         fprintf(stderr, "The loader has reported an error during initialization.\n");
         fclose(outfP);
@@ -350,7 +377,7 @@ char *ldrArgs[128];
     if( !rawMode )
     {
         DIAGNOSTIC(DIAG_PASS, "Pass one started");
-        passOne(fP, outfP);         // first pass finds all locations that need labels and validates the tape.
+        passOne(fP);                // first pass finds all locations that need labels and validates the tape.
         generateLabels();
         fseek(fP, 0, SEEK_SET);
         tape_loc = 0;               // reset tape position
@@ -372,6 +399,18 @@ char *ldrArgs[128];
     else
     {
         fprintf(outfP,"Disassembled from %s\n", filename);
+    }
+
+    // The decoder names the BBN clock and Type 23 drum IOTs, which am1 knows only from these
+    if( asAm1 && !rawMode )
+    {
+        fprintf(outfP,"#include <CLOCK/clockdefs.ah>\n");
+        fprintf(outfP,"#include <DRUM/type23drumdefs.ah>\n");
+    }
+
+    if( !rawMode )
+    {
+        printEquates(outfP);
     }
 
     // We don't check for errors because those were already detected by pass one
@@ -451,18 +490,21 @@ char *ldrArgs[128];
             }
             else if( OPERATION(word) == 032 )   // next data word to load
             {
-                lastAddr = curAddr = OPERAND(word);
+                curAddr = OPERAND(word);
                 word = getWord(fP, 2, state);
 
                 if( keepRim )
                 {
                     formatInstr(curAddr, word);
                 }
+
+                lastAddr = curAddr;
             }
             else
             {
                 // We didn't get what we expected, not a standard macro-generated tape.
-                if( asMacro )
+                // Source can't place words with no addresses, so only a listing goes on.
+                if( asMacro || asAm1 )
                 {
                     fprintf(stderr,"Nonstandard binary tape, unterminated RIM block at read location %d\n",
                         tape_loc - 3);
@@ -476,7 +518,7 @@ char *ldrArgs[128];
                         tape_loc - 3);
                     fprintf(stderr,"Dumping remaining data as random code.\n");
 
-                    formatInstr(0, word);                           // include what we just saw
+                    fprintf(outfP,"0%06o\n", word);                 // include what we just saw
                     state = DATA;
                 }
             }
@@ -502,21 +544,17 @@ char *ldrArgs[128];
                     fprintf(outfP,"%-5d %06o: 000000", tape_loc, lastAddr);
                 }
 
+                // With no label the start is a number, bank-relative with its bank as am1 writes it
                 if( getLabel(curAddr, curAddr, tmpstr) == -1 )
                 {
-                    sprintf(tmpstr,"%06o", curAddr);
+                    sprintf(tmpstr,"%04o", (curAddr & 07777));
                 }
-                else if( asAm1 )
+
+                // am1 keeps each bank's symbols apart, so the bank is named unless both are 0
+                word = BANKNUM(curAddr);
+                if( asAm1 && (word || curBank) )
                 {
-                    word = BANKNUM(curAddr);
-                    if( word )
-                    {
-                        fprintf(outfP,"       start %s:%o\n", tmpstr, word);
-                    }
-                    else
-                    {
-                        fprintf(outfP,"       start %s\n", tmpstr);
-                    }
+                    fprintf(outfP,"       start %s:%o\n", tmpstr, word);
                 }
                 else
                 {
@@ -534,7 +572,11 @@ char *ldrArgs[128];
                         fprintf(outfP,"/ Warning - program used memory not in bank 0.\n");
                     }
 
-                    fprintf(outfP,"/ Warning - program ended with an am1 stop, no start address available.\n");
+                    fprintf(outfP,"/ Warning - program ended with no start address, an am1 stop or none.\n");
+                }
+                else if( asAm1 )
+                {
+                    fprintf(outfP,"       stop\n");
                 }
                 else
                 {
@@ -553,14 +595,22 @@ char *ldrArgs[128];
                     extendedMem = true;
                 }
 
-                if( allowRepeat || setBit(memMap, curAddr) )
+                // -n keeps the first load of an address; otherwise a listing shows every load and
+                // source keeps the last, which is what memory holds.
+                if( !allowRepeat )
                 {
-                    if( curAddr != (lastAddr + 1) )
+                    if( setBit(memMap, curAddr) )
                     {
-                        checkForVariables(outfP, lastAddr, curAddr);
+                        formatInstr(curAddr, word);
                     }
-
+                }
+                else if( !(asMacro || asAm1) || (loadCount[curAddr & 0177777] <= 1) )
+                {
                     formatInstr(curAddr, word);
+                }
+                else
+                {
+                    --loadCount[curAddr & 0177777];
                 }
 
                 lastAddr = curAddr;
@@ -577,16 +627,14 @@ char *ldrArgs[128];
         case RAW:
         case DATA:                                  // we got past the end of all BIN blocks, dump the rest
             // word will contain the 18 bit value we read, dump it
-            if( state == RAW )
+            // DATA is reached only in the listing mode, so it dumps as RAW does there
+            if( (state == RAW) && (asMacro || asAm1) )
             {
-                if( asMacro || asAm1 )
-                {
-                    formatInstr(curAddr++, word);
-                }
-                else
-                {
-                    fprintf(outfP,"0%06o\n", word);
-                }
+                formatInstr(curAddr++, word);
+            }
+            else
+            {
+                fprintf(outfP,"0%06o\n", word);
             }
             break;
 
@@ -605,12 +653,17 @@ char *ldrArgs[128];
     exit(0);
 }
 
+// Pass one: read the whole input, marking every loaded location and every location an
+// instruction refers to, so that labels can be made before anything is printed.
 void
-passOne(FILE *fP, FILE *outfP)
+passOne(FILE *fP)
 {
 int word;
 int curAddr;
-int endAddr;               // for BIN loader
+bool hasStart;
+
+    hasStart = false;
+    curAddr = 0;
 
     if( skipRim )
     {
@@ -639,7 +692,12 @@ int endAddr;               // for BIN loader
         case START:
         case RESTART:                               // only difference is that we don't print leader info
             word = getWord(fP, 1, state);
-            if( OPERATION(word) == 032 )            // beginning of the RIM code block
+            if( word == -1 )
+            {
+                fprintf(stderr,"No RIM block before the end of the input.\n");
+                exit(1);
+            }
+            else if( OPERATION(word) == 032 )       // beginning of the RIM code block
             {
                 state = RIM;
                 DIAGNOSTIC(DIAG_STATE, "New state is RIM");
@@ -701,6 +759,10 @@ int endAddr;               // for BIN loader
             switch( (*loaderP)(fP, LOADER_CMD_NEXT, &curAddr, &word, NULL) )
             {
             case LOADER_DONE:
+                hasStart = true;
+                state = DONE;
+                break;
+
             case LOADER_STOP:
                 state = DONE;
                 break;
@@ -709,7 +771,11 @@ int endAddr;               // for BIN loader
                 continue;
 
             case LOADER_MORE:
-                markValidByInstruction(FULLADDR(curAddr), word);
+                markValidByInstruction(curAddr, word);
+                if( loadCount[curAddr & 0177777] < 0177777 )
+                {
+                    ++loadCount[curAddr & 0177777];
+                }
                 break;
 
             case LOADER_ERROR:
@@ -721,8 +787,11 @@ int endAddr;               // for BIN loader
             break;
 
         case DONE:
-            // Add the start address
-            markTarget(curAddr, 0, 0)->flags |= MEM_START;
+            // Add the start address, if there is one
+            if( hasStart )
+            {
+                markTarget(curAddr, 0, 0)->flags |= MEM_START;
+            }
             return;
 
         default:
@@ -911,11 +980,14 @@ char tmpstr[256];
             fprintf(outfP,(asMacro)?"/ Now in bank %o\n":"bank %o\n", curBank);
         }
 
-        if( pc > (lastAddr + 1) )
+        // Any word not right after the last one needs an origin: the first, one below the last,
+        // and the first in a bank just entered, whose location counter is wherever it was left.
+        if( needBank || (pc != emitNext) )
         {
             fprintf(outfP,"%o/\n", pc & 07777);    // addr is relative to current bank
         }
 
+        emitNext = (pc + 1);
         lastAddr = pc;
         fprintf(outfP,"%s ", (symbolstr[0] != '\0')?symbolstr:"     ");
     }
@@ -977,10 +1049,25 @@ CodeDef codeDef;
     labelP = markValid(addr, 0);            //this address is used
     labelP->flags |= MEM_LOADED;
     operand = OPERAND(word);
+
+    // cal ignores its address field, so it has no target
+    if( (OPERATION(word) == 016) && !(word & 010000) )
+    {
+        return;
+    }
+
+    // The target is in the instruction's own bank
     if( iFlags & (INSTR_READS | INSTR_WRITES) )
     {
-        // Indirection isn't a write, it's a read
-        markTarget(FULLADDR(operand), addr, iFlags);
+        // Indirection isn't a write or a jump to the target, the target is a pointer that is read
+        if( iFlags & INSTR_INDIRECT )
+        {
+            markTarget((BANKOF(addr) | operand), addr, INSTR_READS);
+        }
+        else
+        {
+            markTarget((BANKOF(addr) | operand), addr, iFlags);
+        }
     }
 }
 
@@ -990,16 +1077,17 @@ CodeDef codeDef;
 LabelP
 markTarget(int address, int creator, int iFlags)
 {
-int flags;
 LabelP labelP;
 
+    address &= (BANKS * MEMSIZE) - 1 ; // for safety, limit to our supported size
     labelP = getLabelPointer(address, true);
     labelP->refAddr = creator;
     labelP->flags |= MEM_TARGET | MEM_USED;
     labelP->instFlags |= iFlags;
 
-    // An indirect is not a write to this target
-    if( (iFlags & (INSTR_WRITES | INSTR_INDIRECT)) == (INSTR_WRITES | INSTR_INDIRECT) )
+    // Only a data instruction writing directly makes a variable: an indirect is not a write to
+    // this target, jsp writes nothing, and jda's deposit is what JD already says.
+    if( (iFlags & INSTR_WRITES) && !(iFlags & (INSTR_INDIRECT | INSTR_JUMPS | INSTR_CALLS | INSTR_JDA)) )
     {
         labelP->flags |= MEM_MODIFIED;
     }
@@ -1007,7 +1095,8 @@ LabelP labelP;
     return( labelP );
 }
 
-// Return the label number if the address has been loaded and is the target of a memory reference, else -1
+// Return the label number if the address has been loaded, or defined at the top, and is the target
+// of a memory reference, else -1
 // Format the proper result, either a label or the address if no label defined.
 int
 getLabel(int address, int defaultval, char* rsltP)
@@ -1017,7 +1106,7 @@ LabelP labelP;
     address &= (BANKS * MEMSIZE) - 1 ; // for safety, limit to our supported size
     labelP = getLabelPointer(address, false);
 
-    if( labelP && (labelP->flags & MEM_LOADED) && labelP->label[0] )
+    if( labelP && (labelP->flags & (MEM_LOADED | MEM_EQUATED)) && labelP->label[0] )
     {
         sprintf(rsltP,"%s", labelP->label);
         return( address );
@@ -1060,7 +1149,7 @@ char tmpstr[8];
             // The naming is decided in the following order:
             // Possible letter prefixes are:
             // J  - jmp target, location is jumped to
-            // JS - jsp or cal target
+            // JS - jsp target
             // JD - jda target
             // X  - xct target
             // V  - variable, location written to, can be preceeded by J, JS, JD, or X, e.g. JSV
@@ -1118,6 +1207,12 @@ char tmpstr[8];
             *cP = '\0';
             sprintf(labelP->label, "%s%d", tmpstr, i);
         }
+
+        // No block loads it, so its label can only be a definition, printed before the code
+        if( labelP->label[0] && (labelP->flags & MEM_TARGET) && !(labelP->flags & MEM_LOADED) )
+        {
+            labelP->flags |= MEM_EQUATED;
+        }
     }
 }
 
@@ -1137,24 +1232,86 @@ LabelP lblP;
     return( lblP );
 }
 
-// See if there are any used memory locations that were not loaded.
-// If so, they were macro1 variables, emit them.
+// Print a definition for each referenced location that no block loads: macro1 variables, and
+// anything outside the program. A definition puts no word on the tape, so the source still
+// assembles to the tape's own words. The value is bank-relative, as an operand field is.
 void
-checkForVariables(FILE *outfP, int addr, int endAddr)
+printEquates(FILE *outfP)
 {
+int addr;
 LabelP labelP;
 
-    while( ++addr < endAddr )
+    for( addr = 0; addr < (MEMSIZE * BANKS); ++addr )
     {
-        if( (labelP = getLabelPointer(addr, false)) )
+        if( !(labelP = getLabelPointer(addr, false)) || !(labelP->flags & MEM_EQUATED) )
         {
-            if( !(labelP->flags & (MEM_LOADED | MEM_EMITTED)) && labelP->label[0] )
-            {
-                labelP->flags |= MEM_EMITTED;
-                fprintf(outfP, "%s, 0\n", labelP->label);
-            }
+            continue;
+        }
+
+        if( asAm1 )
+        {
+            fprintf(outfP, "#define %s 0%04o\n", labelP->label, (addr & 07777));
+        }
+        else if( asMacro )
+        {
+            fprintf(outfP, "%s=%o\n", labelP->label, (addr & 07777));
+        }
+        else
+        {
+            fprintf(outfP, "%-5s %06o: %s, referenced, not loaded\n", "", addr, labelP->label);
         }
     }
+}
+
+// Choose a loader from the RIM block, which loads the loader itself: the DDT loader has rpb at
+// 7751, am1's has rpb at 7752 after an eem or a nop. The input is left at its start.
+// Returns the loader found, or the bin loader if neither matches.
+LoaderP
+detectLoader(FILE *fP)
+{
+int word;
+int addr;
+int at7751;
+int at7752;
+LoaderP foundP;
+
+    at7751 = at7752 = -1;
+
+    while( (word = nextWord(fP)) >= 0 )
+    {
+        if( OPERATION(word) != 032 )
+        {
+            break;              // the 060 that ends the block, or not a RIM block
+        }
+
+        addr = OPERAND(word);
+        if( (word = nextWord(fP)) < 0 )
+        {
+            break;
+        }
+
+        if( addr == 07751 )
+        {
+            at7751 = word;
+        }
+        else if( addr == 07752 )
+        {
+            at7752 = word;
+        }
+    }
+
+    if( (at7752 == 0730002) && ((at7751 == 0724074) || (at7751 == 0760000)) )
+    {
+        foundP = am1loader;
+    }
+    else
+    {
+        foundP = binloader;
+    }
+
+    fseek(fP, 0, SEEK_SET);
+    tape_loc = 0;
+    return( foundP );
 }
 
 // Look for a loader by name.
@@ -1266,16 +1423,15 @@ char line[256];
 
         // cP now points to the symbol name, terminate it
         cP2 = cP;
-        while( !isspace(*cP2) )
+        while( *cP2 && !isspace(*cP2) )
         {
             ++cP2;
         }
 
         *cP2 = '\0';
-        cP[LABELSIZE-1] = '\0';  // limit the length
 
         labelP = getLabelPointer(addr & 0xFFFF, true);  // constrain the address just in case
-        strcpy(labelP->label, cP);
+        snprintf(labelP->label, LABELSIZE, "%s", cP);   // limit the length
     }
 
     fclose(fP);
@@ -1328,9 +1484,10 @@ usage()
     fprintf(stderr,"    raw overrides a and m\n");
     fprintf(stderr,"k - keep RIM loader code if seen and in macro mode; normally no because MACRO usually adds it\n");
     fprintf(stderr,"l - output the leader in readable form, only in verbose\n");
-    fprintf(stderr,"n - don't output a location if it has already been output\n");
+    fprintf(stderr,"n - don't output a location if it has already been output, needed with a and m if one is\n");
     fprintf(stderr,"v - print version number and exit\n");
     fprintf(stderr,"L loader - use the named loader with optional loader arguments\n");
+    fprintf(stderr,"    without it, bin or am1 is chosen from the RIM block\n");
     fprintf(stderr,"s name - symbol definition file to use\n");
     fprintf(stderr,"o name - output file name, defaults to stdout\n");
     fprintf(stderr,"Flags can be together, -mid, or separate, -m -i -d\n");

@@ -1,0 +1,23 @@
+define with tags local to each use, R and tag+R
+
+define wait n
+	law i n
+	dac cn+R
+lp,	isp cn+R
+	jmp lp+R
+	jmp out+R
+cn,	0
+out,	nop
+	term
+
+define here
+	lac R
+	jmp R+2
+	term
+
+100/
+go,	wait 10
+	wait 20
+	here
+	hlt
+	start go

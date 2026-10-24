@@ -1,0 +1,11 @@
+a tag of a define body used outside that body is refused
+
+define m a
+x,	lac a
+	term
+
+100/
+go,	m 5
+	jmp x	/ refused
+	hlt
+	start go

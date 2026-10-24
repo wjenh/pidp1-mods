@@ -1,0 +1,12 @@
+a repeat whose count differs from one use to the next is refused
+
+define m a
+	repeat a, ral 1s	/ refused
+	lac a
+	term
+
+100/
+go,	m 2
+	m 3
+	hlt
+	start go

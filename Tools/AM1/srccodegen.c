@@ -208,7 +208,7 @@ extern char *origFilenameP;         // the source named on the command line
 extern char asciiToType340(char ch);
 extern int type340Shift(char ch);
 extern int evalExpr(PNodeP nodeP);
-extern long int hashExpr(PNodeP nodeP);
+extern char *poolKey(PNodeP exprP);
 
 static FILE *srcfP;
 static bool atBol;                  // the last character written ended a line
@@ -300,7 +300,7 @@ static void addItem(SrcNoteP noteP, SrcItemKind kind, PNodeP exprP);
 static void snapFirsts(SymNodeP symP);
 static void *firstRefOf(SymNodeP symP);
 static void addSlots(SymNodeP symP, SymNodeP parentP);
-static void keyNow(SrcSlotP slotP, char *keyP, size_t size);
+static char *keyNow(SrcSlotP slotP);
 static bool keyHolds(SrcSlotP slotP);
 static bool subtreeHolds(SymNodeP symP, SrcSlotP topP, const char *nowP);
 static bool sameSide(int a, int b);
@@ -2889,23 +2889,32 @@ bool lost;
 
 // The key a plain assembly gives a slot's expression now, where relayout kept
 // the parser's key for a word nothing names: an address its edits moved.
-// Returns the key's text in keyP; a key read from a serial number is the
-// parser's own.
-static void
-keyNow(SrcSlotP slotP, char *keyP, size_t size)
+// Returns the key's text, allocated; the caller frees it.  A key read from a
+// serial number is the parser's own.
+static char *
+keyNow(SrcSlotP slotP)
 {
 long key;
+char *keyP;
 
     key = strtol(slotP->symP->name, NILP, 10);
 
     if( !slotP->refs && (key >= 0) && (key < (1L << 22)) && slotP->symP->ptr )
     {
-        snprintf(keyP, size, "%ld", hashExpr((PNodeP)(slotP->symP->ptr)));
+        keyP = poolKey((PNodeP)(slotP->symP->ptr));
     }
     else
     {
-        snprintf(keyP, size, "%s", slotP->symP->name);
+        keyP = strdup(slotP->symP->name);
     }
+
+    if( !keyP )
+    {
+        fprintf(stderr, "am1: out of memory in -O=source\n");
+        exit(1);
+    }
+
+    return(keyP);
 }
 
 // Whether an orphan slot's key, as a plain assembly makes it now, still sorts
@@ -2914,48 +2923,53 @@ long key;
 static bool
 keyHolds(SrcSlotP slotP)
 {
-char now[48];
-char other[48];
+char *nowP;
+char *otherP;
 SymNodeP symP;
 SrcSlotP upP;
 int depth;
+bool holds;
 
-    keyNow(slotP, now, sizeof(now));
+    nowP = keyNow(slotP);
 
-    if( !strcmp(now, slotP->symP->name) )
+    if( !strcmp(nowP, slotP->symP->name) )
     {
+        free(nowP);
         return(true);
     }
 
-    for( depth = 0, symP = slotP->parentP; symP && (depth < SRC_DEPTH); symP = upP->parentP, ++depth )
+    holds = true;
+
+    for( depth = 0, symP = slotP->parentP; holds && symP && (depth < SRC_DEPTH); symP = upP->parentP, ++depth )
     {
         upP = findSlot(symP);
-        keyNow(upP, other, sizeof(other));
-
-        if( !sameSide(strcmp(slotP->symP->name, symP->name), strcmp(now, other)) )
-        {
-            return(false);
-        }
+        otherP = keyNow(upP);
+        holds = sameSide(strcmp(slotP->symP->name, symP->name), strcmp(nowP, otherP));
+        free(otherP);
     }
 
-    return( subtreeHolds(slotP->symP->leftP, slotP, now) && subtreeHolds(slotP->symP->rightP, slotP, now) );
+    holds = holds && subtreeHolds(slotP->symP->leftP, slotP, nowP) && subtreeHolds(slotP->symP->rightP, slotP, nowP);
+    free(nowP);
+    return(holds);
 }
 
 // Whether every key under a slot sorts against its new key as against its old.
 static bool
 subtreeHolds(SymNodeP symP, SrcSlotP topP, const char *nowP)
 {
-char other[48];
+char *otherP;
+bool same;
 
     if( !symP )
     {
         return(true);
     }
 
-    keyNow(findSlot(symP), other, sizeof(other));
+    otherP = keyNow(findSlot(symP));
+    same = sameSide(strcmp(symP->name, topP->symP->name), strcmp(otherP, nowP));
+    free(otherP);
 
-    return( sameSide(strcmp(symP->name, topP->symP->name), strcmp(other, nowP)) &&
-            subtreeHolds(symP->leftP, topP, nowP) && subtreeHolds(symP->rightP, topP, nowP) );
+    return( same && subtreeHolds(symP->leftP, topP, nowP) && subtreeHolds(symP->rightP, topP, nowP) );
 }
 
 // Whether two comparisons came out on the same side, equal counting as its own.

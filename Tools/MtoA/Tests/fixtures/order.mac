@@ -1,0 +1,15 @@
+left to right with no precedence: a+b*c, a-b+c
+
+100/
+go,	lac a+b*c
+	lac a-b+c
+	lac a*b+c
+	lac 2*3+1
+	lac a-1
+	lac -a
+	lac a -1
+	hlt
+a,	2
+b,	3
+c,	5
+	start go

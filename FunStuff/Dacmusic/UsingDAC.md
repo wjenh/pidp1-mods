@@ -2,8 +2,8 @@
 
 This document describes the PDP-1 D/A converters, IOTs 71 and 72, and the music player and tools built on them.
 
-This is version 1.1\
-Edit date 14-Oct-2026
+This is version 1.2\
+Edit date 24-Oct-2026
 
 How it all works inside, the IOTs included, is *Implementation.md* in this directory.
 
@@ -21,9 +21,9 @@ Everything the device does is something 1960s logic could do: counters, latches,
 multiplying converters and one shared multiplier.
 
 In fact, part of this was actually implemented, the 4 channel DAC and possibly more, by John Chowning on
-the Standford PDP-1D #48 in the '60s and used for researching this very application.
-Also, early music synthesizers that were beind developed in the late '60s used some of the same techniques,
-but mostly implemented in analog circuitry, digital was still to expensive.
+the Stanford PDP-1D #48 in the '60s and used for researching this very application.
+Also, early music synthesizers that were being developed in the late '60s used some of the same techniques,
+but mostly implemented in analog circuitry, digital was still too expensive.
 
 This does mean that this experiment would have cost a fortune, almost certainly more than the PDP-1 itself.
 But again, it *could* have been done, therefore it's legitimate.
@@ -53,7 +53,10 @@ https://drive.google.com/drive/folders/1BtgZoSKmaCbC2deI5yjbnqnxJUJDnQRe?usp=dri
 - **The voices**, instruments the player loads from the Type 23 drum: the basic nine, all 27 stops of the
   Flentrop organ in Harvard's Busch Hall, seven recorded instruments, 42 Hammond organ presets, and a Highland bagpipe
 - **The renderer**, *dacrender*, which turns a tape into a wav file with no PDP-1 at all
-- **Four tapes** ready to play, two of them with the tempo of E. Power Biggs's recordings
+- **Harmony**, *harmony.rim*, Samson's Harmony Compiler rebuilt, which compiles music source tapes for this player and
+  Samson's, see */opt/pidp1-mods/Docs/UsingHarmony.md*
+- **Several tapes** are ready to play, including Bach's Little Fugue, *Wachet auf* and Toccata after E. Power Biggs's
+  recordings
 
 ## What's here?
 
@@ -66,8 +69,11 @@ https://drive.google.com/drive/folders/1BtgZoSKmaCbC2deI5yjbnqnxJUJDnQRe?usp=dri
 | *FunStuff/Dacmusic/instruments* | The recorded instruments and the Hammond presets |
 | *FunStuff/Dacmusic/drums* | The voice drum images, made by *make* |
 | *FunStuff/Dacmusic/render* | The renderer, *dacrender* |
-| *FunStuff/Dacmusic/tapes* | Six tapes to play |
+| *FunStuff/Dacmusic/midi* | *midi2dac*, a MIDI file to a tape, and *midi2hc*, a MIDI file to Harmony source |
+| *FunStuff/Dacmusic/harmony* | Harmony, Samson's Harmony Compiler rebuilt, see *Docs/UsingHarmony.md* |
+| *FunStuff/Dacmusic/tapes* | Seven tapes to play |
 | *FunStuff/Dacmusic/dac.config* | The settings to add to *pidp1.config* |
+| *FunStuff/Dacmusic/CC-BY-SA-2.5-SE.txt* | The license of four of the nine voices, see *Credits* |
 
 ## Getting ready
 
@@ -76,7 +82,8 @@ https://drive.google.com/drive/folders/1BtgZoSKmaCbC2deI5yjbnqnxJUJDnQRe?usp=dri
 Follow *INSTALLATION.md*, *make install* in */opt/pidp1-mods/IOTs/DAC*, then *make* in
 */opt/pidp1-mods/FunStuff/Dacmusic*.
 
-That builds the player, *music/dacmusic.rim*, the tools and five voice drum images in *drums/*.
+That builds the player, *music/dacmusic.rim*, Harmony, *harmony/harmony.rim*, the tools, the renderer, *midi2dac*,
+*midi2hc* and six voice drum images in *drums/*.
 
 ### The settings
 
@@ -87,7 +94,7 @@ restart the emulator.
 | Setting | What it does |
 |---|---|
 | lightpen=on | The player's menu needs the light pen |
-| dacgain=1.0 | The converters' output level; 1.0 plays as the tapes were made |\
+| dacgain=1.0 | The converters' output level; 1.0 plays as the tapes were made |
 | dacroom=voices | The room the music is heard in, see *The room* below |
 | daconset=8 | An organ note starts up to 8 ms late, as on a real tracker organ, see below |
 
@@ -120,7 +127,7 @@ The drum reads the file again at its next transfer, so you can even change drums
 menu is up, the next PLAY finds the new voices.
 Just don't do it while a piece is loading or playing.
 
-The five drum images:
+The six drum images:
 
 | Drum | Voices | Plays |
 |---|---|---|
@@ -129,6 +136,7 @@ The five drum images:
 | pdp23drum-hammond | The base nine, then the 42 Hammond presets | *sonata1-stereo.bin* and Samson's tapes, and the presets from the menu |
 | pdp23drum-recorded-1 | Flute, violin, string section, trumpet, horn | Instruments you pick from the menu |
 | pdp23drum-recorded-2 | Flute, piano, guitar, drum kit, B3 slow, B3 fast | Instruments you pick from the menu |
+| pdp23drum-bagpipe | The Highland bagpipe's chanter (0) and drones (1) | *scotland-brave.bin* |
 
 The recorded instrument waveforms are too big for one drum, hence two.
 
@@ -136,6 +144,8 @@ A punched tape names its instruments by their numbers in the library.
 A tape plays on any drum that has the same voices at the same numbers.
 The first nine voices of the Flentrop and Hammond images are the standard nine, so those play anything the
 standard drum does.
+The Flentrop's nine are the synthesized ones, so a tape on the nine sounds different there, see *The nine basic
+voices* below.
 
 ## Playing a tape
 
@@ -178,10 +188,14 @@ The header counts the parts as they come in.
 When no more come for about 2 seconds the read is over and the status line says TAPE READ.
 A tape this program punched also carries its added settings, the room and the onset among them.
 These will not be seen by the original Samson player, so a tape created here will still play
-on the orignal player
+on the original player.
 
 READ TAPE doesn't halt, unlike the Samson player.
 Any problem is reported on the status line, see *The messages* below.
+
+A tape over 7,424 words, the whole Haffner Symphony for one, runs on into the banks the voices use, and the voices
+load after it.
+It plays as any other, but leaves less room for the orchestra, see VOICES DO NOT FIT WITH THIS TAPE below.
 
 ### Set the orchestra
 
@@ -211,13 +225,13 @@ The fields:
 ROOM and ONSET, on the line with READ TAPE, PLAY and PUNCH, are the room the music is heard in and how late
 an organ note may start (see *The room* and *The onset* below).
 Each opens its list as the other fields do.
-- **ROOM**: CONFIG, NONE, HALL, BUSCH HALL or VOICES.
-- **ONSET**: CONFIG, OFF, 2 MS, 4 MS, 6 MS, 8 MS, 12 MS or 16 MS.
+- **ROOM** offers CONFIG, NONE, HALL, BUSCH HALL or VOICES.
+- **ONSET** offers CONFIG, OFF, 2 MS, 4 MS, 6 MS, 8 MS, 12 MS or 16 MS.
 
 CONFIG is whatever *dacroom* and *daconset* say in *pidp1.config*.
 The converters take a choice at once, so an instrument you try in its list is heard in the room you chose.
 Both are saved on the tape when you PUNCH, and READ TAPE sets them from a tape that has them.
-A tape punched by an older player, or made elsewhere, sets both to CONFIG; a tape with no orchestra leaves them
+A tape punched by the 1.0 player, or made elsewhere, sets both to CONFIG; a tape with no orchestra leaves them
 as they were.
 
 ### Organ stops
@@ -238,6 +252,7 @@ To the right of each row is its volume slider, 16 points from 0 dB at the right 
 point, with the level in dB under it.
 Pen-down at a point to set the level, or drag along the track.
 The sliders work on the menu and while a piece plays and the level is saved on the tape when you PUNCH.
+On a tape with dynamics the slider sets the level at f, and the tape's dynamics move it from there, see *Loudness*.
 
 ### Play it
 
@@ -265,6 +280,8 @@ Samson's own player, *pdp1m13*, still reads such a tape's parts; it halts at the
 the last of them, since it doesn't know what that block is.
 The 1.0 player reads a tape punched by this one as far as its orchestra, says TAPE ERROR BAD COUNT there, and
 keeps and plays its parts.
+A tape with dynamics is for this player only.
+*pdp1m13* halts at its first dynamic, and the 1.0 player doesn't know them.
 
 ### The messages
 
@@ -272,7 +289,7 @@ keeps and plays its parts.
 |---|---|
 | READING TAPE, TAPE READ | A READ TAPE under way, and done |
 | NO TAPE | No word came from the reader in about 12 seconds. The parts already loaded are kept |
-| TAPE ERROR BAD COUNT, TOO MANY PARTS, TAPE TOO LARGE | The read stopped. The parts read whole before it are kept. More than 30 parts, or a tape taking 7,868 words or more in core, is too large; Samson's trio sonatas fit |
+| TAPE ERROR BAD COUNT, TOO MANY PARTS, TAPE TOO LARGE | The read stopped. The parts read whole before it are kept. More than 30 parts, or a tape too large for core with the program, is too large; the whole Haffner fits |
 | TAPE READ CHECKSUM ERROR | A block's checksum failed. It is taken as read, as Samson's player takes it |
 | TAPE READ ORCHESTRA REFUSED | The tape's orchestra names a voice the drum doesn't have, or a volume, place, room or onset the menu can't show. The orchestra is unchanged |
 | PUNCHING TAPE, TAPE PUNCHED | A PUNCH under way, and done |
@@ -281,6 +298,7 @@ keeps and plays its parts.
 | VOICE NOT IN THE LIBRARY | The orchestra names a voice the drum doesn't have |
 | VOICE n DAMAGED, RELOAD THE DRUM | A block of voice n failed its checksum. Copy the drum file in again |
 | VOICES TOO LARGE | The orchestra's voices don't fit in core together. Choose smaller ones |
+| VOICES DO NOT FIT WITH THIS TAPE | The tape is over 7,424 words and the orchestra's voices don't fit in the core it leaves. Choose smaller ones, or play a smaller tape, a movement for instance |
 | STOPS DO NOT MATCH | A converter's stops are from different divisions, or a stop is mixed with another voice |
 | STOPPED | STOP ended the piece |
 
@@ -294,9 +312,11 @@ keeps and plays its parts.
 | *tapes/sonata1-stereo.bin* | Samson's Trio Sonata I on the default organ, spread across the stereo field | Any of the three with the nine |
 | *tapes/scotland-brave.bin* | *Scotland the Brave* on the Highland bagpipe, the chanter in the center and the drones to the left | Bagpipe |
 | *tapes/amazing-grace-piano.bin* | *Amazing Grace* on the recorded piano, with no room | Recorded-2 |
+| *tapes/haffner-1968.bin* | Mozart's Haffner Symphony, K. 385, whole, with its dynamics and the fourth movement's trills, from the 1968 source in */opt/pidp1-mods/tapes/old/mozart_sym35_1feb68.bin*, on the principal, gedackt, flute and bourdon at 4 feet. For this player only, see *Punch it* | Any of the three with the nine |
 
-Each tape carries its room and onset, so it plays as intended whatever *pidp1.config* says: the four organ tapes
-VOICES and 8 MS, the bagpipe VOICES with the onset off, and *Amazing Grace* no room and no onset.
+Each tape carries its room and onset, so it plays as intended whatever *pidp1.config* says.
+The four organ tapes and the Haffner have VOICES and 8 MS, the bagpipe VOICES with the onset off, and
+*Amazing Grace* no room and no onset.
 
 The two tempo tapes take only their timing from Biggs's recordings, by matching a rendering against the record,
 no music from the recordings is in them (copyrighted).
@@ -316,10 +336,23 @@ That is the tape, not the player.
 
 | Family | Voices |
 |---|---|
-| ORGAN | principal, gedackt, bourdon, each with a pipe's chiff as it speaks |
+| ORGAN | principal, gedackt, bourdon |
 | WINDS | flute, reed, trumpet |
 | PLUCKED | plucked bass, harpsichord |
 | PERCUSSION | marimba |
+
+On the standard and Hammond drums all nine are recorded.
+The organ voices are pipes of the organ of Bureå Church in Sweden.
+The principal is an open 8-foot pipe, the gedackt a stopped one, the trumpet the organ's trumpet stop, a reed,
+and the bourdon its 16-foot pedal Subbas to F3 with a stopped 8-foot rank above.
+The flute, the reed (an oboe) and the plucked bass (a double bass, pizzicato) are orchestral recordings, the
+marimba a marimba struck hard.
+Each is 5,400 to 9,600 words, so any four of the first eight fit in core together.
+The harpsichord is larger, see *The recorded instruments* below.
+
+The Flentrop drum keeps the synthesized nine, built from harmonics and envelopes, the organ pipes with a chiff
+as they speak.
+There is no room for the recorded harpsichord beside the stops, and the Flentrop keeps its sound.
 
 ### The Flentrop
 
@@ -352,11 +385,25 @@ The drum kit sits where General MIDI puts its drums: kick C2, snare D2, floor to
 low tom A2, open hi-hat A#2, high tom C3, crash C#3, ride D#3, ride bell F3.
 Every other pitch is silent.
 
-A recorded voice is large, 13,000 to 22,000 words, and the voices of an orchestra must fit in core together,
-banks 5 to 17 octal.
+A recorded voice is large, 13,000 to 38,000 words, and the voices of an orchestra must fit in core together,
+banks 5 to 17 octal, 45,056 words.
 That is room for two of them, and sometimes three.
 PLAY says VOICES TOO LARGE when they don't fit.
-A converter with no part still loads voice 0 which is why each recorded drum starts with the small flute.
+A converter with no part still loads voice 0 which is why each recorded drum starts with the small flute,
+the synthesized one, 1,536 words.
+
+The bagpipe's chanter is recorded too, each of its nine notes a zone, tuned to A 440 over the drones.
+
+So is the harpsichord, voice 8 of the standard and Hammond drums.
+It is an English harpsichord's 8-foot register, a recording every whole tone from A#1 to E6, a zone every six
+semitones, with each note's decay and the pluck.
+At 38,010 words it is the largest voice.
+Beside it an orchestra has room for the flute, and for the plucked bass when every converter has a part, since
+a converter without one loads the flute too.
+With any other voice of the nine it is VOICES TOO LARGE.
+A tape larger than 7,424 words leaves less room still.
+*midi2dac* maps the General MIDI pianos and guitars to the harpsichord too, so a MIDI file mixing them with organs
+can be refused the same way.
 
 ### The Hammond
 
@@ -386,6 +433,13 @@ One step, 3 dB, down on each centered pair, and more for three on a side.
 The room adds its own sound so with a room the whole sound is turned down a little to make space for it,
 6 dB in the large hall and 3 dB in Busch Hall.
 
+**Dynamics.** A tape the Harmony Compiler punches under LANGUAGE 1968 DAC carries the score's dynamics, see
+*/opt/pidp1-mods/Docs/UsingHarmony.md*.
+Each converter's slider sets its level at f, and each dynamic moves the level from there.
+pp is 18 dB softer, p 12, mp 9 and mf 6, and ff is 3 dB louder, never past the slider's span.
+Every movement starts at f.
+A slider moved while such a tape plays moves the whole line, dynamics and all.
+
 *dacgain* scales the output, 1.0 is as the tapes were made.
 This normally shouldn't need to be changed.
 
@@ -409,7 +463,7 @@ Two are provided, Adolphus Busch Hall where the Flentrop is located or a generic
 | dacroom=none | No room, the converters' sound as it is |
 
 *voices* is the one to use.
-Tthe organ gets its own hall and everything else a hall that suits it.
+The organ gets its own hall and everything else a hall that suits it.
 
 The room is not implemented in the IOTs, it is in the waveforms.
 It takes no machine cycles.
@@ -425,6 +479,27 @@ the same every time.
 The timing of the piece doesn't move, only where each note begins to sound.
 Set it to 0, or leave it out, for every note exactly on time.
 As with the room, a program can change it, with *dyo*, and the player does from a tape or its ONSET field.
+
+## A MIDI file to a tape
+
+*midi/midi2dac* makes a tape from one or more MIDI files, each file a movement, with no PDP-1 and no Harmony
+Compiler.
+In */opt/pidp1-mods/FunStuff/Dacmusic*:
+```
+midi/midi2dac ~/amazing-grace.mid -o ~/grace.bin
+```
+The player has four converters, one note at a time each, so a piece gets four parts at most.
+*midi2dac* shares them among the file's tracks, splits a track that plays chords, and says what it had to leave
+out, by part and bar.
+A file played in, rather than written in a notation program, needs *--played*.
+Its notes are then snapped to 64ths.
+The tape has the file's tempo and its dynamics, from the notes' velocities.
+
+READ TAPE it, set PARTS A MOVEMENT to the number *midi2dac* gives, set the orchestra and PLAY.
+Or give the tape its orchestra with *--orchestra* and a short text file naming each converter's part, voices,
+octave, volume and place, and the room and the onset; then the tape sets them all itself.
+*--plain* makes a tape for *pdp1m13* and the 1.0 player.
+*midi/README.md* has the details.
 
 ## Rendering a tape to a wav file
 
@@ -458,7 +533,9 @@ voices/dacvoice voices/defs/clarinet.def clarinet.voice
 voices/dacdrum mylibrary.lib drums/pdp23drum-mine
 ```
 Keep the nine basic ones first in your library so every tape still names the same voices,
-or at least keep a small voice first, since voice 0 is always loaded.
+or at least keep a small voice first, since voice 0 is always loaded, such as *voices/lib/flute-synth.voice*,
+1,536 words.
+The synthesized eight are there too, *voices/lib/\*-synth.voice*.
 *voices/README.md* describes the definitions, the voice files and the drum.
 
 ## Programming the converters yourself
@@ -485,11 +562,24 @@ At its most it plays a sampled note at any pitch through an envelope, with vibra
 - **The recorded instruments**: violin, trumpet, horn, piano and guitar are cut from the University of Iowa
   Electronic Music Studios' Musical Instrument Samples, free to use, https://theremin.music.uiowa.edu/MIS.html.
   The string section is from Versilian Studios' VSCO 2 Community Edition, CC0,
-  https://versilian-studios.com/vsco-community/.
-  Thanks to both.
+  https://versilian-studios.com/vsco-community/, and the harpsichord from their Versilian Community Sample
+  Library, its English harpsichord (a Zuckermann kit), CC0, https://github.com/sgossner/VCSL.
+  The bagpipe chanter is from IowaSpaceWizard's *Great Highland bagpipe samples* on Freesound, CC0,
+  https://freesound.org/people/IowaSpaceWizard/packs/29644/.
+  Thanks to all three.
+- **The basic nine**: the flute, reed (an oboe) and plucked bass (a double bass, pizzicato) are cut from
+  VSCO 2 Community Edition, and the marimba from the Versilian Community Sample Library, both CC0, as above.
+  The principal, gedackt, trumpet and bourdon are cut from **Lars Palo** and **Graham Goode**'s sample set of
+  **Bureå Church**, Sweden, https://familjenpalo.se/vpo/about-burea-church/, licensed Creative Commons
+  Attribution-ShareAlike 2.5 Sweden, https://creativecommons.org/licenses/by-sa/2.5/se/.
+  The samples were changed.
+  They were mixed to one channel, resampled, cut and looped.
+  Those four voice files, and the standard and Hammond drums holding them, carry the same license;
+  its text is *CC-BY-SA-2.5-SE.txt*, here beside this file.
 - **The drum kit** is cut from *MuldjordKit by Lars Muldjord (DrumGizmo)*, through its SFZ port by kinwie,
   licensed CC BY 4.0, https://creativecommons.org/licenses/by/4.0/.
-  The samples were changed: mixed to one channel, resampled, cut and looped.
+  The samples were changed.
+  They were mixed to one channel, resampled, cut and looped.
   The kit voice, the drum holding it, and anything rendered from it carry this credit.
 
 Enjoy!\

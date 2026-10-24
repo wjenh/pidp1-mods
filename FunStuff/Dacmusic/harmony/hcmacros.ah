@@ -1,0 +1,69 @@
+// hc1d's test-and-jump macros (tapes/music/hc1d.mac lines 95-242), as
+// am1 cpp macros under the same names, so the compiler (hccomp.ac) reads
+// line for line against hc1d.mac. Each is a skip and a jmp, so never
+// skip over one. An operand is used as written, a location or a pool
+// constant such as [21].
+//
+// Included by harmony.am1.
+
+#ifndef HCMACROS_AH
+#define HCMACROS_AH
+
+// On AC, as it stands.
+#define trze(t) sza i; jmp t                // AC zero
+#define trnz(t) sza; jmp t                  // AC not zero
+#define trpl(t) sma; jmp t                  // AC not negative
+#define trmi(t) spa; jmp t                  // AC negative
+#define trel(a, t) sad a; jmp t             // AC equal to a
+#define trnl(a, t) sas a; jmp t             // AC not equal to a
+
+// AC less c, then the jump on the difference; AC is left the difference.
+#define tles(c, t) sub c; spa; jmp t        // AC < c
+#define tgrel(c, t) sub c; sma; jmp t       // AC >= c
+#define tgrec(c, t) sub c; sma sza; jmp t   // AC > c
+
+// On a word, loaded into AC first.
+#define test0(y, z) lac y; sza i; jmp z     // y zero
+#define test1(y, z) lac y; sza; jmp z       // y not zero
+#define testp(y, z) lac y; sma; jmp z       // y not negative
+#define testm(y, z) lac y; spa; jmp z       // y negative
+#define testel(y, a, z) lac y; sad a; jmp z // y equal to a
+#define testnl(y, a, z) lac y; sas a; jmp z // y not equal to a
+
+// The two kinds of message. A complaint types its letters black, an
+// error red. m is an M_ name below.
+#define complaint(m) lac [m]; jda er
+#define error(m) lac [m]; jda er1
+
+// The messages' letters, three FIO-DEC codes a word. nfd is Harmony's,
+// for an ASCII character with no FIO-DEC code.
+#define M_AIR 0617151
+#define M_AOR 0614651
+#define M_BBL 0626243
+#define M_BLC 0624363
+#define M_BRC 0625163
+#define M_DTU 0642324
+#define M_EIT 0657123
+#define M_EOR 0654651
+#define M_ERT 0655123
+#define M_ETR 0652351
+#define M_ILC 0714363
+#define M_ILR 0714351
+#define M_ITG 0712367
+#define M_MTL 0442343
+#define M_MTS 0442322
+#define M_NOR 0454651
+#define M_NPS 0454722
+#define M_TFF 0236666
+#define M_TIC 0237163
+#define M_TMC 0234463
+#define M_TME 0234465
+#define M_TMF 0234466
+#define M_TMG 0234467
+#define M_TMR 0234451
+#define M_TMS 0234422
+#define M_UAT 0246123
+#define M_UNC 0244563
+#define M_NFD 0456664
+
+#endif

@@ -1,0 +1,13 @@
+comments, tabs between statements, origins, tags and location checks
+/ a comment line
+
+100/	lac a	dac b	/ three statements
+go,	lac a	/ a comment
+x,y,	lac b
+104,	nop
+200/
+z,	.+1
+	jmp go
+a,	1
+b,	2
+	start go

@@ -1,0 +1,14 @@
+start without an address goes on to a further program
+
+100/
+go,	lac a
+	hlt
+a,	5
+start
+
+second program
+200/
+go2,	lac b
+	hlt
+b,	6
+	start go2

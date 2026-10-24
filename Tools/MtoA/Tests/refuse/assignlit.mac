@@ -1,0 +1,9 @@
+an assignment of a constant's address is refused
+
+x=(5	/ refused
+100/
+go,	lac a
+	hlt
+a,	5
+	constants
+	start go

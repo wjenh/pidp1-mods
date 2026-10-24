@@ -1,16 +1,18 @@
-# The Flentrop library: the standard nine first, numbered 0-8 as the
+# The Flentrop library. The standard nine come first, numbered 0-8 as the
 # tapes name them, then the 27 stops of the 1958 Flentrop in Adolphus
 # Busch Hall, 9-35, a family a division, made by dacvoice from
-# ../defs/flentrop/ (voices/README.md, "Stops").
-flute.voice
-reed.voice
-plucked-bass.voice
-marimba.voice
-principal.voice
-gedackt.voice
-trumpet.voice
-bourdon.voice
-harpsichord.voice
+# ../defs/flentrop/ (voices/README.md, "Stops"). The nine are the
+# synthesized ones (-synth). The recorded harpsichord does not fit
+# beside the stops, and the Flentrop keeps its sound.
+flute-synth.voice
+reed-synth.voice
+plucked-bass-synth.voice
+marimba-synth.voice
+principal-synth.voice
+gedackt-synth.voice
+trumpet-synth.voice
+bourdon-synth.voice
+harpsichord-synth.voice
 
 # Rugpositief (I), 9-15
 flentrop/rp-holpijp-8.voice
@@ -38,7 +40,7 @@ flentrop/bw-prestant-2.voice
 flentrop/bw-sifflet-1.voice
 flentrop/bw-regaal-8.voice
 
-# Pedaal, 29-35: a 16-foot frame, so a part at 8 FT sounds at 16 feet
+# Pedaal, 29-35. A 16-foot frame, so a part at 8 FT sounds at 16 feet.
 flentrop/ped-bourdon-16.voice
 flentrop/ped-prestant-8.voice
 flentrop/ped-gedekt-8.voice

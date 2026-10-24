@@ -1,0 +1,11 @@
+brackets group: a+[b*c]
+
+100/
+go,	lac a+[b*c]
+	lac [a+b]*c
+	lac [a]
+	hlt
+a,	2
+b,	3
+c,	5
+	start go

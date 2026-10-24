@@ -1,0 +1,11 @@
+repeat writes its statements n times
+
+n=3
+100/
+go,	repeat 3, ral 1s
+	repeat n, lac a	dac b
+	repeat 2, rcl 9s
+	hlt
+a,	0
+b,	0
+	start go

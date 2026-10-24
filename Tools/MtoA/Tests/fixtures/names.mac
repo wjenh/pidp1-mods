@@ -1,0 +1,16 @@
+six characters, upper case, digit-first names, Ns shifts
+
+100/
+go,	lac counter1
+	dac counter2
+	lac Upper
+	lac upper
+	jmp 1j
+1j,	rcl 9s
+	ral 3s
+	sar 1s
+	hlt
+counte,	5
+Upper,	6
+upper,	7
+	start go

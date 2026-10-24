@@ -1,0 +1,2066 @@
+// The compiler. Samson's hc1d (tapes/music/hc1d.mac) ported to am1,
+// with the 1968 language beside it (Docs/UsingHarmony.md describes
+// both). The labels are hc1d.mac's, so a reader finds each piece there;
+// those that start with a digit there are spelled with a letter first
+// (2s3 is s2s3, 3i is tri, 1u and 3u are units1 and units3). Where
+// hc1d.mac and hc1d.rim differ, this follows the .rim.
+//
+// These parts are not hc1d's. The part's notes are in the store and its
+// bar entries in BARS (harmony.am1's nput, nget, bput, bget), counted
+// from 0 up, where hc1d grew them toward each other in its 4K. end hands
+// the part to harmony.am1's pend instead of punching it. A fatal message
+// goes on to hfat instead of halting. Each place the 1968 language
+// differs is marked "1968" and tests lng. 1968 DAC (lng 2) is the 1968
+// language with the dynamics stored, marked "1968 DAC". trill sets a
+// part's trill value in both (trw).
+//
+// Included by harmony.am1 in bank 0, with hcmacros.ah. Uses its reader
+// (rp, rawc), typing (typ, tyw, wtx), store (nput, nget, bput, bget,
+// nbase) and part bookkeeping (pend, hfat, perr, pskp, inp, lng, npv,
+// oct68, stp).
+//
+// Everything here runs in bank 0 with the extend-mode window open, as
+// the whole program does. hc1d's routines keep its calls, jda with a
+// dap-form return, and its register use; each header says how it is
+// called and what it returns.
+
+// The part's start (hc1d's pf, pg, xp). The title is read whole, then
+// typed. Entered via jmp from harmony.am1's cap, with ft at fb.
+
+// In hc1d the title runs to its first slash, every character kept.
+pg,
+    jda rp
+    dac chr
+    sza
+    dac inp                 // a part has begun, so the end of the tape cuts it short
+    lac chr
+    dac i ft
+    testnl(chr, [21], pg1)
+xp,
+    law ptit
+    dac pfu
+    law fb
+    dac emp
+    law i 1
+    dac tc
+    jmp erf                 // types the title, then harmony.am1's ptit keeps it, then pfr
+pg1,
+    idx ft
+    trnl([fl], pg)
+hap,
+    jmp rrz
+
+// In the 1968 language the title is the part's first line, after the
+// blank characters before it; a slash takes the place of its line end,
+// so it is typed as hc1d types a title.
+pg68,
+    jda rp
+    trze(pg68)
+    dac inp
+pg6a,
+    dac chr
+    lac rawc
+    sad [77]
+    jmp pg6e
+    lac chr
+    dac i ft
+    idx ft
+    trnl([fl], pg6b)
+    jmp rrz
+pg6b,
+    jda rp
+    jmp pg6a
+pg6e,
+    law 21
+    dac i ft
+    jmp xp
+
+// pfr -- a part's state at its start (hc1d lines 431-449), then the
+// key's tables made natural (pum) and on to scan 1.
+pfr,
+    dzm units1
+    dzm units3
+    lac lng                 // units 32 until a units is given (1968)
+    sza i
+    jmp pfr1
+    law 40
+    dac units1
+    law 300
+    dac units3
+pfr1,
+    law i 1
+    dac irl
+    dzm tll
+    dzm ft
+    law 1
+    dac fi
+    dac sid
+    dzm rob
+    dzm gi
+    dzm gis
+    dzm ao
+    dzm tc
+    dzm mm
+    dzm ss
+    dzm skn
+    dzm rcf68
+    dzm pdy
+    law 2                   // a trill of 32nds until trill says otherwise
+    jda trs
+    law 1
+    dac rb
+    dac tbc
+    law i 1
+    dac tim
+    law 26
+    dac st
+    jmp pum
+
+// cr -- type a carriage return. Called via jda; AC and IO are clobbered.
+cr, 0
+    dap crx
+    typ([77])
+crx, jmp .
+
+// sbc -- count a bar entry more (hc1d lines 456-463) in bc and tbc, and
+// check the room (s3x if the part would not fit). Returns AC the entry's
+// index, bc. Called via jda; IO is preserved.
+sbc, 0
+    dap sbx
+    idx tbc
+    idx bc
+    tgrel([BARMAX], s3x)
+    jsp room
+    lac bc
+sbx, jmp .
+
+// snl -- count a note word more in nl and check the room. Returns AC nl.
+// Called via jda; IO is preserved.
+snl, 0
+    dap swx
+    idx nl
+    jsp room
+    lac nl
+swx, jmp .
+
+// rcw -- returns AC fi, the place in the buffer of the next character.
+// Called via jda; IO is preserved.
+rcw, 0
+    dap rwx
+    lac fi
+rwx, jmp .
+
+// rrc -- back to the start of the current word, so it can be scanned
+// again (hc1d lines 477-480). Called via jda; AC is left fl2, IO is
+// preserved.
+rrc, 0
+    dap rrx
+    lac fl2
+    dac fi
+    dac fl1
+rrx, jmp .
+
+// rch -- the next character of the measure buffer (hc1d lines 483-555),
+// refilling it from the tape when it is used up. The fill drops
+// comments and is ended by a slash after fw characters, by end and a
+// space, and in the 1968 language by append or stop and a space too
+// (bga, bgt). A fill that reaches fl characters is fatal (rrz).
+// Called via jda. Returns AC the character; IO is clobbered.
+rch, 0
+    dap rcx
+    lac ft
+    tgrel(fi, rcf)
+    law fb
+    dac mbh
+    dac fi
+    dac ft
+    dac fl1
+    dac fl2
+    law 1
+    dac bgs
+    dac bga
+    dac bgt
+rcy,
+    jda rp
+    dac ch
+    trnl([74], rcc)
+    jda rp                  // a comment's first character
+    sas [56]
+    jmp rcv
+    lac lng                 // upper-case vertical bar comments to line end (1968)
+    sza i
+    jmp rcw0
+rcb,
+    jda rp
+    lac rawc
+    trnl([77], rcb)
+    dzm ch                  // the line end, kept as a space
+    jmp rcc
+rcw0,
+    law 56
+    jmp rcv
+rcu,
+    jda rp
+rcv,
+    trnl([72], rcu)
+    jmp rcy
+
+rcc,
+    lac ch
+    trze(rc1)
+    trel([21], rc1)
+    cla
+    jmp rc2
+rc1,
+    law 1
+rc2,
+    dac pp
+    lac ch
+    dac i ft
+    idx ft
+    tles([fw], rcs)
+    lac ft
+    tles([fl], rce)
+    jmp rrz
+rce,
+    lac ch
+    trel([21], rfc)
+rcs,
+    lac lng
+    sza i
+    jmp rcs1
+    // In the 1968 language append and stop end the fill as end does.
+    law bga
+    dac mtp
+    law wapp
+    dac mtw
+    jsp mtc
+    law bgt
+    dac mtp
+    law wstp
+    dac mtw
+    jsp mtc
+rcs1,
+    lac bgs
+    add [rdt]
+    dap rcd
+    lac ch
+rcd, jmp i .
+
+rdt, rd0; rd1; rd2; rd3; rd4
+
+rd0,
+    trze(rda)
+    trnl([21], rdp)
+rda,
+    law 1
+    dac bgs
+    jmp rcy
+rd1,
+    trnl([65], rdp)
+    law 2
+    dac bgs
+    jmp rcy
+rd2,
+    trnl([45], rdp)
+    law 3
+    dac bgs
+    jmp rcy
+rd3,
+    trnl([64], rdp)
+    law 4
+    dac bgs
+    jmp rcy
+rd4,
+    trze(rfc)
+    trel([1], rfc)
+rdp,
+    lac pp
+    dac bgs
+    jmp rcy
+
+rfc,
+    law i 1
+    add ft
+    dac ft
+rcf,
+    lac fi
+    dap rcg
+rcg, lac .
+    dac ch
+    idx fi
+    lac ch
+    trze(rf1)
+    trel([21], rf1)
+    lac fl1
+    dac fl2
+    jmp rff
+rf1,
+    lac fi
+    dac fl1
+rff,
+    lac ch
+rcx, jmp .
+
+// mtc -- one step of the match of a 1968 fill-ending word. The word is
+// in mtw (its codes, then 100), its state in the word mtp points to (0
+// within another word, 1 at a word's start, k+1 with k codes matched).
+// The whole word and then a space end the fill (to rfc, not returning);
+// a space or slash starts a word, as pp says.
+// Called via jsp, with ch the character. AC and IO are clobbered.
+mtc,
+    dap mtx
+    lac i mtp
+    trze(mtn)
+    add mtw
+    sub [1]
+    dac mtq
+    lac i mtq
+    sad [100]
+    jmp mtc2
+    trnl(ch, mtn)
+    lac i mtp
+    add [1]
+    dac i mtp
+    jmp mtx
+mtc2,
+    lac ch
+    trze(rfc)
+mtn,
+    lac pp
+    dac i mtp
+mtx, jmp .
+
+mtp, 0                      // the state's word
+mtw, 0                      // the word's codes
+mtq, 0
+wapp, 61; 47; 47; 65; 45; 64; 100     // append
+wstp, 22; 23; 46; 47; 100             // stop
+
+// er, er1 -- type an error (hc1d lines 558-625). Types the banner at the
+// part's first, the measure (unless already typed for the last error at
+// this word), a tab and the three letters, red for er1. erf types the
+// title the same way, from xp. Called via jda, AC the letters. AC and
+// IO are clobbered.
+er, 0
+    dap erx
+    lac er
+    dac arg
+    law 1
+    dac uin
+    jmp erc
+er1, 0
+    dap ery
+    lac er1
+    dac arg
+    law i 1
+    dac uin
+erc,
+    law ec3
+    dac pfu
+    idx perr
+ert,
+    lac mjp
+    tgrec([-2], erq)
+    jda red
+    lac [ban:1]
+    jda wtx
+erq,
+    jda blk
+    testnl(mjp, bc, erk)
+    testel(tjp, tc, ec)
+erk,
+    lac mbh
+    dac emp
+erf,
+    dzm blc
+    law 1
+    dac etc
+    lac emp
+err,
+    dap erg
+erg, lac .
+    dac chy
+    trze(et1)
+    trel([21], ec0)
+    typ(chy)
+    jmp etr
+
+// hc1d.rim, not .mac, sets etc to 0.
+et1,
+    cla
+    dac etc
+    sub tc
+    trze(et2)
+    trnl([1], et4)
+    jda blk
+    jmp et4
+et2,
+    jda red
+et4,
+    lac blc
+    tles([100], ets)
+    jda cr
+    dzm blc
+    jmp eti
+ets,
+    typ([0])
+etr,
+    idx blc
+eti,
+    idx emp
+    jmp err
+
+ec0,
+    jda blk
+    typ([21])
+    jda cr
+ec,
+    jmp i pfu
+ec3,
+    typ([36])
+    testp(uin, ec1)
+    jda red
+ec1,
+    lac arg
+    jda tw3
+    jda blk
+ec2,
+    jda cr
+    lac bc
+    dac mjp
+    lac tc
+    dac tjp
+    testp(uin, erx)
+ery, jmp .
+erx, jmp .
+
+// red, blk -- the ribbon red or black, typed only when it changes (rb is
+// +1 black, -1 red). Called via jda; AC and IO are clobbered.
+red, 0
+    dap rex
+    testm(rb, rex)
+    typ([35])
+    law i 1
+    dac rb
+rex, jmp .
+
+blk, 0
+    dap blx
+    testp(rb, blx)
+    typ([34])
+    law 1
+    dac rb
+blx, jmp .
+
+// The errors that drop the word (hc1d lines 644-652).
+s1y,
+s1z,
+    error(M_TMF)
+    jmp te
+s1x,
+    error(M_TFF)
+    jmp te
+s1w,
+    error(M_UNC)
+    jmp te
+s1v,
+    error(M_ERT)
+    jmp te
+
+// The two fatal messages (hc1d lines 654-663). The part is given up and
+// a new one begun where the reader stands (harmony.am1's hfat).
+s3x,
+    jda cr
+    lac [movf:1]
+    jda wtx
+eha,
+    jda cr
+    jmp hfat
+rrz,
+    jda cr
+    lac [mmes:1]
+    jda wtx
+    jmp eha
+
+// No such pseudo-op. The rest of the word is skipped (hc1d lines
+// 665-672).
+pcz,
+    error(M_NPS)
+    test0(chr, te)
+pz2,
+    jda rch
+    dac chr
+    trze(pz3)
+    trnl([21], pz2)
+pz3,
+    lac chr
+    dac trm
+    jmp te
+
+// Scan 1 (hc1d lines 677-827). A word's numbers and letters are counted,
+// and what it is is decided at its terminator (s18).
+s1,
+    dzm ldl
+    dzm ucd
+    dzm num
+    dzm psi
+    dzm chi
+    dzm g
+    dzm r
+    dzm cm
+    law 40
+    dac fc
+    law 100
+    dac fu
+s10,
+    jda rch
+    dac chr
+    trze(s11)
+    tgrec([20], s11)
+s12,
+    idx psi
+    test1(ldl, s13)
+    law 1
+    dac ldl
+s13,
+    testnl(chr, [20], s14)
+    cla
+s14,
+    dac dig
+    lac num
+    ral 1s                  // num * 10
+    dac t1
+    ral 2s
+    add t1
+    add dig
+    dac num
+    jmp s10
+
+s11,
+    test0(ldl, s15)
+    dzm ldl
+    test0(ucd, s17)
+    tgrec([1], s16)
+    lac num
+    dac n2
+    jmp s16
+s17,
+    lac num
+    dac n1
+    dac n2
+    dzm num
+s16,
+    idx ucd
+
+s15,
+    test0(chr, s18)
+    trel([21], s18)
+    idx chi
+    idx psi
+    lac chr
+    trel([73], s19)
+    trel([27], s1a)
+    trel([51], s1b)
+    trel([67], s1c)
+    trel([33], s1d)
+    jmp s10
+
+s19,
+    lac fc
+    dac fu
+s1a,
+    lac fc
+    sar 1s
+    dac fc
+    jmp s10
+
+s1b,
+    idx r
+    jmp s10
+s1c,
+    idx g
+    jmp s10
+s1d,
+    idx cm
+    jmp s10
+
+s18,
+    idx tc
+    lac chr
+    dac trm
+    test0(psi, te)
+    // In the 1968 language the word after trill is its argument (trw).
+    lac skn
+    sza i
+    jmp s18a
+    dzm skn
+    jsp trw
+    jmp te
+s18a,
+    // In the 1968 language a word ends what a slash after rest or copy
+    // would not count; pskip puts it back for the words that are skipped.
+    lac rcf68
+    dac rcsv
+    dzm rcf68
+    lac ucd
+    add cm
+    trze(pc)
+    test1(chi, s1e)
+    test1(ao, ps)
+    testel(n1, tbc, te)
+    // In the 1968 language a bar number ahead of the count repeats the
+    // bars before it.
+    lac lng
+    sza i
+    jmp sbbl
+    lac mm
+    trnz(sbbl)
+    lac tbc
+    tgrel(n1, sbbl)
+    lac tbc
+    ral 1s
+    sub n1
+    dac cbh                 // the first bar repeated, the count less the jump
+    sma sza                 // skip unless it is a bar
+    jmp srp
+sbbl,
+    complaint(M_BBL)
+    jmp te
+srp,
+    law i 1
+    add tbc
+    dac n1                  // the last, the bar before the count
+    jmp co7
+
+s1e,
+    dzm ao
+    lac r
+    tles([2], s1f)
+    complaint(M_TMR)
+    law 1
+    dac r
+s1f,
+    lac g
+    tles([2], s1g)
+    complaint(M_TMG)
+    law 1
+    dac g
+s1g,
+    lac cm
+    tles([2], s1h)
+    complaint(M_TMC)
+    law 1
+    dac cm
+
+s1h,
+    lac cm
+    add r
+    add ucd
+    tgrec([2], s1y)
+    test1(cm, s1s)
+    lac r
+    add g
+    add ucd
+    sub [2]
+    trmi(s1x)
+    trnz(s1t)
+    test0(g, s1t)
+    law 1
+    dac rt
+    jmp sli
+
+s1s,
+    law 2
+    dac rt
+    jmp sli
+
+s1t,
+    dzm rt
+sli,
+    test1(r, s1k)
+    test1(ucd, s1j)
+    law 2
+    jmp s1l
+s1j,
+    cla
+    jmp s1l
+// A rest after a note in the measure that had no articulation letter
+// makes that note legato (hc1d's 2006 amendment; nld is the note
+// before).
+s1k,
+    test1(sid, sk1)
+    lac nld
+    jda nget
+    and [117777]
+    add [400000]
+    dac t1
+    lac nld
+    dac nix
+    lac t1
+    jda nput
+sk1,
+    law 1
+s1l,
+    dac lt
+    test0(rt, s1n)
+    tgrec([1], s1m)
+    law 2
+    dac tim
+    jmp s1o
+
+s1m,
+    testm(tim, s1w)
+    jmp s1o
+
+s1n,
+    law 100
+    dac tim
+    law 1
+    dac t2
+    lac n2
+    dac t1
+    trze(s1v)
+    tgrec([100], s1v)
+
+s1q,
+    lac t1
+    sar 1s
+    dac t1
+    trze(s1p)
+    lac tim
+    sar 1s
+    dac tim
+    lac fu
+    sar 1s
+    dac fu
+    lac t2
+    ral 1s
+    dac t2
+    jmp s1q
+
+s1p,
+    testnl(n2, t2, s1v)
+    test1(fu, s1o)
+    complaint(M_DTU)
+
+s1o,
+    lac tim
+    sar 1s
+    dac fc
+    jmp s2
+
+// Scan 2 (hc1d lines 832-1144). The word's letters are read again, then
+// the note words it makes are stored.
+s2,
+    dzm fu
+    dzm sr
+    dzm tri
+    dzm si
+    dzm aci
+    dzm acc
+    dzm et
+    dzm ete
+    jda rrc
+
+s20,
+    jda rch
+    dac chr
+    trze(s21)
+    tgrec([20], s21)
+    jmp s20
+// The letter's place in s2z picks its action in s2y; a letter not there
+// is passed over.
+s21,
+    law s2z
+    dap s2k1
+s2k1, lac .
+    trel(chr, s2k2)
+    idx s2k1
+    trnl([lac s2z+NS2Z], s2k1)
+    jmp s20
+s2k2,
+    lac s2k1
+    sub [lac s2z]
+    add [s2y]
+    dap s2k3
+s2k3, jmp i .
+
+s2b,
+    lac [200000]
+    dac sv
+    jmp s2a
+s2c,
+    lac [400000]
+    dac sv
+    jmp s2a
+s2sr,
+    lac [20000]
+    dac sv
+    jmp s2a
+s2ss,
+    lac [40000]
+    dac sv
+    jmp s2a
+s2d,
+    dzm sv
+// hc1d.rim, not .mac, sets si to 1, so the last articulation letter
+// wins and tms is never typed.
+s2a,
+    law 1
+    dac si
+    jmp s20
+s2e,
+    law 14
+    add sr
+    dac sr
+    jmp s20
+s2f,
+    law i 14
+    add sr
+    dac sr
+    jmp s20
+s2g,
+    lac [100000]
+    dac tri
+    jmp s20
+s2h,
+    testm(aci, s24)
+    idx acc
+    jmp s25
+s2i,
+    testm(aci, s24)
+    law i 1
+    add acc
+    dac acc
+s25,
+    law 1
+    dac aci
+    jmp s20
+s24,
+    complaint(M_NOR)
+    jmp s20
+s2j,
+    testel(aci, [1], s26)
+
+s27,
+    law i 1
+    dac aci
+    jmp s20
+s26,
+    complaint(M_NOR)
+    dzm acc
+    jmp s27
+
+s2k,
+    law 1
+    jmp s28
+s2l,
+    law 2
+    jmp s28
+s2m,
+    law 3
+    jmp s28
+s2n,
+    law 4
+    jmp s28
+s2o,
+    law 5
+    jmp s28
+s38,
+    law 6
+s28,
+    dac et
+    test0(ete, s29)
+    complaint(M_TME)
+s29,
+    lac et
+    dac ete
+    jmp s20
+
+s2p,
+    lac fu
+    add fc
+    dac fu
+s2q,
+    lac fc
+    sar 1s
+    dac fc
+    jmp s20
+
+s2r,
+    test0(si, s51)
+    trel([1], s52)
+    complaint(M_TMS)
+
+s51,
+    lac ss
+    dac sv
+s52,
+    test1(cm, s69)
+    lac tri
+    dac ccc
+
+s2s3,
+    lac tim
+    add fu
+    dac nft
+    dac nfp
+    test1(g, s2s1)
+    dzm gi
+    test0(rob, s2s)
+    lac nft
+    sub rob
+    dac nft
+    tles([2], s2s2)
+s22s,
+    dzm rob
+    jmp s2s
+
+s2s2,
+    lac nft
+    tgrel(rob, s22s)
+    lac nls
+    dac nl
+    dzm rob
+    complaint(M_ITG)
+    jmp s2s3
+
+s2s1,
+    lac rob
+    add tim
+    dac rob
+    law 1
+    dac gi
+    jmp s2s
+
+s69,
+    lac nfp
+    dac nft
+    test1(tri, s2t)
+    lac ccc
+    dac tri
+
+s2t,
+    test0(fu, s2s4)
+    complaint(M_TIC)
+
+s2s4,
+    test1(g, s2s1)
+    dzm gi
+
+s2s,
+    test0(lt, s2u)
+    tgrec([1], sv2)
+    lac aci
+    add ete
+    trze(s2w)
+    complaint(M_AIR)
+s2w,
+    law 200
+    dac tne
+    jmp s70
+
+// The pitch is the position, staff shift, clef, and in the 1968 language
+// an octave down (oct68), its positions being an octave above hc1d's.
+s2u,
+    lac n1
+    add sr
+    add st
+    add oct68
+    dac ton
+    trmi(s40)
+    tles([44], s2v)
+s40,
+    complaint(M_UAT)
+    jmp s2w
+
+sv2,
+    testel(tne, [200], s70)
+s2v,
+    test0(aci, s31)
+    lac ton
+    add [nt]
+    dap s2v1
+s2v1, lac .
+    add acc
+    dac t1
+    tles([2], s41)
+    lac t1
+    tles([77], s42)
+s41,
+    complaint(M_AOR)
+    jmp s2w
+s42,
+    lac ton
+    add [mt]
+    dap s42a
+    lac t1
+s42a, dac .
+
+s31,
+    lac ton
+    add [mt]
+    dap s31a
+s31a, lac .
+    add tll
+    dac tne
+    tles([2], s40)
+    lac tne
+    tgrec([76], s40)
+    lac tne
+    ral 7s
+    dac tne
+s30,
+    test0(ete, s70)
+    test0(tri, s71)
+s72,
+    complaint(M_ETR)
+    jmp s70
+
+s71,
+    lac ete
+    add [ebl-1]
+    dap s71a
+s71a, lac .
+    sub nft
+    trze(s99)
+    cma
+s99,
+    dac ex
+    trpl(s73)
+
+s79,
+    complaint(M_EIT)
+    jmp s70
+
+s73,
+    lac ton
+    add [1]
+    add [mt]
+    dap s73a
+s73a, lac .
+    add tll
+    dac tnf
+    tles([2], s39)
+    lac tnf
+    tgrec([76], s39)
+    lac tnf
+    ral 7s
+    dac tnf
+    lac ton
+    sub [1]
+    add [mt]
+    dap s73b
+s73b, lac .
+    add tll
+    dac tnd
+    tles([2], s39)
+    lac tnd
+    tgrec([76], s39)
+    lac tnd
+    ral 7s
+    dac tnd
+    jsp dyi
+    lac ete
+    add [ebd-1]
+    dap s73c
+s73c, jmp i .
+
+s81,
+    law 2
+    add tne
+    jda cn
+    law 2
+    add tnd
+    jda cn
+    jmp s75
+
+// m, n and w play their notes at the part's trill value (trv, a 32nd
+// unless trill sets it); the time must be a whole number of pairs
+// (trv2), else EIT.
+s82,
+    dzm cut
+    jmp s76
+
+s83,
+    lac trv2
+    dac cut
+s76,
+    lac nft
+    and trk
+    trnz(s79)
+s77,
+    lac nft
+    sub cut
+    trze(s78)
+    lac trv
+    add tnf
+    jda cn
+    lac trv
+    add tne
+    jda cn
+    lac trv2
+    add cut
+    dac cut
+    jmp s77
+
+s84,
+    lac [400002]
+    add tnf
+    jda cn
+    lac [400002]
+    add tne
+    jda cn
+    lac [400002]
+    add tnd
+    jda cn
+    jmp s75
+
+s85,
+    lac trv
+    add tne
+    jda cn
+    jmp s83
+
+s86,
+    law 1
+    add tnf
+    jda cn
+    law 1
+    add tne
+    jda cn
+    law 1
+    add tnf
+    jda cn
+
+s75,
+    lac ex
+    add [2]
+    add tne
+    add sv
+    jda cn
+    jmp s32
+
+s78,
+    lac ete
+    add [ebe-1]
+    dap s78a
+s78a, jmp i .
+
+s93,
+    lac trv
+    add tnd
+    jda cn
+    lac trv
+    add tne
+    jda cn
+    jmp s32
+
+s95,
+    lac trv
+    add tnf
+    jda cn
+    jmp s32
+
+// cn -- a note word into the part, AC the word. Called via jda; AC and
+// IO are clobbered.
+cn, 0
+    dap cnx
+    lac cn
+    dac nf
+    jda snl
+    dac nix
+    lac nf
+    jda nput
+cnx, jmp .
+
+s39,
+    complaint(M_EOR)
+
+s70,
+    jsp dyi
+    lac nft
+    add tne
+    add sv
+    add tri
+    jda cn
+    test0(gi, s2sa)
+    test1(gis, s2sb)
+    law 1
+    dac gis
+    law i 1
+    add nl
+    dac nls
+    jmp s2sb
+
+s2sa,
+    dzm gis
+s2sb,
+    test0(tri, s32)
+    lac nft
+    ral 1s
+    dac tu
+    jmp s33
+
+s32,
+    lac nft
+    dac tu
+    ral 1s
+    add tu
+    dac tu
+s33,
+    lac mm
+    add tu
+    dac mm
+    lac si
+    dac sid
+    lac nl
+    dac nld
+    jmp te
+
+// Scan 2's letters (hc1d lines 1147-1167) and their actions; then each
+// embellishment's least time in 64ths, its notes before the rest, and
+// after them. m's, n's and w's least times are set with the
+// part's trill value (trs); the values here are for a 32nd.
+s2z,
+    22                      // s
+    43                      // l
+    65                      // e
+    61                      // a
+    62                      // b
+    63                      // c
+    57                      // (
+    54                      // -
+    55                      // )
+    64                      // d
+    44                      // m
+    45                      // n
+    47                      // p
+    24                      // u
+    26                      // w
+    73                      // .
+    27                      // x
+    21                      // /
+    00                      // space
+    50                      // q
+    70                      // h
+s2y,
+    s2b; s2c; s2d; s2e; s2f; s2g
+    s2h; s2i; s2j; s2k; s2l; s2m
+    s38; s2n; s2o; s2p; s2q; s2r
+    s2r; s2sr; s2ss
+ebl,
+    6                       // d
+    4                       // m
+    10                      // n
+    10                      // u
+    4                       // w
+    5                       // p
+ebd, s81; s82; s83; s84; s85; s86
+ebe, s32; s32; s93; s32; s95; s32
+
+// te -- a word's terminator (hc1d lines 1193-1221). A space goes on to
+// the next word; a slash ends the bar, its length checked, waiting grace
+// notes dropped, a bar line and a bar entry made, the accidentals
+// cleared.
+te,
+    test0(trm, s1)
+    lac rcf68               // a slash after rest or copy ends no bar (1968)
+    sza i
+    jmp te2
+    dzm rcf68
+    jmp s1
+te2,
+    law 1
+    dac sid
+    dzm tc
+    testel(mm, units3, te1)
+    dzm tjp
+    lac mm
+    tles(units3, te9)
+    complaint(M_MTL)
+    jmp te1
+te9,
+    complaint(M_MTS)
+
+te1,
+    test0(rob, te0)
+    complaint(M_ITG)
+    dzm rob
+    dzm gi
+    dzm gis
+    lac nls
+    dac nl
+te0,
+    lac [600000]
+    jda cn
+
+teb,
+    jda sbc
+    dac bix
+    lac lmb
+    jda bput
+    lac nl
+    add [1]
+    dac lmb
+    dzm mm
+    jda rcw
+    dac mbh
+    dzm ao
+    law s1
+    dac pfu
+    jmp pue
+
+// pc -- a word with no number and no comma, matched whole against the
+// pseudo-ops (hc1d lines 1224-1246); npv of them, hc1d's 17 or the 1968
+// language's 28.
+pc,
+    dzm tht
+pcr,
+    dzm ucl
+    idx tht
+    tgrec(npv, pcz)
+    lac tht
+    add [pnm-1]
+    dap pcr1
+pcr1, lac .
+    dac zet
+    jda rrc
+
+pc2,
+    jda rch
+    dac chr
+    trze(pc3)
+    trnl([21], pc4)
+    dzm chr
+pc3,
+    law 1
+    dac ucl
+pc4,
+    lac zet
+    dap pc4a
+pc4a, lac .
+    trnl(chr, pcr)
+    test1(ucl, pc9)
+    idx zet
+    jmp pc2
+pc9,
+    lac tht
+    add [pcd-1]
+    dap pc9a
+pc9a, jmp i .
+
+pcd,
+    pv1; pv2; pv3; pv4; pv5; pv6
+    pv7; pv8; pv9; pva; pvb; pvc
+    pvd; pve; pvf; pvg; pvh
+    pv4; pstop; pdyn; pdyn; pdyn; pdyn
+    pdyn; pdyn; pskip; pskip; ptrl
+pnm,
+    pn1; pn2; pn3; pn4; pn5; pn6
+    pn7; pn8; pn9; pna; pnb; pnc
+    pnd; pne; pnf; png; pnh
+    pnap; pnst; pnpp; pnp; pnmp; pnmf
+    pnf6; pnff; pnop; pncl; pntr
+
+pn1, 22; 0                          // s
+pn2, 43; 0                          // l
+pn3, 65; 0                          // e
+pn4, 65; 45; 64; 0                  // end
+pn5, 62; 61; 22; 22; 0              // bass
+pn6, 23; 51; 65; 62; 43; 65; 0      // treble
+pn7, 23; 65; 45; 46; 51; 0          // tenor
+pn8, 61; 43; 23; 46; 0              // alto
+pn9, 24; 45; 71; 23; 22; 0          // units
+pna, 42; 65; 30; 0                  // key
+pnb, 51; 65; 22; 23; 0              // rest
+pnc, 63; 46; 47; 30; 0              // copy
+pnd, 24; 47; 0                      // up
+pne, 64; 46; 26; 45; 0              // down
+pnf, 70; 0                          // h
+png, 50; 0                          // q
+pnh, 23; 65; 44; 47; 46; 0          // tempo
+// The 1968 language's pseudo-ops. append and stop end the part; the
+// dynamics are skipped, or under 1968 DAC held for the next note (pdyn);
+// open and close are skipped; trill's argument sets the trill value
+// (trw).
+pnap, 61; 47; 47; 65; 45; 64; 0     // append
+pnst, 22; 23; 46; 47; 0             // stop
+pnpp, 47; 47; 0                     // pp
+pnp, 47; 0                          // p
+pnmp, 44; 47; 0                     // mp
+pnmf, 44; 66; 0                     // mf
+pnf6, 66; 0                         // f
+pnff, 66; 66; 0                     // ff
+pnop, 46; 47; 65; 45; 0             // open
+pncl, 63; 43; 46; 22; 65; 0         // close
+pntr, 23; 51; 71; 43; 43; 0         // trill
+
+ps,
+    jmp i psw
+
+pv1,
+    lac [200000]            // s
+    dac ss
+    jmp psr
+pv2,
+    lac [400000]            // l
+    dac ss
+    jmp psr
+pv3,
+    dzm ss                  // e
+    jmp psr
+pvf,
+    lac [40000]             // h
+    dac ss
+    jmp psr
+pvg,
+    lac [20000]             // q
+    dac ss
+    jmp psr
+
+pv5,
+    law 12                  // bass
+    dac st
+    jmp psr
+pv6,
+    law 26                  // treble
+    dac st
+    jmp psr
+pv7,
+    law 16                  // tenor
+    dac st
+    jmp psr
+pv8,
+    law 20                  // alto
+    dac st
+    jmp psr
+
+pv9,
+    law 1                   // units
+    dac ao
+    law p9a
+    dac psw
+    jmp te
+p9a,
+    lac n1
+    dac units1
+    ral 1s
+    add n1
+    ral 1s
+    dac units3
+    law i 1
+    dac irl
+
+psr,
+    dzm ao
+    jmp te
+
+// end makes the part's last bar entry, 600000, and hands the part on to
+// the store (harmony.am1's pend, where hc1d punched it and halted).
+pv4,
+    jda sbc
+    dac bix
+    lac [600000]
+    jda bput
+    jmp pend
+
+// In the 1968 language stop ends the part and the tape.
+pstop,
+    law 1
+    dac stp
+    jmp pv4
+
+// In the 1968 language, a word skipped and counted, as if it were not
+// there.
+pskip,
+    idx pskp
+    lac rcsv
+    dac rcf68
+    jmp te
+
+// In the 1968 language, trill. Its argument is read at s18 (trw);
+// neither word counts as a word after rest or copy.
+ptrl,
+    law 1
+    dac skn
+    lac rcsv
+    dac rcf68
+    jmp te
+
+// In the 1968 language, a dynamic, skipped (pskip). Under 1968 DAC it is
+// held, as if not there, for the next note stored (dyi). pdy is its
+// word, 600000 plus 1 pp to 6 ff, which is tht less 19.
+pdyn,
+    lac lng
+    sas [2]
+    jmp pskip
+    lac tht
+    add [600000-0d19]
+    dac pdy
+    lac rcsv
+    dac rcf68
+    jmp te
+
+// trw -- trill's argument, from scan 1's counts. A note's length of a
+// 32nd or longer with nothing else (one number, a power of two to 32, no
+// letter) sets the part's trill value, 64 over it (trs). Any other, a
+// shorter one, a triplet or a dotted one, is skipped, and trill with it;
+// both words are counted in pskp, and the part keeps its trill value.
+// Called via jsp; AC and IO are clobbered.
+trw,
+    local tw1, tw2, tw9, twx
+    dap twx
+    lac ucd
+    sas [1]
+    jmp tw9
+    lac chi
+    sza
+    jmp tw9
+    lac n1
+    trze(tw9)
+    tgrec([40], tw9)
+    lac n1
+    sub [1]
+    and n1
+    sza
+    jmp tw9                 // not a power of two
+    lac n1
+    dac t1
+    law 100
+    dac t2
+tw1,
+    lac t1
+    sad [1]
+    jmp tw2
+    sar 1s
+    dac t1
+    lac t2
+    sar 1s
+    dac t2
+    jmp tw1
+tw2,
+    lac t2
+    jda trs
+    jmp twx
+tw9,
+    idx pskp
+    idx pskp
+twx, jmp .
+    endlocal
+
+// trs -- set the part's trill value, AC in 64ths (2, a 32nd, at the
+// part's start). Sets trv, the time of each of m's, n's and w's notes;
+// trv2, a pair; trk, the bits a time a whole number of pairs has clear;
+// and their least times in ebl (m and w a pair, n two). Called via jda,
+// since a jsp would leave its return address in AC, not the value; AC
+// and IO are clobbered.
+trs, 0
+    local tsx
+    dap tsx
+    lac trs
+    dac trv
+    add trv
+    dac trv2
+    dac ebl+1
+    dac ebl+4
+    sub [1]
+    dac trk
+    lac trv2
+    add trv2
+    dac ebl+2
+tsx, jmp .
+    endlocal
+
+// dyi -- under 1968 DAC, store a held dynamic (pdy) before the note's
+// first word, after any tempo word before it, and let it go. Called via
+// jsp; AC and IO are clobbered.
+dyi,
+    local dyx
+    dap dyx
+    lac pdy
+    trze(dyx)
+    jda cn
+    dzm pdy
+dyx, jmp .
+    endlocal
+
+pvh,
+    law 1                   // tempo
+    dac ao
+    law pha
+    dac psw
+    jmp te
+// In the 1968 language tempo N is a quarter note a minute, a half note
+// below 60, and is made hc1d's K / N, rounded (K, a quarter note at
+// tempo 1, is 12174).
+pha,
+    lac lng
+    sza i
+    jmp pha1
+    lac n1
+    trze(pha1)
+    dac t2                  // the beats a minute, in quarter notes
+    tgrel([0d60], pha2)
+    lac t2
+    ral 1s
+    dac t2
+pha2,
+    lac t2
+    ral 1s
+    dac t3
+    lac [0d24348]           // (2K + N) / 2N, K / N rounded half up
+    add t2
+    dac t4
+    lio t4
+    cla
+    scl 1s
+    div t3
+    jmp pha1                // overflow, which cannot happen; the number as written
+    jmp pha3
+pha1,
+    lac n1
+pha3,
+    add [700000]
+    jda cn
+    jmp psr
+
+key,
+pva,
+    jda rch                 // key
+    trze(pva)
+    trel([55], pum)
+    trel([57], pus)
+    trel([54], puf)
+    jda rrc
+    jmp s1
+
+pum,
+    law s1
+    dac pfu
+pun,
+    law nt
+    dac cpa
+    law kt
+    dac cpb
+    jsp cp44
+pue,
+    law kt
+    dac cpa
+    law mt
+    dac cpb
+    jsp cp44
+    jmp i pfu
+
+pus,
+    dac kys
+    law put
+    dac pfu
+    jmp puh
+puf,
+    dac kys
+    law pug
+    dac pfu
+puh,
+    law pun
+    dac psw
+    law 1
+    dac ao
+    lac lng
+    trnz(ky68)
+    jmp s1
+
+// In the 1968 language the key's symbol repeated k times is k sharps or
+// flats; anything else in the word after them is passed over.
+ky68,
+    law 1
+    dac n1
+ky1,
+    jda rch
+    trze(ky3)
+    trel([21], ky3)
+    trnl(kys, ky2)
+    idx n1
+    jmp ky1
+ky2,
+    jda rch
+    trze(ky3)
+    trnl([21], ky2)
+ky3,
+    dac chr
+    dac trm
+    idx tc
+    jmp pun
+
+put,
+    law 1
+    dac acc
+    law 4
+    dac aci
+    law 3
+    dac tne
+    jmp puw
+pug,
+    law i 1
+    dac acc
+    law 3
+    dac aci
+    law 6
+    dac tne
+
+puw,
+    test0(n1, pw2)
+    lac tne
+    dac ton
+
+pw1,
+    lac ton
+    add [nt]
+    dap pw1a
+pw1a, lac .
+    add acc
+    dac t4
+    lac ton
+    add [kt]
+    dap pw1b
+    lac t4
+pw1b, dac .
+    law 7
+    add ton
+    dac ton
+    tles([44], pw1)
+    law i 1
+    add n1
+    dac n1
+    lac tne
+    add aci
+    dac tne
+    tles([7], puw)
+    law i 7
+    add tne
+    dac tne
+    jmp puw
+
+pw2,
+    law psr
+    dac pfu
+    jmp pue
+
+// cp44 -- copy a key table's 36 words, cpa to cpb. Called via jsp; AC
+// and IO are clobbered.
+cp44,
+    dap cpx
+    law i 44
+    dac cpn
+cpl,
+    lac i cpa
+    dac i cpb
+    idx cpa
+    idx cpb
+    isp cpn
+    jmp cpl
+cpx, jmp .
+
+cpa, 0
+cpb, 0
+cpn, 0
+
+pvb,
+    law 1                   // rest
+    dac ao
+    test0(mm, pb2)
+    error(M_ILR)
+    jmp i1a
+
+pb2,
+    law pb1
+    dac psw
+    jmp te
+pb1,
+    lac lng                 // the slash after it ends no bar (1968)
+    dac rcf68
+    test0(n1, psr)
+    testp(irl, pb3)
+    lac units1
+    add [100]
+    ral 1s
+    dac t1
+    jda snl
+    dac irl
+    dac nix
+    lac t1
+    jda nput
+    jda snl
+    dac nix
+    lac [600000]
+    jda nput
+    lac nl
+    add [1]
+    dac lmb
+
+pb3,
+    jda sbc
+    dac bix
+    lac irl
+    jda bput
+    law i 1
+    add n1
+    dac n1
+    trnz(pb3)
+    jmp psr
+
+pvd,
+    law 1                   // up
+    dac ao
+    law pd1
+    dac psw
+    jmp te
+pd1,
+    lac n1
+    dac tll
+    jmp psr
+
+pve,
+    law 1                   // down
+    dac ao
+    law pe1
+    dac psw
+    jmp te
+pe1,
+    lac n1
+    trze(pe2)
+    cma
+pe2,
+    dac tll
+    jmp psr
+
+pvc,
+    law 2                   // copy
+    dac ao
+    test0(mm, cow)
+    error(M_ILC)
+i2a,
+    law i1a
+    dac psw
+    jmp te
+
+i1a,
+co1,
+    law psr
+    dac psw
+    jmp te
+
+cow,
+    law co2
+    dac psw
+    jmp te
+
+co2,
+    lac n1
+    dac cbh
+    trze(co3)
+    tles(tbc, co4)
+co3,
+    error(M_BLC)
+    jmp i1a
+co4,
+    law co5
+    dac psw
+    jmp te
+
+co5,
+    lac lng                 // the slash after it ends no bar (1968)
+    dac rcf68
+    lac n1
+    tgrel(cbh, cod)
+co6,
+    error(M_BRC)
+    jmp psr
+
+// Under 1968 DAC a copy under a held dynamic has its first bar stored
+// again (cor); then the rest is copied.
+cod,
+    lac pdy
+    trze(co7)
+    jsp cor
+    lac n1
+    tgrel(cbh, co7)
+    jmp psr
+
+// cor -- the copy's first bar, cbh, stored again after the part's notes
+// so far, with the dynamic held (pdy) after its tempo words and in place
+// of the bar's dynamic, if it has one there; then its bar line, its entry,
+// and lmb after it. cbh is left the next bar to copy, pdy let go. Called
+// via jsp; AC and IO are clobbered.
+cor,
+    local cr1, cr2, cr3, cr4, cr9, cox
+    dap cox
+    lac nl
+    add [1]
+    dac t3                  // the bar's entry
+    law i 1
+    add cbh
+    jda bget
+    dac t4                  // the copied bar's next word
+cr1,
+    lac t4
+    jda nget
+    dac t1
+    and [700000]
+    sas [700000]
+    jmp cr2
+    lac t1                  // a tempo word, kept before the dynamic
+    jda cn
+    idx t4
+    jmp cr1
+cr2,
+    lac pdy
+    jda cn
+    dzm pdy
+    lac t1
+    sad [600000]
+    jmp cr9
+    and [700000]
+    sas [600000]
+    jmp cr4
+    idx t4                  // the bar's dynamic, replaced
+cr3,
+    lac t4
+    jda nget
+    dac t1
+    sad [600000]
+    jmp cr9
+cr4,
+    lac t1
+    jda cn
+    idx t4
+    jmp cr3
+cr9,
+    lac [600000]
+    jda cn
+    jda sbc
+    dac bix
+    lac t3
+    jda bput
+    lac nl
+    add [1]
+    dac lmb
+    idx cbh
+cox, jmp .
+    endlocal
+
+// Bars cbh to n1 copied (cbh from 1), each an entry more; from srp too,
+// for a 1968 repeat.
+co7,
+    law i 1
+    add cbh
+    dac cbh
+co8,
+    lac cbh
+    jda bget
+    dac t4
+    jda sbc
+    dac bix
+    lac t4
+    jda bput
+    idx cbh
+    tles(n1, co8)
+    jmp psr
+
+// Scan 1 and 2's words (hc1d lines 1484-1570). Each is set before it is
+// read in a part, but rb and the measure buffer, which harmony.am1 sets
+// at each READ TAPE.
+ldl, 0                      // preceding character numeric? 1 yes, 0 no (s1, s2)
+ucd, 0                      // number of numeric fields read (s1)
+num, 0                      // value of the numeric field (s1)
+n1, 0                       // first number (s1)
+n2, 0                       // last number of 1 or 2 (s1)
+psi, 0                      // character count (s1)
+chi, 0                      // non-numeric character count (s1)
+fc, 0                       // fraction status (s1, s2)
+fu, 0                       // fraction used (s1, s2)
+g, 0                        // count of g's (s1)
+r, 0                        // count of r's (s1)
+cm, 0                       // count of commas (s1)
+rt, 0                       // right indicator, 0 number, 1 g, 2 comma (s1)
+lt, 0                       // left indicator, 0 number, 1 r, 2 comma (s1)
+tim, 0                      // running time (s1)
+trm, 0                      // terminator (s1)
+ao, 0                       // arguments outstanding (ps)
+bc, 0                       // bar count (te)
+tbc, 0                      // bar count within part (sbc)
+tc, 0                       // terminator count within measure (s1)
+chr, 0                      // character read (s1, s2, pc)
+dig, 0                      // digit read (s1)
+ss, 0                       // running status of the s l e h q mode (s2)
+sv, 0                       // value of ss for this note (s2)
+sr, 0                       // staff relocation count (s2)
+st, 0                       // clef offset, 0 = subbass (s2)
+tri, 0                      // triplet, 0 no, 100000 yes (s2)
+aci, 0                      // accidental 0 none, 1 sharp or flat, -1 natural (s2); spacing (key)
+acc, 0                      // accidental count (s2, key)
+et, 0                       // embellishment temporary (s2)
+ete, 0                      // embellishment (s2)
+nf, 0                       // note forming (cn)
+ton, 0                      // position in the staff, in mt (s2, key)
+tne, 0                      // semitone; position in a key's table (s2, key)
+tnd, 0                      // the position below, for an embellishment (s2)
+tnf, 0                      // the position above (s2)
+nl, 0                       // last note word's index (s2)
+nft, 0                      // note's time (s2)
+nfp, 0                      // nft kept from the grace notes' robbery (s2)
+ex, 0                       // time for the sustained note (s2)
+cut, 0                      // time not available to the trill loop (s2)
+mm, 0                       // 3 x units used in the measure so far (s2)
+tu, 0                       // 3 x units used by this note (s2)
+units1, 0                   // units (ps)
+units3, 0                   // 6 x units, a bar's count (ps)
+mbh, 0                      // the measure's start in the buffer (rch)
+lmb, 0                      // the last measure's first note index (te)
+tht, 0                      // the pseudo-op being tried (pc)
+zet, 0                      // its character being compared (pc)
+ucl, 0                      // the word's end reached (pc)
+psw, 0                      // where an argument goes (ps)
+sid, 0                      // si of the note before (s2)
+nld, 0                      // nl of the note before (s2)
+ccc, 0                      // triplet of the last note not a comma (s2)
+nls, 0                      // nl kept for grace notes (s2)
+rob, 0                      // time the grace notes want (s2)
+gi, 0                       // grace note (s2)
+gis, 0                      // gi kept (s2)
+tll, 0                      // transposition in semitones (up, down)
+pfu, 0                      // where erf, ec and pue go on to
+si, 0                       // an articulation letter in the note (s2)
+cbh, 0                      // the copy's first bar (copy)
+irl, 0                      // the rest measure's note index, -1 none yet (rest)
+bgs, 0                      // how much of "end" is matched (rch)
+bga, 0                      // how much of "append" is matched (rch, 1968)
+bgt, 0                      // how much of "stop" is matched (rch, 1968)
+fi, 0                       // the buffer's next character (rch)
+ft, 0                       // the buffer's last character (rch)
+pp, 0                       // 1 if the character is a space or slash (rch)
+ch, 0                       // character from the tape (rch)
+fl1, 0                      // last terminator's place (rch)
+fl2, 0                      // the word's start (rch)
+chy, 0                      // character typed (er)
+arg, 0                      // the message's letters (er)
+uin, 0                      // 1 complaint, -1 error (er)
+etc, 0                      // hc1d.rim's 0, at every space (er)
+blc, 0                      // characters on the line (er)
+mjp, 0                      // the measure of the last error (er)
+tjp, 0                      // its terminator count (er)
+emp, 0                      // the buffer's place typed (er)
+rb, 0                       // +1 black, -1 red (red, blk)
+kys, 0                      // the key's symbol, ( or - (key)
+skn, 0                      // the next word is trill's argument (1968)
+trv, 0                      // the trill value, in 64ths (trs)
+trv2, 0                     // two of it (trs)
+trk, 0                      // trv2 less 1 (trs)
+pdy, 0                      // a dynamic held for the next note, 0 none (1968 DAC)
+rcf68, 0                    // rest or copy just taken, a slash ends no bar (1968)
+rcsv, 0                     // rcf68 before this word (1968)
+t1, 0
+t2, 0
+t3, 0
+t4, 0

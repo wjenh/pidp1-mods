@@ -1,0 +1,56 @@
+# T1 corpus: every .mac file in the checkout outside Projects/, and what is expected of it.
+#   words        macro1 assembles it; am1 must load the same words (R10 for constants pools)
+#   words-lf     the same, but its lines end in a bare CR, so macro1 is given an LF copy
+#   words-title  the same, but its first line is code, so both are given a copy with a title
+#   am1          macro1 cannot assemble it; the conversion must assemble in am1
+#   refuse       macro1 cannot assemble it; the converter must refuse it
+# The note says why a file is not plain "words".
+Diagnostics/digital-1-27-m-mb.mac                       words
+Diagnostics/maindec-30-DisplayTest.mac                  words
+IOTs/DCS2/example2.mac                                  words
+IOTs/DCS2/example3.mac                                  words
+IOTs/Demos/demo40.mac                                   words
+IOTs/Demos/demo57.mac                                   words
+IOTs/Demos/poll.mac                                     words
+IOTs/Type23Drum/Tests/drumdiag.mac                      words
+IOTs/Type23Drum/Tests/drumtest.mac                      words
+src/blincolnlights/pdp1/maindec/maindec1_01.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_02.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_03.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_04.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_05.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_06.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_07.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_10.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_11.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_12.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_13.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_14.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_15.mac         am1          macro1 never defines a tag named by a dummy (ck1-ck6)
+src/blincolnlights/pdp1/maindec/maindec1_16.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_17.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_20.mac         words
+src/blincolnlights/pdp1/maindec/maindec1_end.mac        words
+src/blincolnlights/pdp1/maindec/maindec4.mac            words
+tapes/music/dpys5.mac                                   words-lf     lines end in CR
+tapes/music/hc1d.mac                                    words-lf     lines end in CR
+tapes/music/lives2.mac                                  words-lf     lines end in CR
+tapes/music/pdp1m13.mac                                 words-lf     lines end in CR
+tapes/music/sw41f.mac                                   words-lf     lines end in CR
+tapes/old/1invad.mac                                    words
+tapes/old/dpys5.mac                                     words
+tapes/old/et.mac                                        refuse       DEC MACRO terminate on a body line: a define used inside itself without end
+tapes/old/lisp.mac                                      words
+tapes/old/typtst.mac                                    words-title  first line is code
+tapes/sources/circle.mac                                words
+tapes/sources/ddt.mac                                   refuse       DEC MACRO repeat 3 cli with no comma: macro1 repeats 04003 times
+tapes/sources/dpys5-demo.mac                            words
+tapes/sources/et_eng.mac                                refuse       DEC MACRO terminate on a body line: a define used inside itself without end
+tapes/sources/icss_1_2.mac                              words
+tapes/sources/icss_1_3.mac                              words
+tapes/sources/line.mac                                  words
+tapes/sources/minskytron_ii.mac                         words
+tapes/sources/munch.mac                                 words
+tapes/sources/pdp1m13.mac                               words-lf     lines end in CR
+tapes/sources/ribbon.mac                                am1          dimension, DEC MACRO's, which macro1 lacks
+tapes/sources/spacewar_dual_screen_4_4g.mac             words

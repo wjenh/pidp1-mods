@@ -1,0 +1,11 @@
+variables inside a define body is refused
+
+define m a
+	lac a
+	variables	/ refused
+	term
+
+100/
+go,	m 5
+	hlt
+	start go

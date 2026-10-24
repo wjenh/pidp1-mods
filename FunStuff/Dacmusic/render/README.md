@@ -1,82 +1,82 @@
-# dacrender: a punched tape to a wav file
+# dacrender, a punched tape to a wav file
 
 `dacrender` plays a music tape for the PDP-1's D/A converters into a
 wav file, as the PDP-1 would play it, with no PDP-1, no emulator and no
-Python. The tape is one the music program punched (PUNCH on its menu):
-Peter Samson's Harmony Compiler parts, then the orchestra the menu set,
-each converter's part, instrument, octave, volume and place, and the room
-and the onset. A tape with no
-orchestra (a Harmony Compiler tape as it comes) plays the program's
-default: an organ, principal, gedackt and bourdon, the bass doubled at
-16 feet.
+Python. The tape is one the music program punched (PUNCH on its menu).
+It holds Peter Samson's Harmony Compiler parts, then the orchestra the
+menu set, each converter's part, instrument, octave, volume and place,
+and the room and the onset. A tape with no orchestra (a Harmony Compiler
+tape as it comes) plays the program's default, an organ of principal,
+gedackt and bourdon, the bass doubled at 16 feet.
 
-It is a straight rendering: 16-bit stereo at 50 kHz, the converters' own
-rate, each converter at its place in the stereo field as the orchestra
-sets it (one of nine, LEFT, L3, L2, L1, CENTER, R1, R2, R3, RIGHT, on a
-constant-power law: CENTER is 3 dB down in each channel), with no mixing,
-gain or trimming of its own. A tape with no places (no orchestra, or a
-block punched before them) has converters 1 and 2 on the left and 3 and
-4 on the right. Each channel is the converters' sum over 2, as the
-device's: with three or four converters on one side, or all four
-centered, a loud passage can pass full scale and is clipped, and the
-count of clipped samples is printed. The file runs to the end of the
-two-second pause after the last movement.
+It is a straight rendering, 16-bit stereo at 50 kHz, the converters'
+rate. Each converter sits at its place in the stereo field as the
+orchestra sets it, one of nine (LEFT, L3, L2, L1, CENTER, R1, R2, R3,
+RIGHT) on a constant-power law, so CENTER is 3 dB down in each channel.
+The renderer adds no mixing, gain or trimming of its own. A tape with no
+places (no orchestra, or a block punched before them) has converters 1
+and 2 on the left and 3 and 4 on the right. Each channel is the
+converters' sum over 2, as the device's is. With three or four
+converters on one side, or all four centered, a loud passage can pass
+full scale and is clipped, and the count of clipped samples is printed.
+The file runs to the end of the two-second pause after the last
+movement.
 
 With `--room=`, the device's room is put after the mix, as the
-emulator's `dacroom` setting puts it: `busch`, Adolphus Busch Hall at
+emulator's `dacroom` setting puts it. `busch` is Adolphus Busch Hall at
 Harvard, where the Flentrop stands (falling 60 dB in 4.1 s at 100 Hz,
 3.4 s at 1 kHz and 1.9 s at 10 kHz, the first of the room 49 ms after
-the note, a plate beside the hall); or `hall`, a generic hall of 3 s,
-for every other voice. It is the device's own code
-(`IOTs/DAC/room.h`), so the file is what the device plays. A room adds
-to the peaks, so with one the
-whole sound, dry and room together, is cut: 3 dB in Busch Hall, 6 dB in
-the hall, enough for the loudest tapes of the voices each room is for
-(the Flentrop's full plenum, the nine's Sonata I). The file then runs on
-past the pause while the room dies away: 2 s more for the hall, 4 s for
-Busch Hall. `--room=voices` lets the voices choose, as the emulator's
-`dacroom=voices` does: Busch Hall if a voice the orchestra plays asks
-for it (`room busch`, as the Flentrop's stops do), the hall otherwise;
-it prints which. `--room=none` puts no room after the mix.
+the note, a plate beside the hall); `hall` is a generic hall of 3 s,
+for every other voice. It is the device's code (`IOTs/DAC/room.h`), so
+the file is what the device plays. A room adds to the peaks, so with one
+the whole sound, dry and room together, is cut, by 3 dB in Busch Hall
+and 6 dB in the hall, enough for the loudest tapes of the voices each
+room is for (the Flentrop's full plenum, the nine's Sonata I). The file
+then runs on past the pause while the room dies away, 2 s more for the
+hall and 4 s for Busch Hall. `--room=voices` lets the voices choose, as
+the emulator's `dacroom=voices` does. It is Busch Hall if a voice the
+orchestra plays asks for it (`room busch`, as the Flentrop's stops do),
+and the hall otherwise; `dacrender` prints which. `--room=none` puts no
+room after the mix.
 
-A voice file may give the voice its voicing (below, "Voice files"): the
-edge tone, the wind at a flue pipe's mouth, and the speech, a large pipe
+A voice file may give the voice its voicing (below, "Voice files"). The
+edge tone is the wind at a flue pipe's mouth. The speech is a large pipe
 speaking more slowly than a small one, with a breath of noise as it
-does, and the céleste, a second read of the converter's words at half
-the rate, a few cents sharp, so the note beats as a rank a little off
-the unison does. They are the device's own code (`IOTs/DAC/edge.h`), so
-they too are what the device plays.
+does. The céleste is a second read of the converter's words at half the
+rate, a few cents sharp, so the note beats as a rank a little off the
+unison does. They are the device's code (`IOTs/DAC/edge.h`), so they too
+are what the device plays.
 
 A voice file of version 5 (below) gives the converter's work for
-recorded instruments (`../Implementation.md`, "Recorded instruments"):
-the interpolation between a sample and the next, a vibrato from the
-slow counter, a Leslie's tremolo and its swing of the converter's place
-between the channels, a percussion sine at a multiple of the note's
-step, the packing of three samples in two words, and a block's own end,
-loop and stride, with which a slur to another zone strikes the note
-again. The renderer plays them as the player and the device do. Each is off
-unless the voice asks for it.
+recorded instruments (`../Implementation.md`, "Recorded instruments").
+That is the interpolation between a sample and the next, a vibrato from
+the slow counter, a Leslie's tremolo and its swing of the converter's
+place between the channels, a percussion sine at a multiple of the
+note's step, the packing of three samples in two words, and a block's
+own end, loop and stride, with which a slur to another zone strikes the
+note again. The renderer plays them as the player and the device do.
+Each is off unless the voice asks for it.
 
 With `--onset=MS`, each note in wavetable mode may start up to MS
-milliseconds late (a note in sample mode starts on time), as
-the emulator's `daconset` setting starts it: a tracker organ's pallets
-do not open the instant the key goes down, and the pipes of a chord do
-not speak together. The delay is drawn for each converter from its own
-fixed sequence, so a tape renders the same every time, and it is never
-more than half the next note's length. The timing of the piece does
-not move: only where each note begins sounding within it.
+milliseconds late, as the emulator's `daconset` setting starts it. A
+tracker organ's pallets do not open the instant the key goes down, and
+the pipes of a chord do not speak together. The
+delay is drawn for each converter from a fixed sequence, so a tape
+renders the same every time, and it is never more than half the next
+note's length. The timing of the piece does not move, only where each
+note begins sounding within it.
 
 A tape whose orchestra (version 3) sets a room or an onset is rendered
 in them, as the player plays it; `--room=` and `--onset=` override the
-tape. A tape that sets neither, or says the configuration's, has no
-room and every note on time unless a switch is given.
+tape. A tape that sets neither, or leaves them to the configuration, has
+no room and every note on time unless a switch is given.
 
 ## Build
 
-Any C99 compiler and its math library; nothing else. `dacrender.c`,
-`dacrender_lib.h` (the nine voices, compiled in), `Makefile`, and the
-device's `room.h` and `edge.h` in `IOTs/DAC`, the room and the voicing.
-`make` in `..` builds it; here, on its own:
+It needs a C99 compiler and its math library, nothing else. The files
+are `dacrender.c`, `dacrender_lib.h` (the nine voices' files, compiled
+in), `Makefile`, and the device's `room.h` and `edge.h` in `IOTs/DAC`,
+the room and the voicing. `make` in `..` builds it; here, on its own:
 
 ```
 make
@@ -91,7 +91,7 @@ cc -O2 -std=c99 -ffp-contract=off -I../../../IOTs/DAC -o dacrender dacrender.c -
 The Makefile's `ROOMDIR` names the directory of `room.h` and `edge.h`
 (`make ROOMDIR=path` if they are elsewhere). This builds on Linux (a
 Raspberry Pi included), macOS, and Windows under WSL or MinGW. Keep
-`-ffp-contract=off`: it makes every host compute the same samples.
+`-ffp-contract=off`, which makes every host compute the same samples.
 
 ## Run
 
@@ -100,34 +100,50 @@ dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib] [--room=none|hall|bu
 ```
 
 The file is the tape's name with `.wav` unless one is given. `--secs=S`
-renders only the first S seconds (and no room's tail after them). A whole trio sonata, about 16 minutes
-of music, took 3.4 seconds on an x64 PC. `--voices=file.lib` plays the
-voices that library lists in place of the nine compiled in (below,
-"Voice files").
+renders only the first S seconds (and no room's tail after them). A
+whole trio sonata, about 16 minutes of music, took 3.4 seconds on an x64
+PC. `--voices=file.lib` plays the voices that library lists in place of
+the nine compiled in (below, "Voice files").
 
 It prints the tape's parts and movements, the orchestra, volumes and
 places it plays, the piece's length, the peak, the samples clipped and
-the time it took. A tape the
-program would question is played as the program plays it, with a
-warning in place of the menu's message:
-- a checksum that fails: the block is taken as read;
-- an orchestra the program would refuse (an instrument it does not have,
-  a volume that is not one of the slider's levels; in a version 2 or 3
-  block, also a stop the library lacks, a gap in the stops, a detune, or
-  a place that is not one of the nine; in a version 3 block, a room or
-  onset not in the menu's lists): the default plays;
-- a tape error (a bad count, more than 30 parts, a tape larger than the
-  program's 7,872 words): the parts read whole before it play.
+the time it took. A tape the program would question is played as the
+program plays it, with a warning in place of the menu's message:
+- A checksum that fails takes the block as read.
+- An orchestra the program would refuse leaves the default playing. It
+  is refused for an instrument the program does not have or a volume
+  that is not one of the slider's levels; in a version 2 or 3 block,
+  also for a stop the library lacks, a gap in the stops, a detune, or a
+  place that is not one of the nine; in a version 3 block, also for a
+  room or onset not in the menu's lists.
+- After a tape error (a bad count, more than 30 parts, a tape larger
+  than the program's room for it), the parts read whole before it play.
+
+The program keeps a tape in banks 2-3, 7,424 words, and runs a larger
+one on into banks 5-15, with the voices after it. The whole Haffner, for
+one, leaves 38,492 words for the voices. Such a tape adds a line saying
+where the voices start and how many words they take. An orchestra too
+large for the words above the tape ends the run, as the program refuses
+it (VOICES DO NOT FIT WITH THIS TAPE); the same orchestra with a smaller
+tape, a movement for instance, may play.
+
+A tape the Harmony Compiler punched under LANGUAGE 1968 DAC carries its
+score's dynamics, and they play as the program plays them. Each
+converter plays at its volume for f, and from each dynamic on, that
+volume is lowered by 18 dB for pp, 12 for p, 9 for mp and 6 for mf, or
+raised by 3 dB for ff, held within the slider's span. Each movement
+starts at f (`../Implementation.md`, "The dynamics").
 
 The orchestra block is read in each of the four forms a player's PUNCH
-has written: version 3 (40 words, what this player punches: version 2
-then the room and the onset), version 2 (38 words), the 17-word block
-with volumes, and the 13-word block without them.
+has written. They are version 3 (40 words, what this player punches,
+version 2's words and then the room and the onset), version 2 (38
+words), the 17-word block with volumes, and the 13-word block without
+them.
 
 ## MP3
 
-50 kHz is not an MP3 rate; either encoder below resamples to 48 kHz on
-its own.
+50 kHz is not an MP3 rate; either encoder below resamples to 48 kHz by
+itself.
 
 ```
 lame -V 2 piece.wav piece.mp3
@@ -139,21 +155,24 @@ ffmpeg -i piece.wav -ar 48000 -b:a 256k piece.mp3
 
 ## Voice files
 
-The instruments are voices: the nine the music program has are compiled
+The instruments are voices. The nine the music program has are compiled
 in, numbered 0-8 as the program numbers them, and an orchestra block
-names them by those numbers. `--voices=file.lib` plays another library:
-a list of voice files, one a line, relative to the list's own
-directory, each voice numbered by its place in the list from 0 (blank
-lines and `#` comments are not counted). The renderer places the voices
-an orchestra plays in the converters' memory itself, so a voice file
-holds no address. It does not read the drum file the program loads its
+names them by those numbers. They are compiled in as the text of their
+voice files (`../voices/lib/standard.lib`), read at start as `--voices`
+reads a file, so the nine compiled in and
+`--voices=../voices/lib/standard.lib` play the same. `--voices=file.lib`
+plays another library. A library is a list of voice files, one a line,
+relative to the list's directory, each voice numbered by its place in
+the list from 0 (blank lines and `#` comments are not counted). The
+renderer places the voices an orchestra plays in the converters' memory
+itself, so a voice file holds no address. It does not read the drum file the program loads its
 voices from (`../voices/README.md`, "dacdrum"); give it the same
 library with `--voices`. The libraries here:
 
 | library | the drum made from it |
 |---|---|
-| `../voices/lib/standard.lib` (compiled in) | `pdp23drum-standard` |
-| `../voices/lib/flentrop.lib` | `pdp23drum-flentrop` |
+| `../voices/lib/standard.lib` (compiled in; the nine recorded) | `pdp23drum-standard` |
+| `../voices/lib/flentrop.lib` (the nine synthesized) | `pdp23drum-flentrop` |
 | `../instruments/hammond.lib` | `pdp23drum-hammond` |
 | `../instruments/recorded-1.lib` | `pdp23drum-recorded-1` |
 | `../instruments/recorded-2.lib` | `pdp23drum-recorded-2` |

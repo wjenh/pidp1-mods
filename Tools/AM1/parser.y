@@ -40,7 +40,6 @@ static int pendingLabelLine;
 int nameTokenLine;
 int nameTokenSrcLine;
 
-static char scratchStr[128];            // a scratch string
 
 // The optimizer directives.
 // Each kind of span is flat and independent of the others,
@@ -92,6 +91,7 @@ extern PNodeP rootP;
 
 int setConstPC(int pc, SymNodeP symP);
 void setConstVal(SymNodeP symP);
+static void checkConstRefs(void);
 void setVarsPC(int bank, PNodeListP listP);
 void addExports(PNodeP nodesP);
 void importSymbols(char *filenameP);
@@ -145,7 +145,7 @@ extern int evalExpr(PNodeP);
 extern int countAscii(char *strP);
 extern int countType340(char *strP);
 extern int countText(FlexText text);
-extern long int hashExpr(PNodeP);
+extern char *poolKey(PNodeP);
 extern bool doWarn(int errType);
 extern bool fileIsMain(char *nameP);
 extern void checkPCBound(char *msgP, int pc, int lineNo);
@@ -393,6 +393,8 @@ body   : stmt_list
                         {
                             setConstVal(symlistP->symP);
                         }
+
+                        checkConstRefs();
                     }
                     else
                     {
@@ -1557,6 +1559,18 @@ SymNodeP symP;
     }
 }
 
+// Every constant reference, in source order, for checkConstRefs().
+typedef struct constref
+{
+    struct constref *nextP;
+    PNodeP nodeP;           // the CONSTANT node
+    int lineNo;             // and where it was written
+    const char *fileP;
+} ConstRef, *ConstRefP;
+
+static ConstRefP constRefsP;
+static ConstRefP *constRefsTailPP = &constRefsP;
+
 // A literal, [expr, in the current bank's pool: literals of one value share a slot.
 // endP is what ended it, a comment or NILP.
 // Returns the CONSTANT node.
@@ -1565,18 +1579,18 @@ literalNode(int lineNo, int pc, PNodeP exprP, PNodeP endP)
 {
 SymNodeP symP;
 PNodeP nodeP;
-char *nameP;
+ConstRefP refP;
+char *keyP;
 
     // Jump thru hoops for constant compression
-    sprintf(scratchStr,"%ld",hashExpr(exprP));
-    if( !(symP = sym_find(&(curBankP->constSymP), scratchStr)) )
+    keyP = poolKey(exprP);
+    if( !(symP = sym_find(&(curBankP->constSymP), keyP)) )
     {
-        nameP = malloc(strlen(scratchStr) + 1);
-        strcpy(nameP, scratchStr);
-        symP = sym_make(nameP, 0);
+        symP = sym_make(keyP, 0);
         sym_add(&(curBankP->constSymP), symP);
         symP->ptr = exprP;
     }
+    free(keyP);
     nodeP = newnode(lineNo, pc, CONSTANT, NILP, endP);
     nodeP->value.symP = symP;
 
@@ -1588,7 +1602,52 @@ char *nameP;
     // under an unrelated symbol, complete with the wrong bank
     // qualifier.
     nodeP->value2.ptr = exprP;
+
+    if( !(refP = (ConstRefP)malloc(sizeof(ConstRef))) )
+    {
+        yyerror("out of memory in literalNode()");
+    }
+
+    refP->nextP = NILP;
+    refP->nodeP = nodeP;
+    refP->lineNo = lineNo;
+    refP->fileP = internFileName(filenameP);
+    *constRefsTailPP = refP;
+    constRefsTailPP = &(refP->nextP);
     return(nodeP);
+}
+
+// Once every pool word has its value, check that each constant reference's own
+// expression gives the value of the word it shares.  The pool key is chosen before
+// the values are known, so a key that failed to tell two expressions apart would
+// otherwise give one of them the other's value, silently.
+static void
+checkConstRefs(void)
+{
+ConstRefP refP;
+SymNodeP symP;
+int value;
+
+    for( refP = constRefsP; refP; refP = refP->nextP )
+    {
+        symP = refP->nodeP->value.symP;
+
+        // The word's own expression is the one setConstVal() evaluated.
+        if( refP->nodeP->value2.ptr == symP->ptr )
+        {
+            continue;
+        }
+
+        value = evalExpr((PNodeP)(refP->nodeP->value2.ptr));
+
+        if( value != symP->value2 )
+        {
+            verrorlf(refP->lineNo, refP->fileP,
+                "this constant is 0%06o, but am1 pooled it with constant word 0%04o, which is 0%06o "
+                "(an am1 defect, please report it)",
+                value, symP->value, symP->value2);
+        }
+    }
 }
 
 // Walk a symbol table of constants, set the pc for each,

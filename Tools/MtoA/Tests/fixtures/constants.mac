@@ -1,0 +1,14 @@
+constants, nested constants, and more uses than values
+
+100/
+go,	lac (5
+	add (5)
+	sub (lac (7
+	lio (jmp go
+	sas (5
+	hlt
+	constants
+after,	lac (6
+	jmp go
+	constants
+	start go

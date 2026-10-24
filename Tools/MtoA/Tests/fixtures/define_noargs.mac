@@ -1,0 +1,18 @@
+define without arguments, old fails: a define with no dummies swallowed the file
+
+define swap
+	rcl 9s
+	rcl 9s
+	term
+
+define
+	clear
+	cla
+	cli
+	terminate
+
+100/
+go,	clear
+	swap
+	hlt
+	start go

@@ -1,0 +1,29 @@
+define used inside a define, and . in an argument
+
+define init a,b
+	law b
+	dap a
+	term
+
+define clear a,b
+	init .+2,a
+	dzm
+	idx .-1
+	sas (dzm b+1
+	jmp .-3
+	term
+
+100/
+go,	clear tab,tab+7
+	init x,.+3
+x,	jmp .
+	hlt
+tab,	0
+	0
+	0
+	0
+	0
+	0
+	0
+	0
+	start go

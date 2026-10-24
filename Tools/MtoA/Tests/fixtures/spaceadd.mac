@@ -1,0 +1,14 @@
+a space adds in macro1, old fails: dap a 1 ORed
+
+100/
+go,	dap a 1
+	lac i a
+	add a 3
+	law i 20
+	law 2 1
+	sza sma
+	dac a+a
+	hlt
+a,	0
+	0
+	start go

@@ -7,7 +7,7 @@
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
 CFLAGS += -std=c99 -ffp-contract=off
-ROOMDIR ?= ../../../IOTs/DAC
+ROOMDIR ?= /opt/pidp1-mods/IOTs/DAC
 
 dacrender: dacrender.c dacrender_lib.h $(ROOMDIR)/room.h $(ROOMDIR)/edge.h
 	$(CC) $(CFLAGS) -I$(ROOMDIR) -o dacrender dacrender.c -lm

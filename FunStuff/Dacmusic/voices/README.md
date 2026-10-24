@@ -11,12 +11,12 @@ use them is `../UsingDAC.md`; how the device plays them is
 
 | file | what |
 |---|---|
-| `lib/*.voice`, `lib/standard.lib` | the nine voices of the music program, numbered 0-8 by `standard.lib` as every tape names them |
-| `lib/flentrop/*.voice`, `lib/flentrop.lib` | the 27 stops of the 1958 Flentrop in Adolphus Busch Hall, a family a division; `flentrop.lib` numbers the nine 0-8 and the stops 9-35 |
-| `lib/bagpipe-*.voice`, `lib/bagpipe.lib` | the Highland bagpipe: `bagpipe.lib` numbers the chanter 0 and the drones 1 |
+| `lib/*.voice`, `lib/standard.lib` | the nine voices of the music program, numbered 0-8 by `standard.lib` as every tape names them, all nine recorded; `lib/*-synth.voice`, the synthesized nine, are voices 0-8 of `flentrop.lib`, and `flute-synth.voice` voice 0 of the recorded instruments' libraries |
+| `lib/flentrop/*.voice`, `lib/flentrop.lib` | the 27 stops of the 1958 Flentrop in Adolphus Busch Hall, a family a division; `flentrop.lib` numbers the synthesized nine 0-8 (the recorded harpsichord does not fit the drum beside the stops, and the Flentrop keeps its sound), and the stops 9-35 |
+| `lib/bagpipe-*.voice`, `lib/bagpipe.lib` | the Highland bagpipe: `bagpipe.lib` numbers the chanter 0 and the drones 1; the chanter is recorded, the drones a table |
 | `dacvoice.c`, `Makefile` | the generator: a table voice or a stop from a definition |
 | `dacdrum.c` | the drum writer: a library to the drum file |
-| `defs/*.def` | definitions: the five table voices of the library and the bagpipe's two (`dacvoice` remakes them word for word), and `clarinet.def`, a new one |
+| `defs/*.def` | definitions: the five synthesized table voices (`lib/flute-synth.voice`, `reed-synth`, `plucked-bass-synth`, `marimba-synth`, `trumpet-synth`) and the bagpipe's drones (`dacvoice` remakes them word for word), `bagpipe-chanter.def`, a synthesized chanter no library uses, and `clarinet.def`, a new one |
 | `defs/flentrop/*.def` | the Flentrop's stops, each division's lines (n, frame, envelope, chiff) the same in all its stops |
 
 The recorded instruments and the Hammond's voices are in
@@ -146,8 +146,11 @@ are not counted.
 Put a small table voice first. The player loads voice 0 for a converter
 the tape gives no part, so an idle converter holds voice 0 in core, and
 the voices of an orchestra must fit banks 5-15 together, 45,056 words.
-A recorded voice there (13,000 to 22,000 words) would take room a part
-needs. Every library here begins with `flute.voice`, 1,536 words.
+A large voice there (the recorded instruments are 13,000 to 38,000
+words) would take room a part needs. `standard.lib` and the Hammond's
+begin with the recorded flute, `flute.voice`, 5,408 words; the
+Flentrop's and the recorded instruments' with the synthesized one,
+`flute-synth.voice`, 1,536.
 
 ## dacvoice
 
@@ -206,9 +209,11 @@ dB/s to a sustain under the peak or to none, and any release longer than
 about 79 s (30 dB over its time); the message names the stage. `decay 0
 dB/s` with the sustain at the peak, as the Flentrop's stops have it, and
 a start at the peak are taken. Sampled voices are not made here: the
-four in `lib/` (principal, gedackt, bourdon, harpsichord) and the
-recorded instruments were made by tools that are not part of the
-release.
+four synthesized ones in `lib/` (`principal-synth.voice`,
+`gedackt-synth`, `bourdon-synth` and `harpsichord-synth`) and the
+recorded ones, the nine of `standard.lib`, the bagpipe's chanter and
+the instruments of `../instruments/`, were made by tools that are not
+part of the release.
 
 ## Stops
 

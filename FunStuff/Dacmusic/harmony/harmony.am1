@@ -1,0 +1,1061 @@
+harmony2 - Peter Samson's hc1d with his later additions.
+// Harmony compiles a music source tape in Samson's Harmony Compiler
+// language to the intermediate tape the music players read.
+// It punches the same words as hc1d and types the same/ text,
+// every part of the tape in one run with no halt, the parts kept in
+// core and punched together at the end.
+// Docs/UsingHarmony.md is the user guide.
+//
+// The tape is a FIO-DEC source, an ASCII source, or a compiled tape,
+// told apart by its first frames.
+// A source is in hc1d's language or in the 1968 language of the Haffner's tape
+// or in 1968 DAC, the 1968 language/ with its dynamics punched for the DAC player,
+// set by the test word switches.
+// A compiled tape is checked, listed and kept in memory for the menu's
+// SOURCE, but PUNCH punches nothing from it.
+//
+// It operates in two modes, 'traditional' and a lightpen version that uses
+// the Type 340 display.
+//
+// For traditional, start at 0101.
+// Test word bit 17 (1) picks the 1968 language, bit 16 also is the 1968 DAC.
+// bits 9-11 (0700) all set don't punch a tape, as in hc1d.
+// The whole tape is read, the parts kept are punched, and the program halts.
+// Continue starts again for the next tape.
+//
+// Start at 0100, the default start, for the lightpen version on the Type 340.
+// The initial language is read from test word bits 16-17 also and changed on the menu.
+//
+// Bank 0 holds the program, the measure buffer, and the tables.
+// Bank 1 holds the part directory and the menu
+// Bank 2 holds a part's bar entries while it is compiled, and above them the writer.
+// Banks 3-14 are the storage for each part as the words it punches.
+// bank 15 holds the titles and the typed log for the menu.
+//
+// 14-Oct-2026 Claude: written.
+// 23-Oct-2026 Claude: cleaned for release.
+// 24-Oct-2026 wje more cleanup, make lightpen the default start at 100.
+
+#include "hcmacros.ah"
+#include <TYPE340/type340iots.ah>
+#include <LIGHTPEN/lightpen.ah>
+
+// Type the FIO-DEC code in the low six bits of x (hc1d's "type").
+#define typ(x) lio x; jda tyw
+
+// A word of the part directory (bank 1), for the part being finished.
+#define dput(t, v) lac [t:1]; add npart; dac pp2; lac v; dac i pp2
+
+#define BARS 020000             // a part's bar entries, while it is compiled
+#define BARMAX 0d2048           // bar entries a part may have
+#define STORE 030000            // the store's first word
+#define STEND 0167777           // and its last
+#define TITLES 0170000          // 16 codes for each part's title
+#define LOG 0174000             // the typed log, a code a word
+#define LOGEND 0200000
+#define MAXP 0d128              // parts on a tape
+#define FLEN 0600               // the measure buffer f, 384 characters
+#define fw (fb+0400)            // a fill's 256th character
+#define NS2Z 0d21               // scan 2's letters
+#define LOOKN 0d32              // frames kindf looks at
+#define POLLS 0d28000           // reader polls in a wait of about 2 s (each 75 us, keepScreen's test included)
+#define CTMAX 0d32767           // the largest count a compiled block may have
+
+// The kinds of tape (kindf).
+#define KNONE 0
+#define KCOMP 1
+#define KASC 2
+#define KFIO 3
+#define KEMPTY 4
+
+100/
+    jmp menuStart           // 0100, the menu's start
+    jmp con                 // 0101, the console start
+
+// con -- the console start. READ TAPE then PUNCH, then a halt.
+con,
+    eem
+    dzm mon                 // no screen to keep drawn
+    dzm rps                 // a start resets the reader, so no read is pending
+    dzm tempoNew            // the tempo words punched as compiled
+    jsp testLanguage
+    lat
+    and [700]
+    dzm npun
+    sas [700]
+    jmp cn1
+    law 1
+    dac npun
+cn1,
+    jsp rtape
+    jsp punch
+    hlt
+    jmp con
+
+// menuStart -- the menu's start. The reader is reset, the language read
+// from the test word as at the console start, the punch never quiet, no
+// part read and the log empty, so PUNCH before READ TAPE punches nothing.
+// Then jumps to the menu (hcmenu.ac) in bank 1, which does not return.
+menuStart,
+    eem
+    dzm rps
+    jsp testLanguage
+    dzm npun
+    dzm npart
+    dzm nfat
+    dzm nunf
+    dzm nbad
+    dzm nbadc
+    dzm rfs
+    dzm kind
+    dzm tempoOld
+    dzm tempoNew
+    dzm tempoBad
+    lac [LOG]
+    dac logp
+    law 1
+    dac mon
+    jmp i [menu:1]
+
+// testLanguage -- set lng from the test word. Bit 17 is the 1968
+// language, and bit 16 with it 1968 DAC; bit 16 alone is hc1d's. Called
+// via jsp; AC is clobbered, IO is preserved.
+testLanguage,
+    local tlgx
+    dap tlgx
+    lat
+    and [3]
+    sad [2]
+    cla
+    sad [3]
+    law 2
+    dac lng
+tlgx, jmp .
+    endlocal
+
+// readFromMenu, punchFromMenu -- READ TAPE and PUNCH for the menu. Each
+// calls rtape or punch, which return in bank 0, then returns to the
+// caller in bank 1. Called via jsp i from bank 1; AC and IO are clobbered.
+readFromMenu,
+    dac mret
+    jsp rtape
+    jmp i mret
+punchFromMenu,
+    dac mret
+    jsp punch
+    jmp i mret
+
+// tempoFromMenu -- for the menu after READ TAPE, findTempo, TEMPO's
+// starting value. Called via jsp i from bank 1; AC and IO are clobbered.
+tempoFromMenu,
+    dac mret
+    jsp findTempo
+    jmp i mret
+
+// sourceTyp, sourceMsg, sourceNum, sourceFrame, sourceKeep -- for the
+// writer (hcwrite.ac, bank 2). In turn they type IO's code, type the
+// message at warg (a full address), type a space and warg in decimal,
+// punch the frame warg with the menu's screen kept drawn, and keep the
+// screen drawn. Called via jsp i; AC and IO are clobbered.
+sourceTyp,
+    dac wret
+    jda tyw
+    jmp i wret
+sourceMsg,
+    dac wret
+    lac warg
+    jda tas
+    jmp i wret
+sourceNum,
+    dac wret
+    lac warg
+    jda tdsp
+    jmp i wret
+sourceFrame,
+    dac wret
+    jsp keepScreen
+    lio warg
+    ppa
+    jmp i wret
+sourceKeep,
+    dac wret
+    jsp keepScreen
+    jmp i wret
+
+// keepScreen -- with the menu on (mon), keep its screen drawn while the
+// program waits on the reader, the typewriter or the punch. A pen hit is
+// passed over and a stopped display started again. Without the menu,
+// nothing.
+// Called via jsp; AC and IO are clobbered.
+keepScreen,
+    dap ksx
+    lac mon
+    sza i
+    jmp ksx
+    dsp
+    jmp ks1
+    drs
+ks1,
+    dss
+    jmp ksx
+    lio [mlist:1]
+    dla
+ksx, jmp .
+
+// rtape -- READ TAPE. The tape's kind is found, then a source compiled
+// part by part into the store, or a compiled tape checked and listed.
+// Each part kept is in the directory (npart of them). Called via jsp; AC
+// and IO are clobbered.
+rtape,
+    dap rtend
+    lac lng
+    dac rlng
+    dzm npart
+    dzm nfat
+    dzm nunf
+    dzm nbad
+    dzm nbadc
+    dzm rfs
+    dzm stp
+    dzm inp
+    lac [STORE]
+    dac ptop
+    lac [LOG]
+    dac logp
+    jsp kindf
+    dac kind
+    sad [KCOMP]
+    jmp ctape
+    sad [KFIO]
+    jmp rsrc
+    sad [KASC]
+    jmp rsrc
+    sad [KEMPTY]
+    jmp rk9
+    lac [mnon:1]
+    jda tas
+    law 1
+    dac rfs
+    jmp rtend
+rk9,
+    lac [memp:1]
+    jda tas
+rtend, jmp .
+
+// rsrc -- a source tape. The compile's state is set for the tape's start
+// (the measure buffer cleared as hc1d's is at its load, its guard word a
+// slash, so a scan into stale text always ends), then the first part.
+// Entered via jmp from rtape; falls into cap.
+rsrc,
+    law fb
+    dac rsp
+    law i FLEN
+    dac rsn
+rs1,
+    dzm i rsp
+    idx rsp
+    isp rsn
+    jmp rs1
+    law 21
+    dac fl
+    dzm rb
+    law 1
+    dac first
+    law ceot
+    dac eotj
+    law 72
+    dac acs
+    dzm apf
+    dzm acr
+    lac lng
+    sza
+    jmp rs68
+    law 0d17
+    dac npv
+    dzm oct68
+    jmp cap
+rs68,
+    law 0d28
+    dac npv
+    law i 7
+    dac oct68
+
+// cap -- a part begins (hc1d's ap and pf). After the tape's first part,
+// the frame hc1d loses at Continue (ap starts a read over the frame the
+// reader already holds) is dropped (drop), then the title.
+cap,
+    lac first
+    sza i                   // skip the drop for the tape's first part
+    jsp drop
+    dzm first
+    dzm inp
+    lac ptop
+    dac nbase
+    dzm perr
+    dzm pskp
+    lac logp
+    dac plog
+    dzm lmb
+    law i 1
+    dac bc
+    dac nl
+    law i 2
+    dac mjp
+    law fb
+    dac ft
+    lac lng
+    sza
+    jmp pg68
+    jmp pg
+
+// ptit -- the title, read and typed, kept for the menu. Its first 16
+// codes are kept, to its slash (a stop code after it when shorter). Then
+// pfr.
+// Entered via erf's pfu, from xp.
+ptit,
+    lac npart
+    ral 4s
+    add [TITLES]
+    dac pp1
+    law fb
+    dac pp2
+    law i 0d16
+    dac csc
+pt1,
+    lac i pp2
+    sad [21]
+    jmp pt2
+    dac i pp1
+    idx pp1
+    idx pp2
+    isp csc
+    jmp pt1
+    jmp pfr
+pt2,
+    law 13
+    dac i pp1
+    jmp pfr
+
+// pend -- end (or the 1968 language's append or stop) has made the
+// part's last bar entry. The part is put in the store as hc1d punches
+// it, its notes' count, the notes, their checksum, the bars' count, the
+// bars, their checksum; then the directory, and the next part. Entered
+// via jmp from hccomp.ac.
+pend,
+    lac nl
+    add [1]
+    dac pcn
+    lac bc
+    add [1]
+    dac pcb
+    lac nbase
+    dac pp1
+    lac pcn
+    dac i pp1
+    lac pcn
+    dac csn
+    jsp csum
+    idx pp1
+    lac pp1
+    dac pp3                 // the bars' count word
+    lac pcb
+    dac i pp1
+    lac [BARS]
+    dac pp2
+    lac pcb
+    cma
+    dac csc
+pdl,
+    idx pp1
+    lac i pp2
+    dac i pp1
+    idx pp2
+    isp csc
+    jmp pdl
+    lac pp3
+    dac pp1
+    lac pcb
+    dac csn
+    jsp csum
+    idx pp1
+    lac pp1
+    dac ptop
+    dput(dirb, nbase)
+    dput(dirn, pcn)
+    dput(dirc, pcb)
+    dput(dire, perr)
+    dput(dirs, pskp)
+    dput(dirl, plog)
+    idx npart
+    dzm inp
+    sad [MAXP]
+    jmp pdm
+    lac stp                 // the 1968 language's stop ends the tape
+    sza
+    jmp rtend
+    jmp cap
+pdm,
+    lac [mtmp:1]
+    jda tas
+    jmp rtend
+
+// csum -- a block's checksum, hc1d's add of its words. pp1 holds the
+// block's count word's address, csn the count. The sum goes after the
+// csn words and pp1 is left at it. Called via jsp; AC and IO are
+// clobbered.
+csum,
+    dap csx
+    dzm css
+    lac csn
+    trze(cs2)
+    cma
+    dac csc
+cs1,
+    idx pp1
+    lac i pp1
+    add css
+    dac css
+    isp csc
+    jmp cs1
+cs2,
+    idx pp1
+    lac css
+    dac i pp1
+csx, jmp .
+
+// hfat -- after a fatal message (s3x, rrz). The part is given up and
+// counted, and a new one begun where the reader stands, as hc1d's
+// Continue would. Entered via jmp from hccomp.ac.
+hfat,
+    idx nfat
+    dzm inp
+    jmp cap
+
+// ceot -- the source tape has ended. A part cut short by it is counted
+// and not kept (no message; the menu shows it). Entered through eotj.
+ceot,
+    lac inp
+    sza
+    idx nunf
+    dzm inp
+    jmp rtend
+
+// The store. nput and nget reach the part's note words, from index 0,
+// after its count word at nbase; bput and bget its bar entries, in BARS
+// while the part is compiled. room checks that the part still fits in
+// the store, else the "Table overflow" message (s3x).
+
+// nput -- note word AC to index nix. Called via jda; AC and IO are
+// clobbered.
+nput, 0
+    dap npx
+    lac nbase
+    add nix
+    add [1]
+    dac npp
+    lac nput
+    dac i npp
+npx, jmp .
+
+// nget -- the note word at index AC. Called via jda; returns AC the
+// word; IO is preserved.
+nget, 0
+    dap ngx
+    lac nbase
+    add nget
+    add [1]
+    dac npp
+    lac i npp
+ngx, jmp .
+
+// bput -- bar entry AC to index bix. Called via jda; AC and IO are
+// clobbered.
+bput, 0
+    dap bpx
+    lac bix
+    add [BARS]
+    dac bpp
+    lac bput
+    dac i bpp
+bpx, jmp .
+
+// bget -- the bar entry at index AC. Called via jda; returns AC the
+// entry; IO is preserved.
+bget, 0
+    dap bgx
+    lac bget
+    add [BARS]
+    dac bpp
+    lac i bpp
+bgx, jmp .
+
+// room -- the part's words so far (nl+1 notes, bc+1 bars, two counts and
+// two checksums) fit in the store; if not, jumps to s3x. Called via jsp;
+// AC is clobbered, IO is preserved.
+room,
+    dap rmx
+    lac nbase
+    add nl
+    add bc
+    add [5]
+    sub [STEND]
+    sma sza
+    jmp s3x
+rmx, jmp .
+
+// punch -- PUNCH. Each part kept, in order, as hc1d punches it, but with
+// 30 blank frames of leader and of trailer and 6 between blocks and
+// parts; the menu's TEMPO applied first (scaleTempos). Nothing when the
+// test word kept the punch quiet (npun), the tape was a compiled one, no
+// part has words, or TEMPO would put a tempo word out of range
+// (tempoBad). Called via jsp; AC and IO are clobbered.
+punch,
+    dap pux
+    lac npun
+    sza
+    jmp pux
+    lac kind
+    sad [KCOMP]
+    jmp pux
+    jsp scaleTempos
+    lac tempoBad
+    trnz(pux)
+    dzm pud
+    dzm pui
+pu1,
+    lac pui
+    sad npart
+    jmp pu9
+    lac [dirb:1]
+    add pui
+    dac pwp
+    lac i pwp
+    trze(pu8)               // a part with no words in the store
+    dac pwp
+    lac pud
+    trnz(pu2)
+    law i 0d30
+    jda fee
+    law 1
+    dac pud
+    jmp pu3
+pu2,
+    law i 6
+    jda fee
+pu3,
+    jsp pkb
+    law i 6
+    jda fee
+    jsp pkb
+pu8,
+    idx pui
+    jmp pu1
+pu9,
+    lac pud
+    trze(pux)
+    law i 0d30
+    jda fee
+pux, jmp .
+
+// pkb -- punch one block from the store at pwp, its count, its words and
+// its checksum; pwp is left after it. Called via jsp; AC and IO are
+// clobbered.
+pkb,
+    dap pkx
+    lac i pwp
+    add [2]
+    cma
+    dac pwn
+pk1,
+    lac i pwp
+    jda ppw
+    idx pwp
+    isp pwn
+    jmp pk1
+pkx, jmp .
+
+// ppw -- punch word AC as three frames with channel 8, six bits each,
+// high first (hc1d's ppp), the menu's screen kept drawn before each.
+// Called via jda; AC and IO are clobbered.
+ppw, 0
+    dap ppx
+    law i 3
+    dac ppn
+ppw1,
+    jsp keepScreen
+    lio ppw
+    ppb
+    ril 6s
+    dio ppw
+    isp ppn
+    jmp ppw1
+ppx, jmp .
+
+// fee -- punch -AC blank frames (hc1d's fee, "law i N; jda fee"), the
+// menu's screen kept drawn before each. Called via jda; AC and IO are
+// clobbered.
+fee, 0
+    dap fex
+fe1,
+    jsp keepScreen
+    cli
+    ppa
+    isp fee
+    jmp fe1
+fex, jmp .
+
+// TEMPO (the menu's, hcmenu.ac). Before PUNCH, every tempo word of the
+// parts kept is changed in proportion. A tempo word is 0700000 and its N
+// (the top three bits set), and the notes' checksum covers it.
+
+// findTempo -- tempoOld and tempoNew the N of the first tempo word in
+// the parts kept, in order; 0 if there is none, or the tape was a
+// compiled one, which PUNCH does not punch. Called via jsp; AC and IO
+// are clobbered.
+findTempo,
+    local fdt1, fdt2, fdt3, fdt4, fdtx
+    dap fdtx
+    dzm tempoOld
+    dzm tempoNew
+    dzm tempoPart
+    lac kind
+    sad [KCOMP]
+    jmp fdtx
+fdt1,
+    lac tempoPart
+    trel(npart, fdtx)
+    add [dirb:1]
+    dac tempoPtr
+    lac i tempoPtr
+    trze(fdt4)              // a part with no words in the store
+    dac tempoPtr
+    lac i tempoPtr          // the notes' count
+    trze(fdt4)
+    cma
+    dac tempoLeft
+fdt2,
+    idx tempoPtr
+    lac i tempoPtr
+    and [700000]
+    trel([700000], fdt3)
+    isp tempoLeft
+    jmp fdt2
+fdt4,
+    idx tempoPart
+    jmp fdt1
+fdt3,
+    lac i tempoPtr
+    and [77777]
+    dac tempoOld
+    dac tempoNew
+fdtx, jmp .
+    endlocal
+
+// scaleTempos -- apply TEMPO. When tempoNew is set and is not tempoOld,
+// every tempo word's N in the parts kept is made N times tempoNew over
+// tempoOld, rounded half up, each part's notes' checksum made again, and
+// tempoOld made tempoNew, so the store holds the tape as punched. When
+// any N would leave 1-077777, nothing is changed and tempoBad is set.
+// The whole store is checked before a word is written. Called via jsp;
+// AC and IO are clobbered.
+scaleTempos,
+    local sctx
+    dap sctx
+    dzm tempoBad
+    lac tempoNew
+    trze(sctx)
+    trel(tempoOld, sctx)
+    lac tempoOld
+    trze(sctx)
+    dzm tempoWrite
+    jsp tempoPass
+    lac tempoBad
+    trnz(sctx)
+    law 1
+    dac tempoWrite
+    jsp tempoPass
+    lac tempoNew
+    dac tempoOld
+sctx, jmp .
+    endlocal
+
+// tempoPass -- one pass of scaleTempos over the parts kept. Each tempo
+// word's new N is found, one out of range setting tempoBad; with
+// tempoWrite, each word is replaced and the part's notes' checksum made
+// again (csum).
+// Called via jsp; AC and IO are clobbered.
+tempoPass,
+    local tps1, tps2, tps3, tps5, tps6, tps7, tpsx
+    dap tpsx
+    dzm tempoPart
+tps1,
+    lac tempoPart
+    trel(npart, tpsx)
+    add [dirb:1]
+    dac tempoPtr
+    lac i tempoPtr
+    trze(tps7)              // a part with no words in the store
+    dac tempoBlock
+    dac tempoPtr
+    lac i tempoPtr          // the notes' count
+    trze(tps7)
+    cma
+    dac tempoLeft
+tps2,
+    idx tempoPtr
+    lac i tempoPtr
+    and [700000]
+    trnl([700000], tps6)
+    // mul leaves the product shifted left one, the form div wants.
+    lac i tempoPtr
+    and [77777]
+    mul tempoNew
+    div tempoOld
+    jmp tps5                // no skip, so the quotient overflows
+    dac tempoQuot
+    dio tempoRem
+    lac tempoRem            // half up, twice the remainder against the divisor
+    add tempoRem
+    tles(tempoOld, tps3)
+    idx tempoQuot
+tps3,
+    lac tempoQuot
+    trze(tps5)
+    tgrel([100000], tps5)
+    lac tempoWrite
+    trze(tps6)
+    lac tempoQuot
+    ior [700000]
+    dac i tempoPtr
+    jmp tps6
+tps5,
+    law 1
+    dac tempoBad
+tps6,
+    isp tempoLeft
+    jmp tps2
+    lac tempoWrite
+    trze(tps7)
+    lac tempoBlock
+    dac pp1
+    lac i pp1
+    dac csn
+    jsp csum
+tps7,
+    idx tempoPart
+    jmp tps1
+tpsx, jmp .
+    endlocal
+
+// Typing. Every code typed goes through tyw, which keeps it in the log
+// for the menu.
+
+// tyw -- type the code in IO (typ), the menu's screen kept drawn first.
+// Called via jda; AC and IO are preserved.
+tyw, 0
+    dap tyx
+    dio tyv
+    jsp keepScreen
+    lio tyv
+    tyo
+    lac logp
+    sad [LOGEND]
+    jmp ty1
+    dio i logp
+    idx logp
+ty1,
+    lac tyw
+tyx, jmp .
+
+// wtx -- type a table of words, three codes each, high first, to a word
+// 013 (hc1d's messages; AC the table's address). With wtt set (tas), the
+// spaces that pad out the last word are not typed. Called via jda; AC
+// and IO are clobbered.
+wtx, 0
+    dap wtz
+wt1,
+    lac i wtx
+    sad [13]
+    jmp wtz
+    dac tsw
+    idx wtx
+    law i 3
+    dac tsn
+    lac wtt
+    trze(wt3)
+    lac i wtx
+    trnl([13], wt3)
+    lac tsw
+    and [77]
+    trnz(wt3)
+    law i 2
+    dac tsn
+    lac tsw
+    and [7700]
+    trnz(wt3)
+    law i 1
+    dac tsn
+wt3,
+    lac tsw
+    cli
+    rcl 6s
+    dac tsw
+    jda tyw
+    isp tsn
+    jmp wt3
+    jmp wt1
+wtz, jmp .
+
+// tas -- type one of Harmony's messages (a text table, AC its address),
+// lower case first, the last word's padding not typed. Called via jda;
+// AC and IO are clobbered.
+tas, 0
+    dap tax
+    typ([72])
+    law 1
+    dac wtt
+    lac tas
+    jda wtx
+    dzm wtt
+tax, jmp .
+
+// tw3 -- type AC's three codes, high first (hc1d's print). Called via
+// jda; AC and IO are clobbered.
+tw3, 0
+    dap t3x
+    law i 3
+    dac t3n
+t31,
+    lac tw3
+    cli
+    rcl 6s
+    dac tw3
+    jda tyw
+    isp t3n
+    jmp t31
+t3x, jmp .
+
+// tdsp -- type a space, then AC in decimal with no leading zeros. Called
+// via jda; AC and IO are clobbered.
+tdsp, 0
+    dap tdx
+    typ([0])
+    dzm tdz
+    law tdt
+    dap tdp
+td1,
+tdp, lac .
+    trze(td4)
+    dac tdq
+    dzm tdd
+td2,
+    lac tdsp
+    sub tdq
+    trmi(td3)
+    dac tdsp
+    idx tdd
+    jmp td2
+td3,
+    lac tdd
+    trnz(td5)
+    lac tdz
+    trze(td6)               // a leading zero
+td5,
+    law 1
+    dac tdz
+    lac tdd
+    jda tdg
+td6,
+    idx tdp
+    jmp td1
+td4,
+    lac tdsp
+    jda tdg
+tdx, jmp .
+
+tdt, 0d100000; 0d10000; 0d1000; 0d100; 0d10; 0
+
+// tdg -- type the digit AC, 0-9. Called via jda; AC and IO are clobbered.
+tdg, 0
+    dap tgx
+    lac tdg
+    sza i
+    law 20                  // FIO-DEC's 0
+    dac tgd
+    typ(tgd)
+tgx, jmp .
+
+#include "hcread.ac"
+#include "hccomp.ac"
+
+// hc1d's tables, the pitch of each staff position (mt, the key and
+// accidentals applied), the key's (kt) and the natural one (nt), 36
+// positions each, one after another as in hc1d, for the lookups at a
+// position's neighbors run into the next table.
+    0                       // mt-1, read by tnd's lookup below position 0
+mt,
+    table 44
+kt,
+    table 44
+nt,
+    2; 4; 6; 7; 11; 13; 15; 16; 20; 22; 23; 25
+    27; 31; 32; 34; 36; 37; 41; 43; 45; 46; 50; 52
+    53; 55; 57; 61; 62; 64; 66; 67; 71; 73; 75; 76
+
+// The measure buffer f (hc1d's fb to fl). A fill is 256 characters, to
+// the slash after them, up to 384; its guard word is a slash.
+fb,
+    table FLEN
+fl, 21
+
+// The reader's first frames (kindf).
+look,
+    table LOOKN
+
+// The program's words. All are set before they are read, at the console
+// start, at READ TAPE or at a part's start.
+lng, 0                      // the language, 0 hc1d, 1 the 1968 language, 2 1968 DAC
+rlng, 0                     // lng at the last READ TAPE
+npun, 0                     // the punch kept quiet
+mon, 0                      // the menu is on, so keepScreen draws its screen
+mret, 0                     // readFromMenu's and punchFromMenu's return, a full address
+tyv, 0                      // tyw's code
+ppn, 0                      // ppw's frames left, negated
+npv, 0                      // pseudo-ops in the language, 17 or 28 (decimal)
+oct68, 0                    // added to a position, 0, or -7 in the 1968 language
+stp, 0                      // the 1968 language's stop has ended the tape
+inp, 0                      // a part has begun and not ended
+first, 0                    // the tape's first part, no frame dropped before it
+kind, 0                     // the tape's kind (kindf)
+eotj, 0                     // where the reader goes at the tape's end
+eots, 0                     // the tape ended in kindf's look
+rps, 0                      // a reader read is pending
+frw, 0                      // frr's waits, negated
+lkn, 0                      // frames in look
+lkp, 0                      // look's next frame for frm
+rfs, 0                      // the tape was refused
+npart, 0                    // parts in the directory
+nfat, 0                     // parts given up at a fatal message
+nunf, 0                     // a part cut short by the tape's end
+nbad, 0                     // frames with bad parity, skipped
+nbadc, 0                    // ASCII characters with no FIO-DEC code
+ptop, 0                     // the store's next free word
+nbase, 0                    // the part's count word in the store
+perr, 0                     // the part's errors typed
+pskp, 0                     // the part's words skipped, in the 1968 language
+plog, 0                     // the part's first code in the log
+logp, 0                     // the log's next word
+nix, 0                      // nput's index
+bix, 0                      // bput's index
+npp, 0
+bpp, 0
+pcn, 0                      // pend's notes' count
+pcb, 0                      // pend's bars' count
+pp1, 0
+pp2, 0
+pp3, 0
+csn, 0                      // csum's count
+csc, 0                      // a count, negated
+css, 0                      // csum's sum
+rsp, 0
+rsn, 0
+pud, 0                      // punch has punched the leader
+pui, 0                      // punch's part
+pwp, 0                      // punch's word in the store
+pwn, 0                      // pkb's words left, negated
+tsw, 0                      // wtx's word being typed
+tsn, 0                      // its codes left, negated
+wtt, 0                      // wtx drops the last word's padding
+t3n, 0
+tdz, 0                      // tdsp has typed a digit
+tdq, 0                      // tdsp's power of ten
+tdd, 0                      // tdsp's digit
+tgd, 0
+tempoOld, 0                 // the first tempo word's N in the store, 0 if none
+tempoNew, 0                 // TEMPO's N, the one the words take at PUNCH, 0 to leave them
+tempoBad, 0                 // PUNCH refused, a tempo word would leave 1-077777
+tempoWrite, 0               // tempoPass writes, not only checks
+tempoPart, 0                // the part, for findTempo and tempoPass
+tempoPtr, 0                 // the word, a full address
+tempoBlock, 0               // the part's notes' count word
+tempoLeft, 0                // the notes left, negated
+tempoQuot, 0                // the new N
+tempoRem, 0                 // and the division's remainder
+warg, 0                     // the argument of the writer's trampolines
+wret, 0                     // and their return, a full address
+
+    constants
+
+// The part directory, each part's store address, notes, bars, errors,
+// words skipped, and its first code in the log (a compiled tape's part
+// has its store address, notes and bars only). Then the menu.
+bank 1
+dirb,
+    table MAXP
+dirn,
+    table MAXP
+dirc,
+    table MAXP
+dire,
+    table MAXP
+dirs,
+    table MAXP
+dirl,
+    table MAXP
+
+// hc1d's messages, its words as hc1d.rim holds them, then 013, and
+// Harmony's; here in bank 1, typed from bank 0 by their full addresses
+// (wtx follows one, the extend-mode window open).
+ban,                        // red, a carriage return, then "To err is human---to forgive, divine."
+    777423; 724600; 655151; 007122; 007024; 446145; 545454; 234600
+    664651; 677125; 653300; 647125; 714565; 737777
+    13
+movf,                       // "Table overflow.  Subdivide source program."
+    742372; 616243; 650046; 256551; 664346; 267300; 007422; 722462
+    647125; 716465; 002246; 245163; 650047; 514667; 516144; 730000
+    13
+mmes,                       // "Measure has too many characters.  Rearrange tape."
+    744472; 656122; 245165; 007061; 220023; 464600; 446145; 300063
+    706151; 616323; 655122; 730000; 745172; 656151; 516145; 676500
+    236147; 657300
+    13
+
+// Harmony's messages (tas).
+mnon, text "not a tape harmony reads, refused\n"
+    13
+memp, text "no tape\n"
+    13
+mtmp, text "more than 128 parts, the rest not read\n"
+    13
+mcmp, text "compiled tape\n"
+    13
+mpt, text "part"
+    13
+mnt, text ", notes"
+    13
+mbr, text ", bars"
+    13
+morc, text "orchestra block\n"
+    13
+mcte, text "the tape ends inside a part, refused\n"
+    13
+mcbc, text "a count that cannot be, refused\n"
+    13
+mcck, text "a checksum fails, refused\n"
+    13
+mstf, text "too large for the store, refused\n"
+    13
+
+#include "hcmenu.ac"
+
+    constants
+
+// The writer, SOURCE, above the bar entries (BARS to 023777).
+bank 2
+4000/
+#include "hcwrite.ac"
+
+    constants
+
+bank 0
+start 100

@@ -239,6 +239,8 @@
  * 21-Oct-2026 claude - the optimizer report is no longer closed twice when a fatal error follows it under -O
  * 21-Oct-2026 wje - more cleanup
  * 22-Oct-2026 wje - fixes for various signal catching and a null pointer during them
+ * 24-Oct-2026 claude/wje - v5.3, modify the constant pool logic to avoid some cases where different
+ *    constants with the same symbolic names in them would hash to the same slot.
 */
 #include <unistd.h>
 #include <stdlib.h>

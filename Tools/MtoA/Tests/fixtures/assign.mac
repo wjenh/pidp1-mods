@@ -1,0 +1,15 @@
+names given values by =, a redefinition, and name=.
+
+a=10
+b=a+5
+100/
+go,	lac a
+	add b
+a=a 2
+	lac a
+top=.
+	jmp top
+c=b-a
+	law c
+	hlt
+	start go

@@ -1,0 +1,12 @@
+constants inside a define body is refused
+
+define m a
+	lac (a
+	constants	/ refused
+	term
+
+100/
+go,	m 5
+	hlt
+	constants
+	start go

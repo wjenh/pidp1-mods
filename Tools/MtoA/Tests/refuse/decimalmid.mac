@@ -1,0 +1,7 @@
+decimal in the middle of an expression
+
+100/
+go,	cla
+	lac 1 decimal 10 octal 1	/ refused
+	hlt
+	start go

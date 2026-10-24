@@ -1,12 +1,19 @@
-.PRECIOUS: *.c
-CC=gcc -O0 -g
+CC=gcc -O1 -g -Wall
 
-mactoam1: mactoam1.l symtab.o
-	flex --outfile mactoam1.c mactoam1.l
-	$(CC) -o mactoam1 mactoam1.c symtab.o
+all: mactoam1
 
-symtab.o: symtab.c symtab.h
-	$(CC) -c symtab.c
+install: mactoam1
+	cp mactoam1 ../../bin/mactoam1
+	strip ../../bin/mactoam1
+
+mactoam1: mactoam1.o m1engine.o
+	$(CC) -o mactoam1 mactoam1.o m1engine.o
+
+mactoam1.o: mactoam1.c m1engine.h
+	$(CC) -c mactoam1.c
+
+m1engine.o: m1engine.c m1engine.h
+	$(CC) -c m1engine.c
 
 clean:
-	@rm mactoam1 mactoam1.c *.o 2>/dev/null || true
+	@rm mactoam1 *.o 2>/dev/null || true

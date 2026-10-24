@@ -1,0 +1,19 @@
+define used with arguments missing, and with too many
+
+define three a,b,c
+	lac a
+	add b
+	dac c
+	term
+
+100/
+go,	three x,y,z
+	three x,y
+	three x
+	three
+	three x,y,z,x
+	hlt
+x,	1
+y,	2
+z,	0
+	start go

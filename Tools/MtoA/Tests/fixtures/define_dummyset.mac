@@ -1,0 +1,12 @@
+define that doubles a dummy, repeat 3, a=a+a
+
+define sw a
+	repeat 3, a=a+a
+	szs a
+	term
+
+100/
+go,	sw 1
+	sw 5
+	hlt
+	start go

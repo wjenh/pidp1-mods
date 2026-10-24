@@ -1,0 +1,17 @@
+a . in an argument to a define that has its own R is refused
+
+define m a
+	jmp R
+	lac a
+	term
+
+define n
+	cla
+	m .+1	/ refused
+	term
+
+100/
+go,	n
+	n
+	hlt
+	start go

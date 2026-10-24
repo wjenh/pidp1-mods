@@ -5,8 +5,8 @@ and the renderer.
 
 See *UsingDAC.md* for how to actually use the programs.
 
-This is version 1.0\
-Edit date 13-Oct-2026
+This is version 1.1\
+Edit date 23-Oct-2026
 
 ## The pieces
 
@@ -22,8 +22,6 @@ Edit date 13-Oct-2026
 | The renderer | *render/dacrender.c* | The device and the player, on a host, tape in and wav out |
 
 *room.h* and *edge.h* are compiled into both the device and the renderer, so both compute the same integers.
-During development everything here was checked against a model in Python, word for word and block for block;
-the model and the tests are not part of the release.
 
 ## The device
 
@@ -93,7 +91,7 @@ A buffer repeats until the program latches another.
 | dyrN | 722072 | 18 bits | The release rate |
 | dylN | 722472 | bits 0-8, 9-17 | The start level and the peak level, 1/8 dB of attenuation |
 | dyxN | 723072 | bits 0-8, 11-17 | The sustain level (0777, none) and the actions |
-| dytN | 723472 | returned | Bits 0-2 the envelope's stage, bits 6-17 the attenuation in 1/64 dB |
+| dytN | 723472 | returned | Bits 0-2 the envelope's stage, bit 3 set while a commit waits, bits 6-17 the attenuation in 1/64 dB |
 | dyqN | 724072 | | Commit every latch to the queue, see below |
 | dyvN | 724472 | 18 bits | The slow counter's rate |
 | dywN | 725072 | bits 0-8, 9-16, 17 | The vibrato's depth, its delay, free running |
@@ -136,19 +134,20 @@ Every latch, IOT 71's buffer latches included, loads together at the end of the 
 
 **IOT 72's command 017, the room and the onset**
 
-These are the device's own settings, one of each for all four converters, so the converter field picks the
+These are the device's settings, one of each for all four converters, so the converter field picks the
 command instead of a converter.
 
 | Mnemonic | Instruction | IO | What it does |
 |---|---|---|---|
-| dye | 727472 | bit 0, bits 16-17 | The room: bit 0 set, the configuration's; else 0 none, 1 the hall, 2 Busch Hall, 3 the voices' choice |
-| dyo | 727572 | bit 0, bits 9-17 | The onset's bound: bit 0 set, the configuration's; else in 1/8 ms (25 cycles), 0 off |
+| dye | 727472 | bit 0, bits 16-17 | Sets the room. Bit 0 set, the configuration's; else 0 none, 1 the hall, 2 Busch Hall, 3 the voices' choice |
+| dyo | 727572 | bit 0, bits 9-17 | Sets the onset's bound. Bit 0 set, the configuration's; else in 1/8 ms (25 cycles), 0 off |
 | dys | 727672 | returned | Bits 0-2 the room set, as *dye*'s, bits 3-5 the room playing (0 none, 1 the hall, 2 Busch Hall), bits 9-17 the onset's bound in 1/8 ms, 0777 if longer |
 
 *dacroom* and *daconset* set both when the emulator starts.
 A setting given holds until another is given or the emulator restarts, through a halt and a new program.
-Neither is a latch: the room changes at once and starts empty, the onset applies from the next event's end, and a
-note it holds loads as it was going to.
+Neither is a latch.
+The room changes at once and starts empty, the onset applies from the next event's end, and a note it holds
+loads as it was going to.
 The fourth field, 727772, does nothing.
 
 ### Wavetable mode
@@ -196,6 +195,11 @@ loaded.
 
 A program that keeps two entries ahead therefore has two events after each flag to commit the next, not one.
 
+*dyt*'s bit 3 is set while a commit waits.
+A flag read only after the converter's next event has begun stands for two events.
+The queue has loaded twice and is empty, and nothing waits.
+A program that commits until bit 3 is set is two entries ahead again, whatever happened since its last commit.
+
 ### Sample mode and the followed timbre
 
 Sample mode, action 020, plays a sampled note, an attack once, then a loop.
@@ -204,7 +208,7 @@ After each step a phase at or past the end has the loop's length subtracted from
 is seamless at any step.
 The loop must be at least 64 words.
 
-A key on with the phase reset starts the attack again,
+A key on with the phase reset starts the attack again.
 A slur, a new step with no key on, carries on in the attack or the loop.
 
 **The timbre that follows the level.** Up to four timbres stored one after another at the stride and three
@@ -239,7 +243,7 @@ With gains of exactly 1 and 0 the extra terms add exact zeros so the original mi
 ### The voicing
 
 *dzv*'s bits 9-17 carry a voice's voicing, latched and loaded with the note.
-It is for the organ stops, see *edge.h**.
+It is for the organ stops, see *edge.h*.
 
 | Bits | What |
 |---|---|
@@ -379,7 +383,7 @@ A room changed starts empty.
 *dyo* likewise, `IOT 71: onset 1600 cycles, set by the program`.
 
 A frame past full scale is clipped and counted.
-Frames go to SDL, version 2 or 3 as the emulator is built, in batches of 250 to mimimize jitter.
+Frames go to SDL, version 2 or 3 as the emulator is built, in batches of 250 to minimize jitter.
 
 ### Starting and stopping
 
@@ -424,7 +428,7 @@ It starts when the current one ends with no gap.
 
 ## The player
 
-*dacmusic.am1* plays Samson's Harmony Compiler intermediate tapes, the same tapes his *pdp1m13* plays<
+*dacmusic.am1* plays Samson's Harmony Compiler intermediate tapes, the same tapes his *pdp1m13* plays,
 so his notation, his compiler, and his scores stay as they are.
 
 ### Memory
@@ -432,11 +436,11 @@ so his notation, his compiler, and his scores stay as they are.
 | Where | What |
 |---|---|
 | Bank 0 | The program, the menu's display list and their data |
-| Bank 1 | The drum's directory, a 190-word slot for each converter's voice header, the voice loader and the menu's lists |
-| Banks 2-3 | The tape from 020000 to 037277, 7,872 words, each part with its counts and checksums kept for PUNCH |
-| Bank 3 from 037300 | PUNCH and the orchestra block it builds, and the places' tables |
+| Bank 1 | The drum's directory, a 190-word slot for each converter's voice header, the voice loader, the menu's lists and the room's values |
+| Banks 2-3 | The tape from 020000 to 036377, 7,424 words |
+| Bank 3 from 036400 | The code that finds a bar's address and plays the dynamics, then PUNCH and the orchestra block it builds, the places' tables and the room's and the onset's names |
 | Bank 4 | Each converter's ring, 256 entries of 4 words |
-| Banks 5-15 | The voices the orchestra names, from 050000 |
+| Banks 5-15 | A tape too large for banks 2-3 from 050000, then the voices the orchestra names, from 050000 or after that tape |
 
 The extend-mode window is open throughout, every indirect address is a full 16-bit one.
 The Type 340's subroutine instructions reach banks 0 and 1 only, so the menu's texts are there.
@@ -453,6 +457,17 @@ It starts the reader, polls its status while the 340 keeps drawing, and takes ea
 The tape is over when no word comes for about 2 seconds, 12 for the first read.
 A failed checksum takes the block as read, as *pdp1m13* does on Continue.
 
+**The tape in core.** A part is kept as four words, the count and checksum of its notes and of its bar pointers as
+read, then its notes, a bar line, its bar pointers as read and an end mark.
+The address of a bar is made from its pointer when the bar plays.
+A part's notes, its pointers and the orchestra block are each placed below 036400 while they fit.
+The first that doesn't starts at 050000, with everything after it, so a piece is never split.
+The voices then load from the word after the tape, not from 050000.
+A tape past 0200000 keeps the parts read whole before it and says TAPE TOO LARGE.
+An orchestra too large for the words left above the tape is refused at PLAY with VOICES DO NOT FIT WITH THIS TAPE;
+the same orchestra may play with a smaller tape, a movement for instance.
+The whole Haffner leaves 38,492 words for the voices.
+
 **The orchestra block.** PUNCH punches the parts exactly as read, checksums included, then one more block.
 Its count, 0700050, is negative, so *pdp1m13* halts on it rather than taking it for a part.
 Its 40 words are the version, 3, then *per*, the parts a movement, then for each converter nine words, its part
@@ -468,7 +483,7 @@ is.
 The player gives the room and the onset to the device as it does the volumes, when the orchestra is set and before
 each piece plays.
 
-The block holds numbers, not addresses or slider positions, a tape remains valid if a library is rebuilt.
+The block holds numbers, not addresses or slider positions; a tape remains valid if a library is rebuilt.
 
 ### Timing
 
@@ -496,20 +511,48 @@ The sequencer's rules, in short:
 - Rests, a voice short of its bar and a movement's end are key offs, ties and offs while silent are ignored.
 - An event over 131,071 cycles is split so every event fits the 18-bit event length.
 
-A bar is decoded only when every ring has room for 128 entries, more than any bar needs.
+A bar is decoded only when every ring has room for 128 entries, more than any bar needs, and every converter's
+dynamics queue has room for 4 of its 12 places.
 
-**Feeding the converters.** The service routine, *svc*, polls each converter's flag.
-On a new event it latches the next entry from the ring and commits it to the queue with *dyq*.
+**Feeding the converters.** The service routine, *svc*, reads the four converters' flags in turn, 1, 2, 3, 4, 1, ...,
+serves each converter whose flag is set as it reads it, and returns when four readings in a row find none set.
+To serve one, it latches the next entry from the ring and commits it to the queue with *dyq*, and goes on latching
+and committing until *dyt* shows a commit waiting.
 At the start the player commits entries 0 and 1, starts all four converters with *dxg*, and latches entry 2 so it
 always runs two entries ahead.
 A new event then has to be served within the two events after it, at least 1,600 cycles, not within one.
+Its flag should be read before the converter's next event begins; after each latch *svc* reads the next
+converter's flag, so a converter waits at most for the three others' latches.
+A flag read later stands for two events, and the queue has emptied.
+That serve commits two entries, and the converter is two ahead again.
+Only the entry whose start was missed has its dynamic late, by up to an event.
+A serve that finds a commit already waiting (its event ended while an earlier serve latched, and that serve
+committed for it) commits nothing.
 The decoder calls *svc* from every loop that could run long.
-On the Little Fugue, with the play screen and its readouts, the closest the service ever comes to late is
-19,567 cycles to spare.
+With the play screen and its readouts, the least the service has to spare is 19,117 cycles over the Little
+Fugue's first 70 seconds, 9,048 over Sonata I's, and 7,551 over the whole Haffner with its dynamics.
 
 At PLAY the player clears the four flags, gives each converter its volume and place about 0.1 s before the
 start so their slews are over before any sound and latches each converter's fixed values from its voice's
 record.
+
+### The dynamics
+
+A tape Harmony punches under LANGUAGE 1968 DAC has dynamics among its notes.
+They are 600001 to 600006 for pp, p, mp, mf, f and ff, each just before the note it governs.
+No note, bar line or tempo word uses them; *pdp1m13* halts on one, so such a tape is for this player only.
+
+From that note on, the converter's volume is its slider's level lowered by pp 18 dB, p 12, mp 9, mf 6 or f 0, or
+raised by ff 3 dB, held within the slider's 45 dB.
+Each movement starts at f, so a tape without dynamics plays at the sliders' levels and the player gives no *dzg*
+while it plays.
+A slider moved while a piece plays moves the level under the dynamic.
+The levels are the program's, not the tape's, so they can be retuned without a new tape.
+
+The decoder queues a dynamic that changes the level, twelve at most a converter, with the number of the entry its
+note starts.
+*svc* gives it to the converter with *dzg* as that entry begins, and the device's slew smooths the step.
+A copied or repeated bar plays the dynamics stored in it.
 
 ### Loading the voices
 
@@ -572,7 +615,7 @@ The level is kept if it lies within the two runs' span, else it moves to the spa
 A pen held still keeps its level and a drag pulls it along a frame behind.
 The new level goes to the converter at once, by *dzg*, whose slew keeps a drag from clicking.
 
-While a piece plays the player's idle turn polls the pen so STOP and the sliders work
+While a piece plays the player's idle turn polls the pen so STOP and the sliders work.
 While it decodes a bar it doesn't poll so in a dense passage the screen can pause for a few milliseconds.
 
 ## The voices and the drum
@@ -598,21 +641,28 @@ A block longer than a field runs on into the next fields.
 its next transfer.
 
 **How the voices were made:**
-- **The basic nine**: five tables synthesized from their harmonics and four sampled notes, organ pipes with a chiff
-  and a plucked string, synthesized as sampled notes, one an octave.
+- **The basic nine** are recorded (below).
+  The principal, gedackt, trumpet and bourdon are pipes of Bureå Church's organ, a zone every six semitones,
+  the bourdon its pedal Subbas 16 to F3 and a stopped 8-foot rank above; the flute, reed (an oboe), plucked
+  bass (a double bass, pizzicato) and marimba are orchestral recordings a few semitones apart; the harpsichord
+  is 38,010 words, the other eight 5,408 to 9,522.
+  The Flentrop drum keeps the synthesized nine (*voices/lib/\*-synth.voice*).
+  They are five tables synthesized from their harmonics, three organ pipes with a chiff synthesized as sampled
+  notes, one an octave, and a plucked string as sampled notes for the harpsichord, which has no room beside the
+  stops.
 - **The Flentrop's stops** are made by **dacvoice** from each stop's pipe class, open, stopped, conical or reed,
   its ranks placed as harmonics of the division's frame, and a level.
   A mutation is a rank on the 3rd, 5th or 6th harmonic, exactly in tune; a mixture is several ranks, each breaking
   back an octave where it would pass a zone's top.
-- **The bagpipe's** chanter and drones are tables made by **dacvoice** from their harmonics, the chanter's two
-  formants and the drones' odd harmonics, the chanter at a period of 7 cycles so its images fall above hearing.
+- **The bagpipe's** chanter is recorded (below), a zone a note, at a period of 7 cycles so its images fall above
+  hearing. Its drones are a table made by **dacvoice** from their odd harmonics.
 - **The recorded instruments** were cut from the recordings by tools that are not part of the release.
-  A zone is four semitones, its root a recorded note.
+  A zone is four semitones (the harpsichord's six, the chanter's one note), its root a recorded note.
   Each zone is band-limited to what its highest note can play below 0.45 of the sample rate, resampled with a
   windowed sinc to 1.25 times that band's Nyquist rate, and for a solo instrument flattened to a steady pitch, so
   every period is a whole number of words and the loop is seamless; the vibrato is then the device's.
   The loop is two or more periods crossfaded into the attack, at least 64 samples.
-  A piano or guitar note's decay is measured and taken out of the stored words, and the device's envelope puts it
+  A piano, guitar or harpsichord note's decay is measured and taken out of the stored words, and the device's envelope puts it
   back.
   Each voice is packed.
 - **The Hammond** is a stop with a 16-foot frame.

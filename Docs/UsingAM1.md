@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.1 and covers up through am1 version 5.2; it will be updated as needed.\
-Edit date 22-Oct-2026
-Update for new twopass support
+This is version 3.2 and covers up through am1 version 5.2; it will be updated as needed.\
+Edit date 24-Oct-2026\
+Update for constant pool changes, mactoam1 changes.
 
 ## What is **am1**?
 
@@ -15,8 +15,8 @@ Simply because the available ones seem to essentially duplicate the old **macro1
 It's time for a modern assembler that brings productive features and better error checking and better readability.
 
 Am1 provides some significant new features while maintaining some compatibility with existing macro sources.
-Additionally, a separate conversion tool, **mactoam1**, is provided to process an existing macro source file and
-convert it to **am1** syntax.
+Additionally, a separate conversion tool, **mactoam1**, is provided to convert an existing **macro1** source file
+to **am1** source that assembles to the same binary.
 
 It can, in fact, produce as its output valid source that can be assembled by **macro1**.
 
@@ -94,10 +94,12 @@ But, see next.
 
 Never fear, help is here! - *Dudley Do-right*
 
-The **mactoam1** utility, see its documentation, will convert existing source code to **am1** with good
-reliability, including converting **macro1** defines into the equivalent **cpp** defines.
+The **mactoam1** utility, see its documentation, converts existing **macro1** source code to **am1** source
+that assembles to the idential binary **macro1** assembles to, including converting **macro1** defines into **am1**'s
+block *#define* ... *#enddef*.
+What it cannot convert it refuses giving an *#error* line in the output.
 
-If you have only a binary image, then use the **disassemble_tape** utility in its macro source mode
+If you have only a binary image, then use the **disassembler** utility in its macro source mode
 to create a macro source file you can then process as above.
 
 And of course, you can go back to macro sources from **am1** by using the macro source output flag.
@@ -158,10 +160,20 @@ All references within the scope are then emitted as pc-relative so no externally
 Constants are handled specially to allow for constant reuse.
 When a constant is encountered, its defining expression is used to create a hash code that is saved
 as the key in the constants symbol table.
-Thus, the next time the same value is seen the existing entry will be used.
+When every symbol the expression uses is already defined, the key is its value and
+the next time the same value is seen the existing entry will be used.
+When it uses a symbol not yet defined, the key is which symbol is in place of its value and
+if an operator is applied to it, the expression itself.
+The entry is shared only with constants written the same way.
+`[foo+1]` and `[1+foo]` share one entry; `[foo+1]` and `[foo+2-1]` each get their own
+even though both evaluate to the same value.
+
 When a *constants* directive is seen, all constants added since the last instance of the directive are assigned
-locations starting from the current location, which will be updated to one past the last constant processed.
+locations starting from the current location which will then be updated to one past the last constant processed.
 However, the actual value is not computed until the end of the program so that forward references can be used.
+Then, every constant's expression is checked against the value of the entry it shares.
+A mismatch would be a defect in **am1** and it stops with an error giving the constant's line
+rather than load a wrong value.
 
 If there are constants that have not been processed when the end of the program is reached, they will be automatically
 processed and placed just after the last location used.
@@ -183,12 +195,7 @@ The parser side knows nothing about the details of the code generators, it just 
 and creates the parse tree.
 
 Wrapping the parsing and code generation is control logic that manages the files and optionally
-preprocesses the input, as **cpp** would, with **am1**'s own preprocessor.
-
-The companion tool, **mactoam1** handles the syntactic differences between **macro1** and **am1** and
-deals with translating them, and also understands the original *define-terminate* syntax and converts
-that to **cpp** *#define* statements.
-It is implemented using flex.
+preprocesses the input, as **cpp** would, using **am1**'s own preprocessor.
 
 ## Building **am1**
 
@@ -198,7 +205,10 @@ Just type make.
 
 ## Usage
 
-**am1** [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
+```
+**am1** [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-Dsymbol]...  [-W|-W=name...]
+    [-Ipath]... [-ipath] sourcefile
+```
 
 - a space means *add*, default is *or*
 - b generate binary tape image code, the default action
@@ -216,7 +226,7 @@ Just type make.
 - r don't output an initial rim loader
 - s generate a symbol table, automatic if non-overlay exports are done
 - S print a list of the highest address used in each bank and for a program with overlays,
-  where each overlay is on the drum
+  where each overlay is on the drum.
   The highest address is the bank's highest word assembled into or reserved by a *table*
   and *none* for a bank with no usage
 - T generate test mode output, see below
@@ -972,6 +982,11 @@ const2, a+456
 
 But, constants are also tracked and kept in a *constants pool*.
 Successive uses of the same constant all share one memory location for their value, saving space.
+A constant whose symbols are all defined where it appears shares a location with every other constant
+of the same value in its pool.
+One that has a symbol defined later shares only with constants written the same way,
+so two that are spelled differently even if they evaluate to the same value take a location each,
+see *What goes on inside?*.
 
 If a constant is the last thing on a line except for a trailing comment, the trailing ] can be omitted.\
 *Note* that *last* means **last**, nothing but an optional trailing comment is allowed.\
@@ -1594,21 +1609,15 @@ They are accessed using the normal inter-bank notation, *sym:n*.
 
 ## Special directives
 
-There are two special directives that are not of general use.
-
-One is *%%forcelocal*, which is a terrible hack to allow **mactoam1** to convert macro-style defines to
-**cpp** style.
-It causes any location symbol, even if not marked as local, seen in a local scope to be assumed local.
-If that same symbol is then used outside local scopes, it is made non-local.
-
-The second is the line and file marker the preprocessor inserts, used to keep the current file name and line
+There is one special directive that is not of general use.
+It is the line and file marker the preprocessor inserts, used to keep the current file name and line
 number correct.
 It will always be on a line by itself and is of the form:
 ```
 # number "filename"
 ```
 
-It is recommended that neither be used directly.
+It is recommended that it not be used.
 
 ## An example
 

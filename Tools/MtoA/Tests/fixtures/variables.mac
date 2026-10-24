@@ -1,0 +1,11 @@
+overbar variables and the variables statement
+
+100/
+go,	lac \x
+	dac y\
+	add x
+	dac z~
+	hlt
+	variables
+end,	jmp go
+	start go

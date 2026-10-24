@@ -1,9 +1,9 @@
 # Recorded instruments, drum 2 of 2: the piano, the guitar, the drum kit
-# and the Hammond organ's two stops. The flute is voice 0: the player
-# loads voice 0 for a converter the tape gives no part, and it is the
-# smallest voice (1,536 words), so each recorded voice fits in core
-# beside it.
-../voices/lib/flute.voice
+# and the Hammond organ's two stops. The synthesized flute is voice 0.
+# The player loads voice 0 for a converter the tape gives no part, and
+# it is the smallest voice (1,536 words), so each recorded voice fits
+# in core beside it.
+../voices/lib/flute-synth.voice
 lib/piano.voice
 lib/guitar.voice
 lib/kit.voice

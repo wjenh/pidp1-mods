@@ -1,0 +1,1610 @@
+// Harmony's light-pen menu on the Type 340. It offers READ TAPE, the
+// parts listed as read (title, bars, notes, errors), each part's typed
+// text in full, PUNCH, LANGUAGE, LOG, the whole of what was typed,
+// TEMPO, the tape's tempo words made faster or slower at PUNCH, and
+// SOURCE, the parts kept punched as a source tape in the form FORM shows
+// (hcwrite.ac).
+//
+// Included by harmony.am1 in bank 1, after the part directory. Its words
+// in bank 0 (lng, rlng, npart, kind, rfs, nfat, nunf, nbad, nbadc, logp,
+// and TEMPO's tempoOld, tempoNew and tempoBad) are reached through their
+// full addresses (npart:0), and its READ TAPE, PUNCH and TEMPO's first
+// value through readFromMenu, punchFromMenu and tempoFromMenu; SOURCE is
+// the writer's source, in bank 2, and FORM its srcForm; the titles and
+// the log are in bank 15. The extend-mode window is open throughout, as
+// in the rest of the program; menuStart enters at menu.
+//
+// The screen is a display list in bank 1, drawn again each time the 340
+// stops. Its second word, screenGate, is a jump to the main screen or to
+// the log's. The main screen has TEMPO on the title's line, its readout
+// and four steps (-10, -1, +1, +10); READ TAPE, PUNCH, LANGUAGE (HC1D,
+// 1968 or 1968 DAC after it) and LOG; the status line; a line of counts;
+// sixteen rows, a page of the parts; MORE, the page's number, SOURCE and
+// FORM (FIO-DEC or ASCII after it). The log's screen has BACK, MORE and
+// its header, then a page of the typed text, built from the log
+// (logPage). What the pen may point at is drawn with the pen on, and
+// nothing else is, so a hit is told by the band and column it falls in
+// (findTarget). A hit acts once, at the frame's end. The pen must leave
+// the targets for about 0.14 s before the next one counts, as in the DAC
+// music program's menu. While READ TAPE and PUNCH run, keepScreen
+// (harmony.am1) draws the list from the reader's, the typewriter's and
+// the punch's waits, and passes over a hit.
+//
+// The text is in character set 1, upper case only. A FIO-DEC code is
+// shown by ftab, a code with no glyph passed over.
+
+#include <TYPE340/type340cmds.ah>
+
+// The point words before text at (px, py), or before a save word (ATS).
+#define AT(px, py) next(point); y(py) next(point); x(px) next(character)
+#define ATS(px, py) next(point); y(py) next(point); x(px) next(subroutine)
+// A target's text at (px, py), the pen on; ATQ turns it off again before
+// a save word.
+#define OPN(px, py) lpon next(point); y(py) next(point); x(px) next(character)
+#define ATQ(px, py) lpoff next(point); y(py) next(point); x(px) next(subroutine)
+#define SAVEC (save | next(character))
+// A part's row k, the pen on, its point and a save to its text.
+#define ROW(k) intensity(5) lpon next(point); y(ROWY0 - (k) * ROWP) next(point); \
+    x(ROWX) next(subroutine); SAVEC | (rowText:1 + (k) * ROWW)
+
+#define PENAP 0d22              // the pen's aperture, APERTURE200, a hit within 10 units
+#define AWAYN 0d4000            // passes of the wait without a hit, 0.14 s
+#define BLANKW 0373737          // a text of nothing, three end characters
+#define CEND 037                // the end character
+#define CSPACE 040
+
+// The targets, as findTarget numbers them; a part's row k is ROWT + k.
+#define TREAD 1
+#define TPUNCH 2
+#define TLANG 3
+#define TLOG 4
+#define TMORE 5
+#define TBACK 6
+#define TLMORE 7
+#define TTDN10 0d8              // TEMPO's steps, -10, -1, +1, +10 (tempoSteps)
+#define TTDN1 0d9
+#define TTUP1 0d10
+#define TTUP10 0d11
+#define TSOURCE 0d12
+#define TFORM 0d13
+#define ROWT 0d16
+
+// The main screen, in the screen's units. drc's points are even and
+// every threshold odd. The buttons' texts are at BTNY, READ TAPE
+// (60-186) left of FXREAD, PUNCH (260-330) of FXPUNCH, LANGUAGE 1968 DAC
+// (410-648) of FXLANG, LOG (700-742) of FXLOG; their band is from BTNB to
+// BTNT.
+#define BTNY 0d900
+#define BTNB 0d889
+#define BTNT 0d925
+#define FXREAD 0d223
+#define FXPUNCH 0d371
+#define FXLANG 0d673
+#define FXLOG 0d781
+// TEMPO's readout is at TEMPOX on the title's line (HDY, the band HDB to
+// HDT), TEMPO 32767 FROM 32767 at its longest (340-648). Its steps are
+// -10 (680-722) left of FXTDN10, -1 (760-788) of FXTDN1, +1 (830-858) of
+// FXTUP1, +10 (900-942) of FXTUP10.
+#define TEMPOX 0d340
+#define FXTDN10 0d741
+#define FXTDN1 0d809
+#define FXTUP1 0d879
+#define FXTUP10 0d961
+// The rows, NROWS of them, ROWP apart down from ROWY0, at x ROWX. Row
+// k's band is from 11 below its baseline to 25 above, so the bands meet,
+// from ROWB up to ROWTOP. A row is ROWW words of text at most (56
+// characters).
+#define NROWS 0d16
+#define ROWY0 0d780
+#define ROWP 0d36
+#define ROWX 0d60
+#define ROWTOP 0d805
+#define ROWB 0d229
+#define ROWW 0d20
+#define TITLEW 0d16             // a title's characters on its row
+// MORE (60-116) on the main screen, its band MOREB to MORET, left of
+// FXMORE; on its line PAGE p OF q (200-354), no target, left of FXPAGE,
+// SOURCE (440-510) of FXSOURCE, FORM FIO-DEC (600-768) of FXFORM.
+#define MOREY 0d180
+#define MOREB 0d169
+#define MORET 0d205
+#define FXMORE 0d151
+#define FXPAGE 0d401
+#define FXSOURCE 0d561
+#define FXFORM 0d801
+// The log's screen has BACK (60-116) left of FXBACK and MORE (200-256)
+// of FXLMORE on its header's line, the band HDB to HDT; then LINES
+// lines, LINEP apart down from LINEY0 at x LINEX, LCOLS characters each.
+// A line is LINEW words, three to place it and the rest its text.
+#define HDY 0d960
+#define HDB 0d949
+#define HDT 0d985
+#define FXBACK 0d159
+#define FXLMORE 0d299
+#define LINES 0d40
+#define LINEY0 0d920
+#define LINEP 0d22
+#define LINEX 0d30
+#define LCOLS 0d66
+#define LINEW 0d26
+#define LBUFW (LINES * LINEW + 1)
+
+// menu -- the menu, from menuStart, which has set the language from the
+// test word and left no part read. Every word it reads is set here or by
+// the routine that uses it, since a restart does not reload the program.
+// Entered via jmp i; does not return.
+menu,
+    local mn0, mn1, mn2, mn3, mn4
+    lac [sBlank:1]
+    jda setStatus
+    dzm pageFirst
+    dzm logShown
+    lac [jump mainScreen:1]
+    dac screenGate
+    jsp showLanguage
+    dzm i [srcForm:2]
+    jsp showForm
+    jsp fillMain
+    jsp showTempo
+    dzm armed               // a pen already on a target waits until it leaves
+    law i AWAYN
+    dac awayCount
+mn0,
+    // The aperture is set each frame, since the configuration overrides
+    // one set at start.
+    lio [PENAP]
+    dpy-i LIGHTPEN
+    dzm hitTarget
+    lio [mlist:1]
+    dla
+mn1,
+    dsp
+    jmp mn2
+    drc
+    jsp findTarget
+    sza i                   // skip if a target holds it
+    jmp mn3
+    // The frame's first hit is the one that counts.
+    dac hitNow
+    law i AWAYN             // the pen is on a target, so it has not left
+    dac awayCount
+    lac hitTarget
+    sza i
+    lac hitNow
+    dac hitTarget
+mn3,
+    drs
+mn2,
+    dss
+    jmp mn4
+    // The frame has ended. An armed hit acts.
+    lac hitTarget
+    sza i
+    jmp mn0
+    lac armed
+    sza i
+    jmp mn0
+    dzm armed
+    lac hitTarget
+    jda act
+    jmp mn0
+// The wait for the stop counts the pen's absence, about 35 us a pass.
+// Each AWAYN passes without a hit arm the next.
+mn4,
+    isp awayCount           // skip when the pen has been away long enough
+    jmp mn1
+    law 1
+    dac armed
+    law i AWAYN
+    dac awayCount
+    jmp mn1
+    endlocal
+
+// findTarget -- the target whose band and column hold drc's point, on
+// the screen shown. IO holds drc's word. Called via jsp; returns AC the
+// target, 0 if none; IO is preserved.
+findTarget,
+    local ft1, ft2, ft3, ft4, ft5, ft6, ft7, ft8, ft9, fta, ftb, ftc, ftm, ftq, ftr, \
+        ftn, ftx, ftw, ftpx, ftpy, ftk, ftd
+    dap ftx
+    dio ftw
+    lac ftw
+    and [0777]
+    ral 1s
+    dac ftpy
+    lac ftw
+    rar 9s
+    and [0777]
+    ral 1s
+    dac ftpx
+    lac logShown
+    sza
+    jmp ft5
+    // The main screen, first the title's line with TEMPO's steps.
+    lac ftpy
+    sub [HDT]
+    sma
+    jmp ftn
+    lac ftpy
+    sub [HDB]
+    sma                     // skip if below its bottom
+    jmp ft7
+    // The buttons' band.
+    lac ftpy
+    sub [BTNT]
+    sma                     // skip if below its top
+    jmp ftn
+    lac ftpy
+    sub [BTNB]
+    spa                     // skip if above its bottom
+    jmp ft1
+    lac ftpx
+    sub [FXREAD]
+    sma                     // skip if left of it
+    jmp ft2
+    law TREAD
+    jmp ftx
+ft2,
+    lac ftpx
+    sub [FXPUNCH]
+    sma
+    jmp ft3
+    law TPUNCH
+    jmp ftx
+ft3,
+    lac ftpx
+    sub [FXLANG]
+    sma
+    jmp ft4
+    law TLANG
+    jmp ftx
+ft4,
+    lac ftpx
+    sub [FXLOG]
+    sma
+    jmp ftn
+    law TLOG
+    jmp ftx
+    // The rows' bands, from ROWTOP down. Row k is (ROWTOP - y) / ROWP.
+ft1,
+    lac ftpy
+    sub [ROWTOP]
+    sma
+    jmp ftn
+    lac ftpy
+    sub [ROWB]
+    spa
+    jmp ftm
+    lac [ROWTOP]
+    sub ftpy
+    dac ftd
+    dzm ftk
+ftr,
+    lac ftd
+    sub [ROWP]
+    spa
+    jmp ftq
+    dac ftd
+    idx ftk
+    jmp ftr
+ftq,
+    lac ftk
+    add [ROWT]
+    jmp ftx
+    // MORE, the page's number, SOURCE and FORM.
+ftm,
+    lac ftpy
+    sub [MORET]
+    sma
+    jmp ftn
+    lac ftpy
+    sub [MOREB]
+    spa
+    jmp ftn
+    lac ftpx
+    sub [FXMORE]
+    sma
+    jmp ftb
+    law TMORE
+    jmp ftx
+ftb,
+    lac ftpx
+    sub [FXPAGE]
+    spa
+    jmp ftn
+    lac ftpx
+    sub [FXSOURCE]
+    sma
+    jmp ftc
+    law TSOURCE
+    jmp ftx
+ftc,
+    lac ftpx
+    sub [FXFORM]
+    sma
+    jmp ftn
+    law TFORM
+    jmp ftx
+    // The log's screen, BACK and MORE on the header's line.
+ft5,
+    lac ftpy
+    sub [HDT]
+    sma
+    jmp ftn
+    lac ftpy
+    sub [HDB]
+    spa
+    jmp ftn
+    lac ftpx
+    sub [FXBACK]
+    sma
+    jmp ft6
+    law TBACK
+    jmp ftx
+ft6,
+    lac ftpx
+    sub [FXLMORE]
+    sma
+    jmp ftn
+    law TLMORE
+    jmp ftx
+    // TEMPO's steps.
+ft7,
+    lac ftpx
+    sub [FXTDN10]
+    sma
+    jmp ft8
+    law TTDN10
+    jmp ftx
+ft8,
+    lac ftpx
+    sub [FXTDN1]
+    sma
+    jmp ft9
+    law TTDN1
+    jmp ftx
+ft9,
+    lac ftpx
+    sub [FXTUP1]
+    sma
+    jmp fta
+    law TTUP1
+    jmp ftx
+fta,
+    lac ftpx
+    sub [FXTUP10]
+    sma
+    jmp ftn
+    law TTUP10
+    jmp ftx
+ftn,
+    cla
+ftx, jmp .
+
+ftw, 0                      // drc's word
+ftpx, 0                     // the point's x
+ftpy, 0                     // and its y
+ftk, 0                      // a row
+ftd, 0                      // ROWTOP - y, less a row each turn
+    endlocal
+
+// act -- act on an armed hit. AC holds the target. Called via jda; AC
+// and IO are clobbered.
+act, 0
+    local ac1, ac2, ac3, ac4, ac5, ac6, ac7, ac8, ac9, aca, acx, acp
+    dap acx
+    lac act
+    sub [ROWT]
+    spa                     // skip if a part's row
+    jmp ac1
+    jda openPart
+    jmp acx
+ac1,
+    lac act
+    sas [TREAD]
+    jmp ac2
+    jsp readTape
+    jmp acx
+ac2,
+    sas [TPUNCH]
+    jmp ac3
+    jsp punchTape
+    jmp acx
+ac3,
+    sas [TLANG]
+    jmp ac4
+    jsp toggleLanguage
+    jmp acx
+ac4,
+    sas [TLOG]
+    jmp ac5
+    jsp openLog
+    jmp acx
+ac5,
+    sas [TMORE]
+    jmp ac6
+    jsp nextPage
+    jmp acx
+ac6,
+    sas [TBACK]
+    jmp ac7
+    jsp showMain
+    jmp acx
+ac7,
+    sas [TLMORE]
+    jmp ac9
+    jsp nextLogPage
+    jmp acx
+ac9,
+    sas [TSOURCE]
+    jmp aca
+    jsp sourceTape
+    jmp acx
+aca,
+    sas [TFORM]
+    jmp ac8
+    jsp toggleForm
+    jmp acx
+    // TEMPO's steps, TTDN10 to TTUP10, the rest of the targets.
+ac8,
+    sub [TTDN10]
+    add [tempoSteps:1]
+    dac acp
+    lac i acp
+    jda stepTempo
+acx, jmp .
+
+acp, 0                      // tempoSteps's word
+    endlocal
+
+tempoSteps, -0d10; -1; 1; 0d10
+
+// readTape -- READ TAPE. READING TAPE is shown over an empty list, the
+// tape read by rtape (keepScreen drawing meanwhile), then its outcome
+// shown on the status line with the first page of its parts. Called via
+// jsp; AC and IO are clobbered.
+readTape,
+    local rd1, rd2, rd3, rd4, rd5, rdx
+    dap rdx
+    lac [sReading:1]
+    jda setStatus
+    dzm i [npart:0]
+    dzm i [nfat:0]
+    dzm i [nunf:0]
+    dzm i [nbad:0]
+    dzm i [nbadc:0]
+    dzm pageFirst
+    dzm i [tempoOld:0]
+    dzm i [tempoNew:0]
+    jsp showTempo
+    jsp fillMain
+    jsp i [readFromMenu:0]
+    jsp i [tempoFromMenu:0]
+    jsp showTempo
+    lac i [kind:0]
+    sas [KEMPTY]
+    jmp rd1
+    lac [sNoTape:1]
+    jmp rd3
+rd1,
+    sas [KNONE]
+    jmp rd2
+    lac [sNotTape:1]
+    jmp rd3
+rd2,
+    sas [KCOMP]
+    jmp rd4
+    lac i [rfs:0]
+    sza
+    jmp rd5
+    lac [sChecked:1]
+    jmp rd3
+rd5,
+    lac [sRefused:1]
+    jmp rd3
+rd4,
+    lac [sTapeRead:1]
+rd3,
+    jda setStatus
+    jsp fillMain
+rdx, jmp .
+    endlocal
+
+// punchTape -- PUNCH. The parts kept are punched by harmony.am1's punch,
+// with PUNCHING TAPE then TAPE PUNCHED shown (TAPE PUNCHED, FOR THE DAC
+// PLAYER when it was read in 1968 DAC); NOTHING TO PUNCH when no part
+// has words or the tape was a compiled one; NOT PUNCHED when TEMPO would
+// put a tempo word out of range. Then TEMPO's readout, its FROM gone
+// once the store holds the scaled words. Called via jsp; AC and IO are
+// clobbered.
+punchTape,
+    local pn1, pn2, pn3, pn4, pn5, pn6, pnx, pnk, pnp
+    dap pnx
+    dzm pnk
+    lac i [kind:0]
+    sad [KCOMP]
+    jmp pn2
+pn1,
+    lac pnk
+    sad i [npart:0]
+    jmp pn2
+    add [dirb:1]
+    dac pnp
+    lac i pnp
+    sza
+    jmp pn3
+    idx pnk
+    jmp pn1
+pn2,
+    lac [sNothing:1]
+    jda setStatus
+    jmp pnx
+pn3,
+    lac [sPunching:1]
+    jda setStatus
+    jsp i [punchFromMenu:0]
+    lac i [rlng:0]
+    sad [2]
+    jmp pn5
+    lac [sPunched:1]
+    jmp pn6
+pn5,
+    lac [sPunchedDac:1]
+pn6,
+    jda setStatus
+    lac i [tempoBad:0]
+    sza i
+    jmp pn4
+    lac [sTempoRange:1]
+    jda setStatus
+pn4,
+    jsp showTempo
+pnx, jmp .
+
+pnk, 0                      // a part
+pnp, 0                      // its word of dirb
+    endlocal
+
+// sourceTape -- SOURCE. The parts kept are punched as a source tape by
+// the writer (hcwrite.ac), in the language LANGUAGE shows and the form
+// FORM shows, with PUNCHING SOURCE then SOURCE PUNCHED shown, SEE THE LOG
+// after it when a part was refused, a word written differently or an
+// orchestra block left out; NOTHING TO PUNCH with no part kept. Called
+// via jsp; AC and IO are clobbered.
+sourceTape,
+    local so1, so2, so3, sox
+    dap sox
+    lac i [npart:0]
+    sza
+    jmp so1
+    lac [sNothing:1]
+    jda setStatus
+    jmp sox
+so1,
+    lac [sSrcPunching:1]
+    jda setStatus
+    jsp i [source:2]
+    sza
+    jmp so2
+    lac [sSrcPunched:1]
+    jmp so3
+so2,
+    lac [sSrcSeeLog:1]
+so3,
+    jda setStatus
+sox, jmp .
+    endlocal
+
+// toggleForm -- FORM. Switch the source tape's form, FIO-DEC or ASCII,
+// for the next SOURCE. Called via jsp; AC and IO are clobbered.
+toggleForm,
+    local tfx
+    dap tfx
+    lac i [srcForm:2]
+    xor [1]
+    dac i [srcForm:2]
+    jsp showForm
+tfx, jmp .
+    endlocal
+
+// showForm -- the form's name after FORM. Called via jsp; AC is
+// clobbered, IO is preserved.
+showForm,
+    local sfx
+    dap sfx
+    lac [SAVEC | sFio:1]
+    dac formWord
+    lac i [srcForm:2]
+    sza i
+    jmp sfx
+    lac [SAVEC | sAscii:1]
+    dac formWord
+sfx, jmp .
+    endlocal
+
+// toggleLanguage -- LANGUAGE. Step to hc1d's language, the 1968
+// language, then 1968 DAC, in turn, for the next READ TAPE and SOURCE.
+// Called via jsp; AC and IO are clobbered.
+toggleLanguage,
+    local tlx
+    dap tlx
+    lac i [lng:0]
+    add [1]
+    sad [3]
+    cla
+    dac i [lng:0]
+    jsp showLanguage
+tlx, jmp .
+    endlocal
+
+// showLanguage -- the language's name after LANGUAGE. Called via jsp;
+// AC is clobbered, IO is preserved.
+showLanguage,
+    local slx
+    dap slx
+    lac [SAVEC | sHc1d:1]
+    dac langWord
+    lac i [lng:0]
+    sza i
+    jmp slx
+    lac [SAVEC | s1968:1]
+    dac langWord
+    lac i [lng:0]
+    sad [1]
+    jmp slx
+    lac [SAVEC | s1968Dac:1]
+    dac langWord
+slx, jmp .
+    endlocal
+
+// stepTempo -- a step of TEMPO. tempoNew is moved by AC and kept within
+// 1-077777 (hc1d's tempo field); nothing when the tape has no tempo
+// word. Called via jda; AC and IO are clobbered.
+stepTempo, 0
+    local stp1, stp2, stpx
+    dap stpx
+    lac i [tempoOld:0]
+    sza i
+    jmp stpx
+    lac i [tempoNew:0]
+    add stepTempo
+    sma sza                 // skip if not above 0
+    jmp stp1
+    law 1
+stp1,
+    dac i [tempoNew:0]
+    sub [100000]
+    spa                     // skip if past 077777
+    jmp stp2
+    lac [77777]
+    dac i [tempoNew:0]
+stp2,
+    jsp showTempo
+stpx, jmp .
+    endlocal
+
+// showTempo -- TEMPO's readout, TEMPO and the N it will punch, then FROM
+// and the tape's while they differ; TEMPO NONE when the tape has no
+// tempo word. Called via jsp; AC and IO are clobbered.
+showTempo,
+    local sht1, sht2, shtx
+    dap shtx
+    lac [tempoText:1]
+    jda textStart
+    dzm numWidth
+    lac [sTempo:1]
+    jda putText
+    lac i [tempoOld:0]
+    sza
+    jmp sht1
+    lac [sNone:1]
+    jda putText
+    jmp sht2
+sht1,
+    lac i [tempoNew:0]
+    jda putNumber
+    lac i [tempoNew:0]
+    sad i [tempoOld:0]
+    jmp sht2
+    lac [sFrom:1]
+    jda putText
+    lac i [tempoOld:0]
+    jda putNumber
+sht2,
+    jsp textEnd
+shtx, jmp .
+    endlocal
+
+// nextPage -- MORE on the main screen. Shows the next page of parts, the
+// first after the last. Called via jsp; AC and IO are clobbered.
+nextPage,
+    local np1, npx
+    dap npx
+    lac pageFirst
+    add [NROWS]
+    dac pageFirst
+    sub i [npart:0]
+    spa                     // skip if past the last part
+    jmp np1
+    dzm pageFirst
+np1,
+    jsp fillMain
+npx, jmp .
+    endlocal
+
+// openPart -- a part's row. Shows the log's screen from the part's first
+// typed code (for a compiled tape's part, from the log's start). AC
+// holds the row on the page. Called via jda; AC and IO are clobbered.
+openPart, 0
+    local op1, opx, opk, opp
+    dap opx
+    lac openPart
+    add pageFirst
+    dac opk
+    sub i [npart:0]
+    sma                     // skip if a part is there
+    jmp opx
+    lac opk
+    dac logPart
+    lac [LOG]
+    dac logFirst
+    lac i [kind:0]
+    sad [KCOMP]
+    jmp op1
+    lac [dirl:1]
+    add opk
+    dac opp
+    lac i opp
+    dac logFirst
+op1,
+    jsp startLog
+opx, jmp .
+
+opk, 0                      // the part
+opp, 0                      // its word of dirl
+    endlocal
+
+// openLog -- LOG. Shows the log's screen, from the log's start. Called
+// via jsp; AC and IO are clobbered.
+openLog,
+    local olx
+    dap olx
+    lac [LOG]
+    dac logFirst
+    law i 1
+    dac logPart             // none, the whole log
+    jsp startLog
+olx, jmp .
+    endlocal
+
+// startLog -- the log's screen, its first page from logFirst. Called via
+// jsp; AC and IO are clobbered.
+startLog,
+    local stx
+    dap stx
+    lac logFirst
+    dac logStart
+    law 1
+    dac logPageNo
+    jsp logPage
+    law 1
+    dac logShown
+    lac [jump logScreen:1]
+    dac screenGate
+stx, jmp .
+    endlocal
+
+// nextLogPage -- MORE on the log's screen. Shows its next page, the
+// first after the last. Called via jsp; AC and IO are clobbered.
+nextLogPage,
+    local nl1, nl2, nlx
+    dap nlx
+    lac logNext
+    sza i
+    jmp nl1
+    dac logStart
+    idx logPageNo
+    jmp nl2
+nl1,
+    lac logFirst
+    dac logStart
+    law 1
+    dac logPageNo
+nl2,
+    jsp logPage
+nlx, jmp .
+    endlocal
+
+// showMain -- BACK. Shows the main screen again. Called via jsp; AC is
+// clobbered, IO is preserved.
+showMain,
+    local smx
+    dap smx
+    dzm logShown
+    lac [jump mainScreen:1]
+    dac screenGate
+smx, jmp .
+    endlocal
+
+// setStatus -- the status line shows the text at AC, a full address.
+// Called via jda; AC is clobbered, IO is preserved.
+setStatus, 0
+    local ssx
+    dap ssx
+    lac setStatus
+    ior [SAVEC]
+    dac statusWord
+ssx, jmp .
+    endlocal
+
+// fillMain -- set the main screen's words for the program's state, the
+// line of counts, the page's rows from pageFirst (a row with no part
+// blank), and the page's number. Called via jsp; AC and IO are
+// clobbered.
+fillMain,
+    local fm1, fm2, fm3, fm4, fm5, fm6, fm7, fm9, fmx
+    dap fmx
+    lac [countText:1]
+    jda textStart
+    dzm numWidth
+    lac [sParts:1]
+    jda putText
+    lac i [npart:0]
+    jda putNumber
+    lac i [nfat:0]
+    sza i
+    jmp fm1
+    lac [sGivenUp:1]
+    jda putText
+    lac i [nfat:0]
+    jda putNumber
+fm1,
+    lac i [nunf:0]
+    sza i
+    jmp fm2
+    lac [sCutShort:1]
+    jda putText
+    lac i [nunf:0]
+    jda putNumber
+fm2,
+    lac i [nbad:0]
+    sza i
+    jmp fm3
+    lac [sBadParity:1]
+    jda putText
+    lac i [nbad:0]
+    jda putNumber
+fm3,
+    lac i [nbadc:0]
+    sza i
+    jmp fm4
+    lac [sNoCode:1]
+    jda putText
+    lac i [nbadc:0]
+    jda putNumber
+fm4,
+    jsp textEnd
+    // The rows.
+    dzm rowIndex
+    lac [rowText:1]
+    dac rowPtr
+fm5,
+    lac rowIndex
+    add pageFirst
+    dac rowPart
+    sub i [npart:0]
+    spa                     // skip if no part is there
+    jmp fm6
+    lac [BLANKW]
+    dac i rowPtr
+    jmp fm7
+fm6,
+    jsp buildRow
+fm7,
+    lac rowPtr
+    add [ROWW]
+    dac rowPtr
+    idx rowIndex
+    sas [NROWS]
+    jmp fm5
+    // PAGE p OF q, nothing with no part; NROWS is 16, a shift of 4.
+    lac [pageText:1]
+    jda textStart
+    dzm numWidth
+    lac i [npart:0]
+    sza i
+    jmp fm9
+    lac [sPage:1]
+    jda putText
+    lac pageFirst
+    sar 4s
+    add [1]
+    jda putNumber
+    lac [sOf:1]
+    jda putText
+    lac i [npart:0]
+    add [NROWS - 1]
+    sar 4s
+    jda putNumber
+fm9,
+    jsp textEnd
+fmx, jmp .
+    endlocal
+
+// buildRow -- part rowPart's row at rowPtr, its number, its title, its
+// bars, notes and errors from the directory; a compiled tape's part has
+// no title and no errors. Called via jsp; AC and IO are clobbered.
+buildRow,
+    local br1, br2, br3, br4, br5, brl, bru, brx, brt, brn, brc, brg
+    dap brx
+    lac rowPtr
+    jda textStart
+    law 3
+    dac numWidth
+    lac rowPart
+    add [1]
+    jda putNumber
+    law CSPACE
+    jda putChar
+    lac i [kind:0]
+    sad [KCOMP]
+    jmp br3
+    // The title, its codes to a stop code, TITLEW at most.
+    lac rowPart
+    ral 4s
+    add [TITLES]
+    dac brt
+    law i TITLEW
+    dac brn
+    dzm brc
+br1,
+    lac i brt
+    and [77]
+    sad [13]
+    jmp br3
+    sad [72]
+    jmp brl
+    sad [74]
+    jmp bru
+    add brc
+    add [ftab:1]
+    dac brg
+    lac i brg
+    spa                     // skip if the code has a glyph
+    jmp br2
+    jda putChar
+    jmp br2
+brl,
+    dzm brc
+    jmp br2
+bru,
+    law 100
+    dac brc
+br2,
+    idx brt
+    isp brn
+    jmp br1
+    // Spaces to the title's end, then the counts.
+br3,
+    lac textCol
+    sub [4 + TITLEW]
+    sma
+    jmp br4
+    law CSPACE
+    jda putChar
+    jmp br3
+br4,
+    lac [sBars:1]
+    jda putText
+    law 4
+    dac numWidth
+    lac [dirc:1]
+    jda rowWord
+    jda putNumber
+    lac [sNotes:1]
+    jda putText
+    law 5
+    dac numWidth
+    lac [dirn:1]
+    jda rowWord
+    jda putNumber
+    lac i [kind:0]
+    sad [KCOMP]
+    jmp br5
+    lac [sErrors:1]
+    jda putText
+    law 3
+    dac numWidth
+    lac [dire:1]
+    jda rowWord
+    jda putNumber
+br5,
+    jsp textEnd
+brx, jmp .
+
+brt, 0                      // the title's next code
+brn, 0                      // its codes left, negated
+brc, 0                      // its case, 0 lower, 0100 upper
+brg, 0                      // ftab's word
+    endlocal
+
+// rowWord -- the directory's word for part rowPart. AC holds the table,
+// a full address. Called via jda; returns AC the word; IO is preserved.
+rowWord, 0
+    local rwx, rwp
+    dap rwx
+    lac rowWord
+    add rowPart
+    dac rwp
+    lac i rwp
+rwx, jmp .
+
+rwp, 0
+    endlocal
+
+// The texts the menu builds, three characters a word, high first, ended
+// by the end character. A text is built by textStart, then putChar,
+// putText and putNumber, then textEnd.
+
+// textStart -- a text begins at AC, a full address. Called via jda; AC
+// is clobbered, IO is preserved.
+textStart, 0
+    local tsx
+    dap tsx
+    lac textStart
+    dac textPtr
+    dzm textAcc
+    dzm textPhase
+    dzm textCol
+tsx, jmp .
+    endlocal
+
+// putChar -- character AC, a 340 code, to the text. Called via jda; AC
+// is clobbered, IO is preserved.
+putChar, 0
+    local pcx
+    dap pcx
+    lac textAcc
+    ral 6s
+    ior putChar
+    dac textAcc
+    idx textCol
+    idx textPhase
+    sas [3]
+    jmp pcx
+    lac textAcc
+    dac i textPtr
+    idx textPtr
+    dzm textAcc
+    dzm textPhase
+pcx, jmp .
+    endlocal
+
+// textEnd -- the end character, and the last word filled with it.
+// Called via jsp; AC is clobbered, IO is preserved.
+textEnd,
+    local te1, tex
+    dap tex
+te1,
+    law CEND
+    jda putChar
+    lac textPhase
+    sza
+    jmp te1
+tex, jmp .
+    endlocal
+
+// putText -- the characters of a 340 text (the type340 directive's) to
+// the text, to its end character. AC holds its full address. Called via
+// jda; AC is clobbered, IO is preserved.
+putText, 0
+    local pt1, pt2, ptx, pts, ptw, ptn
+    dap ptx
+    lac putText
+    dac pts
+pt1,
+    lac i pts
+    dac ptw
+    law i 3
+    dac ptn
+pt2,
+    lac ptw
+    ral 6s
+    dac ptw
+    and [77]
+    sad [CEND]
+    jmp ptx
+    jda putChar
+    isp ptn
+    jmp pt2
+    idx pts
+    jmp pt1
+ptx, jmp .
+
+pts, 0                      // the text's word
+ptw, 0                      // its characters left in place, high first
+ptn, 0                      // and how many, negated
+    endlocal
+
+// putNumber -- AC, 0 to 131071, in decimal, at least numWidth characters
+// wide, with no leading zeros and spaces before it to the width. Called
+// via jda; AC is clobbered, IO is preserved.
+putNumber, 0
+    local pn1, pn2, pn3, pn4, pn5, pn6, pnx, pnv, pnp, pnw, pnd, pnl, pns
+    dap pnx
+    lac putNumber
+    dac pnv
+    lac [pnPowers:1]
+    dac pnp
+    dzm pns
+    law i 6
+    dac pnl
+pn1,
+    lac i pnp
+    dac pnw
+    dzm pnd
+pn2,
+    lac pnv
+    sub pnw
+    spa                     // skip if the power goes in again
+    jmp pn3
+    dac pnv
+    idx pnd
+    jmp pn2
+pn3,
+    lac pnd
+    sza
+    jmp pn4                 // a digit not zero
+    lac pns
+    sza
+    jmp pn5                 // a zero after the first digit
+    lac pnl
+    sad [0777776]
+    jmp pn5                 // the units place, so 0
+    // A leading zero is a space if the width reaches this place.
+    cma
+    sub numWidth
+    sma sza                 // skip if the places left are within the width
+    jmp pn6
+    law CSPACE
+    jda putChar
+    jmp pn6
+pn4,
+    law 1
+    dac pns
+pn5,
+    lac pnd
+    add [60]
+    jda putChar
+pn6,
+    idx pnp
+    isp pnl
+    jmp pn1
+pnx, jmp .
+
+pnv, 0                      // the value left
+pnp, 0                      // pnPowers's word
+pnw, 0                      // its power of ten
+pnd, 0                      // the digit
+pnl, 0                      // the places left, negated
+pns, 0                      // a digit has been put
+    endlocal
+
+pnPowers, 0d100000; 0d10000; 0d1000; 0d100; 0d10; 1
+
+// logPage -- build the log's screen for the page from logStart, the header
+// (PART n or THE LOG, and the page), then the typed text, a line at a
+// time, each line placed at its height, LINEY0 down by LINEP, at
+// most LINES lines of LCOLS characters. A carriage return ends a line,
+// and a longer one goes on in the next; a tab is spaces to the next
+// column of eight; the case codes are followed and the color codes,
+// backspace and the stop code passed over. logNext is left where the
+// next page starts, 0 if the log ends on this one. Called via jsp; AC
+// and IO are clobbered.
+logPage,
+    local lh1, lh2, lp0, lp1, lpe, lpl, lpu, lpt, lpf, lpd, lpz, lpn, lnx, lpx, \
+        lgp, lge, lgc, lgk, lgo, lgy, lgn
+    dap lpx
+    lac [headText:1]
+    jda textStart
+    dzm numWidth
+    lac logPart
+    spa                     // skip if a part's
+    jmp lh1
+    lac [sPart:1]
+    jda putText
+    lac logPart
+    add [1]
+    jda putNumber
+    jmp lh2
+lh1,
+    lac [sTheLog:1]
+    jda putText
+lh2,
+    lac [sLogPage:1]
+    jda putText
+    lac logPageNo
+    jda putNumber
+    jsp textEnd
+    // The lines.
+    lac logStart
+    dac lgp
+    lac i [logp:0]
+    dac lge
+    dzm logNext
+    dzm lgc
+    lac [lineBuffer:1]
+    dac lgo
+    law LINEY0
+    dac lgy
+    dzm lgn
+lp0,
+    // A line begins, unless the log ends. Its three words, then its text.
+    lac lgp
+    sad lge
+    jmp lpz
+    lac lgn
+    sad [LINES]
+    jmp lpf
+    idx lgn
+    lac [intensity(5) | lpoff | next(point)]
+    dac i lgo
+    idx lgo
+    lac lgy
+    add [y(0) | next(point)]
+    dac i lgo
+    idx lgo
+    lac [x(LINEX) | next(character)]
+    dac i lgo
+    idx lgo
+    lac lgy
+    sub [LINEP]
+    dac lgy
+    lac lgo
+    jda textStart
+lp1,
+    lac lgp
+    sad lge
+    jmp lpd
+    lac i lgp
+    and [77]
+    dac lgk
+    idx lgp
+    lac lgk
+    sad [77]
+    jmp lpe
+    sad [72]
+    jmp lpl
+    sad [74]
+    jmp lpu
+    sad [36]
+    jmp lpt
+    add lgc
+    add [ftab:1]
+    dac lgk
+    lac i lgk
+    spa                     // skip if the code has a glyph
+    jmp lp1
+    jda putChar
+    lac textCol
+    sad [LCOLS]
+    jmp lpe
+    jmp lp1
+lpl,
+    dzm lgc
+    jmp lp1
+lpu,
+    law 100
+    dac lgc
+    jmp lp1
+lpt,
+    law CSPACE
+    jda putChar
+    lac textCol
+    sad [LCOLS]
+    jmp lpe
+    and [7]
+    sza
+    jmp lpt
+    jmp lp1
+    // A carriage return, or a full line. The line ends, the next begins.
+lpe,
+    jsp lpn
+    jmp lp0
+    // LINES lines, and more to come. The next page starts here.
+lpf,
+    lac lgp
+    dac logNext
+    jmp lpz
+    // The log's end. The open line ends.
+lpd,
+    jsp lpn
+lpz,
+    lac [lpoff | halt]
+    dac i lgo
+lpx, jmp .
+
+// lpn -- end the line with its end character, and move lgo past its
+// words. Called via jsp; AC is clobbered, IO is preserved.
+lpn,
+    dap lnx
+    jsp textEnd
+    lac textPtr
+    dac lgo
+lnx, jmp .
+
+lgp, 0                      // the log's next code, a full address
+lge, 0                      // the log's end, logp
+lgc, 0                      // the case, 0 lower, 0100 upper
+lgk, 0                      // the code; then its ftab word
+lgo, 0                      // the line buffer's next word
+lgy, 0                      // the next line's height
+lgn, 0                      // the lines so far
+    endlocal
+
+// The screen.
+
+// The display list, the gate, then the main screen or the log's. The
+// main screen's targets are TEMPO's steps on the title's line, the
+// buttons 50 points above the status line, the rows ROWP apart (the
+// pen's reach at PENAP, 10, never takes two), and MORE, SOURCE and FORM
+// 60 below the last row.
+mlist,
+    scale(1) intensity(5) lpoff next(subroutine)
+screenGate, jump mainScreen:1 next(parameter) // or logScreen
+mainScreen,
+    AT(0d60, 0d960)
+    type340 "HARMONY COMPILER"
+    ATS(TEMPOX, HDY)
+    SAVEC | tempoText:1
+    OPN(0d680, HDY)
+    type340 "-10"
+    OPN(0d760, HDY)
+    type340 "-1"
+    OPN(0d830, HDY)
+    type340 "+1"
+    OPN(0d900, HDY)
+    type340 "+10"
+    OPN(0d60, BTNY)
+    type340 "READ TAPE"
+    OPN(0d260, BTNY)
+    type340 "PUNCH"
+    OPN(0d410, BTNY)
+    type340 "LANGUAGE "
+    next(subroutine)
+langWord, SAVEC | sHc1d:1          // or s1968, s1968Dac
+    OPN(0d700, BTNY)
+    type340 "LOG"
+    ATQ(0d60, 0d850)
+statusWord, SAVEC | sBlank:1       // the status line
+    ATS(0d60, 0d820)
+    SAVEC | countText:1
+    ROW(0); ROW(1); ROW(2); ROW(3); ROW(4); ROW(5); ROW(6); ROW(7)
+    ROW(0d8); ROW(0d9); ROW(0d10); ROW(0d11); ROW(0d12); ROW(0d13); ROW(0d14); ROW(0d15)
+    OPN(0d60, MOREY)
+    type340 "MORE"
+    ATQ(0d200, MOREY)
+    SAVEC | pageText:1
+    OPN(0d440, MOREY)
+    type340 "SOURCE"
+    OPN(0d600, MOREY)
+    type340 "FORM "
+    next(subroutine)
+formWord, SAVEC | sFio:1           // or sAscii
+    lpoff halt
+
+// The log's screen, BACK, MORE and the header; then the page logPage
+// builds, ending in a halt.
+logScreen,
+    OPN(0d60, HDY)
+    type340 "BACK"
+    OPN(0d200, HDY)
+    type340 "MORE"
+    ATQ(0d340, HDY)
+    SAVEC | headText:1
+lineBuffer,
+    table LBUFW
+
+// The texts the menu shows as they are.
+sBlank, type340 " "
+sReading, type340 "READING TAPE"
+sTapeRead, type340 "TAPE READ"
+sNoTape, type340 "NO TAPE"
+sNotTape, type340 "NOT A TAPE HARMONY READS"
+sChecked, type340 "COMPILED TAPE, CHECKED"
+sRefused, type340 "COMPILED TAPE REFUSED, SEE THE LOG"
+sPunching, type340 "PUNCHING TAPE"
+sPunched, type340 "TAPE PUNCHED"
+sPunchedDac, type340 "TAPE PUNCHED, FOR THE DAC PLAYER"
+sNothing, type340 "NOTHING TO PUNCH"
+sTempoRange, type340 "NOT PUNCHED: A TEMPO WORD WOULD LEAVE 1-32767"
+sSrcPunching, type340 "PUNCHING SOURCE"
+sSrcPunched, type340 "SOURCE PUNCHED"
+sSrcSeeLog, type340 "SOURCE PUNCHED, SEE THE LOG"
+sFio, type340 "FIO-DEC"
+sAscii, type340 "ASCII"
+sTempo, type340 "TEMPO "
+sFrom, type340 " FROM "
+sNone, type340 "NONE"
+sHc1d, type340 "HC1D"
+s1968, type340 "1968"
+s1968Dac, type340 "1968 DAC"
+sParts, type340 "PARTS "
+sGivenUp, type340 "  GIVEN UP "
+sCutShort, type340 "  CUT SHORT "
+sBadParity, type340 "  BAD PARITY "
+sNoCode, type340 "  NO FIO-DEC CODE "
+sPage, type340 "PAGE "
+sOf, type340 " OF "
+sBars, type340 "  BARS "
+sNotes, type340 "  NOTES "
+sErrors, type340 "  ERRORS "
+sPart, type340 "PART "
+sTheLog, type340 "THE LOG"
+sLogPage, type340 "  PAGE "
+
+// The texts the menu builds.
+countText,                  // the line of counts
+    table 0d25
+pageText,                   // PAGE p OF q
+    table 0d6
+headText,                   // the log's header
+    table 0d8
+tempoText,                  // TEMPO's readout
+    table 0d8
+rowText,                    // the rows, ROWW words each
+    table NROWS * ROWW
+
+// ftab -- each FIO-DEC code, lower case 0-077 then upper case 0100-0177,
+// as a Type 340 character of set 1, upper case only; a glyph set 1 lacks
+// as the nearest it has, and 0400000 for a code with no glyph.
+ftab,
+    0000040                 // 000 space
+    0000061                 // 001 1
+    0000062                 // 002 2
+    0000063                 // 003 3
+    0000064                 // 004 4
+    0000065                 // 005 5
+    0000066                 // 006 6
+    0000067                 // 007 7
+    0000070                 // 010 8
+    0000071                 // 011 9
+    0400000                 // 012 none
+    0400000                 // 013 none
+    0400000                 // 014 none
+    0400000                 // 015 none
+    0400000                 // 016 none
+    0400000                 // 017 none
+    0000060                 // 020 0
+    0000057                 // 021 /
+    0000023                 // 022 s
+    0000024                 // 023 t
+    0000025                 // 024 u
+    0000026                 // 025 v
+    0000027                 // 026 w
+    0000030                 // 027 x
+    0000031                 // 030 y
+    0000032                 // 031 z
+    0400000                 // 032 none
+    0000054                 // 033 ,
+    0400000                 // 034 none
+    0400000                 // 035 none
+    0400000                 // 036 tab
+    0400000                 // 037 none
+    0000056                 // 040 middle dot
+    0000012                 // 041 j
+    0000013                 // 042 k
+    0000014                 // 043 l
+    0000015                 // 044 m
+    0000016                 // 045 n
+    0000017                 // 046 o
+    0000020                 // 047 p
+    0000021                 // 050 q
+    0000022                 // 051 r
+    0400000                 // 052 none
+    0400000                 // 053 none
+    0000055                 // 054 -
+    0000051                 // 055 )
+    0000055                 // 056 overline
+    0000050                 // 057 (
+    0400000                 // 060 none
+    0000001                 // 061 a
+    0000002                 // 062 b
+    0000003                 // 063 c
+    0000004                 // 064 d
+    0000005                 // 065 e
+    0000006                 // 066 f
+    0000007                 // 067 g
+    0000010                 // 070 h
+    0000011                 // 071 i
+    0400000                 // 072 none
+    0000056                 // 073 .
+    0400000                 // 074 none
+    0400000                 // 075 backspace
+    0400000                 // 076 none
+    0400000                 // 077 carriage return
+    0000040                 // 100 space
+    0000042                 // 101 "
+    0000047                 // 102 '
+    0000055                 // 103 ~
+    0000077                 // 104 implies
+    0000077                 // 105 or
+    0000077                 // 106 and
+    0000074                 // 107 <
+    0000076                 // 110 >
+    0000077                 // 111 up arrow
+    0400000                 // 112 none
+    0400000                 // 113 none
+    0400000                 // 114 none
+    0400000                 // 115 none
+    0400000                 // 116 none
+    0400000                 // 117 none
+    0000077                 // 120 right arrow
+    0000077                 // 121 ?
+    0000023                 // 122 S
+    0000024                 // 123 T
+    0000025                 // 124 U
+    0000026                 // 125 V
+    0000027                 // 126 W
+    0000030                 // 127 X
+    0000031                 // 130 Y
+    0000032                 // 131 Z
+    0400000                 // 132 none
+    0000075                 // 133 =
+    0400000                 // 134 none
+    0400000                 // 135 none
+    0400000                 // 136 tab
+    0400000                 // 137 none
+    0000055                 // 140 _
+    0000012                 // 141 J
+    0000013                 // 142 K
+    0000014                 // 143 L
+    0000015                 // 144 M
+    0000016                 // 145 N
+    0000017                 // 146 O
+    0000020                 // 147 P
+    0000021                 // 150 Q
+    0000022                 // 151 R
+    0400000                 // 152 none
+    0400000                 // 153 none
+    0000053                 // 154 +
+    0000051                 // 155 ]
+    0000041                 // 156 |
+    0000050                 // 157 [
+    0400000                 // 160 none
+    0000001                 // 161 A
+    0000002                 // 162 B
+    0000003                 // 163 C
+    0000004                 // 164 D
+    0000005                 // 165 E
+    0000006                 // 166 F
+    0000007                 // 167 G
+    0000010                 // 170 H
+    0000011                 // 171 I
+    0400000                 // 172 none
+    0000030                 // 173 times
+    0400000                 // 174 none
+    0400000                 // 175 backspace
+    0400000                 // 176 none
+    0400000                 // 177 carriage return
+
+// The menu's words.
+pageFirst, 0                // the page's first part
+logShown, 0                 // the log's screen is shown
+hitTarget, 0                // the target of the frame's first hit, 0 if none
+hitNow, 0                   // a hit's target
+armed, 0                    // a hit will count
+awayCount, 0                // passes left until the pen counts as away, negated
+rowIndex, 0                 // fillMain's row
+rowPtr, 0                   // its text
+rowPart, 0                  // its part
+numWidth, 0                 // putNumber's width
+textPtr, 0                  // the text's next word, a full address
+textAcc, 0                  // its characters not yet stored
+textPhase, 0                // how many, 0 to 2
+textCol, 0                  // the characters put since textStart
+logFirst, 0                 // the start of the log screen's first page
+logStart, 0                 // the page's start, a full address
+logNext, 0                  // the next page's, 0 if none
+logPart, 0                  // the part, or -1 for the whole log
+logPageNo, 0                // the page's number

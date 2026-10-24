@@ -1,0 +1,18 @@
+define with arguments, old fails: a define with dummies swallowed the file
+
+define setup a,b
+	law i b
+	dac a
+	term
+
+define	count a,b
+	isp a
+	jmp b
+	term
+
+100/
+go,	setup cnt,10
+lp,	count cnt,lp
+	hlt
+cnt,	0
+	start go

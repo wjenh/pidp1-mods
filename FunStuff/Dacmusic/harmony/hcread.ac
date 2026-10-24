@@ -1,0 +1,681 @@
+// The reader. Frames from the paper tape reader with a time limit for
+// the tape's end, the three kinds of tape told apart, the code stream a
+// source gives the compiler (rp, as hc1d's rp gives it, from FIO-DEC or
+// from ASCII), and a compiled tape checked, listed and kept in the store.
+//
+// Included by harmony.am1 in bank 0. Uses its kind, eotj, rps, nbad,
+// nbadc, the directory, the store (ptop, nbase, dput), rtend and
+// keepScreen, its typing (typ, tyw, tw3, tas, tdsp, tdg) and messages,
+// and hccomp.ac's red, blk and cr. Runs with the extend-mode window open.
+
+// frr -- the next frame from the reader, in AC (8 bits). The reader is
+// started on a frame with no wait (rpa-i), and while it reads, status
+// bit 1 is polled, the menu's screen kept drawn between polls
+// (keepScreen); when no frame comes in frw's waits of about 2 s each
+// (POLLS polls), the tape has ended and frr jumps to eotj instead of
+// returning. That leaves the read it started unfinished, and the reader
+// keeps it. A tape mounted again completes it with its first frame. So
+// a frame already in the buffer is taken first, and while a read is
+// pending (rps) none is started again.
+// Called via jsp. AC the frame; IO is clobbered.
+frr,
+    dap frx
+    cks
+    ril 1s
+    spi                     // skip unless a frame is in already
+    jmp frt
+    lac rps
+    sza
+    jmp fr1
+    rpa-i
+    law 1
+    dac rps
+fr1,
+    lac frw
+    dac frc
+fr2,
+    lac [-POLLS]
+    dac frp
+fr3,
+    cks
+    ril 1s
+    spi i                   // skip if the frame is in
+    jmp fr4
+frt,
+    rrb
+    dzm rps
+    dio frv
+    law i 1                 // after the first frame, one wait
+    dac frw
+    lac frv
+    and [377]
+frx, jmp .
+fr4,
+    jsp keepScreen
+    isp frp
+    jmp fr3
+    isp frc
+    jmp fr2
+    jmp i eotj
+
+frv, 0
+frc, 0                      // the waits left, negated
+frp, 0                      // the polls left in this wait, negated
+
+// frm -- the next frame of the tape, the lookahead's first (kindf), then
+// the reader's. At the tape's end, jumps to eotj.
+// Called via jsp. AC the frame; IO is clobbered.
+frm,
+    dap fmx
+    lac lkp
+    sad lkn
+    jmp fm2
+    add [look]
+    dap fm1
+    idx lkp
+fm1, lac .
+fmx, jmp .
+fm2,
+    lac eots
+    sza
+    jmp i eotj
+    jsp frr
+    jmp fmx
+
+// kindf -- which kind the tape is, from its first LOOKN frames that
+// follow the leader, kept in look for frm to give again:
+//   KCOMP, compiled, when every frame has channel 8;
+//   KASC, ASCII, when some frame has channel 7, not just after a stop
+//     code (FIO-DEC never punches it but there), and every frame is a
+//     character with a FIO-DEC code;
+//   KFIO, FIO-DEC, when no frame has channel 7 but after a stop code;
+//   KNONE, when channel 7 comes with a character FIO-DEC lacks;
+//   KEMPTY, when no frame comes but leader.
+// Called via jsp. AC the kind; IO is clobbered.
+kindf,
+    dap kdx
+    dzm lkn
+    dzm lkp
+    dzm eots
+    law i 5                 // the first frame may take five waits
+    dac frw
+    law kde
+    dac eotj
+kd1,
+    jsp frr
+    trze(kd1)               // leader
+kd2,
+    dac kf
+    lac lkn
+    add [look]
+    dap kd2a
+    lac kf
+kd2a, dac .
+    idx lkn
+    sad [LOOKN]
+    jmp kd3
+    jsp frr
+    jmp kd2
+kde,
+    law 1                   // the tape ended in the lookahead
+    dac eots
+    lac lkn
+    trnz(kd3)
+    law KEMPTY
+    jmp kdx
+kd3,
+    law 1
+    dac k200
+    dac kasc
+    dzm k100
+    dzm kprev
+    lac lkn
+    cma
+    dac kn
+    law look
+    dac kp
+kd4,
+    lac i kp
+    trze(kd6)
+    dac kf
+    and [200]
+    sza i
+    dzm k200
+    lac kf
+    and [100]
+    trze(kd5)
+    lac kprev
+    trel([13], kd5)         // the frame after a stop code
+    law 1
+    dac k100
+kd5,
+    lac kf
+    and [177]
+    add [atab]
+    dap kd5a
+kd5a, lac .
+    spa                     // skip if FIO-DEC has the character
+    dzm kasc
+    lac kf
+kd6,
+    dac kprev
+    idx kp
+    isp kn
+    jmp kd4
+    lac k200
+    trze(kd7)
+    law KCOMP
+    jmp kdx
+kd7,
+    lac k100
+    trze(kd8)
+    lac kasc
+    trze(kdx)               // KNONE is 0
+    law KASC
+    jmp kdx
+kd8,
+    law KFIO
+kdx, jmp .
+
+kf, 0
+kn, 0
+kp, 0
+kprev, 0                    // the frame before, for the stop code's
+k200, 0                     // every frame has channel 8
+k100, 0                     // some frame has channel 7, not after a stop code
+kasc, 0                     // every frame an ASCII character FIO-DEC has
+
+// rp -- the next code for the compiler, as hc1d's rp gives it (hc1d
+// lines 344-375). From FIO-DEC, a frame with channel 7 skipped, a frame
+// with even parity over its 8 channels skipped (counted in nbad, if not
+// blank, where hc1d halts), the frame's low six bits; from ASCII,
+// acode's code. Carriage return and tab become space and the stop code
+// is skipped; rawc keeps the code before that, for the 1968 language's
+// line ends. At the tape's end, jumps to eotj.
+// Called via jda. AC the code; IO is clobbered.
+rp, 0
+    dap rtx
+rt2,
+    lac kind
+    trel([KASC], rta)
+    jsp frm
+    dac rpf
+    and [100]
+    trnz(rt2)
+    // The parity. A rar by the frame's count of ones (its low 9 bits are
+    // the count field) leaves 2525's sign set when the count is odd.
+    law 1000
+    add rpf
+    dap rtp
+    law 2525
+rtp, rar
+    trpl(rtb)
+    law 77
+    and rpf
+    jmp rt3
+rta,
+    jsp acode
+rt3,
+    dac rawc
+    sad [77]
+    cla
+    sad [36]
+    cla
+    sad [13]
+    jmp rt2
+rtx, jmp .
+rtb,
+    lac rpf
+    sza
+    idx nbad
+    jmp rt2
+
+rpf, 0
+rawc, 0                     // the code rp last gave, before carriage return and tab became space
+
+// acode -- the next FIO-DEC code of an ASCII tape. Each character gives
+// its code, in its case, the case codes (72, 74) put in where the case
+// changes, and back to lower case before a character of either case
+// after an upper-case run; carriage return, line feed, or the two
+// together give a carriage return (77). NUL frames are leader and
+// channel 8 is ignored. A character with no FIO-DEC code is typed (nfd)
+// and passed over. At the tape's end, jumps to eotj.
+// Called via jsp. AC the code; IO is clobbered.
+acode,
+    dap acx
+    lac apf
+    trze(ac1)
+    dzm apf
+    lac apc
+    jmp acx
+ac1,
+    jsp frm
+    and [177]
+    trze(ac1)
+    dac acb
+    trnl([12], ac3)
+    lac acr                 // a line feed
+    dzm acr
+    trnz(ac1)               // after a carriage return, the same line end
+    jmp ac4
+ac3,
+    dzm acr
+    lac acb
+    sad [15]
+    idx acr                 // a carriage return; a line feed may follow
+ac4,
+    lac acb
+    add [atab]
+    dap ac5
+ac5, lac .
+    trmi(acbad)
+    dac ace
+    and [200]
+    trze(ac8)
+    lac acs                 // either case, lower case again after upper
+    trnl([74], acn)
+    law 72
+    jmp acs2
+ac8,
+    lac ace
+    and [100]
+    trze(ac9)
+    law 74
+    jmp acs1
+ac9,
+    law 72
+acs1,
+    sad acs                 // skip if the case changes
+    jmp acn
+acs2,
+    dac acs
+    lac ace
+    and [77]
+    dac apc
+    law 1
+    dac apf
+    lac acs                 // the case code first, the character next
+    jmp acx
+acn,
+    lac ace
+    and [77]
+acx, jmp .
+
+// A character FIO-DEC lacks is typed as a tab, nfd in red, its octal
+// value and a carriage return.
+acbad,
+    idx nbadc
+    typ([36])
+    jda red
+    lac [M_NFD]
+    jda tw3
+    jda blk
+    typ([0])
+    lac acb
+    rar 6s
+    and [7]
+    jda tdg
+    lac acb
+    rar 3s
+    and [7]
+    jda tdg
+    lac acb
+    and [7]
+    jda tdg
+    jda cr
+    jmp ac1
+
+acb, 0                      // the frame
+ace, 0                      // its atab entry
+acr, 0                      // the frame before was a carriage return
+acs, 0                      // the case in force, 72 or 74
+apf, 0                      // a code is waiting after its case code
+apc, 0                      // that code
+
+// drop -- drop the frame hc1d loses at Continue. From FIO-DEC it is the
+// tape's next frame, whatever it is; from ASCII the next code. At the
+// tape's end, jumps to eotj.
+// Called via jsp. AC and IO are clobbered.
+drop,
+    dap dpx
+    lac kind
+    trel([KASC], dp1)
+    jsp frm
+    jmp dpx
+dp1,
+    jsp acode
+dpx, jmp .
+
+// cw -- the next word of a compiled tape, three frames with channel 8,
+// six bits each, high first; a frame without it is passed over, as rpb
+// does. At the tape's end, jumps to eotj.
+// Called via jsp. AC the word; IO is clobbered.
+cw,
+    dap cwx
+    law i 3
+    dac cwn
+    dzm cwv
+cw1,
+    jsp frm
+    dac cwf
+    and [200]
+    trze(cw1)
+    lac cwv
+    ral 6s
+    dac cwv
+    lac cwf
+    and [77]
+    ior cwv
+    dac cwv
+    isp cwn
+    jmp cw1
+    lac cwv
+cwx, jmp .
+
+cwn, 0
+cwv, 0
+cwf, 0
+
+// ctape -- a compiled tape, read and checked part by part as pdp1m13's
+// rdp reads it (the counts and both checksums), each part listed on the
+// typewriter and kept in the store as pend keeps a compiled source's
+// (count, notes, checksum, count, bars, checksum), with its store
+// address, notes and bars in the directory, for SOURCE; PUNCH punches
+// nothing from it. An orchestra block (the DAC music
+// program's, a count of 0700000 and up) is passed over and named, and
+// corch set. A count that cannot be, a checksum that fails, a part the
+// store has no room for, or the tape ending inside a part refuses the
+// tape there (rfs set); the parts before it stay kept.
+// Entered via jmp from rtape; ends at rtend.
+ctape,
+    lac [mcmp:1]
+    jda tas
+    dzm corch
+    law cte
+    dac eotj
+ct1,
+    jsp cw
+    dac ccn
+    law ctx
+    dac eotj
+    lac ccn
+    and [777000]
+    trel([700000], ctor)
+    lac ccn
+    trmi(ctbc)
+    tgrec([CTMAX], ctbc)
+    lac ptop
+    dac nbase
+    dac ctw
+    law 1
+    dac cst
+    jsp crm
+    jsp cblk
+    trnz(ctck)
+    lac ccn
+    dac cnn
+    jsp cw
+    dac ccn
+    trmi(ctbc)
+    trze(ctbc)
+    tgrec([CTMAX], ctbc)
+    jsp crm
+    jsp cblk
+    trnz(ctck)
+    lac npart
+    trel([MAXP], ctmp)
+    lac ctw
+    dac ptop
+    dput(dirb, nbase)
+    dput(dirn, cnn)
+    dput(dirc, ccn)
+    idx npart
+    lac [mpt:1]
+    jda tas
+    lac npart
+    jda tdsp
+    lac [mnt:1]
+    jda tas
+    lac cnn
+    jda tdsp
+    lac [mbr:1]
+    jda tas
+    lac ccn
+    jda tdsp
+    jda cr
+    law cte
+    dac eotj
+    jmp ct1
+ctor,
+    lac ccn
+    and [777]
+    dac ccn
+    dzm cst
+    jsp cblk
+    law 1
+    dac corch
+    lac [morc:1]
+    jda tas
+    law cte
+    dac eotj
+    jmp ct1
+cte,
+    jmp rtend
+ctx,
+    lac [mcte:1]
+    jmp ctr
+ctbc,
+    lac [mcbc:1]
+    jmp ctr
+ctck,
+    lac [mcck:1]
+    jmp ctr
+ctmp,
+    lac [mtmp:1]
+    jmp ctr
+ctfl,
+    lac [mstf:1]
+ctr,
+    jda tas
+    law 1
+    dac rfs
+    jmp rtend
+
+ccn, 0                      // the block's count
+cnn, 0                      // the part's notes
+ctw, 0                      // the store's next word for the part
+cst, 0                      // cblk keeps the block in the store
+corch, 0                    // an orchestra block was passed over
+
+// crm -- room in the store for a block of ccn words, its count and its
+// checksum from ctw; if not, the tape is refused (ctfl). Called via jsp;
+// AC is clobbered, IO is preserved.
+crm,
+    dap crmx
+    lac ctw
+    add ccn
+    add [1]
+    sub [STEND]
+    sma sza
+    jmp ctfl
+crmx, jmp .
+
+// cblk -- read ccn words and the checksum after them (the add of them
+// all); with cst set, the count, the words and the checksum kept from
+// ctw on. Called via jsp. AC 0 if the checksum holds, else 1; IO is
+// clobbered.
+cblk,
+    dap cbx
+    dzm ckv
+    lac ccn
+    jda ckp
+    lac ccn
+    trze(cb2)
+    cma
+    dac ckn
+cb1,
+    jsp cw
+    jda ckp
+    lac ckp
+    add ckv
+    dac ckv
+    isp ckn
+    jmp cb1
+cb2,
+    jsp cw
+    jda ckp
+    lac ckp
+    sas ckv                 // skip if the checksum holds
+    jmp cb3
+    cla
+    jmp cbx
+cb3,
+    law 1
+cbx, jmp .
+
+ckv, 0
+ckn, 0
+
+// ckp -- with cst set, AC kept at ctw and ctw moved on. Called via jda;
+// AC and IO are clobbered.
+ckp, 0
+    dap ckx
+    lac cst
+    sza i
+    jmp ckx
+    lac ckp
+    dac i ctw
+    idx ctw
+ckx, jmp .
+
+// atab -- each ASCII character's FIO-DEC code, with 0100 when it is upper
+// case and 0200 when it is either; 0400000 when FIO-DEC has none.
+atab,
+    0400000                 // 000 none
+    0400000                 // 001 none
+    0400000                 // 002 none
+    0400000                 // 003 none
+    0400000                 // 004 none
+    0400000                 // 005 none
+    0400000                 // 006 none
+    0400000                 // 007 none
+    0000275                 // 010 backspace
+    0000236                 // 011 tab
+    0000277                 // 012 line feed
+    0400000                 // 013 none
+    0400000                 // 014 none
+    0000277                 // 015 carriage return
+    0400000                 // 016 none
+    0400000                 // 017 none
+    0400000                 // 020 none
+    0400000                 // 021 none
+    0400000                 // 022 none
+    0400000                 // 023 none
+    0400000                 // 024 none
+    0400000                 // 025 none
+    0400000                 // 026 none
+    0400000                 // 027 none
+    0400000                 // 030 none
+    0400000                 // 031 none
+    0400000                 // 032 none
+    0400000                 // 033 none
+    0400000                 // 034 none
+    0400000                 // 035 none
+    0400000                 // 036 none
+    0400000                 // 037 none
+    0000200                 // 040 space
+    0400000                 // 041 none
+    0000101                 // 042 "
+    0400000                 // 043 none
+    0400000                 // 044 none
+    0400000                 // 045 none
+    0400000                 // 046 none
+    0000102                 // 047 '
+    0000057                 // 050 (
+    0000055                 // 051 )
+    0400000                 // 052 none
+    0000154                 // 053 +
+    0000033                 // 054 ,
+    0000054                 // 055 -
+    0000073                 // 056 .
+    0000021                 // 057 /
+    0000020                 // 060 0
+    0000001                 // 061 1
+    0000002                 // 062 2
+    0000003                 // 063 3
+    0000004                 // 064 4
+    0000005                 // 065 5
+    0000006                 // 066 6
+    0000007                 // 067 7
+    0000010                 // 070 8
+    0000011                 // 071 9
+    0400000                 // 072 none
+    0400000                 // 073 none
+    0000107                 // 074 <
+    0000133                 // 075 =
+    0000110                 // 076 >
+    0000121                 // 077 ?
+    0400000                 // 100 none
+    0000161                 // 101 A
+    0000162                 // 102 B
+    0000163                 // 103 C
+    0000164                 // 104 D
+    0000165                 // 105 E
+    0000166                 // 106 F
+    0000167                 // 107 G
+    0000170                 // 110 H
+    0000171                 // 111 I
+    0000141                 // 112 J
+    0000142                 // 113 K
+    0000143                 // 114 L
+    0000144                 // 115 M
+    0000145                 // 116 N
+    0000146                 // 117 O
+    0000147                 // 120 P
+    0000150                 // 121 Q
+    0000151                 // 122 R
+    0000122                 // 123 S
+    0000123                 // 124 T
+    0000124                 // 125 U
+    0000125                 // 126 V
+    0000126                 // 127 W
+    0000127                 // 130 X
+    0000130                 // 131 Y
+    0000131                 // 132 Z
+    0000157                 // 133 [
+    0400000                 // 134 none
+    0000155                 // 135 ]
+    0400000                 // 136 none
+    0000140                 // 137 _
+    0400000                 // 140 none
+    0000061                 // 141 a
+    0000062                 // 142 b
+    0000063                 // 143 c
+    0000064                 // 144 d
+    0000065                 // 145 e
+    0000066                 // 146 f
+    0000067                 // 147 g
+    0000070                 // 150 h
+    0000071                 // 151 i
+    0000041                 // 152 j
+    0000042                 // 153 k
+    0000043                 // 154 l
+    0000044                 // 155 m
+    0000045                 // 156 n
+    0000046                 // 157 o
+    0000047                 // 160 p
+    0000050                 // 161 q
+    0000051                 // 162 r
+    0000022                 // 163 s
+    0000023                 // 164 t
+    0000024                 // 165 u
+    0000025                 // 166 v
+    0000026                 // 167 w
+    0000027                 // 170 x
+    0000030                 // 171 y
+    0000031                 // 172 z
+    0400000                 // 173 none
+    0000156                 // 174 |
+    0400000                 // 175 none
+    0000103                 // 176 ~
+    0400000                 // 177 none

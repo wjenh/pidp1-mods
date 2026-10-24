@@ -1,0 +1,15 @@
+decimal and octal, as statements and at either end of a word
+
+100/
+go,	lac a
+	decimal
+	law 10
+	100
+	octal
+	100
+tab,	decimal 100 10 1
+	20	octal
+	20
+	hlt
+a,	0
+	start go

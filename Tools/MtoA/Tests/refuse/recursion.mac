@@ -1,0 +1,11 @@
+a define that uses itself without end is refused
+
+define m a
+	lac a
+	m a	/ refused
+	term
+
+100/
+go,	m 5
+	hlt
+	start go

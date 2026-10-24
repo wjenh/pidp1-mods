@@ -1,0 +1,11 @@
+minus zero: -0 and a-a are 0777777 in macro1
+
+100/
+go,	lac (-0
+	lac a-a
+	lac -0
+	sub b-b
+	hlt
+a,	5
+b,	0
+	start go

@@ -1,0 +1,1617 @@
+// The writer, SOURCE. The parts kept are punched again as a source tape
+// that Harmony compiles back to the same words, in the language LANGUAGE
+// shows and the form FORM shows (srcForm), either FIO-DEC with odd parity
+// in channel 8 or ASCII in lower case with line feeds.
+//
+// Each part is walked twice by wgen. The count pass checks it (a part no
+// source makes is refused and not punched) and keeps each bar's run of
+// characters, so that the bar before a run that would carry a fill of
+// hc1d's measure buffer past its 383rd character is padded with spaces to
+// end that fill at its slash (wpad); the punch pass writes the same text
+// with those pads. The pads are kept in the bar entries' bank (BARS),
+// idle once a tape is read. A dynamic (600001-600006, 1968 DAC) is
+// written as its word in the 1968 language, and in hc1d's left out and
+// counted as written differently; a bar stored again for a copy under a
+// dynamic is a bar like any other.
+//
+// Included by harmony.am1 in bank 2, above the bar entries. Bank 0's
+// typing, punch and keepScreen are reached through its trampolines
+// (sourceTyp, sourceMsg, sourceNum, sourceFrame, sourceKeep), its words
+// and tables through their full addresses. The extend-mode window is
+// open throughout, so every pointer here is a full address.
+
+// source -- SOURCE, from the menu. Punches 30 blank frames, each part
+// kept in turn (wpart) and 30 blank frames; types that an orchestra
+// block is left out of a compiled tape. Called via jsp i; returns AC 1
+// when a part is refused, a word written differently or an orchestra
+// block left out, else 0. IO is clobbered.
+source,
+    dac wsret
+    dzm wflag
+    lac [msrc:2]
+    jda wmsg
+    law i 0d30
+    jda wfee
+    dzm wpi
+wsr1,
+    lac wpi
+    sad i [npart:0]
+    jmp wsr9
+    jsp wpart
+    idx wpi
+    jmp wsr1
+wsr9,
+    law i 0d30
+    jda wfee
+    lac i [kind:0]
+    sas [KCOMP]
+    jmp wsrx
+    lac i [corch:0]
+    sza i
+    jmp wsrx
+    lac [mworc:2]
+    jda wmsg
+    law 1
+    dac wflag
+wsrx,
+    lac wflag
+    jmp i wsret
+
+// wpart -- write part wpi from the store. It is counted, then punched,
+// and its line typed (its bars, the entries copied, the words written
+// differently); or it is refused, with the reason and the bar typed, and
+// nothing punched. Called via jsp; AC and IO are clobbered.
+wpart,
+    dap wptx
+    lac wpi
+    add [dirb:1]
+    dac wp1
+    lac i wp1
+    dac wbase               // the notes' count word
+    lac i wbase
+    dac wnc
+    lac wbase
+    add [1]
+    dac wnb
+    add wnc
+    add [1]                 // past the checksum, the bars' count
+    dac wp1
+    lac i wp1
+    dac wbc
+    lac wp1
+    add [1]
+    dac wbb
+    dzm wpass
+    jsp wgen
+    lac wref
+    trnz(wpr)
+    law 1
+    dac wpass
+    jsp wgen
+    lac [mspt:2]
+    jda wmsg
+    lac wpi
+    add [1]
+    jda wtnum
+    lac [msbr:2]
+    jda wmsg
+    lac wbars
+    jda wtnum
+    lac [mscp:2]
+    jda wmsg
+    lac wcopies
+    jda wtnum
+    lac wchg
+    trze(wpt1)
+    law 1
+    dac wflag
+    lac [mschg:2]
+    jda wmsg
+    lac wchg
+    jda wtnum
+wpt1,
+    lio [77]
+    jsp i [sourceTyp:0]
+    jmp wptx
+wpr,
+    law 1
+    dac wflag
+    lac [mspt:2]
+    jda wmsg
+    lac wpi
+    add [1]
+    jda wtnum
+    lac [msref:2]
+    jda wmsg
+    lac wrefbar
+    jda wtnum
+    lac wref                // the reason, and a carriage return
+    jda wmsg
+wptx, jmp .
+
+// wgen -- one pass over the part (wpass 0 counts, 1 punches). Writes the
+// title (part k), the clef, then the bar entries in order, each as a
+// source makes it. An entry is a new bar, its number, its words and a
+// slash; rest for the rest measure in force; copy for a run equal to
+// earlier entries; or tempo words left out of every bar, then units and
+// rest for a new rest measure. units is written where a bar's length
+// changes. Then come the words after the last bar, end, its terminator
+// and the code the next part's start drops. A part no source makes sets
+// wref and wrefbar and ends the pass. Called via jsp; AC and IO are
+// clobbered.
+wgen,
+    dap wgx
+    dzm wref
+    dzm wrun
+    dzm wsl
+    dzm wn
+    dzm wcopies
+    dzm wbars
+    dzm wchg
+    dzm wmode
+    dzm wpos
+    dzm wi
+    law i 1
+    dac wirl                // no rest measure yet
+    dzm wunits
+    dzm woct
+    lac i [lng:0]
+    sza i
+    jmp wg0
+    law 0d32                // units 32 at a part's start (1968)
+    dac wunits
+    law i 7                 // and every position 7 lower
+    dac woct
+wg0,
+    jsp wclef
+    lac [wsPart:2]
+    jda wstr
+    jsp wsp
+    lac wpi
+    add [1]
+    jda wnum
+    lac i [lng:0]
+    sza
+    jmp wg1
+    law 21                  // the title runs to its slash (hc1d)
+    jmp wg2
+wg1,
+    law 77                  // or to its line's end (1968)
+wg2,
+    jda wch
+    dzm wrun                // the title is not read into the buffer
+    jsp wline
+    lac wclw
+    jda wstr
+
+// The entries, wi each turn; the last is end's.
+wg3,
+    lac wi
+    add [1]
+    sad wbc
+    jmp wgend
+    lac wi
+    jda wbget
+    dac we
+    sub wpos
+    spa                     // skip unless it points at words already written
+    jmp wgold
+    sza
+    jmp wgrest              // past the next word, so a rest measure after tempo words
+    jsp wrms
+    sza i
+    jmp wgnew
+    lac we
+    jda wnget
+    and [177]
+    sza
+    jmp wgnew               // a rest measure written as a separate bar
+    jmp wgrest              // one of time 0, which only rest makes
+
+// A new bar. Finds its words to the next bar line, then writes units if
+// its length is a whole number of units not in force, its number, its
+// words, the slash.
+wgnew,
+    lac wpos
+    dac wj
+wgn1,
+    lac wj
+    sad wnc
+    jmp wrefe               // no bar line after it
+    jda wnget
+    sad [600000]
+    jmp wgn2
+    idx wj
+    jmp wgn1
+wgn2,
+    lac wj
+    dac wend
+    jsp wscan
+    lac wlen
+    trze(wgn5)
+    dac wx
+    law 6
+    dac wdv
+    lac wx
+    jda wdiv
+    dac wy                  // the length in units
+    lac wrm
+    trnz(wgn5)
+    lac wy
+    sad wunits
+    jmp wgn5
+    dac wunits
+    law i 1                 // units makes rest begin a new rest measure
+    dac wirl
+    jsp wline
+    lac [wsUnits:2]
+    jda wstr
+    jsp wsp
+    lac wunits
+    jda wnum
+wgn5,
+    jsp wline
+    lac wi
+    add [1]
+    jda wnum
+    jsp wwords
+    jsp wslash
+    lac wend
+    add [1]
+    dac wpos
+    idx wbars
+    idx wi
+    jmp wg3
+
+// An entry before the next word is the rest measure in force (rest k),
+// or a run equal to the entries from the earliest one equal to it (copy).
+wgold,
+    lac we
+    sas wirl
+    jmp wgc0
+    jsp wline
+    lac [wsRest:2]
+    jda wstr
+    jsp wsp
+    jsp wcount
+    dac wl
+    jda wnum
+    lac wi
+    add wl
+    dac wi
+    jmp wg3
+wgc0,
+    dzm wm
+wgc1,
+    lac wm
+    sad wi
+    jmp wrefe               // no earlier entry equal to it
+    jda wbget
+    sad we
+    jmp wgc2
+    idx wm
+    jmp wgc1
+wgc2,
+    law 1
+    dac wl
+wgc3,
+    lac wi
+    add wl
+    add [1]
+    sad wbc                 // the last entry is end's
+    jmp wgc4
+    lac wm
+    add wl
+    jda wbget
+    dac wx
+    lac wi
+    add wl
+    jda wbget
+    sas wx
+    jmp wgc4
+    idx wl
+    jmp wgc3
+wgc4,
+    jsp wline
+    lac [wsCopy:2]
+    jda wstr
+    jsp wsp
+    lac wm
+    add [1]
+    jda wnum
+    jsp wsp
+    lac wm
+    add wl
+    jda wnum
+    lac wcopies
+    add wl
+    dac wcopies
+    lac wi
+    add wl
+    dac wi
+    jmp wg3
+
+// A new rest measure at we. Writes the tempo words before it, each a
+// separate word, then units if a new rest measure needs it (its time is
+// 2 x units), then rest k for it and the entries after it equal to it.
+wgrest,
+    jsp wrms
+    sza i
+    jmp wrefe
+    lac wpos
+    dac wj
+wgr1,
+    lac wj
+    sad we
+    jmp wgr2
+    jda wnget
+    dac ww
+    and [700000]
+    sas [700000]
+    jmp wrefe               // a word before it that is not a tempo word
+    jsp wline
+    lac ww
+    jda wtempo
+    idx wj
+    jmp wgr1
+wgr2,
+    lac we
+    jda wnget
+    and [177]
+    dac wt
+    and [1]
+    trnz(wrefe)             // an odd time, which no units makes
+    lac wt
+    sar 1s
+    dac wt
+    lac wirl
+    spa                     // skip if a rest measure is in force
+    jmp wgr3
+    jmp wgr4
+wgr3,
+    lac wunits
+    sad wt
+    jmp wgr5
+wgr4,
+    jsp wline
+    lac [wsUnits:2]
+    jda wstr
+    jsp wsp
+    lac wt
+    dac wunits
+    jda wnum
+wgr5,
+    lac we
+    dac wirl
+    jsp wline
+    lac [wsRest:2]
+    jda wstr
+    jsp wsp
+    jsp wcount
+    dac wl
+    jda wnum
+    lac we
+    add [2]
+    dac wpos
+    lac wi
+    add wl
+    dac wi
+    jmp wg3
+
+// The last entry, end's. Writes the words after the last bar line, end,
+// its terminator and the code the next part's start drops (a carriage
+// return and a stop code in FIO-DEC, two line feeds in ASCII). On the
+// count pass it sets the pad before the last slash and checks the room
+// for the last run instead.
+wgend,
+    lac wi
+    jda wbget
+    sas [600000]
+    jmp wrefe
+    lac wnc
+    dac wend
+    lac wpos
+    sad wnc
+    jmp wge1
+    jsp wscan
+    jsp wline
+    jsp wwords
+wge1,
+    jsp wline
+    lac [wsEnd:2]
+    jda wstr
+    lac wpass
+    trnz(wge3)
+    lac wsl
+    sza i
+    jmp wge2
+    jsp wpad
+wge2,
+    lac wrun
+    dac wprun
+    lac wbc
+    dac wpbar
+    lac wn
+    add wprun
+    sub [0d383]
+    sma                     // skip if the terminator is below the 383rd character
+    jmp wrefm
+    jmp wgx
+wge3,
+    law 77
+    jda wch
+    lac srcForm
+    trnz(wge4)
+    law 13
+    jda wch
+    jmp wgx
+wge4,
+    law 77
+    jda wch
+wgx, jmp .
+
+// The refusals. Each sets the reason and its bar, and ends the pass.
+wrefe,
+    lac [msr1:2]            // an entry no source makes
+    jmp wrf1
+wrefw,
+    lac [msr2:2]            // a word no source makes
+wrf1,
+    dac wref
+    lac wi
+    add [1]
+    dac wrefbar
+    jmp wgx
+wrefm,
+    lac [msr3:2]            // a run too long for the measure buffer
+    dac wref
+    lac wpbar
+    dac wrefbar
+    jmp wgx
+
+// wrms -- whether a rest measure is at we, as rest makes one, a rest
+// word with no letter and no triplet, then a bar line. Called via jsp;
+// returns AC 1 if so, else 0; IO is clobbered.
+wrms,
+    dap wrmx
+    lac we
+    add [1]
+    sub wnc
+    sma                     // skip if a word follows it
+    jmp wrm0
+    lac we
+    jda wnget
+    and [777600]
+    sas [200]
+    jmp wrm0
+    lac we
+    add [1]
+    jda wnget
+    sas [600000]
+    jmp wrm0
+    law 1
+    jmp wrmx
+wrm0,
+    cla
+wrmx, jmp .
+
+// wcount -- the entries from wi on equal to we, before end's. Called via
+// jsp; returns AC the count, at least 1; IO is clobbered.
+wcount,
+    dap wcx
+    law 1
+    dac wk
+wc1,
+    lac wi
+    add wk
+    add [1]
+    sad wbc
+    jmp wc2
+    lac wi
+    add wk
+    jda wbget
+    sas we
+    jmp wc2
+    idx wk
+    jmp wc1
+wc2,
+    lac wk
+wcx, jmp .
+
+// wscan -- check the words from wpos to wend, a word no source makes
+// refusing the part (a bar line, two articulations, time 0, semitone
+// 077), and count them. wlen gets the length (3 a 64th, 2 in a triplet),
+// wac the words of each articulation; tempo words and dynamics are
+// passed over.
+// Called via jsp; AC and IO are clobbered.
+wscan,
+    dap wscx
+    dzm wlen
+    dzm wac
+    dzm wac+1
+    dzm wac+2
+    dzm wac+3
+    dzm wac+4
+    lac wpos
+    dac wj
+wsc1,
+    lac wj
+    sad wend
+    jmp wscx
+    jda wnget
+    dac ww
+    sad [600000]
+    jmp wrefw
+    and [600000]
+    sad [600000]
+    jmp wsc9                // a tempo word or a dynamic, since no note has l and s both
+    jsp wart
+    add [wac:2]
+    dac wp1
+    lac i wp1
+    add [1]
+    dac i wp1
+    lac ww
+    and [177]
+    trze(wrefw)
+    dac wt
+    ral 1s
+    dac wx
+    lac ww
+    and [100000]
+    trnz(wsc2)
+    lac wx
+    add wt
+    dac wx
+wsc2,
+    lac wx
+    add wlen
+    dac wlen
+    lac ww
+    rar 7s
+    and [77]
+    sad [77]
+    jmp wrefw
+wsc9,
+    idx wj
+    jmp wsc1
+wscx, jmp .
+
+// wart -- ww's articulation as an index, 0 e, 1 l, 2 s, 3 h, 4 q; two
+// refuse the part. Called via jsp; returns AC the index; IO is preserved.
+wart,
+    dap wax
+    lac ww
+    and [660000]
+    sza i
+    jmp wax
+    sad [400000]
+    jmp wa1
+    sad [200000]
+    jmp wa2
+    sad [40000]
+    jmp wa3
+    sad [20000]
+    jmp wa4
+    jmp wrefw
+wa1,
+    law 1
+    jmp wax
+wa2,
+    law 2
+    jmp wax
+wa3,
+    law 3
+    jmp wax
+wa4,
+    law 4
+wax, jmp .
+
+// wwords -- write the words from wpos to wend, each after a space. The
+// accidentals are cleared first, as at a bar's start. Then comes the
+// mode word, when the commonest articulation in them outnumbers the
+// mode's by 2, so they need no letter; then each word (wtempo, wdyn,
+// wnote). Called via jsp; AC and IO are clobbered.
+wwords,
+    dap wwx
+    jsp wmtr
+    dzm wbest
+    law 1
+    dac wk
+wws1,
+    lac wk
+    add [wac:2]
+    dac wp1
+    lac wbest
+    add [wac:2]
+    dac wp2
+    lac i wp2
+    sub i wp1
+    sma                     // skip if wk's is more
+    jmp wws2
+    lac wk
+    dac wbest
+wws2,
+    idx wk
+    sas [5]
+    jmp wws1
+    lac wbest
+    add [wac:2]
+    dac wp1
+    lac wmode
+    add [wac:2]
+    dac wp2
+    lac i wp1
+    sub i wp2
+    sub [1]
+    sma sza                 // skip unless it is more by 2
+    jmp wws3
+    jmp wws4
+wws3,
+    lac wbest
+    dac wmode
+    jsp wsp
+    lac wmode
+    add [wartl:2]
+    dac wp1
+    lac i wp1
+    jda wch
+wws4,
+    lac wpos
+    dac wj
+wws5,
+    lac wj
+    sad wend
+    jmp wwx
+    jda wnget
+    dac ww
+    and [700000]
+    sad [600000]
+    jmp wws8                // a dynamic, as the bar line is not among them
+    jsp wsp
+    lac ww
+    and [700000]
+    sas [700000]
+    jmp wws6
+    lac ww
+    jda wtempo
+    jmp wws7
+wws8,
+    jsp wdyn
+    jmp wws7
+wws6,
+    jsp wnote
+wws7,
+    idx wj
+    jmp wws5
+wwx, jmp .
+
+// wnote -- write ww, a note or rest at wj. Writes its position (wspell;
+// the clef's offset, b for each staff below), its accidental, its
+// letter where the articulation is not the mode's or a rest follows in
+// the bar (hc1d makes a word with no letter legato there), c for a
+// triplet, its time (wdur).
+// A rest is r and the same; one of semitone 0 is written as semitone 1
+// and counted in wchg. Called via jsp; AC and IO are clobbered.
+wnote,
+    dap wnox
+    dzm wlet
+    jsp wart
+    dac wai
+    sas wmode
+    jmp wno1
+    jsp wnxr
+    jmp wno2
+wno1,
+    law 1
+wno2,
+    dac wneed
+    lac ww
+    rar 7s
+    and [77]
+    dac wsem
+    sad [1]
+    jmp wnor
+    sza
+    jmp wnon
+    idx wchg
+wnor,
+    law 51                  // r
+    jda wch
+    law 1
+    dac wlet
+    jmp wno5
+wnon,
+    lac wsem
+    jda wspell
+    lac wsi
+    sub wst
+    sub woct
+    dac wpp
+    dzm wnbs
+wno3,
+    lac wpp
+    sma                     // skip if below the clef's position 0
+    jmp wno4
+    add [0d12]
+    dac wpp
+    idx wnbs
+    jmp wno3
+wno4,
+    lac wpp
+    jda wnum
+    lac wnbs
+    trze(wno6)
+    cma
+    dac wcn
+wno7,
+    law 62                  // b
+    jda wch
+    isp wcn
+    jmp wno7
+    law 1
+    dac wlet
+wno6,
+    lac wsa
+    trze(wno5)
+    jda wch
+    law 1
+    dac wlet
+wno5,
+    lac wneed
+    trze(wno8)
+    lac wai
+    add [wartl:2]
+    dac wp1
+    lac i wp1
+    jda wch
+    law 1
+    dac wlet
+wno8,
+    lac ww
+    and [100000]
+    trze(wno9)
+    law 63                  // c
+    jda wch
+    law 1
+    dac wlet
+wno9,
+    jsp wdur
+wnox, jmp .
+
+// wdyn -- write the dynamic ww. In the 1968 language it is its word
+// after a space (pp, p, mp, mf, f, ff); in hc1d's it is nothing, counted
+// in wchg. Called via jsp; AC and IO are clobbered.
+wdyn,
+    dap wdyx
+    lac i [lng:0]
+    sza
+    jmp wdy1
+    idx wchg
+    jmp wdyx
+wdy1,
+    jsp wsp
+    lac ww
+    and [7]
+    add [wdyt:2-1]
+    dac wp1
+    lac i wp1
+    jda wstr
+wdyx, jmp .
+
+// wnxr -- whether the next word in the bar after wj that is not a tempo
+// word or a dynamic is a rest. Called via jsp; returns AC 1 if so, else
+// 0; IO is clobbered.
+wnxr,
+    dap wnxx
+    lac wj
+    dac wk
+wnx1,
+    idx wk
+    sad wend
+    jmp wnx8
+    jda wnget
+    dac wx
+    and [600000]
+    sad [600000]
+    jmp wnx1
+    lac wx
+    rar 7s
+    and [77]
+    sub [2]
+    spa                     // skip if a note
+    jmp wnx9
+wnx8,
+    cla
+    jmp wnxx
+wnx9,
+    law 1
+wnxx, jmp .
+
+// wdur -- write ww's time. A dot for each set bit below the top one and
+// an x for each clear one, down to the lowest set (hc1d's dots each add half
+// the last, x halves the next); t first if the word has no letter yet,
+// so its two numbers stay apart; then the duration, 64 over the top bit.
+// Called via jsp; AC and IO are clobbered.
+wdur,
+    dap wdux
+    lac ww
+    and [177]
+    dac wt
+    law 100
+    dac wb
+    law 1
+    dac wdn
+wd1,
+    lac wt
+    sub wb
+    sma                     // skip if below the bit
+    jmp wd2
+    lac wb
+    sar 1s
+    dac wb
+    lac wdn
+    ral 1s
+    dac wdn
+    jmp wd1
+wd2,
+    dac wrem                // the time below the top bit
+wd3,
+    lac wrem
+    trze(wd6)
+    lac wb
+    sar 1s
+    dac wb
+    and wrem
+    sza i
+    jmp wd4
+    lac wrem
+    sub wb
+    dac wrem
+    law 73                  // .
+    jmp wd5
+wd4,
+    law 27                  // x
+wd5,
+    jda wch
+    law 1
+    dac wlet
+    jmp wd3
+wd6,
+    lac wlet
+    trnz(wd7)
+    law 23                  // t
+    jda wch
+wd7,
+    lac wdn
+    jda wnum
+wdux, jmp .
+
+// wspell -- spell the semitone AC (2-076). Sets its index (wsi) by its
+// preferred name (C#, Eb, F#, G#, Bb for a black key), or by its other
+// name when the bar's accidentals hold that one there already; else the
+// preferred one with the accidental that makes it (wsa, 055 natural,
+// 057 sharp, 054 flat, 0 none), held in wmt to the bar's end as the
+// compiler's mt holds it. Called via jda; AC and IO are clobbered.
+wspell, 0
+    dap wspx
+    lac wspell
+    sub [2]
+    dac wx
+    law 0d12
+    dac wdv
+    lac wx
+    jda wdiv
+    dac wso
+    ral 3s
+    sub wso
+    dac wso                 // 7 x the octave
+    lac wrm
+    add [wpl:2]
+    dac wp1
+    lac i wp1
+    add wso
+    dac wsi
+    add [wmt:2]
+    dac wp1
+    lac i wp1
+    sad wspell
+    jmp wsp0
+    lac wrm
+    add [wal:2]
+    dac wp1
+    lac i wp1
+    add wso
+    dac wx
+    add [wmt:2]
+    dac wp1
+    lac i wp1
+    sas wspell
+    jmp wsp2
+    lac wx
+    dac wsi
+wsp0,
+    dzm wsa
+    jmp wspx
+wsp2,
+    lac wsi
+    add [nt:0]
+    dac wp1
+    lac i wp1
+    sub wspell
+    sza
+    jmp wsp3
+    law 55                  // ) natural
+    jmp wsp5
+wsp3,
+    spa                     // skip if the natural is higher, a flat
+    jmp wsp4
+    law 54                  // - flat
+    jmp wsp5
+wsp4,
+    law 57                  // ( sharp
+wsp5,
+    dac wsa
+    lac wsi
+    add [wmt:2]
+    dac wp1
+    lac wspell
+    dac i wp1
+wspx, jmp .
+
+// wmtr -- clear the bar's accidentals, making wmt the natural table (nt;
+// no key is written). Called via jsp; AC and IO are clobbered.
+wmtr,
+    dap wmrx
+    lac [nt:0]
+    dac wp1
+    lac [wmt:2]
+    dac wp2
+    law i 0d36
+    dac wcn
+wm1,
+    lac i wp1
+    dac i wp2
+    idx wp1
+    idx wp2
+    isp wcn
+    jmp wm1
+wmrx, jmp .
+
+// wclef -- choose the part's clef, the one whose middle line (position 5)
+// is nearest the middle of its notes' range, by the middle's preferred
+// name; treble when it has none. Sets wst, the clef's offset, and wclw,
+// its word. Called via jsp; AC and IO are clobbered.
+wclef,
+    dap wcfx
+    law 77
+    dac wlo
+    dzm whi
+    dzm wj
+wcf1,
+    lac wj
+    sad wnc
+    jmp wcf3
+    jda wnget
+    dac wx
+    and [700000]
+    sad [700000]
+    jmp wcf2                // a tempo word
+    lac wx
+    sad [600000]
+    jmp wcf2                // a bar line
+    rar 7s
+    and [77]
+    dac wy
+    sad [77]
+    jmp wcf2                // refused later
+    sub [2]
+    spa                     // skip if a note
+    jmp wcf2
+    lac wy
+    sub wlo
+    sma                     // skip if lower than the lowest so far
+    jmp wcf4
+    lac wy
+    dac wlo
+wcf4,
+    lac wy
+    sub whi
+    spa                     // skip if not below the highest so far
+    jmp wcf2
+    lac wy
+    dac whi
+wcf2,
+    idx wj
+    jmp wcf1
+wcf3,
+    lac [wsTreble:2]
+    dac wclw
+    law 0d22
+    dac wst
+    lac whi
+    trze(wcfx)
+    lac wlo
+    add whi
+    sar 1s
+    sub [2]
+    dac wx
+    law 0d12
+    dac wdv
+    lac wx
+    jda wdiv
+    dac wy
+    ral 3s
+    sub wy
+    dac wy
+    lac wrm
+    add [wpl:2]
+    dac wp1
+    lac i wp1
+    add wy
+    dac wmid
+    lac [100000]
+    dac wbd
+    dzm wk
+wcf5,
+    lac wk
+    add [wclo:2]
+    dac wp1
+    lac i wp1
+    add [5]
+    add woct
+    sub wmid
+    spa
+    cma
+    dac wx                  // the distance
+    sub wbd
+    sma                     // skip if nearer than the best so far
+    jmp wcf6
+    lac wx
+    dac wbd
+    lac i wp1
+    dac wst
+    lac wk
+    add [wclt:2]
+    dac wp2
+    lac i wp2
+    dac wclw
+wcf6,
+    idx wk
+    sas [4]
+    jmp wcf5
+wcfx, jmp .
+
+// wtempo -- write the tempo word AC as tempo N. In hc1d's language N is
+// the word's low 15 bits; in the 1968 language it is the N nearest
+// (wt68). Called via jda; AC and IO are
+// clobbered.
+wtempo, 0
+    dap wtx
+    lac [wsTempo:2]
+    jda wstr
+    jsp wsp
+    lac wtempo
+    and [77777]
+    dac wtn
+    lac i [lng:0]
+    trze(wt9)
+    lac wtn
+    trze(wt9)               // tempo 0 is 0 in either language
+    jsp wt68
+wt9,
+    lac wtn
+    jda wnum
+wtx, jmp .
+
+// wt68 -- the 1968 language's N for the word's wtn. Its tempo N makes
+// the word (2K + m) / 2m, K 12174, m N or below 60 twice N (hccomp.ac's
+// pha); so m is tried at K / wtn rounded and the two either side, those
+// an N makes (60 up, or even), and the one whose word is nearest wtn
+// kept (the first tried on a tie). wtn becomes its N; wchg is counted
+// when its word is not wtn. Called via jsp; AC and IO are clobbered.
+wt68,
+    dap w6x
+    lac wtn
+    dac w6w
+    ral 1s
+    dac wdv
+    lac [0d24348]
+    add wtn
+    jda wdiv
+    dac w6m0
+    lac [100000]
+    dac w6be
+    lac [w6off:2]
+    dac w6p
+w61,
+    lac i w6p
+    sad [400000]            // the table's end
+    jmp w69
+    add w6m0
+    dac w6c
+    sma sza                 // skip unless m is above 0
+    jmp w62
+    jmp w68
+w62,
+    sub [0d60]
+    spa                     // skip if 60 or more
+    jmp w63
+    jmp w64
+w63,
+    lac w6c
+    and [1]
+    trnz(w68)               // odd below 60, which no N makes
+w64,
+    lac w6c
+    ral 1s
+    dac wdv
+    lac [0d24348]
+    add w6c
+    jda wdiv
+    dac w6v
+    sub w6w
+    spa
+    cma
+    dac w6e
+    sub w6be
+    sma                     // skip if nearer than the best so far
+    jmp w68
+    lac w6e
+    dac w6be
+    lac w6c
+    dac w6bm
+    lac w6v
+    dac w6bv
+w68,
+    idx w6p
+    jmp w61
+w69,
+    lac w6bm
+    sub [0d60]
+    sma                     // skip if below 60, a half note, where N is m / 2
+    jmp w6a
+    lac w6bm
+    sar 1s
+    jmp w6b
+w6a,
+    lac w6bm
+w6b,
+    dac wtn
+    lac w6bv
+    sas w6w
+    idx wchg
+w6x, jmp .
+
+w6off, 0; -1; 1; -2; 2; 400000     // m's tries about K / wtn, then the end
+
+// wslash -- a bar's slash. On the count pass, the bar's run of
+// characters since the last slash is kept as the pending one, and the
+// one pending before it gets its pad (wpad), since the run after it is
+// known; on the punch pass, the slash's pad of spaces, then the slash.
+// Called via jsp; AC and IO are clobbered.
+wslash,
+    dap wsx
+    lac wpass
+    trnz(wsl5)
+    lac wsl
+    sza
+    jsp wpad
+    lac wrun
+    dac wprun
+    lac wsl
+    dac wpk
+    lac wi
+    add [1]
+    dac wpbar
+    dzm wrun
+    idx wsl
+    jmp wsx
+wsl5,
+    lac wsl
+    add [BARS]
+    dac wp1
+    lac i wp1
+    trze(wsl7)
+    cma
+    dac wcn
+wsl6,
+    jsp wsp
+    isp wcn
+    jmp wsl6
+wsl7,
+    law 21
+    jda wch
+    idx wsl
+wsx, jmp .
+
+// wpad -- set the pending slash's pad. In hc1d's measure buffer, from
+// the 256th character on a slash ends the fill, and a 384th is fatal.
+// The pad is none when its slash is the 256th character or later, which
+// ends the fill, or when the next run (wrun) fits in the fill after it;
+// else it is spaces enough to make it the 256th, so the next run starts
+// the next fill. A run that would reach the 384th character refuses
+// the part. Kept at BARS + the pending slash's number. Called via jsp;
+// AC and IO are clobbered.
+wpad,
+    dap wpdx
+    lac wn
+    add wprun
+    dac wx                  // the pending slash's place in the fill, from 0
+    sub [0d383]
+    sma                     // skip if before the 384th
+    jmp wrefm
+    lac wx
+    sub [0d255]
+    spa                     // skip if it ends the fill
+    jmp wpd1
+    dzm wpd
+    dzm wn
+    jmp wpd3
+wpd1,
+    lac wx
+    add wrun
+    add [1]
+    sub [0d383]
+    spa                     // skip if the next slash would be the 384th or later
+    jmp wpd2
+    law 0d255
+    sub wx
+    dac wpd
+    dzm wn
+    jmp wpd3
+wpd2,
+    dzm wpd
+    lac wx
+    add [1]
+    dac wn
+wpd3,
+    lac wpk
+    add [BARS]
+    dac wp1
+    lac wpd
+    dac i wp1
+wpdx, jmp .
+
+// wch -- put the code AC (FIO-DEC, lower case) into the source. It is
+// counted in wrun. On the count pass, which punches nothing, the menu's
+// screen is kept drawn; on the punch pass the code is punched, in
+// FIO-DEC with channel 8 when the code's ones are even (rp's test, where
+// 2525 rotated right by their count has its sign set when it is odd), in
+// ASCII as wasc's character. Called via jda; AC and IO are clobbered.
+wch, 0
+    dap wchx
+    idx wrun
+    lac wpass
+    trnz(wch0)
+    jsp i [sourceKeep:0]
+    jmp wchx
+wch0,
+    lac srcForm
+    trnz(wch3)
+    law 1000
+    add wch
+    dap wchr
+    law 2525
+wchr, rar
+    spa                     // skip if the count is even
+    jmp wch1
+    lac wch
+    ior [200]
+    jmp wch2
+wch1,
+    lac wch
+    jmp wch2
+wch3,
+    lac wch
+    add [wasc:2]
+    dac wp9
+    lac i wp9
+wch2,
+    jda wframe
+wchx, jmp .
+
+// wline, wsp -- write a line's end (077, a carriage return, or in ASCII
+// a line feed), or a space. Called via jsp; AC and IO are clobbered.
+wline,
+    dap wlx
+    law 77
+    jda wch
+wlx, jmp .
+
+wsp,
+    dap wspy
+    cla
+    jda wch
+wspy, jmp .
+
+// wnum -- AC (0 up) in decimal, no leading zeros. Called via jda; AC and
+// IO are clobbered.
+wnum, 0
+    dap wnx
+    dzm wnz
+    lac [wpow:2]
+    dac wnp
+wnm1,
+    lac i wnp
+    trze(wnm4)
+    dac wnq
+    dzm wnd
+wnm2,
+    lac wnum
+    sub wnq
+    trmi(wnm3)
+    dac wnum
+    idx wnd
+    jmp wnm2
+wnm3,
+    lac wnd
+    add wnz
+    trze(wnm5)              // a leading zero
+    law 1
+    dac wnz
+    lac wnd
+    jda wdig
+wnm5,
+    idx wnp
+    jmp wnm1
+wnm4,
+    lac wnum
+    jda wdig
+wnx, jmp .
+
+wpow, 0d10000; 0d1000; 0d100; 0d10; 0
+
+// wdig -- the digit AC, 0-9. Called via jda; AC and IO are clobbered.
+wdig, 0
+    dap wdgx
+    lac wdig
+    sza i
+    law 20                  // FIO-DEC's 0
+    jda wch
+wdgx, jmp .
+
+// wstr -- the codes at AC (a full address), to a 0. Called via jda; AC
+// and IO are clobbered.
+wstr, 0
+    dap wstx
+wst1,
+    lac i wstr
+    trze(wstx)
+    jda wch
+    idx wstr
+    jmp wst1
+wstx, jmp .
+
+// wnget, wbget -- the part's note word, its bar entry, at index AC.
+// Called via jda; returns AC the word; IO is preserved.
+wnget, 0
+    dap wngx
+    lac wnget
+    add wnb
+    dac wp8
+    lac i wp8
+wngx, jmp .
+
+wbget, 0
+    dap wbgx
+    lac wbget
+    add wbb
+    dac wp8
+    lac i wp8
+wbgx, jmp .
+
+// wdiv -- AC divided by wdv (both 0 up, AC below 0400000). Returns AC
+// the quotient, wrm the remainder. Called via jda; IO is clobbered.
+wdiv, 0
+    dap wdx
+    lio wdiv
+    cla
+    scl 1s
+    div wdv
+    jmp wdx                 // no skip means overflow, which no caller's operands make
+    dio wrm
+wdx, jmp .
+
+// Bank 0's typing and punch, through its trampolines. wmsg types a
+// message (AC its full address), wtnum a space and a number (AC); wframe
+// punches a frame (AC), wfee -AC blank frames. Called via jda; AC and IO
+// are clobbered.
+wmsg, 0
+    dap wmx
+    lac wmsg
+    dac i [warg:0]
+    jsp i [sourceMsg:0]
+wmx, jmp .
+
+wtnum, 0
+    dap wtnx
+    lac wtnum
+    dac i [warg:0]
+    jsp i [sourceNum:0]
+wtnx, jmp .
+
+wframe, 0
+    dap wfrx
+    lac wframe
+    dac i [warg:0]
+    jsp i [sourceFrame:0]
+wfrx, jmp .
+
+wfee, 0
+    dap wfex
+wfe1,
+    cla
+    jda wframe
+    isp wfee
+    jmp wfe1
+wfex, jmp .
+
+// The words the writer writes, as FIO-DEC codes to a 0.
+wsPart, 47; 61; 51; 23; 0               // part
+wsTreble, 23; 51; 65; 62; 43; 65; 0     // treble
+wsAlto, 61; 43; 23; 46; 0               // alto
+wsTenor, 23; 65; 45; 46; 51; 0          // tenor
+wsBass, 62; 61; 22; 22; 0               // bass
+wsUnits, 24; 45; 71; 23; 22; 0          // units
+wsRest, 51; 65; 22; 23; 0               // rest
+wsCopy, 63; 46; 47; 30; 0               // copy
+wsTempo, 23; 65; 44; 47; 46; 0          // tempo
+wsEnd, 65; 45; 64; 0                    // end
+wsDynPp, 47; 47; 0                      // pp
+wsDynP, 47; 0                           // p
+wsDynMp, 44; 47; 0                      // mp
+wsDynMf, 44; 66; 0                      // mf
+wsDynF, 66; 0                           // f
+wsDynFf, 66; 66; 0                      // ff
+
+// The dynamics' words by index, 1 pp to 6 ff (wdyn).
+wdyt, wsDynPp:2; wsDynP:2; wsDynMp:2; wsDynMf:2; wsDynF:2; wsDynFf:2
+
+// The clefs, in the order tried. Each one's offset (hc1d's st, treble 26
+// octal, alto 20, tenor 16, bass 12) and its word.
+wclo, 0d22; 0d16; 0d14; 0d10
+wclt, wsTreble:2; wsAlto:2; wsTenor:2; wsBass:2
+
+// The articulations' letters by index (wart).
+wartl, 65; 43; 22; 70; 50               // e l s h q
+
+// Each semitone's letter from C in its octave (the semitone less 2, mod
+// 12), by its preferred name (wpl) and its other name (wal) for a black
+// key (C# Db, Eb D#, F# Gb, G# Ab, Bb A#).
+wpl, 0; 0; 1; 2; 2; 3; 3; 4; 4; 5; 6; 6
+wal, 0; 1; 1; 1; 2; 3; 4; 4; 5; 5; 5; 6
+
+// wasc -- each FIO-DEC code the writer punches as its ASCII character,
+// lower case. These are the digits, the letters, space, / ( ) - . and a
+// carriage return as a line feed; 0 for the codes it never punches.
+wasc,
+    040                     // 000 space
+    061; 062; 063; 064; 065; 066; 067; 070; 071     // 001-011 1-9
+    0; 0; 0; 0; 0; 0        // 012-017
+    060                     // 020 0
+    057                     // 021 /
+    0163; 0164; 0165; 0166; 0167; 0170; 0171; 0172  // 022-031 s-z
+    0; 0; 0; 0; 0; 0        // 032-037
+    0                       // 040
+    0152; 0153; 0154; 0155; 0156; 0157; 0160; 0161; 0162    // 041-051 j-r
+    0; 0                    // 052-053
+    055                     // 054 -
+    051                     // 055 )
+    0                       // 056
+    050                     // 057 (
+    0                       // 060
+    0141; 0142; 0143; 0144; 0145; 0146; 0147; 0150; 0151    // 061-071 a-i
+    0                       // 072
+    056                     // 073 .
+    0; 0; 0                 // 074-076
+    012                     // 077 carriage return, as a line feed
+
+// The writer's messages (sourceMsg, typed by tas).
+msrc, text "source tape\n"
+    13
+mspt, text "part"
+    13
+msbr, text ", bars"
+    13
+mscp, text ", copied"
+    13
+mschg, text ", changed"
+    13
+msref, text ", refused at bar"
+    13
+msr1, text ", an entry no source makes\n"
+    13
+msr2, text ", a word no source makes\n"
+    13
+msr3, text ", a measure too long for the buffer\n"
+    13
+mworc, text "orchestra block left out\n"
+    13
+
+// The bar's accidentals (wspell), position by position.
+wmt,
+    table 44
+
+// The writer's words. All are set before they are read, at source, at a
+// part (wpart) or at a pass's start (wgen).
+srcForm, 0                  // FORM, 0 FIO-DEC, 1 ASCII (the menu's)
+wsret, 0                    // source's return, a full address
+wflag, 0                    // SEE THE LOG
+wpi, 0                      // the part
+wbase, 0                    // its notes' count word in the store
+wnc, 0                      // its notes
+wnb, 0                      // its first note word
+wbc, 0                      // its bar entries, end's included
+wbb, 0                      // its first bar entry
+wpass, 0                    // 0 the count pass, 1 the punch pass
+wref, 0                     // the refusal's reason, 0 if none
+wrefbar, 0                  // and its bar
+wbars, 0                    // the new bars
+wcopies, 0                  // the entries copied
+wchg, 0                     // the words written differently
+wmode, 0                    // the mode in force, an articulation's index
+wunits, 0                   // the units in force
+wirl, 0                     // the rest measure in force, -1 if none
+woct, 0                     // 0, or -7 in the 1968 language
+wst, 0                      // the clef's offset
+wclw, 0                     // the clef's word
+wpos, 0                     // the next note word to write
+wi, 0                       // the entry
+we, 0                       // its index into the notes
+wend, 0                     // the bar's end, its bar line or the notes' end
+wj, 0                       // a note word
+wk, 0
+wl, 0                       // a run of entries
+wm, 0                       // copy's first entry
+ww, 0                       // the word
+wt, 0                       // a time
+wx, 0
+wy, 0
+wlen, 0                     // the words' length, 3 a 64th (wscan)
+wac, 0; 0; 0; 0; 0          // the words of each articulation (wscan)
+wbest, 0                    // the commonest (wwords)
+wai, 0                      // the articulation's index (wnote)
+wneed, 0                    // a letter needed (wnote)
+wlet, 0                     // a letter written (wnote)
+wsem, 0                     // the semitone (wnote)
+wpp, 0                      // the position (wnote)
+wnbs, 0                     // its b's (wnote)
+wcn, 0                      // a count, negated
+wb, 0                       // the bit (wdur)
+wdn, 0                      // the duration (wdur)
+wrem, 0                     // the time left (wdur)
+wsi, 0                      // the index (wspell)
+wsa, 0                      // the accidental (wspell)
+wso, 0                      // 7 x the octave (wspell)
+wlo, 0                      // the lowest semitone (wclef)
+whi, 0                      // the highest (wclef)
+wmid, 0                     // the middle's index (wclef)
+wbd, 0                      // the nearest distance (wclef)
+wtn, 0                      // the N written (wtempo)
+w6w, 0                      // the word's N (wt68)
+w6m0, 0                     // K / N rounded (wt68)
+w6p, 0                      // the try (wt68)
+w6c, 0                      // its m (wt68)
+w6v, 0                      // its word (wt68)
+w6e, 0                      // its distance (wt68)
+w6be, 0                     // the best's distance (wt68)
+w6bm, 0                     // its m (wt68)
+w6bv, 0                     // its word (wt68)
+wrun, 0                     // the characters since the last slash
+wsl, 0                      // the slashes so far
+wn, 0                       // the fill's characters before the pending run (wpad)
+wprun, 0                    // the pending run (wpad)
+wpk, 0                      // the pending slash's number (wpad)
+wpbar, 0                    // its bar (wpad)
+wpd, 0                      // the pad (wpad)
+wnz, 0                      // a digit written (wnum)
+wnp, 0                      // the power of ten's word (wnum)
+wnq, 0                      // the power of ten (wnum)
+wnd, 0                      // the digit (wnum)
+wdv, 0                      // the divisor (wdiv)
+wrm, 0                      // the remainder (wdiv)
+wp1, 0                      // pointers, full addresses
+wp2, 0
+wp8, 0
+wp9, 0

@@ -1,0 +1,13 @@
+text, flexo and char
+
+100/
+go,	lac (flexo abc
+	lac flexo xy
+	lac char la
+	lac char r5
+	lac char m1
+	hlt
+t1,	text /hello/
+t2,	text .Hello World.
+t3,	text /ab/
+	start go

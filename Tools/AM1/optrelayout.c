@@ -25,7 +25,7 @@
  * every '.', labels, resume pcs, pools, variables, bank contexts and 'start'.
  * Every field it owns is first set to a sentinel, so a field it forgot shows.
  * The pools are then rebuilt as the parser would build them from the edited
- * source: the same hashExpr() keys, filed in the same kind of unbalanced tree
+ * source: the same poolKey() keys, filed in the same kind of unbalanced tree
  * in statement order, slots placed in pre-order.  Layout and rebuild repeat
  * until the pools settle.  Every remaining word is then checked against the
  * word table, which still describes the program as assembled, by perturbing
@@ -96,7 +96,7 @@ extern bool noWarn;
 extern Warning warnings[];
 
 extern int evalExpr(PNodeP);
-extern long int hashExpr(PNodeP);
+extern char *poolKey(PNodeP);
 extern int countAscii(char *strP);
 extern int countText(FlexText flexText);
 
@@ -248,8 +248,7 @@ typedef struct
 // A key a walk made, in the order it made it.
 typedef struct
 {
-    long hash;
-    char name[24];          // as the parser names the slot
+    char *name;             // the key, as the parser names the slot; allocated
     PNodeP firstRefP;       // the reference that made it
     SymNodeP slotP;         // the slot given it
     int refs;
@@ -288,7 +287,8 @@ typedef struct
     unsigned oldOrder;      // bit n: symbol n was defined before it in the walk, as assembled
     unsigned mask;          // bit n: symbol n was resolved when it was parsed
     int modeled;            // 0: no mask gives its key, which is held
-    long oldAllHash;        // its key with every symbol resolved, as assembled
+    char *oldAllKeyP;       // its key with every symbol resolved, as assembled; a
+                            // clone shares its original's
     int walk;               // the last walk that met it
     int key;                // and the key that walk gave it
     void *cloneOfP;         // the RlEdit whose copy made this reference, NILP for
@@ -359,7 +359,7 @@ static int symMapCount;
 static SymNodeP *keySymsPP;         // the symbols every key reads
 static int keySymCount;
 static int keySymCapacity;
-static PNodeP *wildNodesPP;         // the 'sym:*' nodes rlHash() has flipped
+static PNodeP *wildNodesPP;         // the 'sym:*' nodes rlKey() has flipped
 static SymNodeP *wildSymsPP;        // and the symbol each held
 static int wildCount;
 static int wildCapacity;
@@ -474,10 +474,11 @@ static RlReason walkExpr(int bank, PNodeP nodeP);
 static RlReason keyRef(int bank, PNodeP refP);
 static void recordKey(RlRefValue *infoP);
 static void flipWild(PNodeP nodeP);
-static long rlHash(PNodeP exprP);
+static char *rlKey(PNodeP exprP);
 static int addKeySyms(RlRefValue *infoP, PNodeP nodeP);
 static unsigned currentMask(RlRefValue *infoP);
-static long keyUnder(RlRefValue *infoP, unsigned mask, int shifted);
+static bool keyIs(RlRefValue *infoP, unsigned mask, const char *wantP);
+static char *keyUnder(RlRefValue *infoP, unsigned mask, int shifted);
 static RlReason bindSet(int bank, int pool);
 static void buildPools(int *changedP);
 static void orderSet(RlSetP setP);
@@ -1104,7 +1105,7 @@ OverlayContextP ovP;
     }
 
     // The parser keyed a 'sym:*' by its name, and only then made it a BREF,
-    // which hashExpr() would key by its address.  Mark every one so the re-key
+    // which poolKey() would key by its address.  Mark every one so the re-key
     // can key it as the parser did.  A copy keeps the mark.
     for( wildP = wildcardsP; wildP; wildP = wildP->nextP )
     {
@@ -4116,7 +4117,7 @@ heldExpr(PNodeP nodeP)
 
 // The pool re-key.
 //
-// The parser pools a constant under hashExpr() of its expression as it stood
+// The parser pools a constant under poolKey() of its expression as it stood
 // when parsed: a defined symbol gives its address, an undefined one its
 // creation serial number.  It files the keys in a binary tree in the order met,
 // and setConstPC() places the slots in pre-order, so slot order and sharing
@@ -4560,7 +4561,12 @@ OverlayContextP ovP;
     ++rlWalk;
     rlRecord = record;
     rlCreations = 0;
-    keyCount = 0;
+
+    while( keyCount > 0 )
+    {
+        free(keysP[--keyCount].name);
+    }
+
     setCount = 0;
 
     for( b = 0; b <= MAXBANK; ++b )
@@ -4801,7 +4807,8 @@ keyRef(int bank, PNodeP refP)
 int i;
 int set;
 int key;
-long hash;
+char *keyP;
+char *nowP;
 RlRefValue *infoP;
 RlSetP setP;
 RlSlot *slotP;
@@ -4816,7 +4823,7 @@ RlSlot *slotP;
     if( rlRecord )
     {
         recordKey(infoP);
-        hash = strtol(infoP->slotP->name, NILP, 10);
+        keyP = strdup(infoP->slotP->name);
 
         if( (slotP = findSlot(infoP->slotP)) && !slotP->firstRefP )
         {
@@ -4826,10 +4833,20 @@ RlSlot *slotP;
     else if( !infoP->modeled )
     {
         // Held: good only while nothing it could read has changed.
-        if( rlHash((PNodeP)(refP->value2.ptr)) != infoP->oldAllHash )
+        if( !infoP->oldAllKeyP )
         {
             return(RLR_POOL);
         }
+
+        nowP = rlKey((PNodeP)(refP->value2.ptr));
+
+        if( strcmp(nowP, infoP->oldAllKeyP) )
+        {
+            free(nowP);
+            return(RLR_POOL);
+        }
+
+        free(nowP);
 
         for( i = 0; i < infoP->leafCount; ++i )
         {
@@ -4840,11 +4857,17 @@ RlSlot *slotP;
             }
         }
 
-        hash = strtol(infoP->slotP->name, NILP, 10);
+        keyP = strdup(infoP->slotP->name);
     }
     else
     {
-        hash = keyUnder(infoP, currentMask(infoP), 1);
+        keyP = keyUnder(infoP, currentMask(infoP), 1);
+    }
+
+    if( !keyP )
+    {
+        fprintf(stderr, "am1: out of memory in relayout\n");
+        exit(1);
     }
 
     // The bank's open pool.
@@ -4857,13 +4880,17 @@ RlSlot *slotP;
 
     for( i = 0; i < setP->count; ++i )
     {
-        if( keysP[setP->keysP[i]].hash == hash )
+        if( !strcmp(keysP[setP->keysP[i]].name, keyP) )
         {
             break;
         }
     }
 
-    if( i >= setP->count )
+    if( i < setP->count )
+    {
+        free(keyP);
+    }
+    else
     {
         if( setP->count >= setP->capacity )
         {
@@ -4877,8 +4904,7 @@ RlSlot *slotP;
         }
 
         key = newKey();
-        keysP[key].hash = hash;
-        sprintf(keysP[key].name, "%ld", hash);
+        keysP[key].name = keyP;
         keysP[key].firstRefP = refP;
         setP->keysP[setP->count++] = key;
         ++rlCreations;              // the parser's sym_make() for the slot
@@ -4890,7 +4916,7 @@ RlSlot *slotP;
 }
 
 // Turn every marked BREF under a node back into the WILDREF it was, which
-// holds the symbol's name, and push each with its symbol for rlHash() to
+// holds the symbol's name, and push each with its symbol for rlKey() to
 // restore.
 static void
 flipWild(PNodeP nodeP)
@@ -4921,17 +4947,17 @@ flipWild(PNodeP nodeP)
     }
 }
 
-// A constant's key as the parser would make it now: hashExpr() of the
+// A constant's key as the parser would make it now: poolKey() of the
 // expression, with each 'sym:*' keyed by its name, as it was when parsed.
-// Returns the key.
-static long
-rlHash(PNodeP exprP)
+// Returns the key, allocated.
+static char *
+rlKey(PNodeP exprP)
 {
-long hash;
+char *keyP;
 
     wildCount = 0;
     flipWild(exprP);
-    hash = hashExpr(exprP);
+    keyP = poolKey(exprP);
 
     while( wildCount > 0 )
     {
@@ -4940,7 +4966,7 @@ long hash;
         wildNodesPP[wildCount]->type = BREF;
     }
 
-    return(hash);
+    return(keyP);
 }
 
 // Record what made a reference's key as assembled: the symbols it reads, which
@@ -4951,14 +4977,14 @@ recordKey(RlRefValue *infoP)
 {
 unsigned mask;
 unsigned limit;
-long want;
+const char *wantP;
 int i;
 
     infoP->leafStart = keySymCount;
     infoP->leafCount = 0;
     infoP->oldOrder = 0;
     infoP->modeled = 0;
-    infoP->oldAllHash = rlHash((PNodeP)(infoP->refP->value2.ptr));
+    infoP->oldAllKeyP = rlKey((PNodeP)(infoP->refP->value2.ptr));
 
     if( !addKeySyms(infoP, (PNodeP)(infoP->refP->value2.ptr)) )
     {
@@ -4976,9 +5002,9 @@ int i;
         }
     }
 
-    want = strtol(infoP->slotP->name, NILP, 10);
+    wantP = infoP->slotP->name;
 
-    if( keyUnder(infoP, infoP->oldOrder, 0) == want )
+    if( keyIs(infoP, infoP->oldOrder, wantP) )
     {
         infoP->mask = infoP->oldOrder;
         infoP->modeled = 1;
@@ -4989,7 +5015,7 @@ int i;
 
     for( mask = 0; mask < limit; ++mask )
     {
-        if( keyUnder(infoP, mask, 0) == want )
+        if( keyIs(infoP, mask, wantP) )
         {
             infoP->mask = mask;
             infoP->modeled = 1;
@@ -5001,7 +5027,7 @@ int i;
 }
 
 // Add the symbols a key reads, each once, in the order hashExpr() meets them.
-// A 'sym:*' reads none: rlHash() keys it by its name.
+// A 'sym:*' reads none: rlKey() keys it by its name.
 // Returns 1, or 0 when there are more than a key can be modeled with.
 static int
 addKeySyms(RlRefValue *infoP, PNodeP nodeP)
@@ -5081,16 +5107,30 @@ unsigned mask;
     return(mask);
 }
 
+// Whether a reference's key with its symbols resolved by mask is the one given.
+static bool
+keyIs(RlRefValue *infoP, unsigned mask, const char *wantP)
+{
+char *keyP;
+bool same;
+
+    keyP = keyUnder(infoP, mask, 0);
+    same = !strcmp(keyP, wantP);
+    free(keyP);
+    return(same);
+}
+
 // A reference's key with its symbols resolved by mask and, when shifted, each
 // unresolved serial number moved by the change in creations before it.  The
-// real hashExpr() makes it; every flag and serial number is put back.
-static long
+// real poolKey() makes it; every flag and serial number is put back.
+// Returns the key, allocated.
+static char *
 keyUnder(RlRefValue *infoP, unsigned mask, int shifted)
 {
 int i;
 int flagsSaved[RL_MAXKEYLEAVES];
 int serialSaved[RL_MAXKEYLEAVES];
-long hash;
+char *keyP;
 RlSym *symInfoP;
 SymNodeP symP;
 
@@ -5125,7 +5165,7 @@ SymNodeP symP;
         }
     }
 
-    hash = rlHash((PNodeP)(infoP->refP->value2.ptr));
+    keyP = rlKey((PNodeP)(infoP->refP->value2.ptr));
 
     for( i = infoP->leafCount - 1; i >= 0; --i )
     {
@@ -5134,7 +5174,7 @@ SymNodeP symP;
         symP->serialNumber = serialSaved[i];
     }
 
-    return(hash);
+    return(keyP);
 }
 
 // Close a bank's gathered keys into a pool, at a constants directive or the
@@ -5434,7 +5474,6 @@ placeSlot(RlSetP setP, RlSlot *slotP, int *orderP, int n)
 {
 int k;
 int key;
-long hash;
 
     if( slotP->emitted == rlWalk )
     {
@@ -5442,11 +5481,10 @@ long hash;
     }
 
     slotP->emitted = rlWalk;
-    hash = strtol(slotP->symP->name, NILP, 10);
 
     for( k = 0; k < setP->count; ++k )
     {
-        if( keysP[setP->keysP[k]].hash == hash )
+        if( !strcmp(keysP[setP->keysP[k]].name, slotP->symP->name) )
         {
             return( placeKey(setP, setP->keysP[k], slotP, orderP, n) );
         }
@@ -5461,8 +5499,13 @@ long hash;
     }
 
     key = newKey();
-    keysP[key].hash = hash;
-    sprintf(keysP[key].name, "%ld", hash);
+
+    if( !(keysP[key].name = strdup(slotP->symP->name)) )
+    {
+        fprintf(stderr, "am1: out of memory in relayout\n");
+        exit(1);
+    }
+
     return( placeKey(setP, key, slotP, orderP, n) );
 }
 

@@ -1,0 +1,10 @@
+a repeat count with a space in it is refused
+
+n=2
+100/
+go,	lac a
+	repeat n 1, ral 1s	/ refused
+	repeat 2, rar 1s
+	hlt
+a,	5
+	start go

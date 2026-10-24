@@ -1,31 +1,29 @@
-// dacrender: plays a tape punched by the D/A converters' music program
-// (dacmusic.am1's PUNCH: Samson's Harmony Compiler parts, then the
-// orchestra block with each converter's part, voice, octave, volume and
-// place) into a wav file, as the player and the device would play it,
-// with no PDP-1: 16-bit stereo at 50 kHz, the device's own frame.
+// dacrender plays a tape punched by the D/A converters' music program
+// (dacmusic.am1's PUNCH, Samson's Harmony Compiler parts and then the
+// orchestra block) into a wav file, as the player and the device would
+// play it, with no PDP-1. The file is 16-bit stereo at 50 kHz, the
+// device's frame rate.
 //
-// It rebuilds the player and the device, not the emulator: the tape as
-// READ TAPE takes it, the timeline as pdp1m13 times a score, each
-// converter's sequencer as the player latches its entries, and each
-// converter one machine cycle at a time as IOT_71.c computes it, with the
-// same integer arithmetic.
+// It rebuilds the player and the device, not the emulator. The tape is
+// taken as READ TAPE takes it, the score timed as pdp1m13 times it, each
+// converter's entries latched as the player latches them, and each
+// converter run one machine cycle at a time as IOT_71.c computes it, with
+// the same integer arithmetic.
 //
 // The instruments are voices, as a voice file holds them
 // (../voices/README.md). The renderer places the voices the orchestra
 // plays in the converters' memory itself, as the player's loader does;
 // where a block lands does not reach the output, only which pitches share
-// one. A converter's organ stops are premixed as the player premixes
-// them. The nine standard voices are compiled in from dacrender_lib.h;
-// --voices=file.lib plays a library of voice files instead.
-//
-// The device's room (room.h), onset, voicing and céleste (edge.h), and
-// its converter for recorded instruments (version 5 voice files) are
-// played as the device plays them; README.md here and Implementation.md,
-// "The device", describe them.
+// one. The nine standard voices are compiled in as their voice files'
+// text (dacrender_lib.h), read at start as --voices reads a file;
+// --voices=file.lib plays a library of voice files instead. The device's
+// room (room.h) and its voicing and céleste (edge.h) are the device's
+// code. README.md here and Implementation.md, "The renderer", describe
+// the rest.
 //
 // Needs the C99 library and libm only; the device's gain table is
-// compiled in too. One thread: the tape is read, the whole piece
-// sequenced into each converter's entries, then the converters run
+// compiled in too. It runs in one thread. The tape is read, the whole
+// piece sequenced into each converter's entries, then the converters run
 // cycle by cycle and each 4-cycle frame is mixed and written as soon as
 // it is made.
 //
@@ -33,6 +31,7 @@
 // A flag left out takes the tape's room or onset, if its orchestra block (version 3) sets it.
 //
 // 07-Oct-2026 Claude: written.
+// 23-Oct-2026 Claude: the dynamics, longer tapes and voices compiled in as their files; comments cleaned for release.
 
 #include <math.h>
 #include <stdio.h>
@@ -46,38 +45,39 @@
 
 // The machine and the output.
 #define CPS 200000                  // machine cycles a second
-#define CYCLES_PER_FRAME 4          // the device's output frame: 50 kHz
+#define CYCLES_PER_FRAME 4          // the device's output frame, 50 kHz
 #define RATE (CPS / CYCLES_PER_FRAME)
 #define NCONV 4
 #define WAV_FRAMES 4096             // frames buffered before each write
-#define CYCLES_PER_MS 200           // the onset's bound
+#define CYCLES_PER_MS 200           // for the onset's bound, given in ms
 #define ONSET_SEED 2654435769u      // a converter's sequence starts at its number + 1 times this
 
 // The tape, as the player reads it.
 #define WORD_MASK 0777777
 #define SIGN_BIT 0400000
 #define BAR 0600000                 // a bar line in a part's notes
-#define TEMPO_MARK 0700000          // a tempo word: these bits set
-#define ORCH_COUNT 0700021          // the orchestra block's count: a mark, and its 17 words
-#define ORCH_COUNT0 0700015         // the block from before the volumes: its 13 words
-#define ORCH_COUNT2 0700046         // version 2 (README.md): its 38 words
+#define TEMPO_MARK 0700000          // a tempo word has these bits set
+#define ORCH_COUNT 0700021          // the orchestra block's count, a mark and its 17 words
+#define ORCH_COUNT0 0700015         // the 13-word block, from before the volumes
+#define ORCH_COUNT2 0700046         // version 2's, 38 words
 #define ORCH_WORDS 17
 #define ORCH_WORDS0 13
 #define ORCH_WORDS2 38
 #define ORCH_VERSION2 2
-#define ORCH_COUNT3 0700050         // version 3: version 2's words, then the room and the onset
+#define ORCH_COUNT3 0700050         // version 3's, version 2's words and then the room and the onset
 #define ORCH_WORDS3 40
 #define ORCH_VERSION3 3
-#define SETTING_CONFIGURED 0400000  // a block's room or onset: the configuration's (here, the flags')
-#define ROOM_CODES 4                // a block's room: 0 none, 1 hall, 2 Busch Hall, 3 the voices'
+#define SETTING_CONFIGURED 0400000  // a block's room or onset left to the configuration (here, the flags)
+#define ROOM_CODES 4                // a block's room is 0 none, 1 hall, 2 Busch Hall or 3 the voices'
 #define ONSET_UNIT 25               // cycles in a block's onset unit, 1/8 ms
 #define LINE2 9                     // a converter's words in version 2
 #define STOPS 4
-#define PLACE_RIGHT 0400            // a place in the stereo field: 0 left, 0400 right
+#define PLACE_RIGHT 0400            // a place in the stereo field, from 0 left to 0400 right
 #define PLACE_STEP 040              // the player's nine places are 040 apart
 #define NPLACES 9
 #define TAPE_START 020000           // the player keeps the parts in banks 2-3
-#define TAPE_END 037300             // to its TEND, below PUNCH
+#define TAPE_END 036400             // to its TEND, below its bank 3 code and PUNCH
+#define TAPE_R2 050000              // the player's TAPE2, where a tape too large for that runs on to the end of memory
 #define PART_HEADER 4               // words the player keeps before each part
 #define MAX_PARTS 30
 #define NOCT 5                      // the octaves an orchestra block can name
@@ -88,15 +88,16 @@
 // The timing (pdp1m13's) and the sequencer's limits.
 #define DEFAULT_TEMPO 170
 #define PAUSE 400000                // cycles between movements, 2 s
-#define MIN_GAP 400                 // cycles: a key off leaving a shorter gap is dropped
-#define MAX_EVENT 0377777           // cycles: a length fits a positive word
+#define MIN_GAP 400                 // cycles; a key off leaving a shorter gap is dropped
+#define MAX_EVENT 0377777           // cycles; a length fits a positive word
 #define SPLIT 0200000               // a longer entry is latched in pieces of this length
 #define PITCH0 48                   // the pitch whose table is latched before the first entry
+#define DYN_F 5                     // f's index in a dynamic word; the piece and each movement start at f
 #define TABLE_LENGTH 256
 
 // The device (IOT 71 and 72).
-#define FLOOR 0xFFFFFF              // the attenuation's largest: OFF
-#define LEVEL_NONE 0777             // a sustain of none: the decay runs on to the floor
+#define FLOOR 0xFFFFFF              // the attenuation's largest, OFF
+#define LEVEL_NONE 0777             // a sustain of none; the decay runs on to the floor
 #define MAXLEN 262144               // an event length of 0
 #define PHASE_MASK 0xFFFFFFFUL      // 16 integer and 12 fraction bits
 #define NO_THRESHOLD 0777
@@ -107,23 +108,23 @@
 #define ACT_KEYOFF 4
 #define ACT_PHASE 8
 #define ACT_SAMPLE 16
-#define ACT_INTERP 32               // dyx's 040: the interpolation, held
-#define ACT_PACK 64                 // dyx's 0100: the packing, held (sample mode only)
+#define ACT_INTERP 32               // dyx's 040, the interpolation, held
+#define ACT_PACK 64                 // dyx's 0100, the packing, held (sample mode only)
 #define ACT_HELD (ACT_WAVE | ACT_SAMPLE)
 #define ACT_KEPT (ACT_WAVE | ACT_SAMPLE | ACT_INTERP | ACT_PACK) // the actions a note leaves latched
 #define ACT_MASK 0177               // dyx's actions
-#define PACKED_END_MAX 21845        // a packed end, in groups: 65,535 samples
+#define PACKED_END_MAX 21845        // a packed end's largest, in groups (65,535 samples)
 #define NO_SUSTAIN (LEVEL_NONE << 9)
 #define MEM_WORDS 0200000
-// Where the voices' blocks are placed from: the player's banks 5-15, from
-// 050000 to the end of memory, as the player places them.
+// The voices' blocks are placed as the player places them, in its banks
+// 5-15, from 050000 to the end of memory.
 #define PLACE_START 050000
 // A voice whose notes latch each block's own end, loop and stride has
 // each block after those three words, as the player's loader puts them.
 #define OWN_PREFIX 3
 
 // The voicing (edge.h) and the room it chooses.
-#define ROOM_VOICES (-1)            // --room=voices: Busch Hall if a converter's voicing asks for it
+#define ROOM_VOICES (-1)            // --room=voices, Busch Hall if a converter's voicing asks for it
 #define EDGE_UNIT_D (1.0 / (double)(1 << EDGE_OUT_SHIFT))
 #define EDGE_LOWEST (-34)           // a voice file's edge levels, dB, even
 #define EDGE_LOUDEST (-22)
@@ -141,22 +142,23 @@
 #define LEVEL_MAX 0777              // a depth or a level
 #define DELAY_MAX 0377              // the vibrato's delay, in 16 clocks
 #define K_MAX 7                     // the percussion's multiple
-#define PERC_WORDS 256              // the percussion's sine: the device reads 256 words
+#define PERC_WORDS 256              // the percussion's sine, of which the device reads 256 words
 #define ADDR_MAX 0177777            // an end, a loop or a stride
 
 // Voice files.
 #define VOICE_VERSION 5             // the newest; 1 has no stops, 2 no voicing, 3 no céleste, 4 none of 5's
+#define LIB_PITCHES 64              // a voice's steps and zones, one for each of the program's pitches
 #define NZONES 6                    // a stop's zones, an octave each from pitch 2
 #define MAX_ZONES (NZONES + 1)      // and zone 6, a version 5 premix's seventh block
 #define ZONE_PITCHES 12
-#define ZONE_TOP 73                 // B6: the highest an octave up sounds in a voice without zone 6
-#define ZONE6_TOP 75                // C#7: the highest with zone 6
+#define ZONE_TOP 73                 // B6, the highest an octave up sounds in a voice without zone 6
+#define ZONE6_TOP 75                // C#7, the highest with zone 6
 #define FIRST_FIVE 5                // the voice file version that makes a library a version 5 drum
 #define MAX_LINE 4096
 #define MAX_VOICES 512
 
 enum { STAGE_OFF, STAGE_ATTACK, STAGE_DECAY, STAGE_SUSTAIN, STAGE_RELEASE };
-enum { EV_STRIKE, EV_SLUR, EV_OFF, EV_MARK };
+enum { EV_STRIKE, EV_SLUR, EV_OFF, EV_MARK, EV_DYN };
 enum { READ_OK, READ_END, READ_LARGE };
 enum { READ_FIRST, READ_SECOND, READ_PERC };
 
@@ -168,7 +170,7 @@ typedef struct
     int nBars;
 } Part;
 
-// A converter's line of the orchestra: its part in each movement (-1:
+// A converter's line of the orchestra, its part in each movement (-1 for
 // none), its instrument (its first stop), its stops, and its octave's
 // number.
 typedef struct
@@ -185,10 +187,11 @@ typedef struct
     int *wordsP;
     long nWords;
     long pos;
-    long fp;                        // the player's next word of banks 2-3
+    long fp;                        // the player's next word of the tape's area
+    long areaEnd;                   // the end of the area in use, TAPE_END, or MEM_WORDS from TAPE2
 } TapeReader;
 
-// One entry of a converter's ring: its length in cycles, and the table,
+// One entry of a converter's ring, its length in cycles and the table,
 // step and dyx value it latches, 0 where it latches nothing.
 typedef struct
 {
@@ -196,21 +199,21 @@ typedef struct
     long dxa;
     long dyf;
     long dyx;
+    long vol;       // a dynamic's volume from the entry's start, or -1
 } Entry;
 
-// A voice, as its file holds it: its blocks are lengthsP[0..nBlocks-1]
-// words, one after another in wordsP; ownP holds each block's own end,
-// loop and stride, three a block, the end -1 for a block with none (NULL:
-// none has).
+// A voice, as its file holds it. Its blocks are lengthsP[0..nBlocks-1]
+// words, one after another in wordsP. ownP holds each block's own end,
+// loop and stride, three a block, the end -1 for a block with none.
 typedef struct
 {
     const char *nameP;
     int n;
     int sample;
-    int stop;                       // a stop: played as the player's premix of it
+    int stop;                       // a stop, played as the player's premix of it
     int speech[MAX_ZONES];          // a stop's speech block for each zone, zone 6's the sixth's without it
-    int zone6;                      // zone 6's block; -1: none
-    int version;                    // the file's
+    int zone6;                      // zone 6's block, or -1 for none
+    int version;                    // the file's version
     long start, peak, attack, decay, sustain, release;
     long stride;
     long thresholds[3];
@@ -221,20 +224,20 @@ typedef struct
     const int *lengthsP;
     const unsigned long *wordsP;
     const long *ownP;
-    int voicing;                    // dzv's low bits: the edge's level, the speech, Busch Hall
-    int interp;                     // version 5: the interpolation
-    int pack;                       // the packing: end, loop and stride in groups
+    int voicing;                    // dzv's low bits, the edge's level, the speech and Busch Hall
+    int interp;                     // version 5's interpolation
+    int pack;                       // the packing; end, loop and stride are in groups
     long vRate, vDepth, vDelay;     // the slow counter's rate, the vibrato's depth and delay
     int vFree;                      // free running
     long lesA, lesP;                // the Leslie's tremolo and place depths
-    long pLevel, pK, pDecay;        // the percussion: its level, multiple (0: none) and decay
+    long pLevel, pK, pDecay;        // the percussion's level, multiple (0 for none) and decay
     int pBlock;                     // its sine's block
 } Voice;
 
-// A voice placed in memory: what the sequencer and the converter's
-// constants need of it, its zones now addresses, zone 6's in zone6 (0:
+// A voice placed in memory, as the sequencer and the converter's
+// constants need it. Its zones are addresses, zone 6's in zone6 (0 for
 // none). With own, each pitch's block has its own end, loop and stride
-// (zoneEnd, zoneLoop, zoneStride; zone 6's zone6End, zone6Loop,
+// (zoneEnd, zoneLoop, zoneStride, and zone 6's zone6End, zone6Loop,
 // zone6Stride), latched with its table.
 typedef struct
 {
@@ -247,7 +250,7 @@ typedef struct
     long attack, decay, release, start, peak, sustain, held, end, loop, stride;
     long thresholds[3];
     int voicing;
-    int hasLatches;                 // version 5's six are given
+    int hasLatches;                 // version 5's six latches are given
     long dyv, dyw, dym, dyk, dyj, dyp;
     int own;
     long zoneEnd[LIB_PITCHES];
@@ -259,20 +262,22 @@ typedef struct
 {
     int part;
     const Instrument *instP;
-    int octave;                     // the shift: -2 to 2
+    int octave;                     // the octave shift, -2 to 2
     int volume;                     // 1/8 dB
     long sus;
     long held;
     Entry *entriesP;
     long nEntries;
     long capEntries;
+    long pendVol;   // a dynamic's volume for the next entry, or -1
+    int dyn;        // the dynamic in force, 1 pp to 6 ff
     long pend[3];
     long long last;
     int sounding;
     int pitch;
 } Sequencer;
 
-// What an event's end loads besides the event's length: the note.
+// The note an event's end loads, besides the event's length.
 typedef struct
 {
     long addr, length, period, step, attack, decay, release;
@@ -282,7 +287,7 @@ typedef struct
 } Note;
 
 // The pair of words a read holds with the interpolation, by address, and
-// their samples; n of them (0: none yet).
+// their samples, n of them (0 for none yet).
 typedef struct
 {
     long addr[2];
@@ -290,10 +295,10 @@ typedef struct
     int n;
 } Pair;
 
-// One converter: the latches the program writes, the values loaded from
-// them at an event's end, the envelope, the clocks, the onset's note,
-// its cycles to wait (0: none) and its sequence, and the voicing's state
-// and its cycles since the go.
+// One converter. It holds the latches the program writes, the values
+// loaded from them at an event's end, the envelope, the clocks, the
+// onset's note, its cycles to wait (0 for none) and its sequence, and the
+// voicing's state and its cycles since the go.
 typedef struct
 {
     long lAddr, lLength, lPeriod, lStep, lEvlen, lAttack, lDecay, lRelease;
@@ -310,12 +315,13 @@ typedef struct
     long att, start, peak, sustain, attack, decay, release;
     int stage;
     long vol, volTarget;
+    long lVol;      // the latched entry's dynamic volume, or -1
     int going;
     unsigned long phase;
     long evLeft, countdown;
     double visible, pending;
     int pendingValid;
-    // The céleste: its detune k (0: none), the second phase and its step,
+    // The céleste's detune k (0 for none), the second phase and its step,
     // whether this sample time is the odd one, each read's word (visible
     // is the two mixed, or the first alone), and the second's to come.
     int celeste;
@@ -324,13 +330,13 @@ typedef struct
     int odd;
     double first, second, pending2;
     int pending2Valid;
-    // Recorded instruments: the interpolation; the slow counter's phase,
-    // its delay left and its latches, and the terms formed from it (the
-    // vibrato's m, the steps taken, the tremolo, the place's offsets); the
-    // percussion's latches, phase, attenuation (FLOOR: none) and word.
-    // pairs: each read's held pair, the first's, the céleste's and the
-    // percussion's. packed: the first read's and the céleste's from packed
-    // words (sample mode only).
+    // For recorded instruments, the interpolation; the slow counter's
+    // phase, its delay left and its latches, and the terms formed from it
+    // (the vibrato's m, the steps taken, the tremolo, the place's
+    // offsets); the percussion's latches, phase, attenuation (FLOOR for
+    // none) and word. pairs holds each read's pair, the first's, the
+    // céleste's and the percussion's. packed says the first read and the
+    // céleste's read packed words (sample mode only).
     int interp;
     int packed;
     Pair pairs[3];
@@ -391,25 +397,26 @@ static OrchLine orch[NCONV];
 static int volumes[NCONV];
 static int places[NCONV];           // each converter's place, as the orchestra block holds it
 static long placeAtts[NCONV][2];    // its mixer attenuations, 1/64 dB, into the left and right channels
-static long memWords[MEM_WORDS];    // -1: no voice's word there
+static long memWords[MEM_WORDS];    // -1 where no voice's word is
 static Voice voices[MAX_VOICES];
 static int nVoices;
-static int libraryFive;             // a voice file of version 5: the player's drum is version 5
+static int libraryFive;             // a voice file of version 5 makes the player's drum version 5
 static Instrument placed[NCONV];
 static long placeNext;
+static long voiceBase = PLACE_START; // the player's vbs, PLACE_START or the word after a tape run on to TAPE2
 static Sequencer seqs[NCONV];
 static Converter convs[NCONV];
 static long long unmappedFetches;
 static long stepsBeyond;
 static long articulationsHalted;
 static Room room;                   // after the mix; its kind ROOM_OFF unless --room= or the tape
-static long onsetCycles;            // the onset's bound in cycles; 0: off, unless --onset= or the tape
+static long onsetCycles;            // the onset's bound in cycles, 0 for off unless --onset= or the tape sets it
 static int tapeRoom = SETTING_CONFIGURED;   // the orchestra block's room, as the player takes it
 static int tapeOnset = SETTING_CONFIGURED;  // and its onset, in 1/8 ms
 static const int octaveShifts[NOCT] = { 0, -1, 1, -2, 2 };
 static const char *octaveFeet[NOCT] = { "8", "16", "4", "32", "2" };
-// The player's places, left to right (menus.ac's plv is k x PLACE_STEP), each
-// one's dzp word (its plp: the left's attenuation in bits 0-8 and the right's
+// The player's places, left to right (punch.ac's plv is k x PLACE_STEP), each
+// one's dzp word (its plp, the left's attenuation in bits 0-8 and the right's
 // in 9-17, 1/8 dB, MUTE for off, on a constant-power law) and its name.
 static const int placeWords[NPLACES] =
 {
@@ -417,14 +424,14 @@ static const int placeWords[NPLACES] =
 };
 static const char *placeNames[NPLACES] = { "LEFT", "L3", "L2", "L1", "CENTER", "R1", "R2", "R3", "RIGHT" };
 
-// fail: prints the message and exits with status 1.
+// Prints the message and exits with status 1.
 static void fail(const char *msgP)
 {
     fprintf(stderr, "dacrender: %s\n", msgP);
     exit(1);
 }
 
-// growOrFail: realloc that exits on failure.
+// Reallocates the block to bytes, exiting on failure.
 // Returns the new block.
 static void *growOrFail(void *ptrP, size_t bytes)
 {
@@ -438,7 +445,7 @@ static void *growOrFail(void *ptrP, size_t bytes)
     return newP;
 }
 
-// instByName: the library's voice of that name.
+// Finds the library's voice of that name.
 // Returns its number, or -1 if the library has none.
 static int instByName(const char *nameP)
 {
@@ -456,51 +463,8 @@ static int instByName(const char *nameP)
 
 // The voices.
 
-// compiledVoices: the nine compiled in, as voices.
-static void compiledVoices(void)
-{
-    const LibVoice *lP;
-    Voice *vP;
-    int k;
-    int p;
-
-    libraryFive = 0;
-    for(k = 0; k < LIB_VOICES; k++)
-    {
-        lP = &libVoices[k];
-        vP = &voices[k];
-        vP->nameP = lP->nameP;
-        vP->n = lP->n;
-        vP->sample = lP->sample;
-        vP->start = lP->start;
-        vP->peak = lP->peak;
-        vP->attack = lP->attack;
-        vP->decay = lP->decay;
-        vP->sustain = lP->sustain;
-        vP->release = lP->release;
-        vP->stride = lP->stride;
-        vP->thresholds[0] = lP->thresholds[0];
-        vP->thresholds[1] = lP->thresholds[1];
-        vP->thresholds[2] = lP->thresholds[2];
-        vP->end = lP->end;
-        vP->loop = lP->loop;
-        for(p = 0; p < LIB_PITCHES; p++)
-        {
-            vP->steps[p] = lP->steps[p];
-            vP->zones[p] = lP->zones[p];
-        }
-        vP->nBlocks = lP->nBlocks;
-        vP->lengthsP = lP->lengthsP;
-        vP->wordsP = lP->wordsP;
-        vP->voicing = 0;            // the nine have none
-        vP->zone6 = lP->zone6;
-        vP->version = lP->version;
-        libraryFive |= (vP->version >= FIRST_FIVE);
-    }
-    nVoices = LIB_VOICES;
-}
-
-// voiceFail: a voice file's error, at its line, and exit 1.
+// Prints a voice file's error, at its line when there is one, and exits
+// with status 1.
 static void voiceFail(const char *pathP, int line, const char *msgP)
 {
     if( line > 0 )
@@ -514,7 +478,7 @@ static void voiceFail(const char *pathP, int line, const char *msgP)
     exit(1);
 }
 
-// strdupOrFail: a new copy of the string.
+// Returns a new copy of the string, exiting on failure.
 static char *strdupOrFail(const char *sP)
 {
     char *dP;
@@ -524,9 +488,10 @@ static char *strdupOrFail(const char *sP)
     return dP;
 }
 
-// voiceNumbers: the line's numbers from pP on into valsP (base 10, or 8
-// for a block's words), at most max.
-// Returns how many, or -1 for a token that is no number.
+// Reads the line's numbers from pP on into valsP (base 10, or 8 for a
+// block's words), at most max.
+// Returns how many, max + 1 if there are more, or -1 for a token that is
+// no number.
 static int voiceNumbers(char *pP, long *valsP, int max, int base)
 {
     char *tokP;
@@ -550,9 +515,9 @@ static int voiceNumbers(char *pP, long *valsP, int max, int base)
     return n;
 }
 
-// celesteOf: the céleste's detune k in half cents from the line's text at
-// pP: cents from 0.5 to 7.5 in half cents (2, 2.5, 2.50), nothing after.
-// Returns k, 1 to 15, or 0 for anything else.
+// Reads the céleste's detune from the line's text at pP, cents from 0.5
+// to 7.5 in half cents (2, 2.5, 2.50), with nothing after.
+// Returns the detune k in half cents, 1 to 15, or 0 for anything else.
 static int celesteOf(const char *pP)
 {
     long whole;
@@ -599,8 +564,8 @@ static int celesteOf(const char *pP)
     return (int)((whole * 2) + half);
 }
 
-// wholeOf: the token at tokP as a number of decimal digits alone, into *outP.
-// Returns 1, or 0 if it is not one.
+// Reads the token at tokP into *outP if it is decimal digits alone.
+// Returns 1, or 0 if it is not.
 static int wholeOf(const char *tokP, long *outP)
 {
     char *endP;
@@ -613,10 +578,44 @@ static int wholeOf(const char *tokP, long *outP)
     return (*endP == '\0');
 }
 
-// readVoice: the voice file at pathP into *vP (README.md, "Voice files");
-// a malformed file, or one whose blocks are shorter than the voice
-// plays, ends the run.
-static void readVoice(const char *pathP, Voice *vP)
+// Reads a voice file's next line into line (MAX_LINE bytes), its newline
+// kept as fgets() keeps it, from fP, or with fP NULL from the compiled-in
+// lines at *linesPP, which it steps past.
+// Returns 1, 0 at the end, or -1 for a line too long for line.
+static int voiceLine(FILE *fP, const char *const **linesPP, char *line)
+{
+    size_t n;
+
+    if( fP != NULL )
+    {
+        if( !fgets(line, MAX_LINE, fP) )
+        {
+            return 0;
+        }
+        return (((strchr(line, '\n') == NULL) && !feof(fP)) ? -1 : 1);
+    }
+    if( **linesPP == NULL )
+    {
+        return 0;
+    }
+    // As with fgets(), the line and its newline fit with the NUL, or it is too long.
+    n = strlen(**linesPP);
+    if( (n + 2) > MAX_LINE )
+    {
+        return -1;
+    }
+    memcpy(line, **linesPP, n);
+    line[n] = '\n';
+    line[n + 1] = '\0';
+    (*linesPP)++;
+    return 1;
+}
+
+// Reads the voice file at pathP into *vP (README.md, "Voice files"), or
+// with linesP its text compiled in (dacrender_lib.h), pathP naming it. A
+// malformed file, or one whose blocks are shorter than the voice plays,
+// ends the run.
+static void readVoice(const char *pathP, const char *const *linesP, Voice *vP)
 {
     enum { F_NONE, F_STEPS, F_ZONES, F_SPEECH, F_BLOCK };
     FILE *fP;
@@ -657,6 +656,7 @@ static void readVoice(const char *pathP, Voice *vP)
     int seenLeslie;
     int seenPercussion;
     int lineNo;
+    int got;
     int n;
     int i;
     int b;
@@ -666,7 +666,8 @@ static void readVoice(const char *pathP, Voice *vP)
 
     memset(vP, 0, sizeof(*vP));
     vP->zone6 = -1;
-    if( !(fP = fopen(pathP, "r")) )
+    fP = NULL;
+    if( (linesP == NULL) && !(fP = fopen(pathP, "r")) )
     {
         voiceFail(pathP, 0, "cannot read the voice file");
     }
@@ -686,10 +687,10 @@ static void readVoice(const char *pathP, Voice *vP)
     seenInterp = seenPack = seenVibrato = seenLeslie = seenPercussion = 0;
     vP->n = -1;
     lineNo = 0;
-    while( fgets(line, sizeof(line), fP) )
+    while( (got = voiceLine(fP, &linesP, line)) != 0 )
     {
         lineNo++;
-        if( (strchr(line, '\n') == NULL) && !feof(fP) )
+        if( got < 0 )
         {
             voiceFail(pathP, lineNo, "a line too long");
         }
@@ -822,7 +823,7 @@ static void readVoice(const char *pathP, Voice *vP)
             }
             else
             {
-                // The menu's family: checked, and not kept, since nothing
+                // The menu's family is checked but not kept, since nothing
                 // here plays by it.
                 if( seenFamily || (n == 0) )
                 {
@@ -954,7 +955,7 @@ static void readVoice(const char *pathP, Voice *vP)
         }
         else if( (strcmp(word, "zone6") == 0) && (version >= 5) )
         {
-            // zone6 B: zone 6's block, which only an octave up plays.
+            // zone6 B names zone 6's block, which only an octave up plays.
             if( (vP->zone6 >= 0) || (voiceNumbers(pP, vals, 1, 10) != 1) || (vals[0] > 255) )
             {
                 voiceFail(pathP, lineNo, "zone6: one block number, once");
@@ -963,8 +964,8 @@ static void readVoice(const char *pathP, Voice *vP)
         }
         else if( (strcmp(word, "edge") == 0) && (version >= 3) )
         {
-            // edge DB: the edge tone's level k, DB = -36 + 2k (a level is negative, so it is
-            // read here, not by voiceNumbers()).
+            // edge DB gives the edge tone's level k, DB = -36 + 2k. A level is negative, so it
+            // is read here, not by voiceNumbers().
             db = strtol(pP, &endP, 10);
             while( (*endP == ' ') || (*endP == '\t') || (*endP == '\r') || (*endP == '\n') )
             {
@@ -1104,7 +1105,10 @@ static void readVoice(const char *pathP, Voice *vP)
             voiceFail(pathP, lineNo, "no such field");
         }
     }
-    fclose(fP);
+    if( fP != NULL )
+    {
+        fclose(fP);
+    }
     if( (field == F_BLOCK) && (blockFill != lengthsP[vP->nBlocks - 1]) )
     {
         voiceFail(pathP, lineNo, "a block has fewer words than its length");
@@ -1134,10 +1138,10 @@ static void readVoice(const char *pathP, Voice *vP)
     {
         voiceFail(pathP, 0, "the edge and the rise belong with a table or a stop");
     }
-    // A stop: its premix's loop is one table, after the speech; each
-    // zone's speech block is the speech and each table TABLE_LENGTH words,
-    // as the player reads them into the premix's place. Without zone 6
-    // its seventh speech is its sixth, as the drum's header has it.
+    // A stop's premix loops on one table, after the speech. Each zone's
+    // speech block is as long as the speech and each table TABLE_LENGTH
+    // words, as the player reads them into the premix's place. Without
+    // zone 6 its seventh speech is its sixth, as the drum's header has it.
     if( vP->stop )
     {
         if( (nSpeech != ((vP->zone6 >= 0) ? MAX_ZONES : NZONES)) || (vP->loop != TABLE_LENGTH)
@@ -1165,9 +1169,9 @@ static void readVoice(const char *pathP, Voice *vP)
             }
         }
     }
-    // Every word the voice can fetch is in its block: a table's timbres
-    // and their 256 words, a sample up to its end; a block with its own
-    // end and stride, its end and each timbre's.
+    // Every word the voice can fetch must be in its block. That is a
+    // table's timbres and their 256 words, a sample up to its end, or for
+    // a block with its own end and stride, its end and each timbre's.
     need = TABLE_LENGTH;
     timbres = 0;
     for(i = 0; i < 3; i++)
@@ -1252,8 +1256,7 @@ static void readVoice(const char *pathP, Voice *vP)
     vP->ownP = ownP;
 }
 
-// blockValues: block b's end, loop and stride: its own, or the voice's (a
-// compiled voice has none of its own).
+// Gives block b's end, loop and stride, its own or else the voice's.
 static void blockValues(const Voice *vP, int b, long *endP, long *loopP, long *strideP)
 {
     if( (vP->ownP != NULL) && (vP->ownP[3 * b] >= 0) )
@@ -1270,8 +1273,9 @@ static void blockValues(const Voice *vP, int b, long *endP, long *loopP, long *s
     }
 }
 
-// ownEnds: whether each note latches its block's end, loop and stride: a
-// block a zone names (zone 6's too) has its own, other than the voice's.
+// Returns 1 if a block a zone names (zone 6's too) has an end, loop or
+// stride other than the voice's, so that each note latches its block's,
+// else 0.
 static int ownEnds(const Voice *vP)
 {
     long e;
@@ -1294,9 +1298,9 @@ static int ownEnds(const Voice *vP)
     return 0;
 }
 
-// voiceLatches: the six latches version 5 adds for voice vP, its
-// percussion's sine at kAddr, into *iP; hasLatches when any of the voice's
-// five is not 0, as the program writes the six only then.
+// Sets the six latches version 5 adds for voice vP, its percussion's sine
+// at kAddr, in *iP. hasLatches is set when any of the voice's five is not
+// 0, as the program writes the six only then.
 static void voiceLatches(const Voice *vP, long kAddr, Instrument *iP)
 {
     iP->dyv = vP->vRate;
@@ -1308,8 +1312,8 @@ static void voiceLatches(const Voice *vP, long kAddr, Instrument *iP)
     iP->hasLatches = ((iP->dyv | iP->dyw | iP->dym | iP->dyk | iP->dyj) != 0);
 }
 
-// readLibrary: the voice files a library lists, one a line, relative to
-// the library's own directory; a voice's number is its place in the list.
+// Reads the voice files a library lists, one a line, relative to the
+// library's directory. A voice's number is its place in the list.
 static void readLibrary(const char *pathP)
 {
     FILE *fP;
@@ -1362,7 +1366,7 @@ static void readLibrary(const char *pathP)
             memcpy(fullP, pathP, dir);
             strcpy(fullP + dir, pP);
         }
-        readVoice(fullP, &voices[nVoices]);
+        readVoice(fullP, NULL, &voices[nVoices]);
         libraryFive |= (voices[nVoices].version >= FIRST_FIVE);
         nVoices++;
         free(fullP);
@@ -1374,9 +1378,40 @@ static void readLibrary(const char *pathP)
     }
 }
 
-// placeVoice: voice k's blocks in memory from placeNext on, as the
-// player's loader places them, into *iP: with own ends, each block after
-// its end, loop and stride (OWN_PREFIX words).
+// Reads the nine voices compiled in, their files' text read as
+// readLibrary() reads a library's files.
+static void compiledVoices(void)
+{
+    int k;
+
+    libraryFive = 0;
+    for(k = 0; k < LIB_VOICES; k++)
+    {
+        readVoice(libFiles[k].fileP, libFiles[k].linesP, &voices[k]);
+        libraryFive |= (voices[k].version >= FIRST_FIVE);
+    }
+    nVoices = LIB_VOICES;
+}
+
+// Ends the run as the player refuses an orchestra too large for the words
+// from vbs to the end of memory (lhd, AC 4, or 6 above a tape).
+static void voicesTooLarge(void)
+{
+    if( voiceBase == PLACE_START )
+    {
+        fprintf(stderr, "dacrender: the orchestra's voices do not fit the player's banks 5-15\n");
+    }
+    else
+    {
+        fprintf(stderr, "dacrender: the orchestra's voices do not fit the %ld words above this tape, "
+                "and the player refuses them (VOICES DO NOT FIT WITH THIS TAPE)\n", (MEM_WORDS - voiceBase));
+    }
+    exit(1);
+}
+
+// Places voice k's blocks in memory from placeNext on, as the player's
+// loader places them, and fills *iP. With own ends, each block follows its
+// end, loop and stride (OWN_PREFIX words).
 static void placeVoice(int k, Instrument *iP)
 {
     const Voice *vP;
@@ -1396,8 +1431,7 @@ static void placeVoice(int k, Instrument *iP)
     {
         if( (placeNext + own + vP->lengthsP[b]) > MEM_WORDS )
         {
-            fprintf(stderr, "dacrender: the orchestra's voices do not fit the player's banks 5-15\n");
-            exit(1);
+            voicesTooLarge();
         }
         if( own != 0 )
         {
@@ -1447,8 +1481,8 @@ static void placeVoice(int k, Instrument *iP)
     voiceLatches(vP, ((vP->pK != 0) ? addr[vP->pBlock] : 0), iP);
 }
 
-// zoneEnds: the end, loop and stride the table at addr latches with it,
-// for an instrument whose blocks have their own.
+// Gives the end, loop and stride the table at addr latches with it, for
+// an instrument whose blocks have their own.
 static void zoneEnds(const Instrument *iP, long addr, long *endP, long *loopP, long *strideP)
 {
     int p;
@@ -1472,7 +1506,7 @@ static void zoneEnds(const Instrument *iP, long addr, long *endP, long *loopP, l
     *strideP = iP->zoneStride[p];
 }
 
-// sampleOf: a word's sample, as the converters read bits 0-11.
+// Returns a word's sample, as the converters read bits 0-11.
 static long sampleOf(long w)
 {
     long v;
@@ -1481,7 +1515,7 @@ static long sampleOf(long w)
     return ((v & 04000) ? -((~v) & 07777) : v);
 }
 
-// wordOf: a sample as an 18-bit ones' complement word.
+// Returns a sample as an 18-bit ones' complement word.
 static long wordOf(long sample)
 {
     long w;
@@ -1490,7 +1524,7 @@ static long wordOf(long sample)
     return ((sample < 0) ? ((~w) & WORD_MASK) : w);
 }
 
-// blockOf: the words of voice vP's block b.
+// Returns the words of voice vP's block b.
 static const unsigned long *blockOf(const Voice *vP, int b)
 {
     const unsigned long *wP;
@@ -1504,9 +1538,8 @@ static const unsigned long *blockOf(const Voice *vP, int b)
     return wP;
 }
 
-// tableBlock: voice vP's block for zone z, 0-6: the zone map's at the
-// zone's first pitch, or zone 6's; zone 5's for zone 6 in a voice without
-// one.
+// Returns voice vP's block for zone z, 0-6, the zone map's at the zone's
+// first pitch, or zone 6's. A voice without zone 6 gives zone 5's for it.
 static int tableBlock(const Voice *vP, int z)
 {
     if( (z == NZONES) && (vP->zone6 >= 0) )
@@ -1516,16 +1549,16 @@ static int tableBlock(const Voice *vP, int z)
     return vP->zones[2 + (ZONE_PITCHES * ((z < NZONES) ? z : (NZONES - 1)))];
 }
 
-// placeStops: the converter's stops added together in memory from
-// placeNext on, as the player's loader adds them: for each of the NZONES
-// zones, and on a version 5 drum zone 6 too, a block of the sample's end
-// words, word i the sum of every stop's zone table word i mod
+// Adds the converter's stops together in memory from placeNext on, as the
+// player's loader adds them, and fills *iP. For each of the NZONES zones,
+// and on a version 5 drum zone 6 too, it writes a block of the sample's
+// end words, word i the sum of every stop's zone table word i mod
 // TABLE_LENGTH and, below the speech's end, of the first stop's speech
-// word i; the PDP-1's adds give the integer sum, since no partial sum
+// word i. The PDP-1's adds give the integer sum, since no partial sum
 // passes full scale. Every pitch plays its zone's block; the seventh is
 // zone 6 when every stop has one, else the block of pitches 62-63. The
 // voicing is the loudest edge, the widest céleste and every other bit any
-// stop has. Ends the run if the stops are not alike (their voicing aside),
+// stop has. Stops that are not alike (their voicing aside) end the run,
 // as the player refuses them.
 static void placeStops(const OrchLine *oP, Instrument *iP)
 {
@@ -1580,8 +1613,7 @@ static void placeStops(const OrchLine *oP, Instrument *iP)
     }
     if( (placeNext + (nBlocks * fP->end) + ((fP->pK != 0) ? fP->lengthsP[fP->pBlock] : 0)) > MEM_WORDS )
     {
-        fprintf(stderr, "dacrender: the orchestra's voices do not fit the player's banks 5-15\n");
-        exit(1);
+        voicesTooLarge();
     }
     for(z = 0; z < nBlocks; z++)
     {
@@ -1608,7 +1640,7 @@ static void placeStops(const OrchLine *oP, Instrument *iP)
         z = (((p > 2) ? (p - 2) : 0) / ZONE_PITCHES);
         if( libraryFive && mixed && (z == (NZONES - 1)) )
         {
-            z = NZONES;             // a stop without zone 6: 62-63 play the seventh block
+            z = NZONES;             // a stop without zone 6, so 62-63 play the seventh block
         }
         iP->zoneMap[p] = (placeNext + (z * fP->end));
         iP->steps[p] = fP->steps[p];
@@ -1650,8 +1682,8 @@ static void placeStops(const OrchLine *oP, Instrument *iP)
 
 // The tape.
 
-// readTapeFile: the file's words, three frames with the eighth hole each;
-// frames without it (leader) are skipped, as rpb skips them.
+// Reads the file's words, three frames with the eighth hole each. Frames
+// without it (leader) are skipped, as rpb skips them.
 // Returns 1, or 0 if the file cannot be read.
 static int readTapeFile(const char *pathP, TapeReader *rP)
 {
@@ -1669,6 +1701,7 @@ static int readTapeFile(const char *pathP, TapeReader *rP)
     rP->nWords = 0;
     rP->pos = 0;
     rP->fp = TAPE_START;
+    rP->areaEnd = TAPE_END;
     cap = 0;
     nFrame = 0;
     while( (c = fgetc(fP)) != EOF )
@@ -1695,7 +1728,7 @@ static int readTapeFile(const char *pathP, TapeReader *rP)
     return 1;
 }
 
-// nextWord: the tape's next word into *wP.
+// Takes the tape's next word into *wP.
 // Returns 1, or 0 at the tape's end.
 static int nextWord(TapeReader *rP, int *wP)
 {
@@ -1708,15 +1741,35 @@ static int nextWord(TapeReader *rP, int *wP)
     return 1;
 }
 
-// advance: the player's next word of banks 2-3 (its adv).
-// Returns 1, or 0 when that reaches TAPE_END.
+// Moves to the player's next word of the tape's area, as its adv does.
+// Returns 1, or 0 when that reaches the end of the area in use.
 static int advance(TapeReader *rP)
 {
     rP->fp++;
-    return (rP->fp != TAPE_END);
+    return (rP->fp != rP->areaEnd);
 }
 
-// onesAdd: the PDP-1's add, ones' complement with the end-around carry,
+// Places a piece of need words from *startP, as the player's fit does once
+// its count is read. It fits when its start plus need stays below the end
+// of the area in use, as adv requires. One that does not fit the first
+// area starts at TAPE2 instead, and the rest of the tape follows there.
+// Returns 1, or 0 when it does not fit the second area either.
+static int placePiece(TapeReader *rP, long *startP, long need)
+{
+    if( (*startP + need) < rP->areaEnd )
+    {
+        return 1;
+    }
+    if( rP->areaEnd != TAPE_END )
+    {
+        return 0;
+    }
+    rP->areaEnd = MEM_WORDS;
+    *startP = TAPE_R2;
+    return ((*startP + need) < rP->areaEnd);
+}
+
+// Returns the PDP-1's add, ones' complement with the end-around carry,
 // and a minus zero made plus zero, as the player's checksum adds.
 static int onesAdd(int a, int b)
 {
@@ -1730,10 +1783,10 @@ static int onesAdd(int a, int b)
     return ((s == WORD_MASK) ? 0 : (int)s);
 }
 
-// readBlock: count words into a new array at *wordsPP, then the checksum,
-// each word taking its place in banks 2-3 as the player's rdb does.
+// Reads count words into a new array at *wordsPP, then the checksum, each
+// word taking its place in the tape's area as the player's rdb does.
 // Returns READ_OK, READ_END (the tape ended in the block) or READ_LARGE
-// (past bank 3); *sumOkP says whether the checksum held.
+// (past the area's end); *sumOkP says whether the checksum held.
 static int readBlock(TapeReader *rP, int count, int **wordsPP, int *sumOkP)
 {
     int *wP;
@@ -1765,13 +1818,14 @@ static int readBlock(TapeReader *rP, int count, int **wordsPP, int *sumOkP)
     return READ_OK;
 }
 
-// inRange: the player's rng, 0 <= w < limit on an 18-bit word.
+// Returns whether 0 <= w < limit on an 18-bit word, as the player's rng
+// tests it.
 static int inRange(int w, int limit)
 {
     return (((w & SIGN_BIT) == 0) && (w < limit));
 }
 
-// isLevel: whether a volume is one of the slider's levels.
+// Returns whether a volume is one of the slider's levels.
 static int isLevel(int w)
 {
     int k;
@@ -1786,20 +1840,20 @@ static int isLevel(int w)
     return 0;
 }
 
-// isPlace: whether a place is one of the player's nine.
+// Returns whether a place is one of the player's nine.
 static int isPlace(int w)
 {
     return (inRange(w, PLACE_RIGHT + 1) && ((w % PLACE_STEP) == 0));
 }
 
-// defaultPlace: converter c's place before any is given: 1 and 2 left, 3
-// and 4 right.
+// Returns converter c's place before any is given, 1 and 2 left, 3 and 4
+// right.
 static int defaultPlace(int c)
 {
     return ((c < 2) ? 0 : PLACE_RIGHT);
 }
 
-// isOnset: whether a block's onset is one the player's list has: the
+// Returns whether a block's onset is one the player's list has, the
 // configuration's, off, or 2, 4, 6, 8, 12 or 16 ms.
 static int isOnset(int w)
 {
@@ -1816,12 +1870,12 @@ static int isOnset(int w)
     return 0;
 }
 
-// takeOrchestra2: a version 2 or 3 block's words (n of them), as the
-// player's orb takes them: a line has one to four stops, packed from the
-// first, no detune, and a place that is one of the nine; version 3's room
-// and onset are the configuration's or ones the player's lists have.
-// Returns as takeOrchestra; NCONV + 1 also for a version that is not the
-// block's, or a room or onset the player does not have.
+// Takes a version 2 or 3 block's n words, as the player's orb takes them.
+// A line has one to four stops, packed from the first, no detune, and a
+// place that is one of the nine; version 3's room and onset are the
+// configuration's or ones the player's lists have.
+// Returns as takeOrchestra(), NCONV + 1 also for a version that is not
+// the block's, or a room or onset the player does not have.
 static int takeOrchestra2(const int *wP, int n)
 {
     const int *lP;
@@ -1873,9 +1927,9 @@ static int takeOrchestra2(const int *wP, int n)
     return 0;
 }
 
-// takeOrchestra: the block's words, as the player's orb takes them: every
-// number one the player has, or nothing changed. A block from before
-// version 2 puts each converter at its own place, and one from before
+// Takes the block's words as the player's orb takes them, all of them if
+// every number is one the player has, else none. A block from before
+// version 2 puts each converter at its default place, and one from before
 // version 3 leaves the room and the onset the configuration's.
 // Returns 0 if taken, else the converter (1 to NCONV) with a number out of
 // range or a volume that is no level, or NCONV + 1 for per.
@@ -1927,24 +1981,26 @@ static int takeOrchestra(const int *wP, int n)
     return 0;
 }
 
-// tapeError: READ TAPE's end at an error: the parts read whole before it
-// are kept.
+// Reports READ TAPE's end at an error; the parts read whole before it are
+// kept.
 static void tapeError(const char *whyP)
 {
     printf("warning: TAPE ERROR %s: the %d parts read whole before it are kept\n", whyP, nParts);
 }
 
-// loadTape: every part on the tape, and an orchestra block, as READ TAPE
-// takes them (dacmusic.am1's loader): a checksum that fails takes the
-// block as read; a bad count, too many parts or a tape larger than its
-// area ends the read, keeping the parts before it; a block the player
-// would refuse leaves the orchestra as it was.
+// Reads every part on the tape, and an orchestra block, as READ TAPE
+// (menu.ac's rdt) takes them. A checksum that fails takes the block
+// as read; a bad count, too many parts or a tape larger than its two
+// areas ends the read, keeping the parts before it; a block the player
+// would refuse leaves the orchestra as it was. Each piece is placed by
+// placePiece() once its count is read, and voiceBase is set as each part
+// is taken.
 static void loadTape(TapeReader *rP)
 {
     long ph;
+    long bb;
     int ct;
     int nct;
-    int i;
     int status;
     int sumOk;
     int why;
@@ -1953,23 +2009,24 @@ static void loadTape(TapeReader *rP)
     int *blockP;
 
     nParts = 0;
+    voiceBase = PLACE_START;
     for(;;)
     {
+        // The part's four words are passed over unchecked; its count says
+        // where it goes.
         ph = rP->fp;
-        for(i = 0; i < PART_HEADER; i++)
-        {
-            if( !advance(rP) )
-            {
-                tapeError("TAPE TOO LARGE");
-                return;
-            }
-        }
+        rP->fp = (ph + PART_HEADER);
         if( !nextWord(rP, &ct) )
         {
             return;
         }
         if( (ct == ORCH_COUNT) || (ct == ORCH_COUNT0) || (ct == ORCH_COUNT2) || (ct == ORCH_COUNT3) )
         {
+            if( !placePiece(rP, &ph, (ct & 0777)) )
+            {
+                tapeError("TAPE TOO LARGE");
+                return;
+            }
             rP->fp = ph;
             status = readBlock(rP, (ct & 0777), &blockP, &sumOk);
             if( status == READ_LARGE )
@@ -2015,6 +2072,13 @@ static void loadTape(TapeReader *rP)
             return;
         }
         nct = ct;
+        // The four words, the notes and the bar line, in one area.
+        if( !placePiece(rP, &ph, (PART_HEADER + nct + 1L)) )
+        {
+            tapeError("TAPE TOO LARGE");
+            return;
+        }
+        rP->fp = (ph + PART_HEADER);
         status = readBlock(rP, nct, &notesP, &sumOk);
         if( status != READ_OK )
         {
@@ -2048,6 +2112,16 @@ static void loadTape(TapeReader *rP)
             tapeError("BAD COUNT");
             return;
         }
+        // The bar pointers as read and the end mark, in one area, which
+        // may be TAPE2's after notes below TEND.
+        bb = rP->fp;
+        if( !placePiece(rP, &bb, (ct + 1L)) )
+        {
+            free(notesP);
+            tapeError("TAPE TOO LARGE");
+            return;
+        }
+        rP->fp = bb;
         status = readBlock(rP, ct, &barsP, &sumOk);
         if( status != READ_OK )
         {
@@ -2064,16 +2138,13 @@ static void loadTape(TapeReader *rP)
             printf("warning: part %d's bar pointers: the checksum fails (TAPE READ CHECKSUM ERROR); "
                    "taken as read\n", nParts + 1);
         }
-        // The 0 that ends the list, then the bar pointers as read, kept for PUNCH.
-        for(i = 0; i <= ct; i++)
+        // The end mark that closes the list.
+        if( !advance(rP) )
         {
-            if( !advance(rP) )
-            {
-                free(notesP);
-                free(barsP);
-                tapeError("TAPE TOO LARGE");
-                return;
-            }
+            free(notesP);
+            free(barsP);
+            tapeError("TAPE TOO LARGE");
+            return;
         }
         if( nParts == MAX_PARTS )
         {
@@ -2087,13 +2158,17 @@ static void loadTape(TapeReader *rP)
         parts[nParts].barsP = barsP;
         parts[nParts].nBars = ct;
         nParts++;
+        if( rP->areaEnd != TAPE_END )
+        {
+            voiceBase = rP->fp;
+        }
     }
 }
 
 // The timeline.
 
-// kOf: cycles a unit (1/1536 of a whole note) at tempo t, in 1/16 cycle,
-// as pdp1m13's tpo forms it with the test word at 170.
+// Returns the cycles a unit (1/1536 of a whole note) takes at the tempo,
+// in 1/16 cycle, as pdp1m13's tpo forms it with the test word at 170.
 static long long kOf(int tempo)
 {
     long long q;
@@ -2104,7 +2179,7 @@ static long long kOf(int tempo)
     return ((tpm * 35) >> 4);
 }
 
-// atOffset: the time, in 1/16 cycle, of offset o in a bar starting at
+// Returns the time, in 1/16 cycle, of offset o in a bar starting at
 // start, where the tempo changes at each segment's offset.
 static long long atOffset(long long start, const Seg *segsP, int nSegs, long o)
 {
@@ -2126,9 +2201,9 @@ static long long atOffset(long long start, const Seg *segsP, int nSegs, long o)
     return s;
 }
 
-// silentUnits: the silent share of a note of u units for its
-// articulation (pdp1m13's cxt). One cxt halts on plays as normal, as the
-// player's Continue does.
+// Returns the silent share of a note of u units for its articulation
+// (pdp1m13's cxt). One cxt halts on plays as normal, as the player's
+// Continue does.
 static long silentUnits(int art, long u)
 {
     switch( art )
@@ -2149,7 +2224,7 @@ static long silentUnits(int art, long u)
     }
 }
 
-// addEvent: appends an event to a voice's list.
+// Appends an event to a voice's list.
 static void addEvent(EventList *lP, long long t16, int kind, int pitch)
 {
     if( lP->n == lP->cap )
@@ -2165,9 +2240,9 @@ static void addEvent(EventList *lP, long long t16, int kind, int pitch)
 
 // The sequencer.
 
-// seqBoundary: a boundary at cycle t: the pending entry gets its length,
-// split SPLIT cycles at a time while longer than MAX_EVENT, and a new one
-// begins. An event at the last boundary's time joins its entry.
+// Closes the pending entry at cycle t, split SPLIT cycles at a time while
+// longer than MAX_EVENT, and begins the next. An event at the last
+// boundary's time joins its entry.
 static void seqBoundary(Sequencer *sP, long long t)
 {
     long long n;
@@ -2196,6 +2271,7 @@ static void seqBoundary(Sequencer *sP, long long t)
         sP->entriesP[sP->nEntries].dxa = (first ? sP->pend[0] : 0);
         sP->entriesP[sP->nEntries].dyf = (first ? sP->pend[1] : 0);
         sP->entriesP[sP->nEntries].dyx = (first ? sP->pend[2] : 0);
+        sP->entriesP[sP->nEntries].vol = (first ? sP->pendVol : -1);
         sP->nEntries++;
         first = 0;
         n -= piece;
@@ -2203,10 +2279,11 @@ static void seqBoundary(Sequencer *sP, long long t)
     sP->pend[0] = 0;
     sP->pend[1] = 0;
     sP->pend[2] = 0;
+    sP->pendVol = -1;
     sP->last = t;
 }
 
-// seqMerge: the latches an event adds to the pending entry; 0 adds none.
+// Adds an event's latches to the pending entry; a 0 adds none.
 static void seqMerge(Sequencer *sP, long dxa, long dyf, long dyx)
 {
     if( dxa != 0 )
@@ -2223,11 +2300,11 @@ static void seqMerge(Sequencer *sP, long dxa, long dyf, long dyx)
     }
 }
 
-// seqPitch: the pitch a note's step is taken at, and in *octP the
-// octaves its step is still shifted by, as the player's pqs takes them.
-// Each octave up raises the pitch while it stays in the zone map: a
-// zone's harmonics are cut for its own top pitch, so a step shifted up
-// past them would alias. An octave left that would sound above the
+// Returns the pitch a note's step is taken at, and in *octP the octaves
+// its step is still shifted by, as the player's pqs takes them. Each
+// octave up raises the pitch while it stays in the zone map, since a
+// zone's harmonics are cut for its top pitch and a step shifted up past
+// them would alias. An octave left that would sound above the
 // voice's top (ZONE6_TOP with zone 6, ZONE_TOP without), or carry the
 // step past the converter's 17 bits, is given up, the note broken back.
 // So an octave is left only from 52-63, sounding 64-75 on zone 6, or from
@@ -2257,9 +2334,9 @@ static int seqPitch(const Sequencer *sP, int pitch, int *octP)
     return pitch;
 }
 
-// seqZone: the table (or sample) of a pitch at the converter's octave:
-// seqPitch's pitch's, or for a note still shifted up zone 6's, or the top
-// zone's, cut for ZONE_TOP, in a voice without zone 6.
+// Returns the table (or sample) of a pitch at the converter's octave,
+// seqPitch()'s pitch's, or for a note still shifted up zone 6's, or the
+// top zone's, cut for ZONE_TOP, in a voice without zone 6.
 static long seqZone(const Sequencer *sP, int pitch)
 {
     int o;
@@ -2272,9 +2349,9 @@ static long seqZone(const Sequencer *sP, int pitch)
     return ((sP->instP->zone6 != 0) ? sP->instP->zone6 : sP->instP->zoneMap[LIB_PITCHES - 1]);
 }
 
-// seqStep: the step of a pitch at the converter's octave, taken at
-// seqPitch's pitch. The player shifts it by the octaves left: sar to go
-// down, ral (an 18-bit rotate) to go up.
+// Returns the step of a pitch at the converter's octave, taken at
+// seqPitch()'s pitch. The player shifts it by the octaves left, with sar
+// to go down and ral (an 18-bit rotate) to go up.
 static long seqStep(const Sequencer *sP, int pitch)
 {
     long s;
@@ -2297,9 +2374,23 @@ static long seqStep(const Sequencer *sP, int pitch)
     return s;
 }
 
-// seqEvent: what the converter makes of an event at cycle t: a strike, a
-// slur (the step changes, the envelope carries on), a key off, or a mark
-// at a bar's end, which only closes the entry.
+// Returns a dynamic's volume, an attenuation in 1/8 dB, for index 1 pp to
+// 6 ff. It is the converter's slider lowered 18 dB for pp, 12 for p, 9
+// for mp and 6 for mf, or raised 3 dB for ff (the sliders' points are 3 dB
+// apart), held to the sliders' span, 0 to 45 dB.
+static long dynLevel(const Sequencer *sP, int index)
+{
+    static const long points[7] = { 0, 6, 4, 3, 2, 0, -1 };
+    long v;
+
+    v = ((long)sP->volume + (points[index] * 24));
+    return ((v < 0) ? 0 : ((v > 360) ? 360 : v));
+}
+
+// Puts an event at cycle t into the converter's entries. It is a strike, a
+// slur (the step changes, the envelope carries on), a key off, a mark at a
+// bar's end, which only closes the entry, or a dynamic, which gives the
+// next entry its volume.
 static void seqEvent(Sequencer *sP, long long t, int kind, int pitch)
 {
     long table;
@@ -2325,8 +2416,8 @@ static void seqEvent(Sequencer *sP, long long t, int kind, int pitch)
         }
         else if( sP->instP->own && (seqZone(sP, pitch) != seqZone(sP, sP->pitch)) )
         {
-            // Another block's end, loop and stride: latched with its
-            // table, they would cut the note sounding, so it is struck.
+            // Another block's end, loop and stride, latched with its
+            // table, would cut the note sounding, so it is struck.
             kind = EV_STRIKE;
         }
     }
@@ -2351,20 +2442,32 @@ static void seqEvent(Sequencer *sP, long long t, int kind, int pitch)
         seqBoundary(sP, t);
         seqMerge(sP, 0, 0, (sP->sus | sP->held | ACT_KEYOFF));
     }
+    else if( kind == EV_DYN )
+    {
+        // The player's decoder holds a dynamic only when it is not the one
+        // in force, so a tape with none gives no dzg while it plays.
+        if( pitch == sP->dyn )
+        {
+            return;
+        }
+        sP->dyn = pitch;
+        seqBoundary(sP, t);
+        sP->pendVol = dynLevel(sP, pitch);
+    }
     else
     {
         seqBoundary(sP, t);
     }
 }
 
-// seqFinish: the last entry: silence, repeated for ever.
+// Adds the last entry, silence, which the converter repeats for ever.
 static void seqFinish(Sequencer *sP)
 {
     seqBoundary(sP, sP->last + MAX_EVENT);
 }
 
-// feedStep: one step of the timeline (a bar or a pause) to every
-// converter: its part's events, then a mark at the step's end.
+// Feeds one step of the timeline (a bar or a pause) to every converter,
+// its part's events and then a mark at the step's end.
 static void feedStep(EventList *evsP, int nv, long long end16)
 {
     Sequencer *sP;
@@ -2386,9 +2489,9 @@ static void feedStep(EventList *evsP, int nv, long long end16)
     }
 }
 
-// playedBars: a part's bars in the order of play, each its first note
-// word's index; the voice is over at the closing 600000, past the notes,
-// or at a pointer to a bar line.
+// Lists a part's bars in the order of play, each its first note word's
+// index. The voice is over at the closing 600000, past the notes, or at a
+// pointer to a bar line.
 // Returns the count; *startsPP is a new array.
 static int playedBars(const Part *pP, int **startsPP)
 {
@@ -2413,11 +2516,11 @@ static int playedBars(const Part *pP, int **startsPP)
     return n;
 }
 
-// sequencePiece: the piece's timeline, step by step into the sequencers:
-// every per parts are a movement; every bar starts on all voices together
-// and lasts as long as its longest; a tempo word changes every voice's
-// tempo from the score time where its voice reaches it; the movements are
-// PAUSE cycles apart.
+// Feeds the piece's timeline, step by step, into the sequencers. Every
+// per parts are a movement; every bar starts on all voices together and
+// lasts as long as its longest; a tempo word changes every voice's tempo
+// from the score time where its voice reaches it; the movements are PAUSE
+// cycles apart.
 // Returns the piece's length in 1/16 cycle, to the end of the last pause.
 static long long sequencePiece(int *nMovementsP)
 {
@@ -2503,6 +2606,23 @@ static long long sequencePiece(int *nMovementsP)
                             nChanges++;
                             continue;
                         }
+                        // A dynamic, 600001-600006, is kept as a note of no
+                        // length whose pitch is the index, negated.
+                        if( ((w & 0700000) == 0600000) && (w != BAR) )
+                        {
+                            if( nNotes == capNotes )
+                            {
+                                capNotes = ((capNotes == 0) ? 64 : (capNotes * 2));
+                                notesP = growOrFail(notesP, (size_t)capNotes * sizeof(BarNote));
+                            }
+                            notesP[nNotes].v = v;
+                            notesP[nNotes].o = o;
+                            notesP[nNotes].u = 0;
+                            notesP[nNotes].art = 0;
+                            notesP[nNotes].pitch = -(w & 07);
+                            nNotes++;
+                            continue;
+                        }
                         u = ((long)(w & 0177) * (((w >> 15) & 1) ? 2 : 3) * 8);
                         if( u <= 0 )
                         {
@@ -2532,7 +2652,7 @@ static long long sequencePiece(int *nMovementsP)
                     length = ends[v];
                 }
             }
-            // The tempo segments: the changes in order of offset, then voice (stable).
+            // The tempo segments are the changes in order of offset, then voice (a stable sort).
             for(i = 1; i < nChanges; i++)
             {
                 ch = changesP[i];
@@ -2555,11 +2675,15 @@ static long long sequencePiece(int *nMovementsP)
                 segsP[i + 1].tempo = changesP[i].tempo;
                 tempo = changesP[i].tempo;
             }
-            // Each note: a strike, or a slur after a legato note; then its key off,
+            // Each note is a strike, or a slur after a legato note, then its key off
             // unless the silence it leaves is under MIN_GAP cycles.
             for(v = 0; v < nv; v++)
             {
                 evs[v].n = 0;
+                if( k == 0 )
+                {
+                    addEvent(&evs[v], t16, EV_DYN, DYN_F);  // each movement starts at f
+                }
             }
             for(i = 0; i < nNotes; i++)
             {
@@ -2568,6 +2692,11 @@ static long long sequencePiece(int *nMovementsP)
                 u = notesP[i].u;
                 art = notesP[i].art;
                 pitch = notesP[i].pitch;
+                if( pitch < 0 )
+                {
+                    addEvent(&evs[v], atOffset(t16, segsP, (int)nChanges + 1, o), EV_DYN, -pitch);
+                    continue;
+                }
                 if( pitch <= 1 )
                 {
                     addEvent(&evs[v], atOffset(t16, segsP, (int)nChanges + 1, o), EV_OFF, 0);
@@ -2598,7 +2727,7 @@ static long long sequencePiece(int *nMovementsP)
             t16 = atOffset(t16, segsP, (int)nChanges + 1, length);
             feedStep(evs, nv, t16);
         }
-        // The movement's end: every voice off at its last bar's end, then the pause.
+        // At the movement's end every voice goes off at its last bar's end, then the pause.
         for(v = 0; v < nv; v++)
         {
             evs[v].n = 0;
@@ -2621,7 +2750,7 @@ static long long sequencePiece(int *nMovementsP)
 
 // The converters.
 
-// volumeOf: the volume, 1/64 dB, that dzg heads for with value.
+// Returns the volume, 1/64 dB, that dzg heads for with value.
 static long volumeOf(long value)
 {
     long v;
@@ -2630,14 +2759,14 @@ static long volumeOf(long value)
     return ((v == MUTE) ? SILENT : (v << 3));
 }
 
-// gainOf: the gain of an attenuation's integer part plus the volume.
+// Returns the gain of an attenuation's integer part plus the volume.
 static double gainOf(long index)
 {
     return ((index < SILENT) ? libGain[index] : 0.0);
 }
 
-// envAdvance: one cycle of the envelope: a stage moves the attenuation by
-// its rate, and on reaching its target passes to the next stage.
+// Runs one cycle of the envelope. A stage moves the attenuation by its
+// rate, and on reaching its target passes to the next stage.
 static void envAdvance(Converter *cP)
 {
     long sign;
@@ -2691,7 +2820,7 @@ static void envAdvance(Converter *cP)
     }
 }
 
-// convTakeNote: the note the latches hold; the one-shot actions are
+// Copies the note the latches hold into *nP. The one-shot actions are
 // consumed, so only the held ones stay latched.
 static void convTakeNote(Converter *cP, Note *nP)
 {
@@ -2729,8 +2858,8 @@ static void convTakeNote(Converter *cP, Note *nP)
     cP->lActions = (cP->lActions & ACT_KEPT);
 }
 
-// convDrop: both reads' words to 0, and any still to come dropped, with
-// the pairs the interpolation holds for them.
+// Sets both reads' words to 0 and drops any still to come, with the pairs
+// the interpolation holds for them.
 static void convDrop(Converter *cP)
 {
     cP->visible = 0.0;
@@ -2742,15 +2871,15 @@ static void convDrop(Converter *cP)
     cP->pairs[READ_SECOND].n = 0;
 }
 
-// floorShift: x shifted right by n, toward minus infinity (C leaves a
+// Returns x shifted right by n, toward minus infinity (C leaves a
 // negative's shift to the compiler).
 static long long floorShift(long long x, int n)
 {
     return ((x >= 0) ? (x >> n) : -((-x + ((1LL << n) - 1)) >> n));
 }
 
-// triangle: a triangle of the slow counter's 24-bit phase p, from -16,384
-// to 16,384: 0 at 0, rising to 16,384 at a quarter, -16,384 at three.
+// Returns a triangle of the slow counter's 24-bit phase p, from -16,384
+// to 16,384, 0 at 0, rising to 16,384 at a quarter, -16,384 at three.
 static long triangle(long p)
 {
     long q;
@@ -2767,8 +2896,8 @@ static long triangle(long p)
     return (q - 65536);
 }
 
-// convForm: the slow counter's terms, from its phase now: the vibrato's m
-// and the steps taken, the tremolo, and the place's offsets.
+// Forms the slow counter's terms from its phase, the vibrato's m and the
+// steps taken, the tremolo, and the place's offsets.
 static void convForm(Converter *cP)
 {
     long t1;
@@ -2784,18 +2913,17 @@ static void convForm(Converter *cP)
     cP->step2M = (cP->step2 + (long)floorShift((long long)cP->step2 * cP->m, 19));
 }
 
-// convMix: the output's sample: with the céleste the two reads' words at
+// Returns the output's sample, with the céleste the two reads' words at
 // equal power, else the first's.
 static double convMix(const Converter *cP)
 {
     return ((cP->celeste != 0) ? ((cP->first + cP->second) * EDGE_CELESTE_MIX) : cP->first);
 }
 
-// convLoadNote: a note loads, and its actions apply (phase reset, key
-// on, with the slow counter's restart and the percussion's strike, key
-// off), the slow counter's terms are formed, then its voicing: with the
-// speech, the attack is held to the rise's rate while it lasts, never
-// faster than the note's own.
+// Loads a note and applies its actions (phase reset, key on with the slow
+// counter's restart and the percussion's strike, key off), forms the slow
+// counter's terms, then loads its voicing. With the speech, the attack is
+// held to the rise's rate while it lasts, never faster than the note's.
 static void convLoadNote(Converter *cP, const Note *nP)
 {
     long a;
@@ -2835,7 +2963,7 @@ static void convLoadNote(Converter *cP, const Note *nP)
     cP->kLevel = nP->kLevel;
     cP->kDecay = nP->kDecay;
     cP->kAddr = nP->kAddr;
-    // Before the key on: the percussion strikes only on a note detached.
+    // Taken before the key on, since the percussion strikes only on a note detached.
     detached = ((cP->stage == STAGE_OFF) || (cP->stage == STAGE_RELEASE));
     a = nP->actions;
     if( (a & ACT_PHASE) != 0 )
@@ -2847,7 +2975,7 @@ static void convLoadNote(Converter *cP, const Note *nP)
     {
         cP->att = (cP->start << 15);
         cP->stage = STAGE_ATTACK;
-        // The old note's samples go: until the new note's first words, the output is 0.
+        // The old note's samples go; until the next note's first words, the output is 0.
         convDrop(cP);
         cP->odd = 0;
         if( !cP->vFree )
@@ -2878,26 +3006,35 @@ static void convLoadNote(Converter *cP, const Note *nP)
     }
 }
 
-// convLoad: an event's end: the event's length and the note load
-// together.
+// Loads the event's length and the note together, at an event's end.
 static void convLoad(Converter *cP)
 {
     Note note;
 
+    if( cP->lVol >= 0 )         // a dynamic, at its note's start
+    {
+        cP->volTarget = volumeOf(cP->lVol);
+        cP->lVol = -1;
+    }
     cP->evLeft = ((cP->lEvlen != 0) ? cP->lEvlen : MAXLEN);
     convTakeNote(cP, &note);
     convLoadNote(cP, &note);
 }
 
-// convLateEvent: an event's end with the onset: the event's length loads
-// now, the note d cycles later (now if d is 0), d the sequence's next
-// number mod the bound + 1, never past half the event, as the device's
-// lateEvent().
+// Ends an event with the onset, as the device's lateEvent() does. The
+// event's length loads at once and the note d cycles later, d the
+// sequence's next number mod the bound + 1, never past half the event. A
+// note with d 0, or one that leaves wavetable mode, loads at once.
 static void convLateEvent(Converter *cP)
 {
     uint32_t x;
     long d;
 
+    if( cP->lVol >= 0 )
+    {
+        cP->volTarget = volumeOf(cP->lVol);
+        cP->lVol = -1;
+    }
     cP->evLeft = ((cP->lEvlen != 0) ? cP->lEvlen : MAXLEN);
     convTakeNote(cP, &cP->held);
     x = cP->onsetRandom;
@@ -2920,8 +3057,8 @@ static void convLateEvent(Converter *cP)
     }
 }
 
-// convRunEntry: the stream's next entry, as the player latches it; past
-// the last, the last again.
+// Latches the stream's next entry as the player latches it; past the
+// last, the last again.
 static void convRunEntry(Converter *cP)
 {
     const Entry *eP;
@@ -2954,12 +3091,16 @@ static void convRunEntry(Converter *cP)
         cP->lActions = (eP->dyx & ACT_MASK);
     }
     cP->lEvlen = (((eP->len & WORD_MASK) != 0) ? (eP->len & WORD_MASK) : MAXLEN);
+    if( eP->vol >= 0 )
+    {
+        cP->lVol = eP->vol;
+    }
     cP->next = (i + 1);
 }
 
-// convRead: the word at the address plus offset plus the phase's integer
-// part (masked to the table, except in sample mode): bits 0-11, ones'
-// complement, as -1..1.
+// Returns the word at the address plus offset plus the phase's integer
+// part (masked to the table, except in sample mode), its bits 0-11 in
+// ones' complement, as -1..1.
 static double convRead(const Converter *cP, long offset, unsigned long phase)
 {
     long index;
@@ -2983,8 +3124,8 @@ static double convRead(const Converter *cP, long offset, unsigned long phase)
     return ((double)((w >> 6) & 03777) / 2047.0);
 }
 
-// convTimbre: the timbre at this sample: the thresholds the level has
-// reached (0 with no stride).
+// Returns the timbre at this sample, the number of thresholds the level
+// has reached (0 with no stride).
 static long convTimbre(const Converter *cP)
 {
     long level;
@@ -3006,8 +3147,8 @@ static long convTimbre(const Converter *cP)
     return timbre;
 }
 
-// convWordValue: the word at addr as the converter's 12-bit sample: bits
-// 0-11, ones' complement, -0 as 0; an address no voice fills reads 0.
+// Returns the word at addr as the converter's 12-bit sample, its bits
+// 0-11 in ones' complement, -0 as 0. An address no voice fills reads 0.
 static long convWordValue(long addr)
 {
     long w;
@@ -3025,10 +3166,10 @@ static long convWordValue(long addr)
     return ((w >> 6) & 03777);
 }
 
-// convReadPair: read r's sample with the interpolation (READ_FIRST,
-// READ_SECOND the céleste's, READ_PERC the percussion's) at phase: the
-// word at its index and the next, each kept from the pair the read holds,
-// by address, or fetched; the interpolation's product rounded, its shift
+// Reads read r's sample with the interpolation (READ_FIRST, READ_SECOND
+// the céleste's, READ_PERC the percussion's) at phase. The word at its
+// index and the next are each kept from the pair the read holds, by
+// address, or fetched; the interpolation's product is rounded, its shift
 // toward minus infinity.
 // Returns the sample, as -1..1.
 static double convReadPair(Converter *cP, int r, unsigned long phase)
@@ -3077,7 +3218,7 @@ static double convReadPair(Converter *cP, int r, unsigned long phase)
                                                 * (long long)(phase & FRACTION)) + 2048, 12)) / 2047.0);
 }
 
-// rawWord: the word at addr; an address no voice fills reads 0.
+// Returns the word at addr; an address no voice fills reads 0.
 static long rawWord(long addr)
 {
     long w;
@@ -3091,10 +3232,10 @@ static long rawWord(long addr)
     return w;
 }
 
-// packedNumber: sample i of the packed samples from base, as the
-// converter's 12-bit number (ones' complement, -0 as 0): sample 3g is word
-// 2g's bits 0-11, 3g + 1 its bits 12-17 then word 2g + 1's 0-5, 3g + 2
-// word 2g + 1's bits 6-17.
+// Returns sample i of the packed samples from base, as the converter's
+// 12-bit number (ones' complement, -0 as 0). Sample 3g is word 2g's bits
+// 0-11, 3g + 1 its bits 12-17 then word 2g + 1's 0-5, 3g + 2 word 2g + 1's
+// bits 6-17.
 static long packedNumber(long base, long i)
 {
     long g;
@@ -3117,12 +3258,11 @@ static long packedNumber(long base, long i)
     return (((x & 04000) != 0) ? -(long)((~x) & 03777) : x);
 }
 
-// convReadPacked: a packed read's sample at phase (Implementation.md,
-// "Recorded instruments"): the end, the loop and the stride in groups,
-// the phase in samples; with the interpolation between sample i and the
-// next, as convReadPair().
-// Memory does not change while it renders, so it reads both words each
-// time, the values a held word would give.
+// Reads a packed read's sample at phase (Implementation.md, "Recorded
+// instruments"). The end, the loop and the stride are in groups, the phase
+// in samples; the interpolation is between sample i and the next, as in
+// convReadPair(). Memory does not change while it renders, so it reads
+// both words each time, the values a held word would give.
 // Returns the sample, as -1..1.
 static double convReadPacked(const Converter *cP, unsigned long phase)
 {
@@ -3144,8 +3284,8 @@ static double convReadPacked(const Converter *cP, unsigned long phase)
     return ((double)(s0 + floorShift(((long long)(s1 - s0) * (long long)(phase & FRACTION)) + 2048, 12)) / 2047.0);
 }
 
-// convStep: a phase stepped; in sample mode, at or past the end, back by
-// the loop's length (a packed voice's three samples a group).
+// Returns a phase stepped. In sample mode, at or past the end, it goes
+// back by the loop's length (three samples a group in a packed voice).
 static unsigned long convStep(const Converter *cP, unsigned long phase, long step)
 {
     long end;
@@ -3161,14 +3301,14 @@ static unsigned long convStep(const Converter *cP, unsigned long phase, long ste
     return phase;
 }
 
-// convSampleTime: the sample clock: unless the envelope is OFF, the word
+// Runs the sample clock. Unless the envelope is OFF, it fetches the word
 // at the address plus the timbre times the stride plus the phase's integer
-// part is fetched, and with the céleste at every other such sample time
-// from the key on (with the interpolation at every one) the second
-// phase's too, and while the percussion sounds its sine's word; each read
-// interpolated with the next word if the note holds the interpolation.
-// Then the phases step: the first two by the steps the vibrato takes, the
-// percussion's by its multiple of the first's.
+// part; with the céleste, at every other such sample time from the key on
+// (at every one with the interpolation), the second phase's too; and while
+// the percussion sounds, its sine's word. Each read is interpolated with
+// the next word if the note holds the interpolation. Then the phases
+// step, the first two by the steps the vibrato takes, the percussion's by
+// its multiple of the first's.
 static void convSampleTime(Converter *cP)
 {
     long timbre;
@@ -3225,9 +3365,9 @@ static void convSampleTime(Converter *cP)
     cP->kPhase = ((cP->kPhase + ((unsigned long)cP->kMul * (unsigned long)cP->stepM)) & PERC_PHASE);
 }
 
-// convLevel: the output: the fetched sample times the gain of the
+// Returns the output, the fetched sample times the gain of the
 // attenuation plus the volume plus the tremolo, then the edge tone, the
-// breath and the percussion, each times that gain and the gain of its own
+// breath and the percussion, each times that gain and the gain of its
 // level (the breath also that of its decay; the percussion's attenuation
 // is its level and decay together), summed in doubles, as a 32-bit float.
 static float convLevel(const Converter *cP)
@@ -3259,9 +3399,10 @@ static float convLevel(const Converter *cP)
     return (float)x;
 }
 
-// convGo: the latches set once before the start, in the player's order
-// (the volume first; before the go it is there at once), the first entry,
-// then dxg: everything loads and the first sample is fetched.
+// Starts the converter. The latches are set once, in the player's order
+// (the volume first; before the go it is there at once), then the first
+// entry, then dxg, at which everything loads and the first sample is
+// fetched.
 // Returns cycle 0's output.
 static float convGo(Converter *cP, const Sequencer *sP)
 {
@@ -3273,6 +3414,7 @@ static float convGo(Converter *cP, const Sequencer *sP)
     long stride;
 
     memset(cP, 0, sizeof(*cP));
+    cP->lVol = -1;
     cP->seqP = sP;
     cP->att = FLOOR;
     cP->kAtt = FLOOR;
@@ -3294,7 +3436,7 @@ static float convGo(Converter *cP, const Sequencer *sP)
     dyx = (((long)iP->sustain << 9) | iP->held);
     cP->lSustain = ((dyx >> 9) & 0777);
     cP->lActions = (dyx & ACT_MASK);
-    // With each block's own, the first table's block's.
+    // With each block's own end, loop and stride, the first table's block's.
     end = iP->end;
     loop = iP->loop;
     stride = iP->stride;
@@ -3309,7 +3451,7 @@ static float convGo(Converter *cP, const Sequencer *sP)
     cP->lTh[1] = iP->thresholds[1];
     cP->lTh[2] = iP->thresholds[2];
     cP->lVoicing = (iP->voicing & EDGE_VOICING);
-    // Version 5's six, last; 0 (as the latches start) for a voice without them.
+    // Version 5's six latches, last; 0, as the latches start, for a voice without them.
     if( iP->hasLatches )
     {
         cP->lVRate = (iP->dyv & WORD_MASK);
@@ -3336,9 +3478,9 @@ static float convGo(Converter *cP, const Sequencer *sP)
     return 0.0f;
 }
 
-// convPoll: one machine cycle: the volume moves 1/64 dB toward its
-// target, then the envelope, the percussion's decay and the breath, a
-// note the onset holds, the event timer, the sample clock, at every fourth
+// Runs one machine cycle. The volume moves 1/64 dB toward its target,
+// then come the envelope, the percussion's decay and the breath, a note
+// the onset holds, the event timer, the sample clock, at every fourth
 // cycle from the go the noise, at every 64th the slow counter and its
 // terms, and the output. A fetched word reaches the output at the next
 // cycle.
@@ -3375,7 +3517,7 @@ static float convPoll(Converter *cP)
     envAdvance(cP);
     if( cP->kAtt < FLOOR )
     {
-        // The percussion's decay: at the floor it is gone.
+        // The percussion decays, and at the floor it is gone.
         if( (cP->kAtt + cP->kDecay) >= FLOOR )
         {
             cP->kAtt = FLOOR;
@@ -3422,7 +3564,7 @@ static float convPoll(Converter *cP)
     }
     if( (cP->ticks % SLOW_TICK) == 0 )
     {
-        // The slow counter's clock: the delay's first, then the rate.
+        // The slow counter's clock runs out the delay first, then steps by the rate.
         if( cP->hold > 0 )
         {
             cP->hold--;
@@ -3438,7 +3580,7 @@ static float convPoll(Converter *cP)
 
 // The file.
 
-// putLe: n bytes of v, little-endian, at pP.
+// Puts n bytes of v, little-endian, at pP.
 static void putLe(unsigned char *pP, unsigned long v, int n)
 {
     int i;
@@ -3449,7 +3591,7 @@ static void putLe(unsigned char *pP, unsigned long v, int n)
     }
 }
 
-// writeHeader: the wav file's header for frames stereo 16-bit frames.
+// Writes the wav file's header for frames stereo 16-bit frames.
 // Returns 1, or 0 on a write error.
 static int writeHeader(FILE *fP, long frames)
 {
@@ -3472,7 +3614,7 @@ static int writeHeader(FILE *fP, long frames)
     return (fwrite(h, 1, sizeof(h), fP) == sizeof(h));
 }
 
-// pcmOf: a channel's sample as 16 bits, rounded half to even and clipped
+// Returns a channel's sample as 16 bits, rounded half to even and clipped
 // at 32,767; *clippedP counts the clipped.
 static int pcmOf(float x, long *clippedP)
 {
@@ -3492,8 +3634,8 @@ static int pcmOf(float x, long *clippedP)
     return (int)r;
 }
 
-// pcmHeard: as pcmOf, of a sample heard with the room (1/256 of a step,
-// roomHeard()'s).
+// Returns, as pcmOf() does, a sample heard with the room, in 1/256 of a
+// step as roomHeard() gives it.
 static int pcmHeard(long long heard, long *clippedP)
 {
     double r;
@@ -3512,16 +3654,16 @@ static int pcmHeard(long long heard, long *clippedP)
     return (int)r;
 }
 
-// placeAttenuation: the attenuation, 1/64 dB, of one channel's 9 bits of
-// a dzp word (1/8 dB), MUTE past the gain table, as the device takes it.
+// Returns the attenuation, 1/64 dB, of one channel's 9 bits of a dzp word
+// (1/8 dB), MUTE past the gain table, as the device takes it.
 static long placeAttenuation(int value)
 {
     return ((value == MUTE) ? SILENT : ((long)value << 3));
 }
 
-// setPlaceGains: each converter's mixer attenuations for its place. The
-// player gives the dzp before the converters start, so they hold from the
-// first cycle and no slew is heard.
+// Sets each converter's mixer attenuations for its place. The player
+// gives the dzp before the converters start, so they hold from the first
+// cycle and no slew is heard.
 static void setPlaceGains(void)
 {
     int w;
@@ -3535,11 +3677,11 @@ static void setPlaceGains(void)
     }
 }
 
-// mixChannel: one channel of a frame, summed in doubles: converter by
-// converter, its four cycles, each its output times its gain, the gain of
-// its place's attenuation plus the Leslie's offset at that cycle (pan, 0
-// without one), a gain of 0 left out. At the default places (gains of
-// exactly 1 and 0) it is the pair's plain sum.
+// Returns one channel of a frame, summed in doubles converter by
+// converter over its four cycles, each its output times its gain, the
+// gain of its place's attenuation plus the Leslie's offset at that cycle
+// (pan, 0 without one), a gain of 0 left out. At the default places
+// (gains of exactly 1 and 0) it is the pair's plain sum.
 static float mixChannel(float out[NCONV][CYCLES_PER_FRAME], long pan[NCONV][CYCLES_PER_FRAME][2], int ch)
 {
     double sum;
@@ -3562,12 +3704,12 @@ static float mixChannel(float out[NCONV][CYCLES_PER_FRAME], long pan[NCONV][CYCL
     return (float)(sum / 8.0);
 }
 
-// render: frames 4-cycle frames of the four converters, mixed as the
-// device mixes them, each channel the converters through their places'
-// gains, halved and averaged over each frame, then tail frames of
-// silence, through the room when there is one, into the file.
-// Returns 1, or 0 on a write error; *peakP the largest sample, *clippedP
-// the samples clipped.
+// Renders frames 4-cycle frames of the four converters, mixed as the
+// device mixes them, then tail frames of silence, through the room when
+// there is one, into the file. Each channel is the converters through
+// their places' gains, halved and averaged over each frame.
+// Returns 1, or 0 on a write error; *peakP is the largest sample,
+// *clippedP the samples clipped.
 static int render(FILE *fP, long frames, long tail, double *peakP, long *clippedP)
 {
     unsigned char *bufP;
@@ -3667,8 +3809,8 @@ static int render(FILE *fP, long frames, long tail, double *peakP, long *clipped
 
 // The command.
 
-// outName: the tape's name with its extension replaced by .wav.
-// Returns a new string.
+// Returns the tape's name with its extension replaced by .wav, as a new
+// string.
 static char *outName(const char *tapeP)
 {
     const char *slashP;
@@ -3691,7 +3833,7 @@ static char *outName(const char *tapeP)
     return nameP;
 }
 
-// usage: the command's form, and exit 1.
+// Prints the command's form and exits with status 1.
 static void usage(void)
 {
     fprintf(stderr, "usage: dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib]"
@@ -3708,7 +3850,7 @@ static void usage(void)
     exit(1);
 }
 
-// main: reads the tape, sequences the piece, renders it into the file.
+// Reads the tape, sequences the piece and renders it into the file.
 int main(int argc, char **argv)
 {
     TapeReader reader;
@@ -3821,7 +3963,7 @@ int main(int argc, char **argv)
         compiledVoices();
     }
 
-    // The player's default: the organ, 3 parts a movement, every volume 0 dB.
+    // The player's default is the organ, 3 parts a movement, every volume 0 dB.
     // A library without it can play only tapes that name their orchestra.
     organ[0] = instByName("principal");
     organ[1] = instByName("bourdon");
@@ -3869,7 +4011,7 @@ int main(int argc, char **argv)
     {
         memWords[i] = -1;
     }
-    placeNext = PLACE_START;
+    placeNext = voiceBase;
     for(c = 0; c < NCONV; c++)
     {
         for(k = 0; (k < c) && ((orch[k].nStops != orch[c].nStops)
@@ -3907,6 +4049,8 @@ int main(int argc, char **argv)
         seqs[c].sus = ((long)seqs[c].instP->sustain << 9);
         seqs[c].held = seqs[c].instP->held;
         seqs[c].pitch = PITCH0;
+        seqs[c].pendVol = -1;
+        seqs[c].dyn = DYN_F;
     }
     total16 = sequencePiece(&nMov);
     for(c = 0; c < NCONV; c++)
@@ -3915,6 +4059,11 @@ int main(int argc, char **argv)
     }
 
     printf("%s: %d parts, %d a movement: %d movement%s\n", tapeP, nParts, per, nMov, ((nMov == 1) ? "" : "s"));
+    if( voiceBase != PLACE_START )
+    {
+        printf("  the tape runs on past TEND into R2: the voices from %06lo, %ld words used of %ld\n",
+               voiceBase, (placeNext - voiceBase), (MEM_WORDS - voiceBase));
+    }
     for(c = 0; c < NCONV; c++)
     {
         if( orch[c].part < 0 )
@@ -3947,8 +4096,9 @@ int main(int argc, char **argv)
     cycles = (total16 >> 4);
     printf("the piece: %.1f s (%lld cycles, to the end of the last pause)\n", ((double)cycles / CPS), cycles);
     tail = 0;
-    // The tape's room and onset, where no flag gives them: the player gives the device the
-    // block's settings at PLAY. Its "the configuration's" is the flags' here, so none.
+    // The tape's room and onset apply where no flag gives them, as the player gives the
+    // device the block's settings at PLAY. A block's "the configuration's" is the flags'
+    // here, so none.
     if( !roomGiven && (tapeRoom != SETTING_CONFIGURED) )
     {
         static const int roomOfCode[ROOM_CODES] = { ROOM_OFF, ROOM_HALL, ROOM_BUSCH, ROOM_VOICES };
@@ -3959,10 +4109,10 @@ int main(int argc, char **argv)
     {
         onsetCycles = ((long)tapeOnset * ONSET_UNIT);
     }
-    // The room from the voices: the player starts all four converters together, so the
-    // device's choice at each go comes to Busch Hall if any one's voicing asks for it.
-    // (The device may hold the hall for the few cycles between the goes; the mix is silent
-    // then.)
+    // The player starts all four converters together, so the device's choice of the room
+    // from the voices, made at each go, comes to Busch Hall if any one's voicing asks for
+    // it. The device may hold the hall for the few cycles between the goes, while the mix
+    // is silent.
     fromVoices = (roomKind == ROOM_VOICES);
     if( fromVoices )
     {

@@ -1,0 +1,11 @@
+an assignment to a dummy other than D=D+D is refused
+
+define m a
+	a=a+1	/ refused
+	lac a
+	term
+
+100/
+go,	m 5
+	hlt
+	start go

@@ -2,6 +2,8 @@
  * Support for evaluating various parse tree constructs.
 */
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -28,6 +30,10 @@ extern void vwarnl(int errType, int lineno, const char *msgP, ...);
 
 static int _evalExpr(PNodeP);
 static bool hasIndirect(PNodeP nodeP);
+
+// Set while poolKey() evaluates a constant, the code generators give the law
+// range warning when they evaluate it, and a copy at parse time would repeat it.
+static bool quietEval;
 
 void verror(char *msgP, ...);
 void verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...);
@@ -76,7 +82,7 @@ SymNodeP symP;
             // This is tricky, because 4096 is law i 0, so any value in 017777 is technically valid.
             // However, it would be very poor coding, reject it.
             // We have to explicitly check for an 'i' first.
-            if( nodeP->leftP->type == LAW )
+            if( (nodeP->leftP->type == LAW) && !quietEval )
             {
                 if( (unsigned)rval > 07777 )
                 {
@@ -494,6 +500,269 @@ SymNodeP symP;
         // never returns, just to shut up overly-picky c compilers
         return(0);
     }
+}
+
+// A pool key's text as poolKey() builds it, grown as needed.
+typedef struct
+{
+    char *bufP;
+    size_t len;
+    size_t size;
+} KeyText;
+
+static void appendExprText(KeyText *textP, PNodeP nodeP);
+
+// Append printf-style text to a key.
+static void
+keyAppend(KeyText *textP, const char *fmtP, ...)
+{
+va_list argP;
+int need;
+
+    for( ;; )
+    {
+        va_start(argP, fmtP);
+        need = vsnprintf(textP->bufP + textP->len, textP->size - textP->len, fmtP, argP);
+        va_end(argP);
+
+        if( need < 0 )
+        {
+            verror("can't format a constant's pool key");
+        }
+
+        if( (size_t)need < (textP->size - textP->len) )
+        {
+            textP->len += need;
+            return;
+        }
+
+        textP->size = (textP->size * 2) + need;
+
+        if( !(textP->bufP = realloc(textP->bufP, textP->size)) )
+        {
+            verror("out of memory for a constant's pool key");
+        }
+    }
+}
+
+// Start an empty key.
+static void
+keyStart(KeyText *textP)
+{
+    textP->size = 64;
+    textP->len = 0;
+
+    if( !(textP->bufP = malloc(textP->size)) )
+    {
+        verror("out of memory for a constant's pool key");
+    }
+
+    textP->bufP[0] = 0;
+}
+
+// Whether an expression reads something whose value the parse does not know yet:
+// a symbol not yet defined, a sym:* reference, or a constant, whose value is its
+// slot's address.
+static bool
+readsUnknown(PNodeP nodeP)
+{
+    if( !nodeP )
+    {
+        return(false);
+    }
+
+    switch( nodeP->type )
+    {
+    case ADDR:
+    case LCLADDR:
+    case BREF:
+        return( !(nodeP->value.symP->flags & SYMF_RESOLVED) );
+
+    case WILDREF:
+    case CONSTANT:
+        return(true);
+
+    case BINOP:
+        return( readsUnknown(nodeP->leftP) || readsUnknown(nodeP->rightP) );
+
+    case UNOP:
+        return( readsUnknown(nodeP->rightP) );
+
+    default:
+        return(false);
+    }
+}
+
+// An expression's canonical text, allocated; the caller frees it.
+static char *
+exprText(PNodeP nodeP)
+{
+KeyText text;
+
+    keyStart(&text);
+    appendExprText(&text, nodeP);
+    return(text.bufP);
+}
+
+// Append an expression's canonical text: what it reads, operator by operator.
+// A part that reads nothing unknown is written as its value, so equal parts match
+// however they are spelled.  The operands of an operator that commutes are written
+// in a fixed order, so [1+foo] and [foo+1] still share a slot.
+static void
+appendExprText(KeyText *textP, PNodeP nodeP)
+{
+char *leftP;
+char *rightP;
+char *swapP;
+const char *opP;
+int op;
+
+    if( !readsUnknown(nodeP) )
+    {
+        keyAppend(textP, "%lo", (unsigned long)hashExpr(nodeP));
+        return;
+    }
+
+    switch( nodeP->type )
+    {
+    case BINOP:
+        op = nodeP->value.ival;
+        leftP = exprText(nodeP->leftP);
+        rightP = exprText(nodeP->rightP);
+
+        switch( op )
+        {
+        case PLUS:
+            opP = "+";
+            break;
+        case MINUS:
+            opP = "-";
+            break;
+        case MUL:
+            opP = "*";
+            break;
+        case DIV:
+            opP = "/";
+            break;
+        case MOD:
+            opP = "%";
+            break;
+        case AND:
+            opP = "&";
+            break;
+        case OR:
+            opP = "|";
+            break;
+        case XOR:
+            opP = "^";
+            break;
+        case LSHIFT:
+            opP = "<<";
+            break;
+        case RSHIFT:
+            opP = ">>";
+            break;
+        case SEPARATOR:
+            opP = "_";
+            break;
+        default:
+            verror("unknown binary op %d in a constant's pool key", op);
+            return;
+        }
+
+        if( ((op == PLUS) || (op == MUL) || (op == AND) || (op == OR) || (op == XOR) || (op == SEPARATOR)) &&
+            (strcmp(leftP, rightP) > 0) )
+        {
+            swapP = leftP;
+            leftP = rightP;
+            rightP = swapP;
+        }
+
+        keyAppend(textP, "(%s %s %s)", leftP, opP, rightP);
+        free(leftP);
+        free(rightP);
+        return;
+
+    case UNOP:
+        switch( nodeP->value.ival )
+        {
+        case PARENS:
+            break;
+        case UMINUS:
+            keyAppend(textP, "-");
+            break;
+        case CMPL:
+            keyAppend(textP, "~");
+            break;
+        default:
+            verror("unknown unary op %d in a constant's pool key", nodeP->value.ival);
+            return;
+        }
+
+        appendExprText(textP, nodeP->rightP);
+        return;
+
+    case CONSTANT:
+        // A constant inside a constant: its own slot's key names it.
+        keyAppend(textP, "[%s]", nodeP->value.symP->name);
+        return;
+
+    default:
+        // A symbol not yet defined, or a sym:* reference: hashExpr() gives what
+        // identifies it, the symbol's serial number and bank, or the name digested.
+        keyAppend(textP, "s%lx", (unsigned long)hashExpr(nodeP));
+        return;
+    }
+}
+
+// The constant pool's key for an expressions.
+// A bank's literals with equal keys share/ one slot which the parser places
+// before it knows the slot's value.
+// The key is generated by hashExpr() when the expression applies an operator to
+// something the parse has not seen yet or is a constant inside a constant, '#' and
+// the expression's canonical text.
+// The pool is a tree ordered by the key's text, placed in pre-order.
+// '#' sorts below/ every digit so a key with the text sorts against every other key exactly as its
+// number alone does.
+// The pool, and so every address, changes only where two literals that shared a slot now differ.
+// '!' sorts below every character the canonical text can start with,
+// so a key with the value sorts the same way against a key with the text and the same number.
+// Returns the key, allocated; the caller frees it.
+char *
+poolKey(PNodeP exprP)
+{
+KeyText text;
+PNodeP nodeP;
+long number;
+int value;
+
+    keyStart(&text);
+    number = hashExpr(exprP);
+    keyAppend(&text, "%ld", number);
+
+    for( nodeP = exprP; nodeP && (nodeP->type == UNOP) && (nodeP->value.ival == PARENS); nodeP = nodeP->rightP )
+    {
+    }
+
+    if( nodeP && readsUnknown(nodeP) &&
+        ((nodeP->type == BINOP) || (nodeP->type == UNOP) || (nodeP->type == CONSTANT)) )
+    {
+        keyAppend(&text, "#");
+        appendExprText(&text, nodeP);
+    }
+    else if( nodeP && !readsUnknown(nodeP) )
+    {
+        quietEval = true;
+        value = evalExpr(exprP);
+        quietEval = false;
+
+        if( (long)value != (number & WRDMASK) )
+        {
+            keyAppend(&text, "#!%o", value);
+        }
+    }
+
+    return(text.bufP);
 }
 
 // Given a number in 2s cmpl, convert to 1s cmpl.

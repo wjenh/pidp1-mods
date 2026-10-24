@@ -1,0 +1,8 @@
+a tag inside a repeat is refused
+
+100/
+go,	lac a
+	repeat 2, b, ral 1s	/ refused
+	hlt
+a,	5
+	start go

@@ -1,0 +1,8 @@
+expunge is refused
+
+	expunge	/ refused
+100/
+go,	lac a
+	hlt
+a,	5
+	start go

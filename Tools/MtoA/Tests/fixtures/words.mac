@@ -1,0 +1,14 @@
+names that are am1 words, and xx, skip, clc
+
+100/
+go,	lac table
+	lac C
+	lac lia
+	xx
+	skip
+	clc
+	hlt
+table,	1
+C,	2
+lia,	3
+	start go

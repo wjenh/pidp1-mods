@@ -1,0 +1,12 @@
+! is or and & is and
+
+100/
+go,	lac a!b
+	lac a&b
+	lac a!b&c
+	lac 7&a!10
+	hlt
+a,	6
+b,	3
+c,	5
+	start go

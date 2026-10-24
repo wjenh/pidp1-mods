@@ -1,0 +1,11 @@
+an assignment to R in a define body is refused
+
+define m a
+	R=R+1	/ refused
+	lac a
+	term
+
+100/
+go,	m 5
+	hlt
+	start go

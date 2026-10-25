@@ -10,9 +10,9 @@ Where DEC's later documents fill its gaps or correct it, the emulation follows t
 *Microtape: Its Features and Applications* (1963), the F-03 brochure (1964), and DEC's
 field-service memos.
 
-This is version 1.8\
-Edit date 24-Oct-2026\
-Add new relative path behavior for mtp.
+This is version 1.9\
+Edit date 25-Oct-2026\
+Microtape images use the .mtp extension.
 
 ## What is the Type 550 Microtape?
 
@@ -46,8 +46,8 @@ List the drive-to-file mapping in */opt/pidp1-mods/microtapes.txt*, one line per
 A line with no leading slash is in the default /opt/pidp1-mods/Microtapes directory.
 ```
 # drive  image
-1 tape1.img
-2 /home/pi/tapes/system.img,locked
+1 tape1.mtp
+2 /home/pi/tapes/system.mtp,locked
 ```
 - A line is the drive number, 1-8 in *decimal*, drive 8 is 010 in the `mse` field, then
   spaces, then the image's path, which runs to the end of the line and may contain spaces.
@@ -55,6 +55,8 @@ A line with no leading slash is in the default /opt/pidp1-mods/Microtapes direct
   It can then only be read, not written, and mode 7 is refused.
   An image file that is read-only is also mounted locked.
 - A path that does not start with `/` is relative to */opt/pidp1-mods/Microtapes*.
+- An image is named with the `.mtp` extension, which pdp1central's tape library lists;
+  mtp and the emulator take any name.
 - Blank lines and lines starting with `#` are ignored.
   A drive with no line has no tape.
   With no *microtapes.txt* at all, no drive has a tape.
@@ -68,17 +70,17 @@ microtapesbs=2
 ```
 To change tapes while the emulator runs, edit *microtapes.txt*, or let *mtp* do it:
 ```
-bin/mtp 1 tape2.img
-bin/mtp 2 /home/pi/tapes/system.img,locked
-bin/mtp -f /some/other/list.txt 3 scratch.img
-bin/mtp 4 ../work.img
+bin/mtp 1 tape2.mtp
+bin/mtp 2 /home/pi/tapes/system.mtp,locked
+bin/mtp -f /some/other/list.txt 3 scratch.mtp
+bin/mtp 4 ../work.mtp
 ```
 *mtp* replaces the drive's line or adds one.
 The image name is written into the list as given, so a relative name is relative to
 */opt/pidp1-mods/Microtapes*.
 A name starting with `./` or `../` is the exception: it is taken from the current directory,
 as with any other command, and written as the absolute path it resolves to with  `.` or `..`.
-Run in */home/pi/work*, the last example writes `4 /home/pi/work.img`.
+Run in */home/pi/work*, the last example writes `4 /home/pi/work.mtp`.
 `-f` names a list file other than */opt/pidp1-mods/microtapes.txt*.
 
 The change takes effect at the program's next `mse`.
@@ -87,7 +89,7 @@ An unchanged file does nothing, so a program's `mse` never rewinds a tape or und
 The list is not the only thing `mse` looks at.
 The image is read into memory when it is mounted
 so a different tape put in the same file would never be seen and `mtp -u 2` followed by
-`mtp 2 same.img` changes no line of the list.
+`mtp 2 same.mtp` changes no line of the list.
 So `mse` also checks the image file of the drive it
 selects, and if that file was replaced, changed in place,
 or removed since the tape was mounted, it mounts the tape again.
@@ -195,7 +197,7 @@ another drive, or for a file that cannot be created.
     mmt                     // IO = mtmok, mtmlck or mtmerr
     ...
 name,
-    ascii "scratch.img"
+    ascii "scratch.mtp"
 ```
 
 -IOT 301, mse, 720301, select

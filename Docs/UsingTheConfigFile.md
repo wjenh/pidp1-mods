@@ -2,9 +2,9 @@
 
 This document describes /opt/pidp1-mods/pidp1.config and how to use it.
 
-This is version 1.3; it will be updated as needed.
+This is version 1.4; it will be updated as needed.
 
-Edit date 01-Oct-2026
+Edit date 22-Oct-2026
 
 ## What is the configuration file?
 
@@ -134,6 +134,23 @@ Read Docs/UsingAudio.md before changing these.
 | lptLines | IOT_45 | Lines per page |
 | lptNoFF | IOT_45 | Newlines instead of a form feed character |
 | microtapesbs | Microtape plugin | The Type 550 microtape's sequence break channel; 2 by default |
+
+### The plotter
+
+Read Docs/UsingThePlotter.md before changing these. Each is read when the plugin loads and again
+at a reload.
+
+| Setting | Reader | What it does |
+|---|---|---|
+| plottermodel | IOT_73 | The CalComp model, 560, 563 or 565: its step time and paper width; 560 by default |
+| plotterstep | IOT_73 | The step time in microseconds, overriding the model's |
+| plotterpendown, plotterpenup | IOT_73 | The pen's down and up times in milliseconds; 100 by default |
+| plotterfile | IOT_73 | The PNG the paper is written to; a %d in it numbers the sheets. plotter.png by default |
+| plotteridle | IOT_73 | Seconds idle after drawing before the sheet is written; 5 by default, 0 for never |
+| plotterpen | IOT_73 | The pen's width in steps, 1 to 50 |
+| plottersbs | IOT_73 | The sequence break channel, 1 to 15; off by default |
+| plottercks | IOT_73 | The cks bit of the plotter's free flag; 7 by default |
+| plotterorigin | IOT_73 | Where the pen starts, in steps from the left edge |
 
 ### The hardware panel
 

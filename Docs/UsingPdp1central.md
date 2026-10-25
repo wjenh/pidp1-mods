@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.8\
-Edit date 24-Oct-2026\
-Updated for better description of punch behavior.
+This is version 1.10\
+Edit date 25-Oct-2026\
+Added the new Companion control buttons and the drum and microtape libraries.
 
 ## What is pdp1central?
 
@@ -16,8 +16,10 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - it mounts paper tapes in the reader and saves what the punch punches;
 - it fast loads a tape straight into the running pdp-1's memory, with fastload or with ovlload
   for a program with drum overlays;
-- it mounts and unmounts microtapes on the Type 550 drives, with mtp;
+- it mounts and unmounts microtapes on the Type 550 drives, with mtp, choosing from a tape library;
+- it puts drum images from a library onto the Type 23 drum, and saves the drum to the library;
 - it turns the emulator's sound on and off;
+- it opens the typewriter, t30dpy and console windows;
 - it sets the running emulator's gain, audio filters, tuning and sample rate, and its multiply and
   divide option, on the Live tab;
 - it edits /opt/pidp1-mods/pidp1.config, the configuration file, setting by setting;
@@ -25,7 +27,7 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 
 It runs on the machine that runs the emulator.
 The scripts stay, and can still be used on a system without a desktop.
-Pdp1central starts, stops, ans reloads the emulator and starts t30doy by running bin/pdp1control.sh
+Pdp1central starts, stops, and reloads the emulator and starts t30dpy by running bin/pdp1control.sh
 so the two always do the same thing.
 
 ## Starting it
@@ -83,7 +85,7 @@ Front panel (PiDP-1 hardware or virtual) and USB paper tape (yes or no).
 A click saves the choice at once, and it is used at the next start or restart.
 
 *Also start t30dpy* starts the t30dpy display beside the gui or web front end.
-Apps always starts t30dpy,the box is shown checked and cannot be changed.
+Apps always starts t30dpy, the box is shown checked and cannot be changed.
 The emulator sends the display to one window at a time, the last one to connect:
 - with gui, t30dpy starts once pdp1_periphES has connected; t30dpy has the display and the
   gui's display window stays blank;
@@ -117,6 +119,8 @@ overlays.
 The line beside the button then says "with overlays" and reports if ovlload wrote over another tool's
 data on the drum.
 The Log tab list the tracks.
+A drum image picked on the Drums tab afterwards replaces the whole drum, overlays included,
+so pick the drum first, then load.
 
 **Paper tape reader.**
 - Mount... opens a file dialog, and mounts the chosen tape.
@@ -157,6 +161,37 @@ A reload sets the sound back to what the audio enabled setting says.
 When pdp1central reloads the emulator after a click, it puts the sound back as the click set it.
 A reload made elsewhere, by pdp1control reload, is not undone.
 
+**Companions.**
+
+The three buttons open the windows that go with the emulator using the same commands as the
+desktop icons:
+- Typewriter opens a terminal on the typewriter,
+  lxterminal -e "telnet localhost 1041".
+- t30dpy opens the t30dpy display, /opt/pidp1-mods/bin/t30dpy.
+- Pdp1 monitor opens the emulator's screen console, not generally useful except to see
+  error messages.
+  Ctrl-A d exits it as does closing the window, the emulator continues to run.
+
+The windows are not pdp1central's, they stay open when pdp1central exits.
+If a program cannot be started, the message line under the top strip reports why, such as
+"lxterminal: not found".
+
+The buttons work only while the emulator runs, otherwise they are disabled and the row reads
+"pidp1 not running".
+Typewriter and t30dpy also wait for the emulator to respond since they would close with
+nothing to connect to.
+Pdp1 monitor needs only the emulator running.
+
+The t30dpy button is disabled while a t30dpy runs.
+The emulator sends the display to the last window to connect.
+T30dpy will take it from the gui's display window or the browser's display panel,
+the line beside the buttons says which one, if either.
+
+Typewriter has no indicator, and a second click opens a second terminal.
+The typewriter takes one connection at a time, the second terminal's telnet is refused and its
+window closes at once.
+Once the first terminal is closed, Typewriter opens a new one.
+
 **Window colors**
 
 Picks the color scheme (see Colors below).
@@ -166,7 +201,7 @@ When pdp1central.config also changes single colors, a line under the choice says
 ### The Live tab
 
 Settings the running emulator can take while running.
-They are reset to the config file values on the next emulator starr unless saved.
+They are reset to the config file values on the next emulator start unless saved.
 
 **Audio**
 
@@ -225,9 +260,12 @@ the tape's file or "empty", and:
 - Mount... opens a file dialog.
   Choose an existing tape or type a new name.
   A new tape is blank when it is mounted.
+  A name typed with no extension gets .mtp, the microtape image extension; a name with any
+  extension is used as typed.
   A tape already on another drive is refused.
   The check resolves a tape rgardless of how its line lists it, a full path or a name relative to
   /opt/pidp1-mods/Microtapes, with or without ./ or ../.
+- Mount selected mounts the tape chosen in the tape library below, in the same way.
 - Unmount takes the drive's tape out of the mount list.
 
 Pdp1central makes each change with **mtp**.
@@ -238,6 +276,69 @@ editing the file shows within a second or two.
 Comment lines are not shown.
 A tape a program mounts itself with the mmt IOT is not in the file and is not shown.
 The tab works whether the emulator is running or not.
+
+**The tape library.**
+
+Under the drives, the tapes in /opt/pidp1-mods/Microtapes, then what its index.txt lists (see
+Libraries below).
+Choose a tape, then Mount selected on a drive's row.
+A tape in Microtapes, or under it, is given to mtp by its name relative to Microtapes; any
+other by its full path.
+Mounting changes only the mount list, as mtp does; no tape file is copied or changed.
+A program writing to the tape writes the library's file itself, unless the drive's write lock
+is on.
+
+### The Drums tab
+
+The drum images in /opt/pidp1-mods/Drums, then what its index.txt lists (see Libraries below),
+and beside them what the chosen image holds, as drumlist lists it: Adventure, a Z-machine story,
+drumupdater's tracks or overlays.
+
+- Pick puts the chosen image on the drum:
+  1. The drum as it is now is copied to /opt/pidp1-mods/pdp23drum.bak, replacing the last one.
+  2. The tab asks whether to save the current drum to the library first:
+     Save as... opens Save drum's dialog and picks once the drum is saved;
+     Don't save picks at once; Cancel picks nothing, leaving pdp23drum.bak as made.
+  3. The image is copied onto /opt/pidp1-mods/pdp23drum.
+     The emulator reads the new drum in at its next drum transfer, whether it is running or
+     halted.
+     An image shorter than a whole drum is fine; the rest of the drum reads as 0.
+- Save drum... opens a file dialog in Drums and copies the drum to the chosen file.
+  A name with no extension gets .drm.
+  A file saved outside Drums also gets an index.txt line, so it is listed.
+
+With no drum file yet, Pick puts the image there without asking, and Save drum has nothing to
+save.
+
+**IMPORTANT!** While pidp1 is running, the tab warns that a program writing the drum during a
+Pick or Save drum can leave a mix of old and new words.
+The drum writes its file a few seconds behind the program, so halt the program first to be sure.
+
+Fast load with overlays writes its tracks onto the drum: a Pick afterwards replaces them, and a
+fast load after a Pick writes over part of the image.
+Pick first, then load.
+
+### Libraries
+
+The Microtape and Drums tabs each list a library: a directory's own images, .mtp for tapes and
+.drm for drum images, and its subfolders, then the lines of an optional index.txt in that
+directory, one path per line.
+- A line is a file or a folder.
+  A relative line is taken from the library's directory.
+  A line naming a file is listed whatever its extension, so an older .img tape can be listed by
+  its own line.
+- Lines starting with # are comments, and blank lines are skipped.
+  A path listed twice is shown once.
+- A folder has a + that opens it to show its images and subfolders, and - closes it.
+  A folder shows at most 500 entries, and says how many more there are.
+- A line whose path does not exist is shown grayed and marked missing, so it can be deleted.
+- Add file... and Add folder... open a dialog and add the chosen path as a line, relative when
+  it is inside the library's directory, creating index.txt if there is none.
+- Delete entry takes the chosen entry's line out of index.txt.
+  It never deletes a file, and cannot be used on an entry that no line names.
+- The first change each time pdp1central runs keeps the old file as index.txt.bak; comments,
+  the other lines and their order are kept.
+- A change made to the directory or index.txt elsewhere shows within a second or two.
 
 ### The Settings tab
 
@@ -391,9 +492,10 @@ The color names:
 pdp1central is C, using the Nuklear toolkit on SDL2 (2.0.18 or later).
 Nuklear is included in src/pdp1central, unmodified.
 
-Its file dialogs, for Mount..., Load..., Save punch to... and the Microtape tab, run bin/askfile,
+Its file dialogs, for Mount..., Load..., Save punch to..., the Microtape and Drums tabs, run bin/askfile,
 which needs Python 3, and shows zenity's file chooser or Python's Tk one when zenity is missing.
-Fast load and the Microtape tab run bin/fastload, bin/ovlload and bin/mtp, which the install builds.
+Fast load and the Microtape and Drums tabs run bin/fastload, bin/ovlload, bin/mtp and bin/drumlist,
+which the install builds.
 If zenity, Python 3 or its Tk is missing, use:
 ```
 sudo apt install zenity python3 python3-tk
@@ -402,5 +504,5 @@ sudo apt install zenity python3 python3-tk
 To build pdp1central, in /pidp1-mods/src/pdp1central:
 
 ```
-make -C /opt/pidp1-mods/src/pdp1central
+make
 ```

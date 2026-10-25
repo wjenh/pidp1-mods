@@ -1,13 +1,14 @@
-// pdp1central: one desktop window to control the PiDP-1 emulator.
+// pdp1central, one desktop window to control the PiDP-1 emulator.
 // It shows what is running, starts, stops, restarts and reloads the emulator through
 // bin/pdp1control.sh, keeps the script's start-time choices in pdp1control.config, mounts and
 // saves paper tapes, fast loads a tape through fastload, or through ovlload when it has drum
-// overlays, mounts microtapes through mtp, turns the
-// sound on and off, and edits pidp1.config from a schema file that describes every setting.
-// Everything that is not drawing is in the core (core.h); this file is the Nuklear front end on
-// SDL2. One thread and one event loop: SDL_WaitEventTimeout at 250 ms, the running child polled
-// on every pass and process status refreshed once a second. Nothing in the loop blocks longer
-// than a command port's timeout.
+// overlays, mounts microtapes through mtp, picks and saves drum images, turns the
+// sound on and off, starts the typewriter, t30dpy and console windows, and edits pidp1.config
+// from a schema file that describes every setting.
+// Everything that is not drawing is in the core (core.h), this file is the Nuklear front end on SDL2.
+// One thread and one event loop: SDL_WaitEventTimeout at 250 ms, the running child polled
+// on every pass and process status refreshed once a second.
+// Nothing in the loop blocks longer than a command port's timeout.
 // Usage: pdp1central [-r root] [-s schema]
 //
 // 30-Sep-2026 wje (Claude) - written.
@@ -27,6 +28,10 @@
 //     it, or for a .ovl chosen, once their dates agree.
 // 23-Oct-2026 wje (Claude) - a relative microtape name is relative to Microtapes/, as the plugin
 //     takes it, with . and .. taken out; the write lock keeps the tape of a ./ or ../ line.
+// 25-Oct-2026 wje (Claude) - image libraries (library.c): the Drums tab picks and saves drum
+//     images, and the Microtape tab mounts a tape from its library; a new tape name gets .mtp.
+// 25-Oct-2026 wje (Claude) - the Control tab's Companions row starts the typewriter, t30dpy and
+//     the console detached, with the commands of their desktop launchers.
 
 #include <errno.h>
 #include <limits.h>
@@ -62,6 +67,9 @@
 #define AD1_DEFAULT_PORT 1044   // the debugger link's port when pidp1.config does not set ad1port
 #define MT_NAME_MAX 255         // the longest tape path mtp and the plugin take
 #define OVL_MAX_SKEW 5          // seconds a tape's and its .ovl's modification times may differ
+#define LIB_OPEN_MAX 64         // folders open at once in one library's list
+#define LIB_ROW_H 22            // a row of a library's list
+#define DRUMLIST_MS 2000        // the longest drumlist may take to list one image
 
 // What the child slot is doing.
 typedef enum
@@ -72,6 +80,9 @@ typedef enum
     JOB_ASK_PUNCH,
     JOB_ASK_LOAD,
     JOB_ASK_MICROTAPE,
+    JOB_ASK_DRUMSAVE,
+    JOB_ASK_LIBFILE,
+    JOB_ASK_LIBFOLDER,
     JOB_COMMAND
 } Job;
 
@@ -90,9 +101,22 @@ typedef enum
     TAB_CONTROL,
     TAB_LIVE,
     TAB_MICROTAPE,
+    TAB_DRUMS,
     TAB_SETTINGS,
     TAB_LOG
 } Tab;
+
+// A library as its tab shows it: the list, the folders opened in it, and the entry chosen, kept
+// by its path and index.txt line so that it stays chosen when the list is read again.
+typedef struct
+{
+    Library lib;
+    char *openP[LIB_OPEN_MAX];
+    int openCount;
+    char selPath[PATH_MAX];     // "" for none
+    int selLine;
+    int lastError;              // the index.txt error last reported, so it is logged once
+} LibView;
 
 // Change counts for the settings footer.
 typedef struct
@@ -121,9 +145,13 @@ static char scriptPath[PATH_MAX];
 static char askPath[PATH_MAX];      // bin/askfile, every file dialog
 static char fastloadPath[PATH_MAX];
 static char ovlloadPath[PATH_MAX];
-static char drumPath[PATH_MAX];     // the drum image ovlload writes
+static char drumPath[PATH_MAX];     // the drum image ovlload writes, and the drum plugin reads
+static char drumBakPath[PATH_MAX];  // the drum as it was before the last Pick
+static char drumsDir[PATH_MAX];     // the drum images' library
+static char drumlistPath[PATH_MAX];
 static char savePunchPath[PATH_MAX];
 static char mtpPath[PATH_MAX];
+static char t30dpyPath[PATH_MAX];
 static char mtListPath[PATH_MAX];
 static char microtapeDir[PATH_MAX];
 static char tapesDir[PATH_MAX];     // where the paper tape dialogs start
@@ -184,6 +212,16 @@ static MtList mtList;           // microtapes.txt as last read
 static bool mtListRead;
 static nk_bool mtLockNext[MT_DRIVES + 1];   // an empty drive's write lock, for its next mount
 static int mtAskDrive;          // the drive the microtape dialog is choosing for
+
+static LibView tapeView;        // Microtapes/, on the Microtape tab
+static LibView drumView;        // Drums/, on the Drums tab
+static LibView *askViewP;       // the library a dialog is adding to
+static bool drumAsking;         // Pick's question, whether to save the drum first, is shown
+static char drumPickPath[PATH_MAX];     // the image Pick puts on the drum
+static bool drumPickAfterSave;  // the drum dialog was opened by Pick's question, which picks once saved
+static char drumHolds[4096];    // drumlist's output for drumHoldsPath
+static char drumHoldsPath[PATH_MAX];    // the image drumHolds is for, "" for none
+static struct timespec drumHoldsMtime;  // its modification time then, so a change lists it again
 
 static int audioState = -1;     // the live audio the last click's reply gave: 1 on, 0 off, -1 not known
 static int audioRestore = -1;   // the state to put back after a pdp1control reload, -1 for none
@@ -432,9 +470,9 @@ int i;
     memset(&changes, 0, sizeof(changes));
     for( i = 0; i < (schemaP->count + otherCount); i++ )
     {
-        entryP = ((i < schemaP->count) ? &schemaP->entriesP[i] : NULL);
-        diskP = getValue(diskCfP, (entryP ? entryP->name : otherNames[i - schemaP->count]), diskBuf);
-        editP = getValue(editCfP, (entryP ? entryP->name : otherNames[i - schemaP->count]), editBuf);
+        entryP = ((i < schemaP->count)?&schemaP->entriesP[i]:NULL);
+        diskP = getValue(diskCfP, (entryP?entryP->name:otherNames[i - schemaP->count]), diskBuf);
+        editP = getValue(editCfP, (entryP?entryP->name:otherNames[i - schemaP->count]), editBuf);
         if( !valuesDiffer(diskP, editP) )
         {
             continue;
@@ -610,11 +648,13 @@ static bool
 isDialog(Job which)
 {
     return( (which == JOB_ASK_MOUNT) || (which == JOB_ASK_PUNCH) || (which == JOB_ASK_LOAD) ||
-        (which == JOB_ASK_MICROTAPE) );
+        (which == JOB_ASK_MICROTAPE) || (which == JOB_ASK_DRUMSAVE) || (which == JOB_ASK_LIBFILE) ||
+        (which == JOB_ASK_LIBFOLDER) );
 }
 
 // Run the file dialog helper as the child, so the window keeps drawing while it is open. Its
-// mode picks the dialog: an existing tape, a file to save to, or a microtape old or new.
+// mode picks the dialog: an existing tape, a file to save to, a microtape old or new, or a file
+// or folder for a library (askViewP's).
 static void
 startDialog(Job which)
 {
@@ -641,6 +681,24 @@ const char *labelP;
     {
         argv[3] = "load";
         labelP = "choosing a tape to fast load";
+    }
+    else if( which == JOB_ASK_DRUMSAVE )
+    {
+        argv[3] = "drum";
+        argv[4] = drumsDir;
+        labelP = "choosing where to save the drum";
+    }
+    else if( which == JOB_ASK_LIBFILE )
+    {
+        argv[3] = "libfile";
+        argv[4] = askViewP->lib.dirP;
+        labelP = "choosing a file for the library";
+    }
+    else if( which == JOB_ASK_LIBFOLDER )
+    {
+        argv[3] = "libfolder";
+        argv[4] = askViewP->lib.dirP;
+        labelP = "choosing a folder for the library";
     }
     else
     {
@@ -674,7 +732,7 @@ int i;
     line[0] = '\0';
     for( i = 0; argvP[i] && (len < sizeof(line)); i++ )
     {
-        len += snprintf(line + len, (sizeof(line) - len), "%s%s", (i ? " " : ""), argvP[i]);
+        len += snprintf(line + len, (sizeof(line) - len), "%s%s", (i?" ":""), argvP[i]);
     }
 
     if( !childStart(argvP) )
@@ -716,8 +774,8 @@ int result;
         return(true);
     }
 
-    appError("\"%s\" not sent: %s", lineP, ((result == -1) ? "the emulator is not running" :
-        ((result == -2) ? "no answer" : "port error")));
+    appError("\"%s\" not sent: %s", lineP, ((result == -1)?"the emulator is not running" :
+        ((result == -2)?"no answer":"port error")));
     return(false);
 }
 
@@ -791,7 +849,7 @@ int port;
     }
 
     port = atoi(valueP);
-    return( ((port < 0) || (port > 65535)) ? AD1_DEFAULT_PORT : port );
+    return( ((port < 0) || (port > 65535))?AD1_DEFAULT_PORT:port );
 }
 
 // Why fast load cannot be used now, or NULL if it can. The debugger port is never probed: the
@@ -820,7 +878,7 @@ baseName(const char *pathP)
 const char *slashP;
 
     slashP = strrchr(pathP, '/');
-    return( slashP ? (slashP + 1) : pathP );
+    return( slashP?(slashP + 1):pathP );
 }
 
 // Whether pathP names a regular file, its modification time to *mtimeP.
@@ -855,7 +913,7 @@ size_t len;
 
     // The name without its suffix; a dot before the last slash is a directory's.
     dotP = strrchr(baseName(fileP), '.');
-    len = (dotP ? (size_t)(dotP - fileP) : strlen(fileP));
+    len = (dotP?(size_t)(dotP - fileP):strlen(fileP));
     if( (len + 5) > sizeof(baseP) )
     {
         snprintf(whyP, whySize, "the path is too long");
@@ -1004,63 +1062,6 @@ char *argv[4];
     startCommand(argv, CMD_SAVEPUNCH, 0, "saving the punch");
 }
 
-// The absolute path inP with its . and .. components taken out, into outP (PATH_MAX bytes),
-// lexically as mtp does: a .. takes off the component before it, and stops at /. Lexically, not
-// with realpath, so it works for a tape that does not exist yet.
-static void
-collapseDots(const char *inP, char *outP)
-{
-const char *cP;
-const char *endP;
-size_t outLen;
-size_t len;
-
-    // The result is never longer than inP, so it always fits.
-    outLen = 0;
-    for( cP = inP; *cP; cP = endP )
-    {
-        while( *cP == '/' )
-        {
-            ++cP;
-        }
-
-        for( endP = cP; *endP && (*endP != '/'); ++endP )
-        {
-            // to the end of this component
-        }
-
-        len = (size_t)(endP - cP);
-        if( (len == 0) || ((len == 1) && (cP[0] == '.')) )
-        {
-            continue;
-        }
-
-        if( (len == 2) && (strncmp(cP, "..", 2) == 0) )
-        {
-            while( (outLen > 0) && (outP[outLen - 1] != '/') )
-            {
-                --outLen;
-            }
-
-            if( outLen > 0 )
-            {
-                --outLen;
-            }
-            continue;
-        }
-
-        outP[outLen++] = '/';
-        memcpy(outP + outLen, cP, len);
-        outLen += len;
-    }
-
-    if( outLen == 0 )
-    {
-        outP[outLen++] = '/';
-    }
-    outP[outLen] = 0;
-}
-
 // A tape path as the Microtape plugin resolves it, into outP (PATH_MAX bytes): a relative one is
 // relative to the root's Microtapes/. With . and .. taken out, so two spellings of one file
 // compare equal.
@@ -1085,7 +1086,7 @@ int len;
         return(false);
     }
 
-    collapseDots(joined, outP);
+    pathCollapse(joined, outP);
     return(true);
 }
 
@@ -1127,7 +1128,7 @@ int d;
 static bool
 microtapeLock(int drive)
 {
-    return( mtList.spec[drive][0] ? mtList.locked[drive] : mtLockNext[drive] );
+    return( mtList.spec[drive][0]?mtList.locked[drive]:mtLockNext[drive] );
 }
 
 // Mount fileP on a microtape drive with mtp, which rewrites the drive's line in
@@ -1161,11 +1162,11 @@ int other;
 
     if( chosen && tapeFullPath(fileP, full) )
     {
-        appLog("drive %d: %s, %s", drive, fileP, (access(full, F_OK) ? "a new blank tape, made when it is first used" :
+        appLog("drive %d: %s, %s", drive, fileP, (access(full, F_OK)?"a new blank tape, made when it is first used" :
             "an existing tape"));
     }
 
-    snprintf(spec, sizeof(spec), "%s%s", fileP, (locked ? ",locked" : ""));
+    snprintf(spec, sizeof(spec), "%s%s", fileP, (locked?",locked":""));
     snprintf(driveText, sizeof(driveText), "%d", drive);
     snprintf(label, sizeof(label), "mounting a tape on drive %d", drive);
     argv[0] = mtpPath;
@@ -1231,7 +1232,7 @@ commandEnded(int status)
         loadOverwrote = commandSawOverwrite;
         if( status == 0 )
         {
-            loadResult = (commandSawStop ? 2 : 1);
+            loadResult = (commandSawStop?2:1);
         }
         else
         {
@@ -1265,11 +1266,11 @@ commandEnded(int status)
     else if( status == 0 )
     {
         appLog("drive %d: microtapes.txt changed; the emulator %s at its next mse", commandDrive,
-            ((command == CMD_MOUNT) ? "mounts the tape" : "unmounts the drive"));
+            ((command == CMD_MOUNT)?"mounts the tape":"unmounts the drive"));
     }
     else
     {
-        appError("drive %d: tape could not be %s", commandDrive, ((command == CMD_MOUNT) ? "mounted" : "unmounted"));
+        appError("drive %d: tape could not be %s", commandDrive, ((command == CMD_MOUNT)?"mounted":"unmounted"));
     }
 }
 
@@ -1284,11 +1285,301 @@ int before;
         return;
     }
 
-    before = (mtListRead ? mtList.error : 0);
+    before = (mtListRead?mtList.error:0);
     mtListRead = true;
     if( !mtListLoad(mtListPath, &mtList) && (mtList.error != before) )
     {
         appError("%s could not be listed: %s", mtListPath, strerror(mtList.error));
+    }
+}
+
+// List a library again, as its folder, its index.txt and its opened folders now are. An
+// index.txt that cannot be read is reported once, until it can be or the reason changes.
+static void
+refreshLibrary(LibView *viewP)
+{
+    if( !libLoad(&viewP->lib, viewP->openP, viewP->openCount) && (viewP->lib.error != viewP->lastError) )
+    {
+        appError("%s could not be read: %s", viewP->lib.indexP, strerror(viewP->lib.error));
+    }
+    viewP->lastError = viewP->lib.error;
+}
+
+// The library's chosen entry, as listed now, or NULL if nothing is chosen or it is gone.
+static const LibEntry *
+selectedEntry(const LibView *viewP)
+{
+int i;
+
+    if( !viewP->selPath[0] )
+    {
+        return(NULL);
+    }
+
+    for( i = 0; i < viewP->lib.count; i++ )
+    {
+        if( (viewP->lib.entriesP[i].line == viewP->selLine) && !strcmp(viewP->lib.entriesP[i].pathP, viewP->selPath) )
+        {
+            return(&viewP->lib.entriesP[i]);
+        }
+    }
+
+    return(NULL);
+}
+
+// Open a folder in a library's list, or close it if it is open.
+static void
+toggleFolder(LibView *viewP, const char *pathP)
+{
+int i;
+
+    for( i = 0; i < viewP->openCount; i++ )
+    {
+        if( !strcmp(viewP->openP[i], pathP) )
+        {
+            free(viewP->openP[i]);
+            viewP->openP[i] = viewP->openP[--viewP->openCount];
+            refreshLibrary(viewP);
+            return;
+        }
+    }
+
+    if( viewP->openCount == LIB_OPEN_MAX )
+    {
+        appError("%d folders are open already; close one first", LIB_OPEN_MAX);
+        return;
+    }
+
+    if( (viewP->openP[viewP->openCount] = strdup(pathP)) )
+    {
+        viewP->openCount++;
+    }
+    refreshLibrary(viewP);
+}
+
+// Add a file or folder from a dialog to a library's index.txt.
+static void
+libraryAdd(LibView *viewP, const char *pathP)
+{
+    if( !libAdd(&viewP->lib, pathP) )
+    {
+        appError("not added: %s", viewP->lib.errorText);
+        return;
+    }
+
+    appLog("%s added to %s", pathP, viewP->lib.indexP);
+    refreshLibrary(viewP);
+}
+
+// Take the chosen entry's line out of its library's index.txt. The file it names is left alone.
+static void
+libraryDelete(LibView *viewP)
+{
+const LibEntry *entryP;
+
+    if( !(entryP = selectedEntry(viewP)) || (entryP->line < 0) )
+    {
+        return;
+    }
+
+    if( !libDelete(&viewP->lib, entryP->line, entryP->pathP) )
+    {
+        appError("not deleted: %s", viewP->lib.errorText);
+        return;
+    }
+
+    appLog("line %d, for %s, taken out of %s; the file is not touched", (entryP->line + 1), entryP->pathP,
+        viewP->lib.indexP);
+    viewP->selPath[0] = '\0';
+    refreshLibrary(viewP);
+}
+
+// Run drumlist on the Drums tab's chosen image, for what it holds, when the choice or the
+// image's modification time has changed since the last run.
+static void
+refreshDrumHolds(void)
+{
+const LibEntry *entryP;
+struct stat st;
+char *argv[4];
+int status;
+size_t len;
+
+    entryP = selectedEntry(&drumView);
+    if( !entryP || (entryP->kind != LIB_IMAGE) || stat(entryP->pathP, &st) )
+    {
+        drumHoldsPath[0] = '\0';
+        drumHolds[0] = '\0';
+        return;
+    }
+
+    if( !strcmp(drumHoldsPath, entryP->pathP) && (st.st_mtim.tv_sec == drumHoldsMtime.tv_sec) &&
+        (st.st_mtim.tv_nsec == drumHoldsMtime.tv_nsec) )
+    {
+        return;
+    }
+
+    snprintf(drumHoldsPath, sizeof(drumHoldsPath), "%s", entryP->pathP);
+    drumHoldsMtime = st.st_mtim;
+    if( access(drumlistPath, X_OK) )
+    {
+        snprintf(drumHolds, sizeof(drumHolds), "%.4000s is not installed", drumlistPath);
+        return;
+    }
+
+    argv[0] = drumlistPath;
+    argv[1] = "-i";
+    argv[2] = drumHoldsPath;
+    argv[3] = NULL;
+    status = runCapture(argv, drumHolds, sizeof(drumHolds), DRUMLIST_MS);
+    if( status != 0 )
+    {
+        len = strlen(drumHolds);
+        snprintf((drumHolds + len), (sizeof(drumHolds) - len), "%s", ((status < 0) ?
+            "drumlist did not finish\n":"drumlist could not list it\n"));
+    }
+}
+
+// Put drumPickPath on the drum: copied onto pdp23drum through a rename, which the drum plugin
+// watches for, so the emulator reads the whole new drum in at its next transfer.
+static void
+putDrum(void)
+{
+char error[512];
+
+    if( !fileCopy(drumPickPath, drumPath, error, sizeof(error)) )
+    {
+        appError("drum not picked: %s", error);
+        return;
+    }
+
+    appLog("the drum now holds %s; the emulator reads it in at its next drum transfer", drumPickPath);
+    if( pdp1Count > 0 )
+    {
+        appLog("pidp1 is running: a program writing the drum just then can leave a mix of the two drums");
+    }
+}
+
+// Pick: keep the drum as it is in pdp23drum.bak (owner, D1), then ask whether to save it to the
+// library first. With no drum file yet there is nothing to keep, and the image goes on at once.
+static void
+pickDrum(const char *pathP)
+{
+char error[512];
+
+    snprintf(drumPickPath, sizeof(drumPickPath), "%s", pathP);
+    if( access(drumPath, F_OK) )
+    {
+        putDrum();
+        return;
+    }
+
+    if( !fileCopy(drumPath, drumBakPath, error, sizeof(error)) )
+    {
+        appError("drum not picked: keeping it in %s: %s", drumBakPath, error);
+        return;
+    }
+
+    appLog("the drum as it was is in %s", drumBakPath);
+    drumAsking = true;
+}
+
+// Save the drum to pathP, from the drum dialog. A name with no extension gets .drm, and a file
+// outside Drums/ gets an index.txt line so it is listed. pickAfter is true when Pick's question
+// opened the dialog: the pick is made once the drum is saved.
+static void
+saveDrum(const char *pathP, bool pickAfter)
+{
+char target[PATH_MAX];
+char full[PATH_MAX];
+char error[512];
+const char *baseP;
+size_t dirLen;
+
+    if( pathP[0] != '/' )
+    {
+        appError("drum not saved: \"%s\" is not an absolute path", pathP);
+        return;
+    }
+
+    baseP = baseName(pathP);
+    if( (strchr(baseP, '.') == NULL) || (baseP[0] == '.') )
+    {
+        if( snprintf(target, sizeof(target), "%s.drm", pathP) >= (int)sizeof(target) )
+        {
+            appError("drum not saved: \"%s\" is too long", pathP);
+            return;
+        }
+
+        // The dialog asked about replacing the name chosen, not this one.
+        if( !access(target, F_OK) )
+        {
+            appError("drum not saved: %s exists; choose it by that name to replace it", target);
+            return;
+        }
+    }
+    else
+    {
+        snprintf(target, sizeof(target), "%s", pathP);
+    }
+
+    pathCollapse(target, full);
+    if( !strcmp(full, drumPath) || !strcmp(full, drumBakPath) )
+    {
+        appError("drum not saved: choose a file other than %s", full);
+        return;
+    }
+
+    if( !fileCopy(drumPath, full, error, sizeof(error)) )
+    {
+        appError("drum not saved: %s", error);
+        return;
+    }
+    appLog("the drum is saved to %s", full);
+    if( pdp1Count > 0 )
+    {
+        appLog("pidp1 is running: a program writing the drum just then can leave a mix in the saved file");
+    }
+
+    dirLen = strlen(drumsDir);
+    if( (strncmp(full, drumsDir, dirLen) != 0) || (full[dirLen] != '/') )
+    {
+        if( libAdd(&drumView.lib, full) )
+        {
+            appLog("%s added to %s", full, drumView.lib.indexP);
+        }
+        else if( strstr(drumView.lib.errorText, "already line") )
+        {
+            appLog("%s", drumView.lib.errorText);
+        }
+        else
+        {
+            appError("saved, but not listed: %s", drumView.lib.errorText);
+        }
+    }
+    refreshLibrary(&drumView);
+
+    if( pickAfter )
+    {
+        putDrum();
+    }
+}
+
+// The name mtp is given for a library image: relative to Microtapes/ when it is in there, as mtp
+// and the plugin take a relative name, else its full path, into outP (PATH_MAX bytes).
+static void
+tapeMtpName(const char *pathP, char *outP)
+{
+size_t dirLen;
+
+    dirLen = strlen(microtapeDir);
+    if( !strncmp(pathP, microtapeDir, dirLen) && (pathP[dirLen] == '/') && pathP[dirLen + 1] )
+    {
+        snprintf(outP, PATH_MAX, "%s", (pathP + dirLen + 1));
+    }
+    else
+    {
+        snprintf(outP, PATH_MAX, "%s", pathP);
     }
 }
 
@@ -1314,7 +1605,7 @@ audioFromReply(const char *replyP)
         return(0);
     }
 
-    return( !strncmp(replyP, "on", 2) ? 1 : -1 );
+    return( !strncmp(replyP, "on", 2)?1:-1 );
 }
 
 // Send audio on or off to the emulator, and keep the state its reply gives.
@@ -1331,11 +1622,11 @@ int result;
 
     snprintf(line, sizeof(line), "audio %s", wordP);
     result = portCommand(EMU_PORT, line, reply, sizeof(reply));
-    audioState = ((result == 0) ? audioFromReply(reply) : -1);
+    audioState = ((result == 0)?audioFromReply(reply):-1);
     if( result != 0 )
     {
-        appError("\"%s\" not sent: %s", line, ((result == -1) ? "the emulator is not running" :
-            ((result == -2) ? "no answer" : "port error")));
+        appError("\"%s\" not sent: %s", line, ((result == -1)?"the emulator is not running" :
+            ((result == -2)?"no answer":"port error")));
     }
     else if( audioState < 0 )
     {
@@ -1374,14 +1665,14 @@ int result;
     result = portCommand(EMU_PORT, lineP, replyP, replyLen);
     if( result != 0 )
     {
-        appError("\"%s\" not sent: %s", lineP, ((result == -1) ? "the emulator is not running" :
-            ((result == -2) ? "no answer" : "port error")));
+        appError("\"%s\" not sent: %s", lineP, ((result == -1)?"the emulator is not running" :
+            ((result == -2)?"no answer":"port error")));
         snprintf(noteP, noteLen, "not sent");
         return(false);
     }
 
     appLog("sent \"%s\" to the emulator on %d: %s", lineP, EMU_PORT, replyP);
-    snprintf(noteP, noteLen, "%s", (replyP[0] ? replyP : "sent, no reply"));
+    snprintf(noteP, noteLen, "%s", (replyP[0]?replyP:"sent, no reply"));
     return(true);
 }
 
@@ -1446,7 +1737,7 @@ int c;
     if( !liveText[i][0] || *endP || !isfinite(value) )
     {
         appError("%s: \"%s\" is not a %s; not sent", liveValues[i].nameP, liveText[i],
-            ((entryP && (entryP->type == SCHEMA_INT)) ? "whole number" : "number"));
+            ((entryP && (entryP->type == SCHEMA_INT))?"whole number":"number"));
         snprintf(liveNote[i], sizeof(liveNote[i]), "not a number; not sent");
         return;
     }
@@ -1517,7 +1808,7 @@ int rate, i;
     {
         liveFileRow[i] = false;
         snprintf(liveNote[i], sizeof(liveNote[i]), "%s", ((i == LIVE_CUTOFF) ?
-            "not reported; the channels are below" : "from the emulator"));
+            "not reported; the channels are below":"from the emulator"));
     }
     liveText[LIVE_CUTOFF][0] = '\0';
 }
@@ -1634,7 +1925,7 @@ int i, c;
 
         if( len < (sizeof(names) - 1) )
         {
-            len += snprintf(names + len, (sizeof(names) - len), "%s%s=%s", (len ? ", " : ""), liveValues[i].nameP, value);
+            len += snprintf(names + len, (sizeof(names) - len), "%s%s=%s", (len?", ":""), liveValues[i].nameP, value);
         }
     }
 
@@ -1663,7 +1954,7 @@ muldivFromReply(const char *replyP)
         return(1);
     }
 
-    return( !strcmp(replyP, "mul-div now off") ? 0 : -1 );
+    return( !strcmp(replyP, "mul-div now off")?0:-1 );
 }
 
 // Read multiply and divide every MULDIV_POLL_MS while the Live tab shows it. muldiv with a word
@@ -1689,10 +1980,10 @@ int state;
     }
 
     muldivMs = (SDL_GetTicks() | 1);    // never 0, which means read at once
-    state = ((portCommand(EMU_PORT, "muldiv ?", reply, sizeof(reply)) == 0) ? muldivFromReply(reply) : -1);
+    state = ((portCommand(EMU_PORT, "muldiv ?", reply, sizeof(reply)) == 0)?muldivFromReply(reply):-1);
     if( (state >= 0) && (state != muldivState) )
     {
-        appLog("multiply and divide is %s", (state ? "on" : "off"));
+        appLog("multiply and divide is %s", (state?"on":"off"));
     }
     muldivState = state;
 }
@@ -1704,7 +1995,7 @@ muldivSet(bool on)
 char reply[128];
 char note[160];
 
-    if( liveCommand((on ? "muldiv on" : "muldiv off"), note, sizeof(note), reply, sizeof(reply)) )
+    if( liveCommand((on?"muldiv on":"muldiv off"), note, sizeof(note), reply, sizeof(reply)) )
     {
         muldivState = muldivFromReply(reply);
     }
@@ -1724,8 +2015,8 @@ pollAudio(void)
         {
             if( audioRestore >= 0 )
             {
-                appLog("putting the audio back %s after the reload", (audioRestore ? "on" : "off"));
-                audioCommand(audioRestore ? "on" : "off");
+                appLog("putting the audio back %s after the reload", (audioRestore?"on":"off"));
+                audioCommand(audioRestore?"on":"off");
             }
             if( liveRestore )
             {
@@ -1812,6 +2103,8 @@ pollChild(void)
 char out[4096];
 int result;
 Job ended;
+char named[PATH_MAX];
+bool pickAfter;
 
     if( job == JOB_NONE )
     {
@@ -1834,6 +2127,16 @@ Job ended;
     ended = job;
     job = JOB_NONE;
     statusMs = 0;               // refresh the status at once
+    pickAfter = ((ended == JOB_ASK_DRUMSAVE) && drumPickAfterSave);
+    if( ended == JOB_ASK_DRUMSAVE )
+    {
+        drumPickAfterSave = false;
+        if( pickAfter && !dialogPath[0] )
+        {
+            appLog("the drum was not saved, so the pick is not made");
+        }
+    }
+
     if( ended == JOB_SCRIPT )
     {
         appLog("%s finished, status %d", jobLabel, childStatus());
@@ -1871,12 +2174,27 @@ Job ended;
         }
         else
         {
-            mountMicrotape(mtAskDrive, dialogPath, microtapeLock(mtAskDrive), true);
+            // A name typed with no extension gets .mtp (owner, R3); one with any extension is
+            // taken as typed, so an older .img tape still mounts.
+            snprintf(named, sizeof(named), "%s", dialogPath);
+            if( !strchr(baseName(named), '.') && ((strlen(named) + 4) < sizeof(named)) )
+            {
+                strcat(named, ".mtp");
+            }
+            mountMicrotape(mtAskDrive, named, microtapeLock(mtAskDrive), true);
         }
     }
     else if( ended == JOB_ASK_PUNCH )
     {
         savePunch(dialogPath);
+    }
+    else if( ended == JOB_ASK_DRUMSAVE )
+    {
+        saveDrum(dialogPath, pickAfter);
+    }
+    else if( (ended == JOB_ASK_LIBFILE) || (ended == JOB_ASK_LIBFOLDER) )
+    {
+        libraryAdd(askViewP, dialogPath);
     }
 
     startQueued();
@@ -1894,7 +2212,7 @@ char interfaceBuf[CONF_MAX_VALUE + 1];
 
     pdp1Count = procCount("pdp1");
     panelP = controlChoice("frontpanel", "virtual", panelBuf);
-    panelCount = procCount(!strcmp(panelP, "pidp") ? "panel_pidp1" : "vpanel_pdp1");
+    panelCount = procCount(!strcmp(panelP, "pidp")?"panel_pidp1":"vpanel_pdp1");
     interfaceP = controlChoice("interface", "web", interfaceBuf);
     if( !strcmp(interfaceP, "gui") )
     {
@@ -1912,6 +2230,17 @@ char interfaceBuf[CONF_MAX_VALUE + 1];
     usbCount = procCount("pdp1_usb_monitor");
     portUp = portAnswers(EMU_PORT);
     refreshMicrotapes();
+
+    // A library is read only while its tab is shown, so a change made elsewhere shows within a second.
+    if( tab == TAB_MICROTAPE )
+    {
+        refreshLibrary(&tapeView);
+    }
+    else if( tab == TAB_DRUMS )
+    {
+        refreshLibrary(&drumView);
+        refreshDrumHolds();
+    }
 
     if( controlCfP && confChangedOnDisk(controlCfP) && (newP = confLoad(controlPath)) )
     {
@@ -1953,7 +2282,7 @@ requestExit(void)
     }
 
     exitPending = true;
-    appLog("exit: waiting for %s to finish", ((job != JOB_NONE) ? jobLabel : "the queued commands"));
+    appLog("exit: waiting for %s to finish", ((job != JOB_NONE)?jobLabel:"the queued commands"));
 }
 
 // Draw a status lamp and its label beside it.
@@ -1968,7 +2297,7 @@ struct nk_rect dot;
     bounds = nk_widget_bounds(ctxP);
     nk_labelf(ctxP, NK_TEXT_LEFT, "    %s", labelP);
     dot = nk_rect((bounds.x + 4), (bounds.y + ((bounds.h - 14) / 2)), 14, 14);
-    nk_fill_circle(canvasP, dot, (on ? styleColors[STYLE_LAMP_ON] : styleColors[STYLE_LAMP_OFF]));
+    nk_fill_circle(canvasP, dot, (on?styleColors[STYLE_LAMP_ON]:styleColors[STYLE_LAMP_OFF]));
 }
 
 // A lamp in a row begun with nk_layout_row_begin(NK_STATIC), as wide as its label and a gap.
@@ -2022,12 +2351,12 @@ bool usb, t30, idle, running;
     // apps's front end is t30dpy, so t30dpy gets a lamp of its own only beside gui or web.
     t30 = (strcmp(interfaceP, "apps") && !strcmp(controlChoice("t30dpy", "n", t30Buf), "y"));
     snprintf(frontLabel, sizeof(frontLabel), "%s",
-        (!strcmp(interfaceP, "gui") ? "pdp1_periphES" : (!strcmp(interfaceP, "apps") ? "t30dpy" : "pdpsrv")));
+        (!strcmp(interfaceP, "gui")?"pdp1_periphES":(!strcmp(interfaceP, "apps")?"t30dpy":"pdpsrv")));
 
     // Each lamp as wide as its label, so that six fit across the window.
     nk_layout_row_begin(ctxP, NK_STATIC, ROW_H, (4 + usb + t30));
     lampSized(ctxP, "pdp1", (pdp1Count > 0));
-    lampSized(ctxP, (!strcmp(panelP, "pidp") ? "panel_pidp1" : "vpanel_pdp1"), (panelCount > 0));
+    lampSized(ctxP, (!strcmp(panelP, "pidp")?"panel_pidp1":"vpanel_pdp1"), (panelCount > 0));
     lampSized(ctxP, frontLabel, (frontCount > 0));
     if( t30 )
     {
@@ -2135,7 +2464,7 @@ audioLamp(struct nk_context *ctxP)
     }
     else
     {
-        lamp(ctxP, ((audioState == 1) ? "is on" : ((audioState == 0) ? "is off" : "not set here yet")),
+        lamp(ctxP, ((audioState == 1)?"is on":((audioState == 0)?"is off":"not set here yet")),
             (audioState == 1));
     }
 }
@@ -2144,14 +2473,86 @@ audioLamp(struct nk_context *ctxP)
 static void
 audioButton(struct nk_context *ctxP)
 {
-    if( button(ctxP, ((audioState == 1) ? "Turn audio off" : "Turn audio on"),
+    if( button(ctxP, ((audioState == 1)?"Turn audio off":"Turn audio on"),
         (portUp && (pdp1Count > 0) && !audioRestoring())) )
     {
-        audioCommand((audioState == 1) ? "off" : "on");
+        audioCommand((audioState == 1)?"off":"on");
     }
 }
 
-// The Control tab: start-time choices, paper tape, audio and the window's colors.
+// Start a companion window, detached so that it outlives pdp1central; a program that cannot be
+// started is named under the strip.
+static void
+launchCompanion(const char *labelP, char *const argvP[])
+{
+char error[PATH_MAX + 64];
+
+    if( !launchDetached(argvP, error, sizeof(error)) )
+    {
+        appError("%s", error);
+        return;
+    }
+
+    appLog("%s started", labelP);
+    statusMs = 0;               // count t30dpy again at once, so its button is disabled
+}
+
+// The Companions row: the typewriter, t30dpy and the screen console, with the commands of their
+// desktop launchers (tty.desktop, t30dpy.desktop) and, for the console, pdp1.sh's. There are no
+// lamps for the typewriter and the console: lxterminal serves every window from one process, so
+// whether one is open cannot be told, and a second click opens a second window.
+static void
+drawCompanions(struct nk_context *ctxP)
+{
+static const float companionRatios[] = { 0.25f, 0.13f, 0.13f, 0.13f, 0.36f };
+static char *typewriterArgv[] = { "lxterminal", "-e", "telnet localhost 1041", NULL };
+static char *consoleArgv[] = { "lxterminal", "-e", "screen -Dr pidp1", NULL };
+char *t30dpyArgv[] = { t30dpyPath, NULL };
+char interfaceBuf[CONF_MAX_VALUE + 1];
+const char *interfaceP;
+bool answering;
+
+    // telnet and t30dpy end at once with nothing to connect to, which would look like a fault.
+    // pdp1control.sh starts pdp1 in the screen session pidp1, so the console needs only pdp1.
+    answering = (portUp && (pdp1Count > 0));
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 5, companionRatios);
+    nk_label(ctxP, "Companions", NK_TEXT_LEFT);
+    if( button(ctxP, "Typewriter", answering) )
+    {
+        launchCompanion("Typewriter", typewriterArgv);
+    }
+    // pdp1control.sh never starts a second t30dpy, and neither does this.
+    if( button(ctxP, "t30dpy", (answering && (t30Count == 0))) )
+    {
+        launchCompanion("t30dpy", t30dpyArgv);
+    }
+    if( button(ctxP, "pdp1 monitor", (pdp1Count > 0)) )
+    {
+        launchCompanion("Console", consoleArgv);
+    }
+
+    // The emulator serves the display to the last client to connect, so t30dpy takes it.
+    interfaceP = controlChoice("interface", "web", interfaceBuf);
+    if( pdp1Count == 0 )
+    {
+        nk_label(ctxP, "pidp1 not running", NK_TEXT_LEFT);
+    }
+    else if( !portUp )
+    {
+        nk_label(ctxP, "pidp1 not answering", NK_TEXT_LEFT);
+    }
+    else if( t30Count > 0 )
+    {
+        nk_label(ctxP, "t30dpy is running", NK_TEXT_LEFT);
+    }
+    else
+    {
+        nk_label(ctxP, (!strcmp(interfaceP, "gui")?"t30dpy takes the gui's display" :
+            (!strcmp(interfaceP, "web")?"t30dpy takes the browser's display":"")), NK_TEXT_LEFT);
+    }
+}
+
+// The Control tab: start-time choices, paper tape, audio, the companions and the window's colors.
 static void
 drawControl(struct nk_context *ctxP)
 {
@@ -2172,7 +2573,7 @@ int i, count;
     idle = ((job == JOB_NONE) && (queueCount == 0));
 
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
-    nk_label(ctxP, "Start-time choices (used at the next start)", NK_TEXT_LEFT);
+    nk_label(ctxP, "Start-time choices, used at the next start", NK_TEXT_LEFT);
 
     // Each is a set of radio buttons; one that becomes selected is written at once.
     controlChoice("interface", "web", valueBuf);
@@ -2199,14 +2600,14 @@ int i, count;
     }
     if( nk_checkbox_label(ctxP, "also start t30dpy", &t30) && !apps )
     {
-        setControlChoice("t30dpy", (t30 ? "y" : "n"));
+        setControlChoice("t30dpy", (t30?"y":"n"));
     }
     if( apps )
     {
         styleDisableEnd(ctxP);
     }
-    nk_label(ctxP, (apps ? "apps starts t30dpy" : (!t30 ? "" : (web ?
-        "t30dpy has it; the browser's display takes it while open" : "t30dpy has it, not the gui's window"))),
+    nk_label(ctxP, (apps?"apps starts t30dpy":(!t30?"":(web ?
+        "the browser display takes it while open":"t30dpy has it, not the gui's window"))),
         NK_TEXT_LEFT);
 
     controlChoice("frontpanel", "virtual", valueBuf);
@@ -2244,8 +2645,8 @@ int i, count;
     {
         startDialog(JOB_ASK_LOAD);
     }
-    nameP = (loadPath[0] ? baseName(loadPath) : "");
-    withP = (loadOvlPath[0] ? " with overlays" : "");
+    nameP = (loadPath[0]?baseName(loadPath):"");
+    withP = (loadOvlPath[0]?" with overlays":"");
     if( (job == JOB_COMMAND) && ((command == CMD_FASTLOAD) || (command == CMD_OVLLOAD)) )
     {
         nk_labelf(ctxP, NK_TEXT_LEFT, "loading %s%s", nameP, withP);
@@ -2260,15 +2661,15 @@ int i, count;
     }
     else
     {
-        nk_labelf(ctxP, NK_TEXT_LEFT, "last: %s%s, %s", nameP, withP, ((loadResult == 1) ? "started" :
-            ((loadResult == 2) ? "loaded, not started" : "failed")));
+        nk_labelf(ctxP, NK_TEXT_LEFT, "last: %s%s, %s", nameP, withP, ((loadResult == 1)?"started" :
+            ((loadResult == 2)?"loaded, not started":"failed")));
     }
 
     // A row of its own, since the note does not fit beside the button.
     if( loadOverwrote && !((job == JOB_COMMAND) && ((command == CMD_FASTLOAD) || (command == CMD_OVLLOAD))) )
     {
         nk_layout_row_dynamic(ctxP, ROW_H, 1);
-        nk_label_colored(ctxP, "The last load wrote over another tool's data on the drum; the Log tab names the tracks.",
+        nk_label_colored(ctxP, "The last load wrote over another tool's data; see the Log tab.",
             NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
     }
 
@@ -2291,7 +2692,7 @@ int i, count;
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
     if( !mountKnown )
     {
-        nk_label(ctxP, "Mounted: not known (the emulator cannot be asked)", NK_TEXT_LEFT);
+        nk_label(ctxP, "Mounted: not known", NK_TEXT_LEFT);
     }
     else if( mountedPath[0] )
     {
@@ -2311,9 +2712,9 @@ int i, count;
     {
         startDialog(JOB_ASK_PUNCH);
     }
-    nk_label(ctxP, (((job == JOB_COMMAND) && (command == CMD_SAVEPUNCH)) ? "saving" : ""), NK_TEXT_LEFT);
+    nk_label(ctxP, (((job == JOB_COMMAND) && (command == CMD_SAVEPUNCH))?"saving":""), NK_TEXT_LEFT);
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
-    nk_labelf(ctxP, NK_TEXT_LEFT, "Last saved to: %s", (punchPath[0] ? punchPath : "not saved by pdp1central yet"));
+    nk_labelf(ctxP, NK_TEXT_LEFT, "Last saved to: %s", (punchPath[0]?punchPath:"not saved by pdp1central yet"));
 
     // The live sound, as pdp1audio on and off turn it; the audio enabled setting only allows it.
     nk_layout_row_dynamic(ctxP, 12, 1);
@@ -2323,11 +2724,12 @@ int i, count;
     audioLamp(ctxP);
     audioButton(ctxP);
 
-    nk_layout_row_dynamic(ctxP, 12, 1);
-    nk_spacing(ctxP, 1);
+    // Audio, the companions and the colors as one group, with no space between them, so that
+    // the tab still fits with an error line under the strip.
+    drawCompanions(ctxP);
+
     // Option buttons, not a drop-down: at the foot of the tab a drop-down's list would run off
-    // the bottom of the window. No heading row of its own, so that the tab still fits with an
-    // error line under the strip.
+    // the bottom of the window. No heading row of its own, for the same reason.
     for( count = 0; (count < MAX_SCHEMES) && styleSchemeName(count); count++ )
     {
     }
@@ -2350,7 +2752,7 @@ int i, count;
     {
         nk_layout_row_dynamic(ctxP, ROW_H, 1);
         nk_labelf(ctxP, NK_TEXT_LEFT, "Changed by %d color line%s in pdp1central.config", styleOverrides,
-            ((styleOverrides == 1) ? "" : "s"));
+            ((styleOverrides == 1)?"":"s"));
     }
 }
 
@@ -2363,7 +2765,7 @@ startingValue(const SchemaEntry *entryP, char *outP, size_t outLen)
         snprintf(outP, outLen, "%s", entryP->defaultText);
         if( (entryP->type == SCHEMA_BOOL) )
         {
-            snprintf(outP, outLen, "%s", (schemaIsOn(entryP->defaultText) ? "on" : "off"));
+            snprintf(outP, outLen, "%s", (schemaIsOn(entryP->defaultText)?"on":"off"));
         }
         else if( (entryP->type == SCHEMA_FLOAT) && !strchr(outP, '.') )
         {
@@ -2378,13 +2780,13 @@ startingValue(const SchemaEntry *entryP, char *outP, size_t outLen)
         snprintf(outP, outLen, "off");
         break;
     case SCHEMA_FLOAT:
-        formatFloat((entryP->hasRange ? entryP->rangeLow : 1.0), outP, outLen);
+        formatFloat((entryP->hasRange?entryP->rangeLow:1.0), outP, outLen);
         break;
     case SCHEMA_TEXT:
         snprintf(outP, outLen, "0");
         break;
     default:
-        snprintf(outP, outLen, "%d", (entryP->hasRange ? (int)entryP->rangeLow : 0));
+        snprintf(outP, outLen, "%d", (entryP->hasRange?(int)entryP->rangeLow:0));
         break;
     }
 }
@@ -2438,7 +2840,7 @@ nk_flags flags;
 
     if( index != activeEdit )
     {
-        snprintf(editBufsP[index], (CONF_MAX_VALUE + 1), "%s", (valueP ? valueP : ""));
+        snprintf(editBufsP[index], (CONF_MAX_VALUE + 1), "%s", (valueP?valueP:""));
     }
 
     flags = nk_edit_string_zero_terminated(ctxP, (NK_EDIT_FIELD | NK_EDIT_SIG_ENTER), editBufsP[index],
@@ -2483,11 +2885,11 @@ double floatValue, newFloat;
     if( valuesDiffer(getValue(diskCfP, nameP, newValue), valueP) )
     {
         nk_labelf_colored(ctxP, NK_TEXT_LEFT, styleColors[STYLE_CHANGED], "%s *",
-            (entryP ? schemaDisplayName(entryP) : nameP));
+            (entryP?schemaDisplayName(entryP):nameP));
     }
     else
     {
-        nk_label(ctxP, (entryP ? schemaDisplayName(entryP) : nameP), NK_TEXT_LEFT);
+        nk_label(ctxP, (entryP?schemaDisplayName(entryP):nameP), NK_TEXT_LEFT);
     }
     if( entryP && nk_input_is_mouse_hovering_rect(&ctxP->input, bounds) )
     {
@@ -2506,7 +2908,7 @@ double floatValue, newFloat;
     if( !valueP )
     {
         nk_labelf(ctxP, NK_TEXT_LEFT, "default: %s", ((entryP && strcmp(entryP->defaultText, "-")) ?
-            entryP->defaultText : "built-in"));
+            entryP->defaultText:"built-in"));
     }
     else if( readOnly )
     {
@@ -2514,24 +2916,24 @@ double floatValue, newFloat;
     }
     else if( !entryP || (entryP->type == SCHEMA_TEXT) )
     {
-        valueField(ctxP, (entryP ? (int)(entryP - schemaP->entriesP) : index), entryP, nameP, valueP);
+        valueField(ctxP, (entryP?(int)(entryP - schemaP->entriesP):index), entryP, nameP, valueP);
     }
     else if( entryP->type == SCHEMA_BOOL )
     {
         // The tick shows the state, so the words say what a click does; "on" beside an unticked
         // box read as the state.
         on = schemaIsOn(valueP);
-        if( nk_checkbox_label(ctxP, (on ? "click to turn off" : "click to turn on"), &on) )
+        if( nk_checkbox_label(ctxP, (on?"click to turn off":"click to turn on"), &on) )
         {
-            editSet(entryP, nameP, (on ? "on" : "off"));
+            editSet(entryP, nameP, (on?"on":"off"));
         }
     }
     else if( ((entryP->type == SCHEMA_INT) || ((entryP->type == SCHEMA_PORT) && strcmp(valueP, "off"))) &&
         parsesAs(valueP, true) )
     {
         intValue = atoi(valueP);
-        newInt = nk_propertyi(ctxP, label, (entryP->hasRange ? (int)entryP->rangeLow : -1000000000), intValue,
-            (entryP->hasRange ? (int)entryP->rangeHigh : 1000000000), 1, 1.0f);
+        newInt = nk_propertyi(ctxP, label, (entryP->hasRange?(int)entryP->rangeLow:-1000000000), intValue,
+            (entryP->hasRange?(int)entryP->rangeHigh:1000000000), 1, 1.0f);
         if( newInt != intValue )
         {
             snprintf(newValue, sizeof(newValue), "%d", newInt);
@@ -2541,8 +2943,8 @@ double floatValue, newFloat;
     else if( (entryP->type == SCHEMA_FLOAT) && parsesAs(valueP, false) )
     {
         floatValue = atof(valueP);
-        newFloat = nk_propertyd(ctxP, label, (entryP->hasRange ? entryP->rangeLow : -1e9), floatValue,
-            (entryP->hasRange ? entryP->rangeHigh : 1e9), 0.01, 0.005f);
+        newFloat = nk_propertyd(ctxP, label, (entryP->hasRange?entryP->rangeLow:-1e9), floatValue,
+            (entryP->hasRange?entryP->rangeHigh:1e9), 0.01, 0.005f);
         if( newFloat != floatValue )
         {
             formatFloat(newFloat, newValue, sizeof(newValue));
@@ -2615,7 +3017,7 @@ int i;
         return;
     }
 
-    appLog("saved %s, %d change%s", configPath, changes.total, ((changes.total == 1) ? "" : "s"));
+    appLog("saved %s, %d change%s", configPath, changes.total, ((changes.total == 1)?"":"s"));
 
     // Name the changes a reload does not apply.
     names[0] = '\0';
@@ -2627,10 +3029,10 @@ int i;
             ((entryP->applies == APPLIES_RESTART) || (entryP->applies == APPLIES_PROGRAM) ||
             (entryP->sticky && !confGet(editCfP, entryP->name))) && (len < (sizeof(names) - 80)) )
         {
-            len += snprintf(names + len, (sizeof(names) - len), "%s%s%s%s%s", (len ? ", " : ""),
-                schemaDisplayName(entryP), ((entryP->applies == APPLIES_PROGRAM) ? " (restart " : ""),
-                ((entryP->applies == APPLIES_PROGRAM) ? entryP->reader : ""),
-                ((entryP->applies == APPLIES_PROGRAM) ? ")" : ""));
+            len += snprintf(names + len, (sizeof(names) - len), "%s%s%s%s%s", (len?", ":""),
+                schemaDisplayName(entryP), ((entryP->applies == APPLIES_PROGRAM)?" (restart ":""),
+                ((entryP->applies == APPLIES_PROGRAM)?entryP->reader:""),
+                ((entryP->applies == APPLIES_PROGRAM)?")":""));
         }
     }
 
@@ -2638,7 +3040,7 @@ int i;
     if( names[0] || (changes.restart > 0) )
     {
         snprintf(savedNote, sizeof(savedNote), "Saved. Not applied until a restart: %s%s", names,
-            (otherCount && (changes.restart > 0) && !names[0]) ? "settings not in the schema" : "");
+            (otherCount && (changes.restart > 0) && !names[0])?"settings not in the schema":"");
     }
     else
     {
@@ -2727,8 +3129,8 @@ int i;
 
     // The rows, scrolling.
     // Everything below the sub-tabs but the footer rows.
-    nk_layout_row_dynamic(ctxP, (height - (2 * (ROW_H + 4)) - 8 - (diskConflict ? (ROW_H + 4) : 0) -
-        (savedNote[0] ? (ROW_H + 4) : 0)), 1);
+    nk_layout_row_dynamic(ctxP, (height - (2 * (ROW_H + 4)) - 8 - (diskConflict?(ROW_H + 4):0) -
+        (savedNote[0]?(ROW_H + 4):0)), 1);
     if( nk_group_begin(ctxP, "settingrows", NK_WINDOW_BORDER) )
     {
         if( group == GROUP_OTHER )
@@ -2736,7 +3138,7 @@ int i;
             if( otherCount == 0 )
             {
                 nk_layout_row_dynamic(ctxP, ROW_H, 1);
-                nk_label(ctxP, "pidp1.config sets nothing the schema does not describe.", NK_TEXT_LEFT);
+                nk_label(ctxP, "pidp1.config sets no other settings.", NK_TEXT_LEFT);
             }
             for( i = 0; i < otherCount; i++ )
             {
@@ -2771,7 +3173,7 @@ int i;
         refreshOtherNames();
     }
     // "3 changes: 2 on save, 1 needs a restart", naming only the kinds there are.
-    len = (size_t)snprintf(count, sizeof(count), "%d change%s", changes.total, ((changes.total == 1) ? "" : "s"));
+    len = (size_t)snprintf(count, sizeof(count), "%d change%s", changes.total, ((changes.total == 1)?"":"s"));
     sep = ": ";
     if( (changes.reload + changes.panel) > 0 )
     {
@@ -2786,18 +3188,18 @@ int i;
     if( (changes.restart + changes.program) > 0 )
     {
         len += snprintf(count + len, (sizeof(count) - len), "%s%d need%s a restart", sep,
-            (changes.restart + changes.program), (((changes.restart + changes.program) == 1) ? "s" : ""));
+            (changes.restart + changes.program), (((changes.restart + changes.program) == 1)?"s":""));
         sep = ", ";
     }
     if( changes.ignored > 0 )
     {
         snprintf(count + len, (sizeof(count) - len), "%s%d ignored", sep, changes.ignored);
     }
-    nk_label(ctxP, ((changes.total == 0) ? "no changes" : count), NK_TEXT_LEFT);
+    nk_label(ctxP, ((changes.total == 0)?"no changes":count), NK_TEXT_LEFT);
 
     if( savedNote[0] )
     {
-        nk_layout_row_dynamic(ctxP, ROW_H, (savedNeedsRestart ? 3 : 2));
+        nk_layout_row_dynamic(ctxP, ROW_H, (savedNeedsRestart?3:2));
         nk_label_colored(ctxP, savedNote, NK_TEXT_LEFT, styleColors[STYLE_CHANGED]);
         if( savedNeedsRestart && button(ctxP, "Restart now", idle) )
         {
@@ -2842,7 +3244,7 @@ size_t len, skip;
     width -= 8;                 // the label's own padding
     for( skip = 0; skip < len; skip++ )
     {
-        if( snprintf(outP, outLen, "%s%s", (skip ? "..." : ""), (textP + skip)) >= (int)outLen )
+        if( snprintf(outP, outLen, "%s%s", (skip?"...":""), (textP + skip)) >= (int)outLen )
         {
             continue;           // not even the buffer holds it
         }
@@ -2854,29 +3256,272 @@ size_t len, skip;
     }
 }
 
-// The Microtape tab: drives 1-8 as microtapes.txt lists them, each with its write lock, Mount...
-// and Unmount. mtp makes every change, and the table is read back from the file, so a change
-// made in a terminal shows here too.
+// Whether a folder is open in a library's list.
+static bool
+libFolderOpen(const LibView *viewP, const char *pathP)
+{
+int i;
+
+    for( i = 0; i < viewP->openCount; i++ )
+    {
+        if( !strcmp(viewP->openP[i], pathP) )
+        {
+            return(true);
+        }
+    }
+
+    return(false);
+}
+
+// A library's list in a box height pixels high: a row per entry, indented by its depth, a folder
+// with a + or - that opens or closes it, and a click choosing the entry. A missing path is shown
+// grayed, and a folder's entries past LIB_FOLDER_MAX are counted. Returns true when the choice
+// changed.
+static bool
+drawLibraryList(struct nk_context *ctxP, LibView *viewP, const char *idP, float height)
+{
+const LibEntry *entryP;
+struct nk_style_selectable saved;
+struct nk_rect bounds;
+char text[PATH_MAX + 16];
+char shown[PATH_MAX + 16];
+char path[PATH_MAX];
+float ratios[3];                // the indent, the + or -, the entry; nk_layout_row keeps a pointer for the row
+nk_bool chosen;
+bool changed;
+int i;
+
+    changed = false;
+    path[0] = '\0';
+    nk_layout_row_dynamic(ctxP, height, 1);
+    if( !nk_group_begin(ctxP, idP, NK_WINDOW_BORDER) )
+    {
+        return(false);
+    }
+
+    if( viewP->lib.count == 0 )
+    {
+        nk_layout_row_dynamic(ctxP, LIB_ROW_H, 1);
+        nk_labelf(ctxP, NK_TEXT_LEFT, "nothing yet: no %s files in %s and no index lines", viewP->lib.extP,
+            viewP->lib.dirP);
+    }
+
+    for( i = 0; i < viewP->lib.count; i++ )
+    {
+        entryP = &viewP->lib.entriesP[i];
+        ratios[0] = (0.01f + (0.03f * (float)((entryP->depth < 10)?entryP->depth:10)));
+        ratios[1] = 0.04f;
+        ratios[2] = (0.94f - ratios[0]);
+        nk_layout_row(ctxP, NK_DYNAMIC, LIB_ROW_H, 3, ratios);
+        nk_spacing(ctxP, 1);
+        if( entryP->kind == LIB_FOLDER )
+        {
+            // The click is acted on after the list, which toggleFolder reads again.
+            if( nk_button_label(ctxP, (libFolderOpen(viewP, entryP->pathP)?"-":"+")) )
+            {
+                snprintf(path, sizeof(path), "%s", entryP->pathP);
+            }
+        }
+        else
+        {
+            nk_spacing(ctxP, 1);
+        }
+
+        if( entryP->kind == LIB_MORE )
+        {
+            nk_labelf(ctxP, NK_TEXT_LEFT, "... and %d more, not listed", entryP->more);
+            continue;
+        }
+
+        snprintf(text, sizeof(text), "%s%s", entryP->textP, ((entryP->kind == LIB_MISSING)?"  (missing)":""));
+        bounds = nk_widget_bounds(ctxP);
+        fitTail(ctxP, text, bounds.w, shown, sizeof(shown));
+        chosen = ((entryP->line == viewP->selLine) && !strcmp(entryP->pathP, viewP->selPath));
+        saved = ctxP->style.selectable;
+        if( entryP->kind == LIB_MISSING )
+        {
+            ctxP->style.selectable.text_normal = styleColors[STYLE_DISABLED_TEXT];
+            ctxP->style.selectable.text_hover = styleColors[STYLE_DISABLED_TEXT];
+        }
+        if( nk_selectable_label(ctxP, shown, NK_TEXT_LEFT, &chosen) && chosen )
+        {
+            snprintf(viewP->selPath, sizeof(viewP->selPath), "%s", entryP->pathP);
+            viewP->selLine = entryP->line;
+            changed = true;
+        }
+        ctxP->style.selectable = saved;
+        if( nk_input_is_mouse_hovering_rect(&ctxP->input, bounds) && (strcmp(shown, text) || (entryP->depth > 0)) )
+        {
+            nk_tooltip(ctxP, entryP->pathP);
+        }
+    }
+    nk_group_end(ctxP);
+
+    if( path[0] )
+    {
+        toggleFolder(viewP, path);
+    }
+
+    return(changed);
+}
+
+// The buttons every library has: Add file..., Add folder..., and Delete entry, which is for an
+// index.txt line only, never a file. The row is begun by the caller, with three cells for these.
+static void
+drawLibraryButtons(struct nk_context *ctxP, LibView *viewP, bool enabled)
+{
+const LibEntry *entryP;
+
+    entryP = selectedEntry(viewP);
+    if( button(ctxP, "Add file...", enabled) )
+    {
+        askViewP = viewP;
+        startDialog(JOB_ASK_LIBFILE);
+    }
+    if( button(ctxP, "Add folder...", enabled) )
+    {
+        askViewP = viewP;
+        startDialog(JOB_ASK_LIBFOLDER);
+    }
+    if( button(ctxP, "Delete entry", (enabled && entryP && (entryP->line >= 0))) )
+    {
+        libraryDelete(viewP);
+    }
+}
+
+// The Drums tab: Drums/ and its index.txt, what the chosen image holds, and Pick and Save drum.
+// Pick keeps the drum in pdp23drum.bak, then asks whether to save it first (owner, D1).
+static void
+drawDrums(struct nk_context *ctxP, float height)
+{
+static const float splitRatios[] = { 0.62f, 0.38f };
+static const float askRatios[] = { 0.55f, 0.15f, 0.15f, 0.15f };
+const LibEntry *entryP;
+const char *lineP, *nlP;
+float listH;
+bool idle, canAct, haveDrum;
+int rows;
+
+    idle = ((job == JOB_NONE) && (queueCount == 0));
+    canAct = (idle && !drumAsking);     // the question is answered before anything else is done
+    haveDrum = (access(drumPath, F_OK) == 0);
+    entryP = selectedEntry(&drumView);
+
+    // The list gets what the other rows leave: the heading, the buttons, the warning, two notes,
+    // and the question while it is asked.
+    rows = (5 + (drumAsking?1:0));
+    listH = (height - ((float)rows * (ROW_H + 4)) - 12);
+    if( listH < (4 * LIB_ROW_H) )
+    {
+        listH = (4 * LIB_ROW_H);
+    }
+
+    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    nk_labelf(ctxP, NK_TEXT_LEFT, "Drum images in %s and in the index", drumsDir);
+
+    nk_layout_row(ctxP, NK_DYNAMIC, listH, 2, splitRatios);
+    if( nk_group_begin(ctxP, "drumside", NK_WINDOW_NO_SCROLLBAR) )
+    {
+        if( drawLibraryList(ctxP, &drumView, "drumrows", (listH - 10)) )
+        {
+            refreshDrumHolds();
+        }
+        nk_group_end(ctxP);
+    }
+    if( nk_group_begin(ctxP, "drumholds", NK_WINDOW_BORDER) )
+    {
+        nk_layout_row_dynamic(ctxP, 18, 1);
+        if( !drumHoldsPath[0] )
+        {
+            nk_label(ctxP, "Choose an image to see what it holds.", NK_TEXT_LEFT);
+        }
+        for( lineP = drumHolds; drumHoldsPath[0] && *lineP; lineP = (nlP?(nlP + 1):(lineP + strlen(lineP))) )
+        {
+            nlP = strchr(lineP, '\n');
+            nk_text(ctxP, lineP, (nlP?(int)(nlP - lineP):(int)strlen(lineP)), NK_TEXT_LEFT);
+        }
+        nk_group_end(ctxP);
+    }
+
+    if( drumAsking )
+    {
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, askRatios);
+        nk_label_colored(ctxP, "Save the current drum to the library first?", NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
+        if( button(ctxP, "Save as...", idle) )
+        {
+            drumAsking = false;
+            drumPickAfterSave = true;
+            startDialog(JOB_ASK_DRUMSAVE);
+        }
+        if( button(ctxP, "Don't save", idle) )
+        {
+            drumAsking = false;
+            putDrum();
+        }
+        if( button(ctxP, "Cancel", idle) )
+        {
+            drumAsking = false;
+            appLog("pick canceled; %s still holds the drum as it was", drumBakPath);
+        }
+    }
+
+    nk_layout_row_dynamic(ctxP, ROW_H, 5);
+    if( button(ctxP, "Pick", (canAct && entryP && (entryP->kind == LIB_IMAGE))) )
+    {
+        pickDrum(entryP->pathP);
+    }
+    if( button(ctxP, "Save drum...", (canAct && haveDrum)) )
+    {
+        drumPickAfterSave = false;
+        startDialog(JOB_ASK_DRUMSAVE);
+    }
+    drawLibraryButtons(ctxP, &drumView, canAct);
+
+    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    if( pdp1Count > 0 )
+    {
+        nk_label_colored(ctxP, "pidp1 is running: a program writing the drum during Pick or Save drum can "
+            "corrupt the save.", NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
+    }
+    else
+    {
+        nk_label(ctxP, (haveDrum?"":"There is no drum file yet. Pick one to set one. "
+            "Save drum has nothing to save."),
+            NK_TEXT_LEFT);
+    }
+    nk_label(ctxP, "Pick creates a copy of the current drum in pdp23drum.bak.",
+        NK_TEXT_LEFT);
+    nk_label(ctxP, "Fast load with overlays writes its tracks onto the drum: Pick first, then load.", NK_TEXT_LEFT);
+}
+
+// The Microtape tab: drives 1-8 as microtapes.txt lists them, each with its write lock, Mount...,
+// Mount selected and Unmount, then the tape library. mtp makes every change, and the table is
+// read back from the file, so a change made in a terminal shows here too.
 static void
 drawMicrotape(struct nk_context *ctxP)
 {
-static const float rowRatios[] = { 0.10f, 0.48f, 0.16f, 0.13f, 0.13f };
+static const float rowRatios[] = { 0.08f, 0.38f, 0.14f, 0.12f, 0.16f, 0.12f };
 char text[MT_SPEC_MAX + 32];
 char shown[MT_SPEC_MAX + 32];
-struct nk_rect bounds;
+char name[PATH_MAX];
+const LibEntry *entryP;
+struct nk_rect bounds, region;
+float listH;
 nk_bool lock;
 bool idle, known, has;
 int d;
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
     known = (mtList.error == 0);
+    entryP = selectedEntry(&tapeView);
+    region = nk_window_get_content_region(ctxP);
 
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
     nk_labelf(ctxP, NK_TEXT_LEFT, "Microtape drives, as %s lists them", mtListPath);
     for( d = 1; d <= MT_DRIVES; d++ )
     {
         has = (mtList.spec[d][0] != '\0');
-        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 5, rowRatios);
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 6, rowRatios);
         nk_labelf(ctxP, NK_TEXT_LEFT, "Drive %d", d);
 
         if( !known )
@@ -2929,6 +3574,11 @@ int d;
             mtAskDrive = d;
             startDialog(JOB_ASK_MICROTAPE);
         }
+        if( button(ctxP, "Mount selected", (idle && known && entryP && (entryP->kind == LIB_IMAGE))) )
+        {
+            tapeMtpName(entryP->pathP, name);
+            mountMicrotape(d, name, microtapeLock(d), true);
+        }
         if( button(ctxP, "Unmount", (idle && known && has)) )
         {
             unmountMicrotape(d);
@@ -2946,11 +3596,23 @@ int d;
     if( mtList.skipped > 0 )
     {
         nk_labelf_colored(ctxP, NK_TEXT_LEFT, styleColors[STYLE_WARNING],
-            "%d line%s skipped: not \"<drive 1-8> <path>[,locked]\"", mtList.skipped, ((mtList.skipped == 1) ? "" : "s"));
+            "%d line%s skipped: not \"<drive 1-8> <path>[,locked]\"", mtList.skipped, ((mtList.skipped == 1)?"":"s"));
     }
     nk_label(ctxP, "The emulator mounts a change at its next mse; a write lock change also rewinds the tape.",
         NK_TEXT_LEFT);
     nk_label(ctxP, "A tape a program mounts itself (mmt) is not shown.", NK_TEXT_LEFT);
+
+    // The library takes what is left, above its row of buttons.
+    nk_labelf(ctxP, NK_TEXT_LEFT, "Tape library: %s, then what its index lists; choose one, then Mount selected",
+        microtapeDir);
+    listH = ((region.y + region.h) - nk_widget_bounds(ctxP).y - (ROW_H + 12));
+    if( listH < (3 * LIB_ROW_H) )
+    {
+        listH = (3 * LIB_ROW_H);
+    }
+    drawLibraryList(ctxP, &tapeView, "taperows", listH);
+    nk_layout_row_dynamic(ctxP, ROW_H, 3);
+    drawLibraryButtons(ctxP, &tapeView, idle);
 }
 
 // A label that fits its cell, cut at the front with "...", and whole in a tooltip when cut.
@@ -2987,7 +3649,7 @@ int i;
     up = (portUp && (pdp1Count > 0) && !audioRestoring());
 
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
-    nk_label(ctxP, "Live settings: the emulator takes them at once, until the next reload puts back pidp1.config's",
+    nk_label(ctxP, "Live settings: they take effect immediately, the next reload puts back pidp1.config's",
         NK_TEXT_LEFT);
 
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, headRatios);
@@ -3011,7 +3673,7 @@ int i;
         nk_label(ctxP, liveValues[i].labelP, NK_TEXT_LEFT);
         snprintf(before, sizeof(before), "%.*s", CONF_MAX_VALUE, liveText[i]);
         flags = nk_edit_string_zero_terminated(ctxP, (NK_EDIT_FIELD | NK_EDIT_SIG_ENTER), liveText[i],
-            sizeof(liveText[i]), ((i == LIVE_RATE) ? nk_filter_decimal : nk_filter_float));
+            sizeof(liveText[i]), ((i == LIVE_RATE)?nk_filter_decimal:nk_filter_float));
         if( flags & NK_EDIT_ACTIVE )
         {
             liveActive = i;
@@ -3048,7 +3710,7 @@ int i;
         liveSave();
     }
     nk_label(ctxP, "", NK_TEXT_LEFT);
-    nk_label(ctxP, (liveAnySet() ? "writes the values set here, with no reload" : "nothing set here yet"), NK_TEXT_LEFT);
+    nk_label(ctxP, (liveAnySet()?"writes the values set here with no reload":"nothing set here yet"), NK_TEXT_LEFT);
 
     // Multiply and divide, read every MULDIV_POLL_MS while this tab is shown (pollMuldiv).
     nk_layout_row_dynamic(ctxP, 12, 1);
@@ -3065,16 +3727,16 @@ int i;
     }
     else
     {
-        lamp(ctxP, ((muldivState == 1) ? "is on" : ((muldivState == 0) ? "is off" : "not known yet")),
+        lamp(ctxP, ((muldivState == 1)?"is on":((muldivState == 0)?"is off":"not known yet")),
             (muldivState == 1));
     }
-    if( button(ctxP, ((muldivState == 1) ? "Turn off" : "Turn on"), (portUp && (pdp1Count > 0) && (muldivState >= 0))) )
+    if( button(ctxP, ((muldivState == 1)?"Turn off":"Turn on"), (portUp && (pdp1Count > 0) && (muldivState >= 0))) )
     {
         muldivSet(muldivState != 1);
     }
     nk_label(ctxP, "", NK_TEXT_LEFT);
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
-    nk_label(ctxP, "Until the next reload; the CPU tab's muldiv setting is the saved value.", NK_TEXT_LEFT);
+    nk_label(ctxP, "Until the next reload, the CPU tab's muldiv setting is the saved value.", NK_TEXT_LEFT);
 }
 
 // Draw the whole window for one frame.
@@ -3088,7 +3750,7 @@ float used;
     {
         drawStatus(ctxP);
 
-        nk_layout_row_dynamic(ctxP, ROW_H, 5);
+        nk_layout_row_dynamic(ctxP, ROW_H, 6);
         if( nk_select_label(ctxP, "Control", NK_TEXT_CENTERED, (tab == TAB_CONTROL)) )
         {
             tab = TAB_CONTROL;
@@ -3097,9 +3759,15 @@ float used;
         {
             tab = TAB_LIVE;
         }
-        if( nk_select_label(ctxP, "Microtape", NK_TEXT_CENTERED, (tab == TAB_MICROTAPE)) )
+        if( nk_select_label(ctxP, "Microtape", NK_TEXT_CENTERED, (tab == TAB_MICROTAPE)) && (tab != TAB_MICROTAPE) )
         {
             tab = TAB_MICROTAPE;
+            statusMs = 0;       // list its library at once
+        }
+        if( nk_select_label(ctxP, "Drums", NK_TEXT_CENTERED, (tab == TAB_DRUMS)) && (tab != TAB_DRUMS) )
+        {
+            tab = TAB_DRUMS;
+            statusMs = 0;
         }
         if( nk_select_label(ctxP, "Settings", NK_TEXT_CENTERED, (tab == TAB_SETTINGS)) )
         {
@@ -3123,6 +3791,10 @@ float used;
         else if( tab == TAB_MICROTAPE )
         {
             drawMicrotape(ctxP);
+        }
+        else if( tab == TAB_DRUMS )
+        {
+            drawDrums(ctxP, (region.h - used));
         }
         else if( tab == TAB_SETTINGS )
         {
@@ -3183,7 +3855,9 @@ bool ok;
         rootJoin(controlPath, "pdp1control.config") && rootJoin(scriptPath, "bin/pdp1control.sh") &&
         rootJoin(askPath, "bin/askfile") && rootJoin(fastloadPath, "bin/fastload") &&
         rootJoin(ovlloadPath, "bin/ovlload") && rootJoin(drumPath, "pdp23drum") &&
-        rootJoin(savePunchPath, "bin/save_ptp.sh") && rootJoin(mtpPath, "bin/mtp") && rootJoin(mtListPath, "microtapes.txt") &&
+        rootJoin(drumBakPath, "pdp23drum.bak") && rootJoin(drumsDir, "Drums") && rootJoin(drumlistPath, "bin/drumlist") &&
+        rootJoin(savePunchPath, "bin/save_ptp.sh") && rootJoin(mtpPath, "bin/mtp") && rootJoin(t30dpyPath, "bin/t30dpy") &&
+        rootJoin(mtListPath, "microtapes.txt") &&
         rootJoin(microtapeDir, "Microtapes") && rootJoin(tapesDir, "tapes") &&
         rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") && rootJoin(stylePath, "pdp1central.config"));
     if( schemaArgP )
@@ -3257,6 +3931,11 @@ int opt, width, height;
     }
     controlCfP = confLoad(controlPath);
     liveForget();               // the Live tab's fields start from the file
+    if( !libInit(&tapeView.lib, microtapeDir, ".mtp") || !libInit(&drumView.lib, drumsDir, ".drm") )
+    {
+        fprintf(stderr, "pdp1central: out of memory\n");
+        return(1);
+    }
 
     if( SDL_Init(SDL_INIT_VIDEO) )
     {
@@ -3281,7 +3960,7 @@ int opt, width, height;
     // The font the peripherals window uses, or Nuklear's own when it is not there.
     ctxP = nk_sdl_init(windowP, rendererP);
     nk_sdl_font_stash_begin(&atlasP);
-    fontP = (!stat(fontPath, &st) ? nk_font_atlas_add_from_file(atlasP, fontPath, 16, NULL) : NULL);
+    fontP = (!stat(fontPath, &st)?nk_font_atlas_add_from_file(atlasP, fontPath, 16, NULL):NULL);
     if( !fontP )
     {
         fontP = nk_font_atlas_add_default(atlasP, 15, NULL);

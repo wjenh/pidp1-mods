@@ -2,8 +2,8 @@
 #define CORE_H
 // The pdp1central core: everything the control app does that is not drawing.
 // Process status, the localhost command ports, running one child program without blocking,
-// the name=value settings files, the schema that describes pidp1.config, and the microtape
-// mount list.
+// starting a program detached, the name=value settings files, the schema that describes pidp1.config, the microtape
+// mount list, and the libraries of microtape and drum images.
 // Nothing here calls SDL or Nuklear, so the front end can be replaced without touching it.
 // Single-threaded: every call returns within a port timeout, and the front end calls them
 // from its one event loop.
@@ -93,6 +93,41 @@ typedef struct
     struct timespec ctime;
 } MtList;
 
+#define LIB_FOLDER_MAX 500      // entries a folder lists, so a line such as / cannot stall the window
+
+// What a library entry is.
+typedef enum
+{
+    LIB_IMAGE,                  // a file: an image in a folder, or any file an index.txt line names
+    LIB_FOLDER,
+    LIB_MISSING,                // an index.txt line whose path does not exist
+    LIB_MORE                    // stands for a folder's entries past LIB_FOLDER_MAX
+} LibKind;
+
+typedef struct
+{
+    char *pathP;                // the full path, with . and .. taken out
+    char *textP;                // what the list shows: the line as written, or the name in its folder
+    LibKind kind;
+    int depth;                  // 0 for the library folder's own entries and index.txt's lines
+    int line;                   // the index.txt line that names it, counted from 0, or -1
+    int more;                   // for LIB_MORE, how many entries were not listed
+} LibEntry;
+
+// A library of images: its folder's own subfolders and images, then the lines of its index.txt.
+typedef struct
+{
+    char *dirP;                 // the library folder
+    char *indexP;               // its index.txt
+    char *extP;                 // the images' extension, with its dot
+    LibEntry *entriesP;         // in the order shown, a folder's entries after it
+    int count;
+    int cap;
+    int error;                  // errno for an index.txt that exists and could not be read, else 0
+    bool backedUp;              // index.txt.bak was made by this run's first rewrite
+    char errorText[256];        // why the last libAdd or libDelete failed
+} Library;
+
 // procs.c
 int procCount(const char *nameP);
 bool portAnswers(int port);
@@ -106,6 +141,7 @@ bool childStart(char *const argvP[]);
 int childPoll(char *outP, size_t outLen);
 int childStatus(void);
 bool childRunning(void);
+bool launchDetached(char *const argvP[], char *errorP, size_t errorLen);
 
 // conffile.c
 ConfFile *confLoad(const char *pathP);
@@ -122,6 +158,16 @@ int confNames(ConfFile *cfP, char namesP[][CONF_MAX_VALUE + 1], int maxNames);
 // mtlist.c
 bool mtListLoad(const char *pathP, MtList *listP);
 bool mtListChanged(const char *pathP, const MtList *listP);
+
+// library.c
+bool libInit(Library *libP, const char *dirP, const char *extP);
+bool libLoad(Library *libP, char *const openP[], int openCount);
+bool libAdd(Library *libP, const char *pathP);
+bool libDelete(Library *libP, int line, const char *pathP);
+void libFree(Library *libP);
+void pathCollapse(const char *inP, char *outP);
+bool fileCopy(const char *fromP, const char *toP, char *errorP, size_t errorLen);
+int runCapture(char *const argvP[], char *outP, size_t outLen, int timeoutMs);
 
 // schema.c
 Schema *schemaLoad(const char *pathP, char *errorP, size_t errorLen);

@@ -9,6 +9,9 @@
 #   punch       a file to save the punched tape to; replacing one is asked first
 #   microtape   an existing microtape or a new name: mounting never overwrites, so nothing
 #               is asked about replacing
+#   drum        a file to save the drum to; replacing one is asked first
+#   libfile     an existing file of any kind, to add to a library's index.txt
+#   libfolder   an existing folder, to add to a library's index.txt
 #
 # zenity's stderr is kept from pdp1central's log: every dialog warns there that it has no
 # parent window. zenity 4 exits 0 on a cancel, and also when it cannot open the display, which
@@ -17,6 +20,7 @@
 #
 # 09-Oct-2026 wje (Claude) - written, replacing tkaskmicrotape for pdp1central.
 # 18-Oct-2026 wje (Claude) - load's filter also shows .ovl files, which fast load takes.
+# 25-Oct-2026 wje (Claude) - drum, libfile and libfolder, for the image libraries.
 
 import os
 import shutil
@@ -28,6 +32,9 @@ TITLES = {
     'load': 'Fast load a tape',
     'punch': 'Save the punched tape',
     'microtape': 'Mount a microtape',
+    'drum': 'Save the drum',
+    'libfile': 'Add a file to the library',
+    'libfolder': 'Add a folder to the library',
 }
 
 
@@ -64,6 +71,10 @@ def askZenity(zenity, mode, start):
         args += ['--save', '--confirm-overwrite']   # zenity 3 needs it; 4 always asks
     elif mode == 'microtape':
         args += ['--save']
+    elif mode == 'drum':
+        args += ['--save', '--confirm-overwrite', '--file-filter=drum images | *.drm', '--file-filter=All files | *']
+    elif mode == 'libfolder':
+        args += ['--directory']
 
     try:
         r = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
@@ -88,11 +99,13 @@ def askTk(mode, start):
         fail('Tk cannot open a window: %s' % e)
     root.withdraw()
 
-    if mode == 'punch':
+    if mode in ('punch', 'drum'):
         path = tkinter.filedialog.asksaveasfilename(initialdir=start, title=TITLES[mode])
     elif mode == 'microtape':
         path = tkinter.filedialog.asksaveasfilename(initialdir=start, confirmoverwrite=False,
                                                     title=TITLES[mode])
+    elif mode == 'libfolder':
+        path = tkinter.filedialog.askdirectory(initialdir=start, mustexist=True, title=TITLES[mode])
     else:
         path = tkinter.filedialog.askopenfilename(initialdir=start, title=TITLES[mode])
 
@@ -101,7 +114,7 @@ def askTk(mode, start):
 
 
 if (len(sys.argv) != 3) or (sys.argv[1] not in TITLES):
-    fail('usage: askfile mount|load|punch|microtape DIR')
+    fail('usage: askfile mount|load|punch|microtape|drum|libfile|libfolder DIR')
 
 mode = sys.argv[1]
 start = sys.argv[2]

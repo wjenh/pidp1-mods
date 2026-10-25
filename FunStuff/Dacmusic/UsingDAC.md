@@ -1,11 +1,11 @@
 # Using the D/A converters and the DAC music player
 
-This document describes the PDP-1 D/A converters, IOTs 71 and 72, and the music player and tools built on them.
-
-This is version 1.2\
-Edit date 24-Oct-2026
-
+This document describes the PDP-1 D/A converters, IOTs 71 and 72, and the music player and tools built on them.\
 How it all works inside, the IOTs included, is *Implementation.md* in this directory.
+
+This is version 1.3\
+Edit date 24-Oct-2026
+Make punch behavior clear.
 
 ## What is it?
 
@@ -271,6 +271,10 @@ Stopping the PDP-1 stops the converters too, and they don't resume on Continue.
 Start again at 100, the menu comes back with the orchestra as it was.
 
 ### Punch it
+
+**IMPORTANT!** Wait for punching to finish here before saving the punch output to a file, as via *pdp1central*.
+The emulator puts the punch output into a temporary file and until punching is complete, saving the output will
+save only what has been currently written to the temporary file.
 
 PUNCH punches the tape again, the parts exactly as they were read and then the orchestra: each converter's part,
 instrument, stops, octave, volume and place, and the room and the onset.

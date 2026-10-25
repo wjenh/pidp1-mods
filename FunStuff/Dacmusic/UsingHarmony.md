@@ -4,6 +4,7 @@ This document describes Harmony, Peter Samson's Harmony Compiler for the PDP-1 m
 
 This is version 1.0\
 Edit date 24-Oct-2026
+Make punch behavior clear.
 
 ## What is it?
 
@@ -115,6 +116,10 @@ A selection acts when the pen leaves the selection, which means mouse-button-up,
   It is FIO-DEC at each start.
 
 While READ TAPE and PUNCH run, the screen stays up, but it flickers while a character types.
+
+**IMPORTANT!** Wait for punching to finish here before saving the punch output to a file, as via *pdp1central*.
+The emulator puts the punch output into a temporary file and until punching is complete, saving the output will
+save only what has been currently written to the temporary file.
 
 ### The tempo
 

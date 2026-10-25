@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.7\
-Edit date 23-Oct-2026\
-Updated for relative microtape names
+This is version 1.8\
+Edit date 24-Oct-2026\
+Updated for better description of punch behavior.
 
 ## What is pdp1central?
 
@@ -76,7 +76,9 @@ Either still open after 3 seconds is ended.
 
 ### The Control tab
 
-**Start-time choices.** Interface (gui, web or apps), Type 30 display (also start t30dpy),
+**Start-time choices.**
+
+Interface (gui, web or apps), Type 30 display (also start t30dpy),
 Front panel (PiDP-1 hardware or virtual) and USB paper tape (yes or no).
 A click saves the choice at once, and it is used at the next start or restart.
 
@@ -92,7 +94,9 @@ t30dpy starts only once the emulator is ready for it, at most 5 seconds after th
 starts, it closes if it cannot connect.
 The line beside the box says which.
 
-**Fast load.** Load... opens a file dialog, and loads the chosen rim paper tape, either macro or am1,
+**Fast load.**
+
+Load... opens a file dialog, and loads the chosen rim paper tape, either macro or am1,
 straight into the running pdp-1's memory with fastload, then starts it without the time a
 paper tape read takes.
 A running program is stopped first.
@@ -122,7 +126,9 @@ The Log tab list the tracks.
 The emulator cannot be asked what is mounted, pdp1central shows only what it mounted itself.
 Pdp1central remembers the tape only while it runs.
 
-**Paper tape punch.** Save punch to... opens a file dialog, punch punches to the chosen file.
+**Paper tape punch.**
+
+Save punch to... opens a file dialog, punch punches to the chosen file.
 
 Tape commands go to the running front end as the regular tape scripts send them.
 When no front end is running, they go straight to the emulator.
@@ -132,7 +138,14 @@ To watch the tapes, run /opt/pidp1-mods/bin/tapevis yourself, tape commands then
 The web interface's front end does not save the punch to a file.
 A path with a space in it cannot be sent, since the command ports split at spaces.
 
-**Audio.** The button turns the emulator's sound on or off, as pdp1audio on and off do.
+**IMPORTANT!** Don't use Save until the program has finished producing a tape.
+The punch output goes to a temporary file.
+If it isn't complete or doesn't exist, punch will either save only part of the output
+or save nothing.
+
+**Audio.**
+
+The button turns the emulator's sound on or off, as pdp1audio on and off do.
 The audio enabled setting only allows audio; this is what starts it.
 
 The indicator shows what the last click set: "is on", "is off", or "not set here yet" before the
@@ -144,7 +157,9 @@ A reload sets the sound back to what the audio enabled setting says.
 When pdp1central reloads the emulator after a click, it puts the sound back as the click set it.
 A reload made elsewhere, by pdp1control reload, is not undone.
 
-**Window colors** picks the color scheme (see Colors below).
+**Window colors**
+
+Picks the color scheme (see Colors below).
 A click changes the window at once and saves the choice.
 When pdp1central.config also changes single colors, a line under the choice says how many were changed.
 
@@ -245,13 +260,17 @@ Each row has:
 A changed setting is marked with a \*.
 The botom of the table counts the changes by when they take effect.
 
-**Save** writes pidp1.config.
+**Save**
+
+Writes pidp1.config.
 Then, if the emulator is running and a change applies on save or
 at the next run, pdp1central runs pdp1control reload.
 If the hardware panel driver is running and a panel setting changed, it runs pdp1control reloadpanel.
 Changes that need a restart are named with a Restart now button when the emulator is running.
 
-**Revert** drops the changes.
+**Revert**
+
+Drops the changes.
 
 When a change takes effect:
 - on save the emulator or the hardware panel driver rereads the file at Save.

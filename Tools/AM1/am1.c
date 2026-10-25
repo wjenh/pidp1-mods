@@ -242,6 +242,8 @@
  * 24-Oct-2026 claude/wje - v5.3, modify the constant pool logic to avoid some cases where different
  *    constants with the same symbolic names in them would hash to the same slot.
  * 25-Oct-2026 claude - v5.4, add %%ovresident
+ * 25-Oct-2026 claude - v5.5, a // comment after a macro name with no '(', or inside a macro's
+ *    arguments, no longer becomes a block comment that fails to assemble
 */
 #include <unistd.h>
 #include <stdlib.h>

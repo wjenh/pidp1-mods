@@ -12,6 +12,8 @@
  * spaced.
  * The macro expander follows gcc's libcpp for the same reason.
  * Comments are kept as tokens, except inside a directive, where they are blanks.
+ * Not as gcc: a // comment inside a macro's arguments is a blank too, and one
+ * after a macro name with no '(' is written as //, not as a block comment.
  *
  * What gcc's assembler mode does that C does not is kept: an unterminated
  * quote is a token running to the end of its line, a line starting with '#'
@@ -982,29 +984,19 @@ bool saveComments, sawNul;
         if( (c == '/') && (peekc(bP, 1) == '/') )
         {
             bP->linePos = bP->lineLen;
-            if( !saveComments )
+
+            // Unlike gcc, which writes it as a /* */ comment that lands
+            // within a line, where am1 rejects one, a // comment inside a
+            // macro's arguments is a blank.  One read while looking for a
+            // macro's '(' stays as written: it ends the look and is written
+            // where it was.
+            if( !saveComments || (parsingArgs == 2) )
             {
                 flags |= TF_PREV_WHITE;
                 continue;
             }
 
             len = bP->lineLen - start;
-
-            // gcc keeps a // comment read while it gathers a macro's
-            // arguments as a /* */ comment, and writes it so
-            if( parsingArgs )
-            {
-                tP = newTok(PP_COMMENT, bP->lineP + start, len, bP->lineNoP[start], bP->colP[start], flags);
-                tP->textP = ppAlloc(len + 3);
-                tP->textP[0] = '/';
-                tP->textP[1] = '*';
-                memcpy(tP->textP + 2, bP->lineP + start + 2, (len - 2));
-                tP->textP[len] = '*';
-                tP->textP[len + 1] = '/';
-                tP->len = len + 2;
-                return( tP );
-            }
-
             return( newTok(PP_COMMENT, bP->lineP + start, len, bP->lineNoP[start], bP->colP[start], flags) );
         }
 

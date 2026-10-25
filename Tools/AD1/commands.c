@@ -860,19 +860,23 @@ char tmpstr[128];
             printf("%s", instr);
             printf(" indirects to ");
             addr = tgtRead(addr);
-            formatAndPrintOne(SYMBOLIC, FULLADDR(bank, addr));
-            NEWLINE;
 
             // The behavior of indirect depends upon whether or not eem is in effect.
-            // If it is, there is no subsequent indirection.
+            // If it is, the word holds the full 16-bit address and there is no subsequent indirection.
             if( extendedMode() )
             {
                 bank = BANKOF(addr);
+                addr = FULLADDR(bank, addr);
             }
             else
             {
+                // Only the address and the indirect bit count; the rest of the word is ignored.
+                addr &= (INDIRECT_BIT | 07777);
                 deref = true;
             }
+
+            formatAndPrintOne(SYMBOLIC, FULLADDR(bank, addr));
+            NEWLINE;
         }
 
         // Follow the indirection chain if there is one.
@@ -884,10 +888,10 @@ char tmpstr[128];
                 addr &= ~INDIRECT_BIT;
                 tmpaddr = tgtRead(FULLADDR(bank, addr));
                 printf("The value at address ");
-                formatAndPrintOne(SYMBOLIC, addr);
+                formatAndPrintOne(SYMBOLIC, FULLADDR(bank, addr));
                 printf(" is an indirect to ");
-                formatAndPrintOne(SYMBOLIC, tmpaddr & ~INDIRECT_BIT);
-                addr = tmpaddr;
+                formatAndPrintOne(SYMBOLIC, FULLADDR(bank, tmpaddr));
+                addr = tmpaddr & (INDIRECT_BIT | 07777);
                 printf(", follow it, y for yes? ");
                 fgets(tmpstr, sizeof(tmpstr), stdin);
                 if( tmpstr[0] != 'y' )
@@ -895,6 +899,8 @@ char tmpstr[128];
                     break;
                 }
            }
+
+            addr = FULLADDR(bank, addr);
         }
 
         printf("The target address is ");

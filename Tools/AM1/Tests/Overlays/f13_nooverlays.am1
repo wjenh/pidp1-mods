@@ -1,0 +1,16 @@
+f13_nooverlays: f13_resident with one fault
+bank 1
+100/
+        %%ovresident beta
+        hlt
+        %%ovresident beta
+        hlt
+        %%ovresident gamma
+        hlt
+bank 2
+bank 0
+100/
+go,     cla
+        %%ovresident alpha
+        hlt
+        start go

@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v5.3 24-Oct-2026"
-#define AM1SHORTVERSION "am1 v5.3"
+#define AM1VERSION "am1 v5.4 25-Oct-2026"
+#define AM1SHORTVERSION "am1 v5.4"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -61,9 +61,21 @@
                         // value2.ival holds the ceiling reduced to the bank, and
                         // bank the bank
 #define PN_OVLOAD   128 // an OVCALL node written as %%ovload
+#define PN_OVRES    256 // an OVCALL node written as %%ovresident, which names no entry
 
 // The directive an OVCALL node was written as, without its %%.
-#define OVCALLNAME(nodeP) ((((nodeP)->flags) & PN_OVLOAD)? "ovload": "ovcall")
+#define OVCALLNAME(nodeP) ((((nodeP)->flags) & PN_OVRES)? "ovresident": \
+                           (((nodeP)->flags) & PN_OVLOAD)? "ovload": "ovcall")
+
+// What an OVCALL node names after its overlay, the comma and entry, nothing for %%ovresident.
+#define OVCALLSEP(nodeP) ((((nodeP)->flags) & PN_OVRES)? "": ", ")
+#define OVCALLENTRY(nodeP) ((((nodeP)->flags) & PN_OVRES)? "": (nodeP)->value2.strP)
+
+// am1's own names for an %%ovresident's two numbers, the overlay's name and one of these:
+// its window's word's place in ovTable and its number.
+// A dot can't be in a symbol, so no program can write either.
+#define OVRESWINDOW ".window"
+#define OVRESNUMBER ".number"
 
 // What a RELAYOUT node is, in its value.ival.
 // Only optrelayout.c makes them, every back end but the listing skips them
@@ -97,6 +109,8 @@
 #define SYMF_INDIRECT 0x400000  // is an i modifier
 #define SYMF_OVALIAS 0x800000   // an overlay's name for its bank's root global of
                                 // that name, symP is the root's symbol
+#define SYMF_OVNUMBER 0x1000000 // an %%ovresident's number, ov.window or ov.number:
+                                // a value, not the address of a word
 
 #define CTX_FORCELOCAL 1        // forcelocal is active for this context
 

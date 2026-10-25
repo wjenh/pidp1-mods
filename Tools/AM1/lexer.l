@@ -229,6 +229,8 @@ thisbank[ \t]*      { return(THISBANK); }
 [ \t]*%%ovcall/{DIREND}                 { return(directiveToken(OVCALL)); }
 [ \t]*%%ovload[ \t]+                    { return(directiveToken(OVLOAD)); }
 [ \t]*%%ovload/{DIREND}                 { return(directiveToken(OVLOAD)); }
+[ \t]*%%ovresident[ \t]+                { return(directiveToken(OVRESIDENT)); }
+[ \t]*%%ovresident/{DIREND}             { return(directiveToken(OVRESIDENT)); }
 [ \t]*%%ovtable[ \t]+                   { return(directiveToken(OVTABLE)); }
 [ \t]*%%ovtable/{DIREND}                { return(directiveToken(OVTABLE)); }
 

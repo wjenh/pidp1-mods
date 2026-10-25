@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.2 and covers up through am1 version 5.2; it will be updated as needed.\
-Edit date 24-Oct-2026\
-Update for constant pool changes, mactoam1 changes.
+This is version 3.3 and covers up through am1 version 5.4; it will be updated as needed.\
+Edit date 25-Oct-2026\
+Update for %%ovresident addition.
 
 ## What is **am1**?
 
@@ -1131,6 +1131,7 @@ Directives are:
 - %%endoverlay
 - %%ovcall
 - %%ovload
+- %%ovresident
 - %%ovtable
 - start
 - stop

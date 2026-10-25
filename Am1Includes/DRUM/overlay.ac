@@ -12,9 +12,10 @@
 // Each transfer polls cks for the drum's end with breaks left as they are.
 // The drum automatically requests a break at the end of every transfer, so a program running with
 // breaks on needs a handler for the drum's channel or turn it off before using %%ovcall.
+// Such a handler can tell a break that may be the drum's by ovLoading being nonzero.
 //
 // Defines ovEnter, ovFetch, ovInit, the in-an-overlay flag ovActive, the retry count
-// ovRetries, the error hook ovErrHook, and the error halts ovErrNest,
+// ovRetries, the error hook ovErrHook, the loading word ovLoading, and the error halts ovErrNest,
 // ovErrStamp, ovErrDrum and ovErrSwap, each stopping with its OV_ERR_ number in AC.
 // A program that must not halt sets ovErrHook to a full address and on an error
 // the manager jumps there instead of halting.
@@ -45,6 +46,7 @@
 //    entry found once, IO kept only on the load path, the entry's other words read only for
 //    a transfer, dra's error tested in IO.
 // 23-Oct-2026 wje cleanup
+// 25-Oct-2026 Claude: ovLoading, nonzero only while loading.
 
 #ifndef OVERLAY_AC
 #define OVERLAY_AC
@@ -241,6 +243,7 @@ ovLoaded,
     lac i ovPtr
     sas ovWant              // skip if the numbers agree
     jmp ovFailStamp
+    dzm ovLoading           // the load is over, its last break taken
     lac ovWant
     dac i ovRes
     lio ovArg
@@ -298,6 +301,7 @@ ovXferIdle,
     rir 1s                  // the busy bit, bit 17, to the sign
     spi                     // skip if the drum is idle
     jmp ovXferIdle
+    idx ovLoading           // one more transfer of this load
     lio ovXDia
     _OVL_dia
     lio ovXDwc
@@ -327,7 +331,8 @@ ovXferBad,
     idx ovRetries
     jmp ovXferIdle
 
-// Makes the manager ready at a program's start: no overlay running, no retry counted.
+// Makes the manager ready at a program's start: no overlay running, no retry counted,
+// none loading.
 // The windows' words are kept since what they say the windows hold
 // is still there, and so is ovErrHook, which the program sets.
 // IO is preserved, AC is not.
@@ -337,6 +342,7 @@ ovInit,
     dac ovInitR
     dzm ovActive
     dzm ovRetries
+    dzm ovLoading
     eem
     jmp i ovInitR
 
@@ -344,12 +350,13 @@ ovInit,
 // jda into the error's halt.
 // Entry: AC is the OV_ERR_ number, stored by the jda.
 // Exit, to the hook: AC the number, IO the failing %%ovcall's or %%ovload's return
-// past its data words, ovActive 0, eem on; the hook never returns here.
+// past its data words, ovActive and ovLoading 0, eem on; the hook never returns here.
 // Back, with no
-// hook: AC the number, IO preserved.
+// hook: AC the number, IO preserved, ovLoading 0.
 // Called via jda, from this bank only.
 ovErrTo, 0
     dap ovErrToX
+    dzm ovLoading
     lac ovErrHook
     sza                     // skip unless a hook is set
     jmp ovErrHooked
@@ -408,6 +415,10 @@ ovActive, 0
 ovRetries, 0
 // The error hook: 0 to halt on an error, else the full address to go to.
 ovErrHook, 0
+// 0 except while loading, then the load's transfers so far: each end-of-transfer
+// break the manager causes is taken while it is nonzero, if taken when requested.
+// The program reads it and never writes it.
+ovLoading, 0
 
 ovTblP, ovTable:*           // the table's full address
 ovFirst, 0                  // the first entry's full address, 0 until the first call

@@ -1,0 +1,32 @@
+f12_manager: f7_manager with a twopass window
+bank 1
+100/
+#include <DRUM/overlay.ac>
+go1,
+        %%ovcall beta, betaGo
+        hlt
+bank 2
+%%window wa, 1000, 1777
+%%window wb, 2000, 2777, twopass
+%%overlay alpha, wa
+        export alphaGo
+alphaGo, dac alphaX
+        eem
+        jmp i alphaX
+alphaX, 0
+%%endoverlay
+%%overlay beta, wb, persistent
+        export betaGo
+betaGo, dac betaX
+        eem
+        jmp i betaX
+betaX,  0
+%%endoverlay
+bank 0
+100/
+go,     eem
+        jsp i [ovInit:1]
+        %%ovcall alpha, alphaGo
+        hlt
+%%ovtable
+        start go

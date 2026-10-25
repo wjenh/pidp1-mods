@@ -1,0 +1,30 @@
+f12_swap: a swap window at one drum address, and another window's overlays after it
+bank 2
+%%window w1, 2000, 2777
+%%overlay p, w1, persistent
+pGo, hlt
+        table 175
+%%endoverlay
+%%overlay q, w1, persistent
+qGo, hlt
+        table 75
+%%endoverlay
+%%overlay r, w1
+rGo, hlt
+        table 35
+%%endoverlay
+bank 3
+%%window w2, 0, 7777
+%%overlay s, w2
+sGo, hlt
+        table 7375
+%%endoverlay
+%%overlay t, w2
+tGo, hlt
+        table 275
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

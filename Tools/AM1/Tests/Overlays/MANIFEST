@@ -289,6 +289,43 @@ f12_trackend|outgrep|-S|^overlay e1, number 1: track 36, drum 0000-2777,
 f12_trackend|outgrep|-S|^overlay e2, number 2: track 36, drum 3000-5777,
 f12_trackend|outgrep|-S|^overlay e3, number 3: track 37, drum 0000-2777,
 f12_trackend|outgrep|-S|^overlay e4, number 4: track 36, drum 6000-7777,
-f12_twopassdef|fail||OV_TWO_PASS is no longer used
+f12_twopassdef|fail||OV_TWO_PASS is no longer supported
 f12_manager|ok||
 f12_manager|ok|bin|
+f13_resident|refsub||
+f13_resident|ok|bin|
+f13_resident|deref||010101 210000 000107
+f13_resident|deref||010102 520000 000002
+f13_resident|deref||010105 210000 000107
+f13_resident|deref||010106 520000 000002
+f13_resident|deref||010111 210000 000106
+f13_resident|deref||010112 520000 000003
+f13_resident|deref||000102 210000 000106
+f13_resident|deref||000103 520000 000001
+f13_resident|deref|-O1|010101 210000 000107
+f13_resident|deref|-O1|010102 520000 000002
+f13_resident|deref|-O1|010105 210000 000107
+f13_resident|deref|-O1|010106 520000 000002
+f13_resident|deref|-O1|010111 210000 000106
+f13_resident|deref|-O1|010112 520000 000003
+f13_resident|deref|-O1|000102 210000 000106
+f13_resident|deref|-O1|000103 520000 000001
+f13_resident|optgrep|-O|, %%ovresident$
+f13_resident|pairs||010101 010105 2
+f13_resident|nopairs||010101 010111 2
+f13_resident|lstgrep|bin -l|%%ovresident beta$
+f13_resident|lstgrep|bin -l|lac i \[.*ovTable:0.*beta\.window:0.*\] +// the word of overlay beta's window$
+f13_resident|lstgrep|bin -l|sas \[beta\.number:0\] +// overlay beta's number, skip if resident$
+f13_resident|srccheck||
+f13_resident|srccheck|-O1|
+f13_lowcode|deref||000011 210000 000016
+f13_lowcode|deref||000012 520000 000006
+f13_lowcode|optgrep|-O1|deleted 0005: cla => \(deleted\)$
+f13_lowcode|okgrep|-O1|^000006 240013$
+f13_lowcode|deref|-O1|000010 210000 000015
+f13_lowcode|deref|-O1|000011 520000 000006
+f13_lowcode|srccheck|-O1|
+f13_inoverlay|fail||%%ovresident alpha is inside overlay gamma; only the root asks what a window holds
+f13_undeclared|fail||%%ovresident names overlay delta, which is not declared
+f13_notable|fail||this program has overlays and no %%ovtable
+f13_nooverlays|fail||%%ovresident names overlay beta, which is not declared

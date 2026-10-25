@@ -1,0 +1,29 @@
+f13_inoverlay: f13_resident with one fault
+bank 1
+100/
+        %%ovresident beta
+        hlt
+        %%ovresident beta
+        hlt
+        %%ovresident gamma
+        hlt
+bank 2
+%%window wa, 1000, 1777
+%%window wb, 2000, 2777
+%%overlay alpha, wa
+alphaGo, jmp .
+%%endoverlay
+%%overlay beta, wb
+betaGo, jmp .
+%%endoverlay
+%%overlay gamma, wa
+gammaGo, jmp .
+        %%ovresident alpha
+%%endoverlay
+bank 0
+100/
+go,     cla
+        %%ovresident alpha
+        hlt
+%%ovtable
+        start go

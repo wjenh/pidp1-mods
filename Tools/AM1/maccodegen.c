@@ -686,7 +686,8 @@ PNodeP node2P;
         break;
 
     case OVCALL:
-        fprintf(outfP, "/ %%%%%s %s, %s\n", OVCALLNAME(nodeP), nodeP->value.strP, nodeP->value2.strP);
+        fprintf(outfP, "/ %%%%%s %s%s%s\n", OVCALLNAME(nodeP), nodeP->value.strP, OVCALLSEP(nodeP),
+            OVCALLENTRY(nodeP));
 
         for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
         {

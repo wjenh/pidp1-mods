@@ -73,6 +73,8 @@ static int ovTableLine;                 // the %%ovtable's line, 0 when none yet
 SymNodeP ovTableSymP;                   // and its label, NILP when none yet; the
                                         // optimizer's relayout moves it
 static PNodeListP ovCallsP;             // every %%ovcall's and %%ovload's node, in source order
+static PNodeListP ovResidentsP;         // every %%ovresident's node, in source order
+static SymNodeP ovResSymsP;             // the symbols its own names resolve to, in no bank's table
 
 extern PNodeListP wildcardsP;           // any wildcarded cross-bank refs
 extern SymNodeP permSymP;               // the instructions and other permanent values
@@ -117,6 +119,9 @@ PNodeP openOverlay(char *nameP, char *windowNameP, char *modeP);
 PNodeP closeOverlay(void);
 PNodeP placeOvTable(void);
 PNodeP ovCall(char *ovNameP, char *entryNameP, bool load);
+PNodeP ovResident(char *ovNameP);
+static void checkOvResidents(void);
+static bool ovResWildcard(PNodeP nodeP);
 PNodeP literalNode(int lineNo, int pc, PNodeP exprP, PNodeP endP);
 PNodeP directiveNode(int type);
 void reserveTracks(long first, long last);
@@ -307,6 +312,10 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 // Declared after the others so that each keeps its number.
 %token OVLOAD
 
+// %%ovresident, the lexer's only; its node is an OVCALL with PN_OVRES.
+// Declared after OVLOAD for the same reason.
+%token OVRESIDENT
+
 %type <strP> ovIdent
 
 %%
@@ -377,7 +386,9 @@ body   : stmt_list
                         // names for its bank's root globals can take theirs.
                         resolveOverlaySymbols();
 
-                        // Fix any wildcarded brefs
+                        // Fix any wildcarded brefs, the names an %%ovresident
+                        // gives its numbers among them once each is known good.
+                        checkOvResidents();
                         resolveWildcards(wildcardsP, banksP);
 
                         $$ = $1->leftP;        /* recover head link */
@@ -829,6 +840,10 @@ one_stmt        : expr
                 | OVLOAD ovIdent LOCATION ovIdent
                 {
                     $$ = ovCall($2, $4, true);
+                }
+                | OVRESIDENT ovIdent
+                {
+                    $$ = ovResident($2);
                 }
                 ;
 
@@ -1851,7 +1866,7 @@ resolveWildcards(PNodeListP listP, BankContextP banksP)
 {
     while( listP )
     {
-        if( !resolveWildcard(listP, banksP) )
+        if( !ovResWildcard(listP->nodeP) && !resolveWildcard(listP, banksP) )
         {
             // another hack to get offending line, we're at the end of the program
             lineno = listP->nodeP->lineNo + 1;
@@ -3291,6 +3306,213 @@ SymNodeP entryP;
             (ovTableSymP->value + 1 + windowCount + (OVENTRYWORDS * (ovP->number - 1)));
         wordP->leftP->rightP->value.ival = (ovP->ctx.bank << 12) | entryP->value;
     }
+}
+
+// One of am1's own names for an %%ovresident's numbers, the overlay's name then suffixP,
+// OVRESWINDOW or OVRESNUMBER.
+// Returns the name, allocated.
+static char *
+ovResName(char *ovNameP, const char *suffixP)
+{
+char *nameP;
+
+    if( !(nameP = malloc(strlen(ovNameP) + strlen(suffixP) + 1)) )
+    {
+        verror("out of memory recording an %%%%ovresident");
+    }
+
+    strcpy(nameP, ovNameP);
+    strcat(nameP, suffixP);
+    return(nameP);
+}
+
+// A wildcarded reference to nameP, as the grammar makes one for 'name:*',
+// resolved by resolveWildcards() at the end of the parse.
+// Returns the WILDREF node.
+static PNodeP
+ovResWildNode(char *nameP, int lineNo, int pc)
+{
+PNodeP nodeP;
+PNodeListP wildP;
+
+    nodeP = newnode(lineNo, pc, WILDREF, NILP, NILP);
+    nodeP->value.strP = nameP;
+
+    if( !(wildP = (PNodeListP)malloc(sizeof(PNodeListItem))) )
+    {
+        verror("out of memory recording an %%%%ovresident");
+    }
+
+    wildP->nodeP = nodeP;
+    wildP->nextP = wildcardsP;
+    wildcardsP = wildP;
+    return(nodeP);
+}
+
+// An %%ovresident in the root, it skips the next instruction if the overlay is resident in
+// its window.
+// It is eem, then lac i [ovTable:* + ov.window:*], the window's resident word, then
+// sas [ov.number:*], each name am1's own: ov.window is the window's word's place in the
+// table, ov.number the overlay's number.
+// Both are known only once the overlay is declared, which may be after this, so they are
+// written as wildcards, which ovResWildcard() resolves at the end of the parse; a pool key
+// made from a name is one relayout can make again.
+// The eem is always there, the table's bank isn't known here and the word count is fixed now.
+// Returns the OVCALL node, PN_OVRES set, its words are EXPR nodes from rightP, linked
+// through leftP and the overlay's name is in value.strP.
+PNodeP
+ovResident(char *ovNameP)
+{
+int line;
+int pc;
+PNodeP nodeP;
+PNodeP exprP;
+PNodeP *tailPP;
+PNodeListP itemP;
+PNodeListP *itemPP;
+
+    line = optRegionTokenLine;
+
+    if( curOverlayP )
+    {
+        verrorl(line, "%%%%ovresident %s is inside overlay %s; only the root asks what a window holds",
+            ovNameP, curOverlayP->nameP);
+    }
+
+    // One higher, as openOptRegion() explains.
+    nodeP = newnode(line + 1, curBankP->cur_pc, OVCALL, NILP, NILP);
+    nodeP->flags |= (PN_NOINC | PN_OVRES);
+    nodeP->value.strP = ovNameP;
+    nodeP->value2.strP = NILP;
+    nodeP->srcLine = line;
+    nodeP->srcFileP = strdup(optRegionTokenFileP);
+
+    pc = curBankP->cur_pc;
+    tailPP = &(nodeP->rightP);
+
+    tailPP = ovCallWord(tailPP, line + 1, pc, permNode("eem", line + 1, pc));
+    ++pc;
+
+    exprP = binop(line + 1, pc, PLUS, ovResWildNode(strdup(OVTABLENAME), line + 1, pc),
+        ovResWildNode(ovResName(ovNameP, OVRESWINDOW), line + 1, pc));
+    exprP = literalNode(line + 1, pc, exprP, NILP);
+    exprP = binop(line + 1, pc, SEPARATOR,
+        binop(line + 1, pc, SEPARATOR, permNode("lac", line + 1, pc), permNode("i", line + 1, pc)),
+        exprP);
+    tailPP = ovCallWord(tailPP, line + 1, pc++, exprP);
+
+    exprP = literalNode(line + 1, pc, ovResWildNode(ovResName(ovNameP, OVRESNUMBER), line + 1, pc), NILP);
+    exprP = binop(line + 1, pc, SEPARATOR, permNode("sas", line + 1, pc), exprP);
+    ovCallWord(tailPP, line + 1, pc++, exprP);
+
+    curBankP->cur_pc = pc;
+    checkPCBound("The %%ovresident", pc - 1, line);
+
+    if( !(itemP = (PNodeListP)calloc(1, sizeof(PNodeListItem))) )
+    {
+        verror("out of memory recording an %%%%ovresident");
+    }
+
+    itemP->nodeP = nodeP;
+
+    for( itemPP = &ovResidentsP; *itemPP; itemPP = &((*itemPP)->nextP) )
+    {
+        ;
+    }
+
+    *itemPP = itemP;
+    return(nodeP);
+}
+
+// Before resolveWildcards(), check each %%ovresident's overlay and that there is a table,
+// so a name that can't be resolved is reported as that, not as a wildcard that cannot be found.
+static void
+checkOvResidents(void)
+{
+PNodeListP itemP;
+PNodeP nodeP;
+
+    if( ovResidentsP && overlaysP && !ovTableSymP )
+    {
+        verrorlf(overlaysP->lineNo, overlaysP->fileP,
+            "this program has overlays and no %%%%ovtable."
+            " It must be added in the root after every window and overlay");
+    }
+
+    for( itemP = ovResidentsP; itemP; itemP = itemP->nextP )
+    {
+        nodeP = itemP->nodeP;
+
+        if( !findOverlay(nodeP->value.strP) )
+        {
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "%%%%ovresident names overlay %s, which is not declared",
+                nodeP->value.strP);
+        }
+    }
+}
+
+// Resolve one of an %%ovresident's own wildcarded names, ov.window or ov.number, to a
+// bank 0 symbol holding the number and turn it into a BREF, as resolveWildcard() does
+// for a 'sym:*'.
+// The symbol is in no bank's table, so neither the .sym nor the listing's table has it,
+// and SYMF_OVNUMBER tells the optimizer it is a number, not the address of a word.
+// Returns false for any other name, every name a program writes is one of those.
+static bool
+ovResWildcard(PNodeP nodeP)
+{
+char *nameP;
+char *dotP;
+int value;
+SymNodeP symP;
+OverlayContextP ovP;
+
+    nameP = nodeP->value.strP;
+
+    if( !(dotP = strrchr(nameP, '.')) )
+    {
+        return(false);
+    }
+
+    if( !(symP = sym_find(&ovResSymsP, nameP)) )
+    {
+        // checkOvResidents() found every overlay these name.
+        *dotP = 0;
+        ovP = findOverlay(nameP);
+        *dotP = '.';
+
+        if( !ovP )
+        {
+            return(false);
+        }
+
+        if( !strcmp(dotP, OVRESWINDOW) )
+        {
+            value = 1 + ovP->windowP->index;
+        }
+        else if( !strcmp(dotP, OVRESNUMBER) )
+        {
+            value = ovP->number;
+        }
+        else
+        {
+            return(false);
+        }
+
+        if( !(symP = sym_make(nameP, 0)) )
+        {
+            verror("out of memory resolving an %%%%ovresident");
+        }
+
+        symP->value = value;
+        symP->bank = 0;
+        symP->flags |= (SYMF_RESOLVED | SYMF_OVNUMBER);
+        sym_add(&ovResSymsP, symP);
+    }
+
+    nodeP->type = BREF;
+    nodeP->value.symP = symP;
+    nodeP->value2.ival = 0;
+    return(true);
 }
 
 // The overlay numbered number, NILP for 0, the root.

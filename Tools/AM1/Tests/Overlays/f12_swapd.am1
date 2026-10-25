@@ -1,0 +1,31 @@
+f12_swapd: a swap window placed at drum address 0200
+%%drumreserve 3-37
+bank 2
+%%window w1, 2000, 2777
+%%overlay p, w1, persistent
+pGo, hlt
+        table 175
+%%endoverlay
+%%overlay q, w1, persistent
+qGo, hlt
+        table 75
+%%endoverlay
+%%overlay r, w1
+rGo, hlt
+        table 35
+%%endoverlay
+bank 3
+%%window w3, 1000, 1777
+%%overlay u, w3, persistent
+uGo, hlt
+        table 35
+%%endoverlay
+%%overlay v, w3, persistent
+vGo, hlt
+        table 35
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

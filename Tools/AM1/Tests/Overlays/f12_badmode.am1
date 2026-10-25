@@ -1,0 +1,12 @@
+f12_badmode: a window's fourth operand that is not twopass
+bank 2
+%%window w1, 2000, 2777, swap
+%%overlay r, w1
+rGo, hlt
+        table 35
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

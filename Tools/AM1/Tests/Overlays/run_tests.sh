@@ -1,5 +1,5 @@
 #!/bin/bash
-# run_tests.sh -- the drum overlay suite: fixtures F1 to F11, one check per
+# run_tests.sh -- the drum overlay suite: fixtures F1 to F13, one check per
 # MANIFEST line.
 #
 # Usage: run_tests.sh [am1] [-i includes] [name...]
@@ -31,8 +31,9 @@
 #   refsub   exits 0, and every line of <name>.ref is a line of the .dmp; the
 #            .ref holds the words worked out by hand, which the rest of the
 #            dump may add to
-#   fail     exits non-zero, and stderr holds text, so that a fixture that
-#            fails for some other reason fails its check
+#   fail     exits 1, and stderr holds text, so that a fixture that fails
+#            for some other reason fails its check; any other non-zero exit
+#            is a crash (134 is SIGABRT), not the error the line names
 #   warn     exits 0, and stderr holds text
 #   nowarn   exits 0, and stderr does not hold text
 #   pairs    exits 0, and the .dmp's words agree in pairs; text is "A B N", N
@@ -46,6 +47,13 @@
 #            out of the file names each holds
 #   nohand   as hand, but the two files must differ: the control that shows a
 #            hand check can fail
+#   deref    exits 0, and the root word at A is an instruction OP, its top six
+#            bits, whose address names, in A's bank, a word holding V; text is
+#            "A OP V", all octal.  An %%ovresident's literals are placed by
+#            their pool keys, so a check reads through the word, not at a place
+#   srccheck exits 0, and so does -O=source with the flags on a copy of the
+#            fixture, and the .opt.am1 it writes assembles with -T alone to the
+#            words of that build's own .dmp
 #
 # Exit status 0 when every check passes, 1 when one fails, 2 on a usage error.
 
@@ -113,6 +121,23 @@ pair_diffs() {
                     printf "%06o %s, %06o %s; ", ka, va, kb, vb
                 }
             }
+        }' "$1"
+}
+
+# What is wrong with a deref check, nothing when it holds.
+# $1 the .dmp, $2 A, $3 OP, $4 V.
+deref_diff() {
+    awk -v a="$2" -v op="$3" -v v="$4" '
+        function oct(s,    i, n) { n = 0; for (i = 1; i <= length(s); i++) n = n * 8 + substr(s, i, 1); return n }
+        NF == 2 { root[oct($1)] = $2 }
+        END {
+            w = root[oct(a)]
+            if (w == "") { printf "no word at %s", a; exit }
+            got = int(oct(w) / 4096) % 64
+            if (got != int(oct(op) / 4096) % 64) { printf "%s holds %s, not a %s instruction", a, w, op; exit }
+            t = int(oct(a) / 4096) * 4096 + oct(w) % 4096
+            if (root[t] == "") { printf "%s names %06o, which holds no word", a, t; exit }
+            if (oct(root[t]) != oct(v)) { printf "%s names %06o, which holds %s, not %s", a, t, root[t], v }
         }' "$1"
 }
 
@@ -248,9 +273,40 @@ while IFS='|' read -r name expect flags text; do
                 [ "$expect" = hand ] && { ok=0; why="the .$text differs from the hand build's: $(cmp <(sed "s#$FX/##" "$W/$name.$text") <(sed "s#$FX/hand/##" "$W/hand/$name.$text") | head -1)"; }
             fi
             ;;
+        deref)
+            # $text is split on purpose, into A, OP and V.
+            if [ "$rc" != 0 ]; then
+                ok=0; why="exit $rc"
+            elif [ ! -s "$W/$name.dmp" ]; then
+                ok=0; why="no .dmp"
+            else
+                diffs=$(deref_diff "$W/$name.dmp" $text)
+                [ -n "$diffs" ] && { ok=0; why="$diffs"; }
+            fi
+            ;;
+        srccheck)
+            # -O=source writes beside its source, so a copy is assembled, never the fixture.
+            mkdir -p "$W/src/re"
+            cp "$FX/$name.am1" "$W/src/"
+            # $flags is split on purpose, into its options.
+            (cd "$W/src" && "$AM1" -i "$INC" -T $flags -O=source "$W/src/$name.am1" > out.txt 2> err.txt; echo $? > rc.txt)
+            src=$(cat "$W/src/rc.txt" 2>/dev/null)
+            [ -f "$W/src/$name.opt.am1" ] &&
+                (cd "$W/src/re" && "$AM1" -i "$INC" -T "$W/src/$name.opt.am1" > out.txt 2> err.txt; echo $? > rc.txt)
+            rec=$(cat "$W/src/re/rc.txt" 2>/dev/null)
+            if [ "$rc" != 0 ] || [ "$src" != 0 ]; then
+                ok=0; why="exit $rc, under -O=source $src"
+            elif [ "$rec" != 0 ]; then
+                ok=0; why="the .opt.am1 does not assemble: $(head -2 "$W/src/re/err.txt" | tr '\n' ' ')"
+            elif [ ! -s "$W/src/$name.dmp" ] || ! cmp -s "$W/src/$name.dmp" "$W/src/re/$name.opt.dmp"; then
+                ok=0; why="the .opt.am1's words differ: $(diff "$W/src/$name.dmp" "$W/src/re/$name.opt.dmp" 2>&1 | head -4 | tr '\n' ' ')"
+            fi
+            ;;
         fail)
             if [ "$rc" = 0 ]; then
                 ok=0; why="assembled"
+            elif [ "$rc" != 1 ]; then
+                ok=0; why="exit $rc"
             elif ! grep -F -q -- "$text" "$W/err.txt"; then
                 ok=0; why="failed for another reason"
             fi

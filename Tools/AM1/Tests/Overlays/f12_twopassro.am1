@@ -1,0 +1,16 @@
+f12_twopassro: a twopass window with no persistent overlay
+bank 2
+%%window w1, 2000, 2777, twopass
+%%overlay r, w1
+rGo, hlt
+        table 35
+%%endoverlay
+%%overlay s, w1
+sGo, hlt
+        table 75
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

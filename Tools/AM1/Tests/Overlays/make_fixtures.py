@@ -1,4 +1,4 @@
-"""make_fixtures.py -- writes the F1 to F12 fixtures of the overlay suite, run by run_tests.sh.
+"""make_fixtures.py -- writes the F1 to F13 fixtures of the overlay suite, run by run_tests.sh.
 
 Every F1 and F8 fixture is f1_valid.am1 with one change, and every F2 fixture
 f2_valid.am1 with one, so that each fails, warns or passes for the one reason
@@ -27,6 +27,12 @@ F12 is the packed drum layout and the twopass window (am1 v5.2): the design's
 example, a swap window and the drum address it shares, a twopass window, a
 track's end, %%drumreserve and the errors and warning, each place worked out
 by hand above F12.
+F13 is %%ovresident (am1 v5.4): its words and what its two pool words hold,
+worked out by hand above F13, from another bank before the overlays are
+declared and from the table's bank after; the same words under -O1, and
+f13_lowcode, where -O1 moves bank 0 code over the address a query's number
+names and moves the table; the -O=source round trip; and the errors, each a
+one-change variant of f13_resident.
 
 Run it from anywhere: it writes beside itself.  The fixtures are regenerated,
 not edited: change the base or a variant here and run it again.
@@ -1334,12 +1340,140 @@ F12 = [
     # the same program without the define, is the control that assembles.
     ("f12_twopassdef", "f12_twopassdef: OV_TWO_PASS defined before overlay.ac\n#define OV_TWO_PASS\n"
                        + F7_MANAGER.split("\n", 1)[1],
-     ["fail||OV_TWO_PASS is no longer used"]),
+     # The owner's 23-Oct-2026 cleanup of overlay.ac reworded the #error.
+     ["fail||OV_TWO_PASS is no longer supported"]),
     # The manager with a twopass window: it assembles, both evictions in it.
     ("f12_manager", F7_MANAGER.replace("f7_manager: overlay.ac in bank 1, called from bank 1 and bank 0",
                                        "f12_manager: f7_manager with a twopass window")
                               .replace("%%window wb, 2000, 2777", "%%window wb, 2000, 2777, twopass"),
      ["ok||", "ok|bin|"]),
+]
+
+# F13: %%ovresident (am1 v5.4).  Two windows in bank 2, wa (index 0) and wb
+# (index 1), and three overlays, numbered in source order: alpha 1 in wa, beta 2
+# in wb, gamma 3 in wa.  Bank 1 asks before any overlay is declared, beta twice;
+# bank 0, the table's, asks after them.  No overlay.ac: the query calls nothing.
+# Each query is eem, lac i [ovTable:* + ov.window:*], sas [ov.number:*]:
+#   eem 724074, lac i 210000, sas 520000, cla 760200, hlt 760400.
+# Bank 1: 0100-0103, 0104-0107 and 0110-0113, each query and its hlt.  Bank 0:
+# go, cla at 0100, the query at 0101-0103, hlt at 0104, then the table at 0105:
+# the stamp, wa's word at 0106 and wb's at 0107, both 0 for none, then four
+# words per overlay.  So the lac i names a pool word holding 0106 for alpha and
+# gamma, 0107 for beta, and the sas one holding the overlay's number.  The pool
+# words' places follow their keys, so the deref checks read through each word.
+F13 = """\
+f13_resident: %%ovresident from another bank before its overlays, and from the table's bank after them
+bank 1
+100/
+        %%ovresident beta
+        hlt
+        %%ovresident beta
+        hlt
+        %%ovresident gamma
+        hlt
+bank 2
+%%window wa, 1000, 1777
+%%window wb, 2000, 2777
+%%overlay alpha, wa
+alphaGo, jmp .
+%%endoverlay
+%%overlay beta, wb
+betaGo, jmp .
+%%endoverlay
+%%overlay gamma, wa
+gammaGo, jmp .
+%%endoverlay
+bank 0
+100/
+go,     cla
+        %%ovresident alpha
+        hlt
+%%ovtable
+        start go
+"""
+
+F13_REF = """\
+010100 724074
+010103 760400
+010104 724074
+010107 760400
+010110 724074
+010113 760400
+000100 760200
+000101 724074
+000104 760400
+000106 000000
+000107 000000
+"""
+
+F13_DEREFS = ["010101 210000 000107", "010102 520000 000002",
+              "010105 210000 000107", "010106 520000 000002",
+              "010111 210000 000106", "010112 520000 000003",
+              "000102 210000 000106", "000103 520000 000001"]
+
+F13_LINES = (["refsub||", "ok|bin|"]
+             + ["deref||" + d for d in F13_DEREFS]
+             # The optimizer keeps the words as they are, each query a span of its own.
+             + ["deref|-O1|" + d for d in F13_DEREFS]
+             + ["optgrep|-O|, %%ovresident$",
+                # beta's two queries share both pool words; beta's and gamma's,
+                # in two windows, do not, the control that the pairs check can fail.
+                "pairs||010101 010105 2", "nopairs||010101 010111 2",
+                "lstgrep|bin -l|%%ovresident beta$",
+                "lstgrep|bin -l|lac i \\[.*ovTable:0.*beta\\.window:0.*\\] +// the word of overlay beta's window$",
+                "lstgrep|bin -l|sas \\[beta\\.number:0\\] +// overlay beta's number, skip if resident$",
+                "srccheck||", "srccheck|-O1|"])
+
+# Six overlays in one window, so o6's number, 6, is the address of a bank 0
+# word: bank 0's code starts at 4, and -O1 deletes the dead cla at 0005, in its
+# optimize region, moving every word after it down one.  dac val then sits at
+# 0006, the address the number names, and the pool word must still hold 6; the
+# table moves from 0:0015 to 0:0014, and the address word must follow it.
+F13_LOW_OVERLAYS = "".join("%%%%overlay o%d, wa\no%dGo, jmp .\n%%%%endoverlay\n" % (i, i) for i in range(1, 7))
+F13_LOW = """\
+f13_lowcode: -O1 moves bank 0 code across the address a query's number names
+bank 2
+%%window wa, 1000, 1777
+""" + F13_LOW_OVERLAYS + """\
+bank 0
+4/
+go,     lac val
+%%optimize
+        cla
+        lac val
+%%endoptimize
+        dac val
+        %%ovresident o6
+        hlt
+val,    0
+%%ovtable
+        start go
+"""
+
+# Without -O: lac, cla, lac, dac at 0004-0007, the query at 0010-0012, hlt at
+# 0013, val at 0014, the table at 0015, wa's word at 0016.  Under -O1, the cla
+# deleted: lac, lac, dac at 0004-0006 (dac val 240013), the query at 0007-0011,
+# hlt at 0012, val at 0013, the table at 0014, wa's word at 0015.
+F13_LOW_LINES = ["deref||000011 210000 000016", "deref||000012 520000 000006",
+                 # The deletion happened, or the -O1 checks prove nothing.
+                 "optgrep|-O1|deleted 0005: cla => \\(deleted\\)$",
+                 "okgrep|-O1|^000006 240013$",
+                 "deref|-O1|000010 210000 000015", "deref|-O1|000011 520000 000006",
+                 "srccheck|-O1|"]
+
+F13_ERRORS = [
+    ("f13_inoverlay", [("gammaGo, jmp .\n", "gammaGo, jmp .\n        %%ovresident alpha\n")],
+     "fail||%%ovresident alpha is inside overlay gamma; only the root asks what a window holds"),
+    ("f13_undeclared", [("        %%ovresident gamma\n", "        %%ovresident delta\n")],
+     "fail||%%ovresident names overlay delta, which is not declared"),
+    ("f13_notable", [("%%ovtable\n", "")],
+     "fail||this program has overlays and no %%ovtable"),
+    ("f13_nooverlays", [("%%window wa, 1000, 1777\n%%window wb, 2000, 2777\n", ""),
+                        ("%%overlay alpha, wa\nalphaGo, jmp .\n%%endoverlay\n"
+                         "%%overlay beta, wb\nbetaGo, jmp .\n%%endoverlay\n"
+                         "%%overlay gamma, wa\ngammaGo, jmp .\n%%endoverlay\n", ""),
+                        ("%%ovtable\n", "")],
+     "fail||%%ovresident names overlay beta, which is not declared"),
 ]
 
 
@@ -1463,6 +1597,24 @@ def main():
         write(name + ".am1", text)
         for line in lines:
             manifest.append(name + "|" + line)
+
+    # F13: %%ovresident, its low-code case under -O1, and the errors, each a
+    # one-change variant of f13_resident, which is their control.
+    write("f13_resident.am1", F13)
+    write("f13_resident.ref", F13_REF)
+    for line in F13_LINES:
+        manifest.append("f13_resident|" + line)
+    write("f13_lowcode.am1", F13_LOW)
+    for line in F13_LOW_LINES:
+        manifest.append("f13_lowcode|" + line)
+    for name, changes, line in F13_ERRORS:
+        text = F13
+        for old, new in changes:
+            assert text.count(old) == 1, (name, old)
+            text = text.replace(old, new)
+        text = name + ": f13_resident with one fault\n" + text.split("\n", 1)[1]
+        write(name + ".am1", text)
+        manifest.append(name + "|" + line)
 
     write("MANIFEST", "\n".join(manifest) + "\n")
 

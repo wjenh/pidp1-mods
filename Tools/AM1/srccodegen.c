@@ -3079,7 +3079,7 @@ PNodeP wordP;
 
         case OVCALL:
             // Assembling the directive makes its words again, and the literal
-            // a call from another bank names is filed here.
+            // a call from another bank names, or an %%ovresident's two, is filed here.
             for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
             {
                 planRefs(wordP->rightP);
@@ -3715,7 +3715,7 @@ bool first;
         break;
 
     case OVCALL:
-        putf("\t%%%%%s %s, %s", OVCALLNAME(nodeP), nodeP->value.strP, nodeP->value2.strP);
+        putf("\t%%%%%s %s%s%s", OVCALLNAME(nodeP), nodeP->value.strP, OVCALLSEP(nodeP), OVCALLENTRY(nodeP));
         break;
 
     default:

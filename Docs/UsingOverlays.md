@@ -6,8 +6,8 @@ It covers the directives, the overlay manager the program includes, the loader *
 each costs.
 *UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-This is version 1.5 and covers up through am1 version 5.2; it will be updated as needed.\
-Edit date 22-Oct-2026
+This is version 1.6 and covers up through am1 version 5.4; it will be updated as needed.\
+Edit date 25-Oct-2026
 Update for new twopass and drum packing support.
 
 ## What are overlays?
@@ -187,7 +187,7 @@ Inside an overlay:
 - *local* scopes work as they do anywhere, but one may not be open across *%%overlay* or
   *%%endoverlay*.
 - Not allowed: *bank*, an origin (*xxx/*), *import*, *%%window*, *%%ovtable*, *%%ovcall*, *%%ovload*,
-  and another *%%overlay*: overlays do not nest.
+  *%%ovresident*, and another *%%overlay*: overlays do not nest.
 
 An overlay must begin and end in the same file.
 
@@ -256,6 +256,43 @@ A *persistent* data overlay keeps what the program writes into it across evictio
 persistent overlay does.
 *%%ovload* is refused while an overlay's entry is running, as *%%ovcall* is, see *When the manager halts*.
 
+### %%ovresident
+
+```
+        %%ovresident overlay
+```
+
+Asks whether *overlay* is in its window now, without loading it and without calling the manager.
+It assembles to three words in the calling bank:
+
+```
+        eem
+        lac i [ovTable:* + w]   // the word of overlay's window
+        sas [n]                 // overlay's number, skip if resident
+```
+
+**am1** fills in *w*, the window's word's location in the table, and *n*, the overlay's number.
+After it:
+
+- the next instruction is skipped if *overlay* is resident
+- AC holds the window's id via the overlay table, the number of the overlay in the window, 0 for none
+- IO is unchanged and extended mode is on, as after *%%ovcall*.
+
+It takes 30 us.
+The answer holds until the next *%%ovcall* or *%%ovload* of an overlay in the same window.
+
+```
+        %%ovresident truss
+        idx willLoad            // runs only if truss is not in its window
+        %%ovcall truss, trussRun
+        dzm willLoad
+```
+
+It is allowed in the root only and *overlay* can be declared before or after it.
+The program needs an *%%ovtable*, but the query can come before *overlay.ac* is included.
+Its two constants are pooled in the calling bank.
+Like *%%ovcall*, it cannot share its line with a label.
+
 ### %%ovtable
 
 ```
@@ -304,8 +341,9 @@ It defines:
   It leaves the table's record of what each window holds, since core still holds it.
   Loading the program's tape again resets that record to "nothing", so every overlay is then read
   again at its first call.
-  It leaves *ovErrHook* as the program set it;
+  It leaves *ovErrHook* as the program set it, and clears *ovLoading*;
 - *ovActive*, set while an entry runs;
+- *ovLoading*, 0 except while the manager is loading, see *Sequence breaks*;
 - *ovRetries*, the number of transfers made again since *ovInit*;
 - *ovErrHook*, 0 unless the program sets it, where the manager goes on an error instead of halting,
   see *When the manager halts*;
@@ -356,6 +394,29 @@ A program that runs with breaks on needs a handler for the drum's channel since 
 always interrupt.
 One that turns sbs off and enables them later should issue a *cbs* before enabling or it will receive a break
 from the manager's last transfer.
+
+A handler can tell that a break may be the manager's by *ovLoading*, a root word of the manager's
+bank, which the program reads and never writes (from another bank, *lac i [ovLoading:*]* with
+extended mode on).
+It is 0 except while the manager is loading.
+While it loads it holds the number of transfers made so far: 1 for a read or a swap, 2 for a
+*twopass* window's write-back and read, one more for each retry.
+It is set just before each transfer, after the drum is idle, and cleared once the overlay's header
+is checked, on any error, whether it halts or goes to *ovErrHook*, and by *ovInit*.
+
+- Every break the manager's transfers cause is taken while *ovLoading* is nonzero, provided the
+  break is taken when it is requested: breaks on, the drum's channel enabled, and the call made
+  where no break of equal or higher priority is in progress.
+  The drum requests the break as the transfer ends, the machine takes it within an instruction or
+  two, and *ovLoading* stays set for about 110 us more, through the end of the busy wait and the
+  header check.
+- A break held off past that, because breaks were off and turned on later, or the channel was
+  disabled, comes with *ovLoading* 0.
+- A break taken while *ovLoading* is nonzero may still be another device's: it narrows "this may be
+  the drum's" from the whole of a call to the manager's transfers.
+- Your program's own drum transfers are not counted: the manager sets the word only after the drum
+  is idle.
+- A call to an overlay already in its window never touches it.
 
 ### Your program's use of the drum
 
@@ -524,10 +585,12 @@ Setting *ovErrHook* back to 0 restores the halts.
 
 **Core:**
 
-- the manager: 227 words of its bank, its literals included
+- the manager: 221 words of its bank, its literals included
 - the table: 1 header word, 1 per window, and 4 per overlay
 - each *%%ovcall* or *%%ovload*: 3 words from the manager's bank, 4 from another, plus one literal
   in each other bank shared by the same calls
+- each *%%ovresident*: 3 words, plus two constants in its bank shared by the queries of the same
+  overlay there
 - each overlay: the 2 header words at the start of its window
 - each window: its entire range
 
@@ -548,8 +611,11 @@ The timing depends upon the ordering of the overlays and the drum position at th
 For a 1,024 word transfer, the minimum time can be as short as 26 ms or as long as 61 ms.
 
 A call to an overlay already in its window does no transfer, but the manager's checks are not free.
-Each call takes about 0.6 ms in a program with two windows.
-Finding the overlay in the table is a linear search, so more windows add more time.
+Each call takes about 0.3 ms of the manager's time; 100 calls to a short entry, the calling loop
+included, take 44 ms.
+An *%%ovresident* takes 30 us.
+The manager finds the table's entries once, at the first call, so the time is the same however many
+windows there are.
 
 Overlays suit coarse phases with each call doing a significant amount of work or one that has
 a long runtime, not inner loops.
@@ -564,7 +630,7 @@ With overlays:
 - ***file.osym*** is created in addition to the *.sym* file when *-s* is given.
 - **The listing**, *-l*, lists each overlay under its own heading with its two header words.
   Its addresses use its window's address.
-  Each *%%ovcall* and *%%ovload* is listed with the table with what it holds.
+  Each *%%ovcall*, *%%ovload* and *%%ovresident* is listed with the table with what it holds.
 - **Test mode**, *-T*, dumps each overlay word with the overlay's name after it:
   *bbaaaa vvvvvv name*.
 - ***-O*, *-O1*, *-O2*** and *-O=source* work with overlays.
@@ -799,6 +865,7 @@ the drum along with its tape, see *Loading with fastload or ad1*.
 Which overlay is in a window is in the table: *ovTable* is the stamp, the next word is the first
 window's resident overlay number (0 for none), then the next window's, in the order the windows were
 declared. Overlays are numbered from 1, in source order, as *-S* prints them.
+A program asks the same with *%%ovresident*, without relying on the table's layout.
 
 *ovRetries* counts the transfers the manager has had to make again, so a nonzero value after a run
 you never stopped points at the drum.
@@ -827,8 +894,8 @@ Each of these is an error, with its line:
 - an *%%overlay* inside an overlay or a local scope, naming an undeclared window, or with a third
   operand other than *persistent*; an *%%endoverlay* with none open; an overlay never closed, or
   crossing a file boundary;
-- inside an overlay: *bank*, an origin, *import*, *%%window*, *%%ovtable*, *%%ovcall*, *%%ovload*, or
-  a local scope still open at *%%endoverlay*;
+- inside an overlay: *bank*, an origin, *import*, *%%window*, *%%ovtable*, *%%ovcall*, *%%ovload*,
+  *%%ovresident*, or a local scope still open at *%%endoverlay*;
 - an overlay longer than its window, header included;
 - a window whose first address is above its last, shorter than 3 words, outside its bank, above 07750
   in bank 0, tagged with another bank, overlapping another window, or holding a root word, a fourth
@@ -842,13 +909,14 @@ Each of these is an error, with its line:
   *ovEnter* is defined;
 - a *%%ovload* likewise, its symbol in place of the entry and *ovFetch* in place of *ovEnter*; with
   an *overlay.ac* older than *%%ovload*, which has no *ovFetch*, the message says so;
+- an *%%ovresident* naming an overlay the program does not declare;
 - a program with overlays and no *%%ovtable*; an *%%ovtable* given twice, before any overlay, or
   followed by a *%%window* or *%%overlay*;
 - a *%%drumreserve* track outside 0-37, or a range running backward;
 - an overlay with no location on the drum: no free track with its span free, or, in a swap window, no
   drum address at which every overlay of the window finds a free track;
 - an *%%overlay* or *%%endoverlay* inside an *%%optimize* region, a *%%nooptimize* span or a *%%speed*
-  region, with or without *-O*: a region may not cross an overlay's boundary (from am1 v4.0).
+  region, with or without *-O*: a region may not cross an overlay's boundary
 
 ## Not yet
 

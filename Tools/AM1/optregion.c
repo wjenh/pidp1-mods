@@ -162,9 +162,10 @@ optRegionStatement(OptTableP tableP, PNodeP nodeP, int bank, int pc)
     }
 }
 
-// A %%ovcall's or %%ovload's words.
-// The manager reads its data words through the
+// A %%ovcall's, %%ovload's or %%ovresident's words.
+// The manager reads a call's data words through the
 // call's return address, none may be rewritten, deleted or moved apart.
+// An %%ovresident's words are am1's, kept as the directive makes them.
 // They are a hands-off span of their own, unless the author's is open.
 void
 optRegionOvcall(OptTableP tableP, PNodeP nodeP, int bank, int pc, int open)
@@ -176,7 +177,7 @@ optRegionOvcall(OptTableP tableP, PNodeP nodeP, int bank, int pc, int open)
         if( !openHandsOffP )
         {
             openHandsOffP = newHandsOff(tableP, nodeP->srcLine, nodeP->srcFileP, bank, pc);
-            openHandsOffP->ovcall = ((nodeP->flags & PN_OVLOAD)? 2: 1);
+            openHandsOffP->ovcall = ((nodeP->flags & PN_OVRES)? 3: (nodeP->flags & PN_OVLOAD)? 2: 1);
             ovcallSpanP = openHandsOffP;
         }
 
@@ -1064,6 +1065,16 @@ int count;
     {
         fprintf(fP, "  am1 makes each %%%%ovcall's and %%%%ovload's words a span of their own: the drum overlay\n");
         fprintf(fP, "  manager reads the words after the call through its return address.\n");
+
+        // Only a program that asks, so a program that doesn't reports as before.
+        for( spanP = tableP->handsOffP; spanP; spanP = spanP->nextP )
+        {
+            if( spanP->ovcall == 3 )
+            {
+                fprintf(fP, "  An %%%%ovresident's words are a span of their own too, kept as am1 makes them.\n");
+                break;
+            }
+        }
     }
 
     for( spanP = tableP->handsOffP; spanP; spanP = spanP->nextP )
@@ -1071,7 +1082,8 @@ int count;
         if( spanP->ovcall )
         {
             fprintf(fP, "\n  span %d  %s line %d, %%%%%s\n", spanP->id,
-                (spanP->fileP)?spanP->fileP:"-", spanP->openLine, ((spanP->ovcall == 2)? "ovload": "ovcall"));
+                (spanP->fileP)?spanP->fileP:"-", spanP->openLine,
+                ((spanP->ovcall == 3)? "ovresident": (spanP->ovcall == 2)? "ovload": "ovcall"));
         }
         else
         {

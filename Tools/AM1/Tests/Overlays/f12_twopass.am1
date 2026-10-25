@@ -1,0 +1,20 @@
+f12_twopass: a twopass window's overlays placed one by one
+bank 2
+%%window w1, 2000, 2777, twopass
+%%overlay p, w1, persistent
+pGo, hlt
+        table 75
+%%endoverlay
+%%overlay q, w1, persistent
+qGo, hlt
+        table 175
+%%endoverlay
+%%overlay r, w1
+rGo, hlt
+        table 35
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

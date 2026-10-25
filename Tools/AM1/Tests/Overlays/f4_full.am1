@@ -1,104 +1,138 @@
-f4_full: 33 overlays of one window, no track reserved
+f4_full: 33 overlays of 0200 words, one track free
+%%drumreserve 0-36
 bank 2
 %%window w1, 2000, 2777
 %%overlay o1, w1
 o1Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o2, w1
 o2Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o3, w1
 o3Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o4, w1
 o4Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o5, w1
 o5Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o6, w1
 o6Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o7, w1
 o7Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o8, w1
 o8Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o9, w1
 o9Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o10, w1
 o10Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o11, w1
 o11Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o12, w1
 o12Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o13, w1
 o13Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o14, w1
 o14Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o15, w1
 o15Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o16, w1
 o16Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o17, w1
 o17Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o18, w1
 o18Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o19, w1
 o19Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o20, w1
 o20Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o21, w1
 o21Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o22, w1
 o22Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o23, w1
 o23Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o24, w1
 o24Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o25, w1
 o25Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o26, w1
 o26Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o27, w1
 o27Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o28, w1
 o28Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o29, w1
 o29Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o30, w1
 o30Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o31, w1
 o31Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o32, w1
 o32Go,   hlt
+        table 175
 %%endoverlay
 %%overlay o33, w1
 o33Go,   hlt
+        table 175
 %%endoverlay
 bank 0
 100/

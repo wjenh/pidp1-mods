@@ -6285,6 +6285,12 @@ int nonlinear;
         case LCLADDR:
         case BREF:
         case CONSTANT:
+            // An %%ovresident's number is a value, no address, and never moves.
+            if( (nodeP->type == BREF) && (nodeP->value.symP->flags & SYMF_OVNUMBER) )
+            {
+                break;
+            }
+
             for( i = 0; i < *countP; ++i )
             {
                 if( !leavesP[i].isDot && (leavesP[i].symP == nodeP->value.symP) )

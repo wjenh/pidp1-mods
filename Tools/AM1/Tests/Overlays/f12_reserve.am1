@@ -1,0 +1,29 @@
+f12_reserve: the example, tracks 0-3 reserved
+%%drumreserve 0-3
+bank 2
+%%window w1, 2000, 3777
+%%overlay o300, w1
+o300Go, hlt
+        table 451
+%%endoverlay
+%%overlay o450, w1
+o450Go, hlt
+        table 677
+%%endoverlay
+%%overlay o600, w1
+o600Go, hlt
+        table 1125
+%%endoverlay
+%%overlay o700, w1
+o700Go, hlt
+        table 1271
+%%endoverlay
+%%overlay o1000, w1
+o1000Go, hlt
+        table 1745
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

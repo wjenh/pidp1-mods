@@ -533,13 +533,21 @@ int addr;
 
 // Where does a symbol leaf point?  A BREF names a word in its qualifying
 // bank; anything else (a pool CONSTANT included) the referencing word's bank.
-// Returns 1 with the bank and address stored, 0 (reported) if unresolved.
+// An %%ovresident's numbers point nowhere: each is a value that only looks
+// like a bank 0 address.
+// Returns 1 with the bank and address stored, 0 (reported) if unresolved, 0
+// quietly for a number.
 static int
 leafTarget(OptTableP tableP, OptWordP entryP, PNodeP leafP, int *bankP, int *addrP)
 {
 SymNodeP symP;
 
     symP = leafSymbol(leafP);
+
+    if( symP && (symP->flags & SYMF_OVNUMBER) )
+    {
+        return(0);
+    }
 
     // Each message once: a root word in a drum overlay's view was the root
     // view's to report.

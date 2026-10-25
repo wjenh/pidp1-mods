@@ -1,0 +1,25 @@
+f12_trackend: overlays that do not fit a track's rest, and one that fills it
+%%drumreserve 0-35
+bank 2
+%%window w1, 0, 7777
+%%overlay e1, w1
+e1Go, hlt
+        table 2775
+%%endoverlay
+%%overlay e2, w1
+e2Go, hlt
+        table 2775
+%%endoverlay
+%%overlay e3, w1
+e3Go, hlt
+        table 2775
+%%endoverlay
+%%overlay e4, w1
+e4Go, hlt
+        table 1775
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

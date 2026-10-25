@@ -943,8 +943,9 @@ OverlayContextP ovP;
         (ovP->windowP->last - ovP->windowP->first + 1));
 }
 
-// An %%ovcall or %%ovload line, then each of its words on a line of its own, the last two,
-// the data words, saying what they hold.
+// An %%ovcall, %%ovload or %%ovresident line, then each of its words on a line of its own,
+// the last two saying what they hold: an %%ovcall's or %%ovload's data words, an
+// %%ovresident's load of the window's word and test of the overlay's number.
 // Bincodegen.c saved their values, the statement's terminator ends the last line.
 static void
 listOvCall(FILE *outfP, PNodeP nodeP)
@@ -952,7 +953,8 @@ listOvCall(FILE *outfP, PNodeP nodeP)
 PNodeP wordP;
 
     startLine(true, outfP, nodeP);
-    output(outfP, doOutput, "%%%%%s %s, %s", OVCALLNAME(nodeP), nodeP->value.strP, nodeP->value2.strP);
+    output(outfP, doOutput, "%%%%%s %s%s%s", OVCALLNAME(nodeP), nodeP->value.strP, OVCALLSEP(nodeP),
+        OVCALLENTRY(nodeP));
 
     for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
     {
@@ -961,7 +963,18 @@ PNodeP wordP;
         output(outfP, doOutput, "    ");
         listOperand(outfP, wordP->rightP);
 
-        if( wordP->leftP && !wordP->leftP->leftP )
+        if( nodeP->flags & PN_OVRES )
+        {
+            if( wordP->leftP && !wordP->leftP->leftP )
+            {
+                output(outfP, doOutput, "      // the word of overlay %s's window", nodeP->value.strP);
+            }
+            else if( !wordP->leftP )
+            {
+                output(outfP, doOutput, "      // overlay %s's number, skip if resident", nodeP->value.strP);
+            }
+        }
+        else if( wordP->leftP && !wordP->leftP->leftP )
         {
             output(outfP, doOutput, "      // overlay %s's entry in ovTable", nodeP->value.strP);
         }

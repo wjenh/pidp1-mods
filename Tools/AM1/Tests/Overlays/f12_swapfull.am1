@@ -1,0 +1,21 @@
+f12_swapfull: a swap window's overlays need more tracks than are free
+%%drumreserve 0-35
+bank 2
+%%window w1, 2000, 2777
+%%overlay p, w1, persistent
+pGo, hlt
+        table 175
+%%endoverlay
+%%overlay q, w1, persistent
+qGo, hlt
+        table 75
+%%endoverlay
+%%overlay r, w1, persistent
+rGo, hlt
+        table 35
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

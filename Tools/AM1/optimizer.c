@@ -2228,10 +2228,15 @@ int lineNo;
 // EXPR node of its own, with its own pc, chained from the OVCALL node's
 // rightP; the words are a hands-off span, since the manager reads the data
 // words through the call's return address.
+// An %%ovresident's three words, eem, lac i and sas, are a span too, but
+// nothing reads them as data, so they are not marked OPTF_OVCALL.
 static void
 addOvCallWords(OptTableP tableP, PNodeP nodeP)
 {
 PNodeP wordP;
+int flags;
+
+    flags = ((nodeP->flags & PN_OVRES)? 0: OPTF_OVCALL);
 
     // In an overlay's view the call is the root's, context only, and its span
     // was the root view's to report.
@@ -2243,7 +2248,7 @@ PNodeP wordP;
     for( wordP = nodeP->rightP; wordP && !builder.failed; wordP = wordP->leftP )
     {
         addEntry(tableP, wordP->bank, wordP->pc, reduceOperand(wordP->rightP), OPTK_EXPR, wordP, wordP->rightP,
-            NILP, wordP->lineNo, OPTF_OVCALL);
+            NILP, wordP->lineNo, flags);
         advancePC(1);
     }
 

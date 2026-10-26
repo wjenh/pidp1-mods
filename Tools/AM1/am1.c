@@ -244,6 +244,7 @@
  * 25-Oct-2026 claude - v5.4, add %%ovresident
  * 25-Oct-2026 claude - v5.5, a // comment after a macro name with no '(', or inside a macro's
  *    arguments, no longer becomes a block comment that fails to assemble
+ * 25-Oct-2026 wje give a syntax error if a directive that must start at the beginning of a line follows a semicolon
 */
 #include <unistd.h>
 #include <stdlib.h>

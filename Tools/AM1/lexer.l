@@ -53,7 +53,12 @@ extern char processType340Escape(char ch);
 extern char asciiToType340(char);
 extern void reset_line(void);
 extern void verror(char *msgP, ...);
+extern void verrorl(int lineNo, const char *msgP, ...);
 extern void vwarn(int errtype, char *msgP, ...);
+
+// The keywords the start-of-line rules below recognize. Anywhere else one
+// reaches the name rule, which reports it rather than take it as a name.
+static const char *lineKeywords[] = { "start", "stop", "constants", "variables", "import", "export" };
 static int directiveToken(int token);
 static void noteStatement(int token);
 
@@ -244,6 +249,37 @@ thisbank[ \t]*      { return(THISBANK); }
                         }
 
 \:                      { return(BREF); }
+
+^[ \t]*(start|stop|constants|variables|import|export)[ \t]*,   {
+                        // A keyword written as a label. Left to the rules below,
+                        // start or stop ends the program here, and the parse
+                        // reports a syntax error or, when a literal before it names
+                        // a later label, that label as undefined, lines away from
+                        // the cause. Being longer, this match wins over theirs.
+                        char *nameP = yytext;
+                        int len;
+
+                        while( isspace(*nameP) )
+                        {
+                            ++nameP;
+                        }
+                        for( len = 0; isalpha(nameP[len]); ++len )
+                        {
+                        }
+                        verror("%.*s is an am1 keyword and cannot be a label", len, nameP);
+                        return(BAD);
+                        }
+
+^[ \t]+(start|stop|constants|variables|import|export)[a-zA-Z0-9_]+  {
+                        // An indented name that only begins with a keyword, such as
+                        // starter. The keyword rules below take the blanks with the
+                        // keyword, so they outmatch the blanks rule and split the
+                        // name, where at column 0 the name rule's longer match wins.
+                        // Drop the blanks, as the blanks rule does, and rescan the
+                        // name away from the start of the line.
+                        yyless(strspn(yytext, " \t"));
+                        }
+
 ^[ \t]*start[ \t]*      { return(START); }
 ^[ \t]*stop[ \t]*       { return(STOP); }
 ^[ \t]*constants[ \t]*  { return(CONSTANTS); }
@@ -526,6 +562,20 @@ octal                   { decimalMode = false; }
 
 [a-zA-Z_][a-zA-Z0-9_]*  {
                         SymNodeP symP;
+
+                            // A keyword here is not at the start of its line: after a
+                            // ';', in a local list, or an operand. Taken as a name it
+                            // became a label that assembled, or an undefined symbol
+                            // reported at the end of the program. After a ';' lineno
+                            // is already one ahead.
+                            for( int k = 0; k < (int)(sizeof(lineKeywords) / sizeof(lineKeywords[0])); ++k )
+                            {
+                                if( strcmp(yytext, lineKeywords[k]) == 0 )
+                                {
+                                    verrorl((sawSemi)?(lineno - 1):lineno,
+                                        "%s is an am1 keyword, allowed only at the start of a line", yytext);
+                                }
+                            }
 
                             if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
                             {

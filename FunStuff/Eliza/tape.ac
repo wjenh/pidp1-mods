@@ -1,0 +1,419 @@
+// tape.ac -- the Type 550 Microtape on drive 1, where a script is written
+// back. It selects the drive, seeks a block, reads and writes a block, and
+// reads the directory. The tape is polled with mrs, as the example in
+// Docs/UsingType550Microtape.md polls it; the sequence break system is left
+// alone.
+//
+// Block 1 is the directory, NSLOTS entries of DIRENT words (the script's
+// number, 0 for a free slot; its characters; its words; the built-in script
+// it descends from). Slot k, from 0, is SLOTBLKS blocks from block SLOT0 +
+// SLOTBLKS*k. Block 0 is never used, so that a seek to the directory turns
+// forward at block 0's reverse mark, never in the end zone. A blank tape
+// reads as zeros, a directory with every slot free.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah and MICROTAPE/type550defs.ah. The code
+// is in bank 012, included there, with extend mode on. Its routines are
+// called via jsp from that bank and return by dap; an argument is in IO,
+// since jsp overwrites AC with the return. A block moves to or from tpAddr, a
+// full address. Each routine's data words follow its code.
+
+// tpOpen -- select drive 1; the tape is not moving under this program's
+// control until a seek starts it.
+// Does not preserve AC or IO.
+// Called via jsp.
+local toX
+tpOpen, dap toX
+    lio [mtu1]
+    mse                     // clears the flags; 34 ms before any flag
+    dzm tpRev
+toX, jmp .
+endloc
+
+// tpStop -- stop the tape.
+// Does not preserve AC or IO.
+// Called via jsp.
+local tsX
+tpStop, dap tsX
+    cli
+    mlc
+tsX, jmp .
+endloc
+
+// tpSeek -- search to block IO, forward. The search is started again in its
+// direction at every call, which clears a flag left unanswered while the
+// program did something else; past the block it reverses until it sees a
+// lower block's reverse mark, then goes forward again.
+// Skips at block IO's search flag, when its read or write must be commanded
+// at once (Docs/UsingType550Microtape.md, "Deadlines"). Does not skip on an
+// error or after SEEKTURNS turns, with the tape stopped.
+// Does not preserve AC or IO.
+// Called via jsp.
+local skX, skW, skN, skT, skGo, skLoop, skRev, skTurn, skNone, skFail, skGot
+tpSeek, dap skX
+    dio skW
+    law i SEEKTURNS
+    dac skT
+    lio [mtgo mtsrch]
+    lac tpRev
+    SKIP_NEXT_IF_AC_ZERO
+    lio [mtgo mtrev mtsrch]
+skGo, mlc
+skLoop, mrs
+    spi i                   // skip if the data flag is up
+    jmp skNone
+    mrd                     // the mark code and the block number
+    lai
+    and [mtblk]
+    dac skN
+    lac tpRev
+    SKIP_NEXT_IF_AC_ZERO
+    jmp skRev
+    lac skN
+    SKIP_NEXT_IF_DIFFERENT skW
+    jmp skGot               // the block wanted, forward
+    sub skW
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp skLoop              // short of it
+    law 1                   // past it, so reverse
+    lio [mtgo mtrev mtsrch]
+    jmp skTurn
+skRev, lac skN
+    SKIP_NEXT_IF_DIFFERENT skW
+    jmp skLoop
+    sub skW
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp skLoop              // not back past it yet
+    cla                     // a lower block, so forward again
+    lio [mtgo mtsrch]
+skTurn, dac tpRev
+    isp skT
+    jmp skGo
+    jmp skFail
+skNone, ril 2s              // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp skLoop
+skFail, jsp tpStop
+    jmp skX
+skGot, idx skX
+skX, jmp .
+
+skW, 0
+skN, 0
+skT, 0
+endloc
+
+// tpRdBlk -- read block IO into the MTWDS words from tpAddr, forward, then
+// set the tape searching forward again for the next block's mark. The
+// block's words, both checksums included, must total zero.
+// Skips with the block read. Does not skip on an error, a short block or a
+// bad total, with the tape stopped.
+// Does not preserve AC or IO.
+// Called via jsp.
+local rbX, rbP, rbS, rbN, rb0, rb0e, rb1, rb2, rb3, rbFail
+tpRdBlk, dap rbX
+    jsp tpSeek
+    jmp rbX
+    lio [mtgo mtread]
+    mlc                     // within 600 us of the mark, for the leading checksum
+    lac tpAddr
+    dac rbP
+    dzm rbS
+rb0, mrs
+    spi i                   // skip if the data flag is up
+    jmp rb0e
+    mrd                     // the leading checksum
+    lai
+    dac rbS
+rb1, mrs
+    spi i                   // skip if the data flag is up
+    jmp rb2
+    mrd
+    dio i rbP
+    idx rbP
+    lai
+    add rbS
+    dac rbS
+    jmp rb1
+rb2, ril 1s                 // the block end flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp rb3
+    ril 1s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp rb1
+    jmp rbFail
+rb0e, ril 2s
+    spi i
+    jmp rb0
+    jmp rbFail
+rb3, mrd                    // the trailing checksum
+    lai
+    add rbS
+    dac rbS
+    mrs
+    ril 2s
+    spi                     // skip unless the error flag is up, so nothing missed
+    jmp rbFail
+    lio [mtgo mtsrch]
+    mlc                     // within 800 us, so the next block's mark is seen
+    dzm tpRev
+    lac rbS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rbFail              // the total
+    lac rbP
+    sub tpAddr
+    SKIP_NEXT_IF_SAME [MTWDS]
+    jmp rbFail              // a short block
+    idx rbX
+    jmp rbX
+rbFail, jsp tpStop
+rbX, jmp .
+
+rbP, 0
+rbS, 0
+endloc
+
+// tpWrBlk -- write the MTWDS words from tpAddr and the checksum tpCks into
+// block IO, forward, then set the tape searching forward again.
+// Skips with the block written. Does not skip on an error, with the tape
+// stopped.
+// Does not preserve AC or IO.
+// Called via jsp.
+local wbX, wbP, wbN, wb1, wb2, wb3, wb4, wbFail
+tpWrBlk, dap wbX
+    jsp tpSeek
+    jmp wbX
+    lac tpAddr
+    dac wbP
+    lio [mtgo mtwrit]
+    mlc                     // within 400 us of the mark; a word asked at once
+wb1, mrs
+    spi i                   // skip if the data flag is up
+    jmp wb2
+    lio i wbP
+    mwr
+    idx wbP
+    jmp wb1
+wb2, ril 1s                 // the block end flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp wb3
+    ril 1s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp wb1
+    jmp wbFail
+wb3, lio tpCks
+    mwr
+    law i 24                // about 300 us, for the checksum to reach the tape
+    dac wbN
+wb4, isp wbN
+    jmp wb4
+    mrs
+    ril 2s
+    spi                     // skip unless the error flag is up, so nothing missed
+    jmp wbFail
+    lio [mtgo mtsrch]
+    mlc
+    dzm tpRev
+    idx wbX
+    jmp wbX
+wbFail, jsp tpStop
+wbX, jmp .
+
+wbP, 0
+wbN, 0
+endloc
+
+// tpSum -- return the checksum of the MTWDS words from tpAddr, the complement
+// of their sum, so that a block written with it totals zero.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+local suX, suP, suN, suS, suLoop
+tpSum, dap suX
+    lac tpAddr
+    dac suP
+    law i MTWDS
+    dac suN
+    dzm suS
+suLoop, lac i suP
+    add suS
+    dac suS
+    idx suP
+    isp suN
+    jmp suLoop
+    lac suS
+    cma
+suX, jmp .
+
+suP, 0
+suN, 0
+suS, 0
+endloc
+
+// tpDir -- read the directory into dirBuf.
+// Skips with it read. Does not skip on a tape error, with the tape stopped.
+// Does not preserve AC or IO.
+// Called via jsp.
+local tdX
+tpDir, dap tdX
+    lac [dirBuf:*]
+    dac tpAddr
+    lio [DIRBLK]
+    jsp tpRdBlk
+    jmp tdX
+    idx tdX
+tdX, jmp .
+endloc
+
+// tpEntry -- find the directory entry of script number IO, or, with IO 0,
+// the first free one.
+// Skips with the entry's address in dirBuf in AC and its slot in tpSlot; does
+// not skip when there is none.
+// AC is the result, IO is preserved.
+// Called via jsp.
+local teX, teN, teLoop, teGot
+tpEntry, dap teX
+    dio teN
+    dzm tpSlot
+    lac [dirBuf:*]
+    dac tpEnt
+teLoop, lac i tpEnt
+    SKIP_NEXT_IF_DIFFERENT teN
+    jmp teGot
+    lac tpEnt
+    add [DIRENT]
+    dac tpEnt
+    idx tpSlot
+    SKIP_NEXT_IF_SAME [NSLOTS]
+    jmp teLoop
+    jmp teX
+teGot, idx teX
+    lac tpEnt
+teX, jmp .
+
+teN, 0
+endloc
+
+// tpFirst -- return the first block of slot tpSlot.
+// AC is the result, IO is preserved.
+// Called via jsp.
+local tfX
+tpFirst, dap tfX
+    lac tpSlot
+    ral 5s                  // SLOTBLKS blocks a slot
+    add [SLOT0]
+tfX, jmp .
+endloc
+
+// tpBlocks -- return the blocks that hold IO words, a whole block for a part.
+// AC is the result, IO is preserved.
+// Called via jsp.
+local tbX
+tpBlocks, dap tbX
+    lai
+    add [MTWDS-1]
+    sar 8s
+tbX, jmp .
+endloc
+
+// tpRdSlot -- read slot tpSlot's first IO blocks into TBUF on.
+// Skips with them read. Does not skip on a tape error, with the tape stopped.
+// Does not preserve AC or IO.
+// Called via jsp.
+local rsX, rsN, rsB, rsLoop
+tpRdSlot, dap rsX
+    lai
+    cma
+    dac rsN                 // -blocks, for isp
+    jsp tpFirst
+    dac rsB
+    lac [TBUF]
+    dac tpAddr
+rsLoop, lio rsB
+    jsp tpRdBlk
+    jmp rsX
+    lac tpAddr
+    add [MTWDS]
+    dac tpAddr
+    idx rsB
+    isp rsN
+    jmp rsLoop
+    idx rsX
+rsX, jmp .
+
+rsN, 0
+rsB, 0
+endloc
+
+// tpWrSlot -- write the first IO blocks from TBUF on into slot tpSlot, each
+// with its checksum from tpCkTab.
+// Skips with them written. Does not skip on a tape error, with the tape
+// stopped.
+// Does not preserve AC or IO.
+// Called via jsp.
+local wsX, wsN, wsB, wsC, wsLoop
+tpWrSlot, dap wsX
+    lai
+    cma
+    dac wsN
+    jsp tpFirst
+    dac wsB
+    lac [TBUF]
+    dac tpAddr
+    lac [tpCkTab:*]
+    dac wsC
+wsLoop, lac i wsC
+    dac tpCks
+    lio wsB
+    jsp tpWrBlk
+    jmp wsX
+    lac tpAddr
+    add [MTWDS]
+    dac tpAddr
+    idx wsB
+    idx wsC
+    isp wsN
+    jmp wsLoop
+    idx wsX
+wsX, jmp .
+
+wsN, 0
+wsB, 0
+wsC, 0
+endloc
+
+// tpCkAll -- put the checksums of the first IO blocks from TBUF on into
+// tpCkTab, worked out before the tape moves, since a block's write starts
+// within 400 us of its mark.
+// Does not preserve AC or IO.
+// Called via jsp.
+local caX, caN, caC, caLoop
+tpCkAll, dap caX
+    lai
+    cma
+    dac caN
+    lac [TBUF]
+    dac tpAddr
+    lac [tpCkTab:*]
+    dac caC
+caLoop, jsp tpSum
+    dac i caC
+    idx caC
+    lac tpAddr
+    add [MTWDS]
+    dac tpAddr
+    isp caN
+    jmp caLoop
+caX, jmp .
+
+caN, 0
+caC, 0
+endloc
+
+tpAddr, 0                   // the full address a block moves to or from
+tpCks, 0                    // the checksum tpWrBlk writes
+tpRev, 0                    // not 0 while the search runs in reverse
+tpSlot, 0                   // tpEntry's slot, from 0
+tpEnt, 0                    // and its entry's address
+tpCkTab,                    // a slot's checksums, a block each
+    table SLOTBLKS
+dirBuf,                     // the directory block
+    table MTWDS

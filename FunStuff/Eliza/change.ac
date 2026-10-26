@@ -1,0 +1,672 @@
+// change.ac -- CHANGE, the 1965 listing's script editor, which an input whose
+// first word is + enters, and NEWLST, the rule an input whose first word is *
+// adds (the listing's CHANGE, TPRINT, L000550-000590 and L001770-001800). A
+// command is typed bare, as in TYPE ALWAYS, and read as one list by rdList's
+// rules; it names its rule by keyword, found as the conversation finds one
+// (findRule). An edit lasts until the conversation ends, since each
+// connection reads its script afresh.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah, lists.ac, engine.ac (itemNext,
+// findRule, txtAll, txtRun, txtOne, inList), script.ac (rdLine, keyTab,
+// myTran), hash.ac, dcsio.ac, and the program's hangUp and noCells, where
+// CHANGE goes when the connection is lost or the cells run out.
+//
+// The code is in bank 1, included there, with extend mode on. Its routines
+// are called via jsp from bank 1, change and newRule via jsp i from bank 0.
+// Bank 0's routines are called through their full addresses and return
+// through them (dac/jmp i); bank 0's words are reached indirectly. The file
+// ends with a few words of bank 0. putAsc, newline and putc return by dap, to
+// bank 0 only, so CHANGE calls them through farAsc, farNl and farPutc.
+// Each routine's data words follow its code.
+
+local chRtn, chCmd, chR, chRl, chT, chHi, chOp, chAsk, chFind, chNext, \
+    chEnd, chSay, chNotRec, chBad, chNotFound, grX, alX, getRule, argList, \
+    chSA, saR, saE, saEs, saRule, saItem, saApp, saPut, saDone, \
+    chNewC, chNew, chApp, adBot, adPut, rkR, rkN, rkPrev, rkLoop, rkNum, \
+    rkList, rkIns
+// The commands' routines are global, since chTab names them by full address,
+// and so is chOld, which prefix reads.
+
+// change -- CHANGE. It prints PLEASE INSTRUCT ME and a blank line, then takes
+// a command a line, printing each command's output and PLEASE INSTRUCT ME
+// again after it, until START.
+// Does not preserve AC or IO.
+// Called via jsp i from bank 0, returning through the caller's full address.
+change, dac chRtn
+chAsk, lio [txInstr:1]
+    jsp i [farAsc:0]
+    jsp i [farNl:0]
+    jsp i [farNl:0]
+    jsp i [getLine:0]
+    jmp i [hangUp:0]
+    jsp i [farNl:0]
+    jsp i [farNl:0]
+    jsp i [rdLine:0]
+    jmp chBad
+    dac chCmd
+
+    // The command, by its first cell, as the listing's JOB .E. G(J).
+    lio chCmd
+    jsp i [itemNext:0]
+    jmp chNotRec            // an empty line
+    dio chR
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp chNotRec
+    lac [chTab:1]
+    dac chT
+chFind, lac i chT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp chNotRec
+    dac chHi
+    idx chT                 // at the low word
+    lac chHi
+    SKIP_NEXT_IF_SAME i [ixHi:0]
+    jmp chNext
+    lac i chT
+    SKIP_NEXT_IF_SAME i [ixLo:0]
+    jmp chNext
+    idx chT
+    lac i chT
+    dac chOp
+    jmp i chOp
+chNext, idx chT
+    idx chT
+    jmp chFind
+
+chBad, SKIP_NEXT_IF_SAME [RDBAD]
+    jmp i [noCells:0]
+    lio [txNotRec:1]        // malformed, and rdLine has returned its list
+    jsp i [farAsc:0]
+    jsp i [farNl:0]
+    jmp chAsk
+chNotRec, lio [txNotRec:1]
+    jmp chSay
+chNotFound, lio [txNotFound:1]
+chSay, jsp i [farAsc:0]
+    jsp i [farNl:0]
+chEnd, lio chCmd
+    jsp i [IRALST:0]
+    jmp chAsk
+
+chStart, lio chCmd
+    jsp i [IRALST:0]
+    jmp i chRtn
+
+chType, jsp getRule
+    lio chRl
+    jsp tprint
+    jmp chEnd
+
+chDispla, jsp displa
+    jmp chEnd
+
+    // SUBST kw (old) (new) and APPEND kw (old) (new) look in each
+    // decomposition list in turn for the first list item whose cells begin
+    // with old's. SUBST replaces that item by new; APPEND puts new at the
+    // bottom of that decomposition list.
+chSubst, cla
+    jmp chSA
+chAppend, law 1
+chSA, dac chApp
+    jsp getRule
+    jsp argList
+    lac i [ixLo:0]
+    dac chOld
+    jsp argList
+    lac i [ixCell:0]
+    dac chNewC
+    lac i [ixLo:0]
+    dac chNew
+    lac chRl
+    dac saR
+saRule, lio saR
+    jsp i [itemNext:0]
+    jmp chNotFound
+    dio saR
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp saRule
+    lac i [ixLo:0]
+    dac saEs
+    dac saE
+saItem, lio saE
+    jsp i [itemNext:0]
+    jmp saRule
+    dio saE
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp saItem              // the counter
+    lio i [ixLo:0]
+    jsp prefix
+    jmp saItem
+    dzm i [datHi:0]
+    lac chNew
+    dac i [datLo:0]
+    lac [FSUB]
+    dac i [datFlg:0]
+    lac chApp
+    SKIP_NEXT_IF_AC_ZERO
+    jmp saApp
+    lio i [ixCell:0]
+    jsp i [SUBST:0]
+    lio i [datLo:0]         // the list replaced
+    jsp i [IRALST:0]
+    jmp saDone
+saApp, lio saEs
+saPut, jsp i [NEWBOT:0]
+    jmp i [noCells:0]
+
+    // new is the rule's now, so the command's cell that held it is made a
+    // number, and returning the command does not return new.
+saDone, dzm i [datHi:0]
+    dzm i [datLo:0]
+    dzm i [datFlg:0]
+    lio chNewC
+    jsp i [SUBST:0]
+    jmp chEnd
+
+    // ADD kw ((pattern) (rule) ...) adds a decomposition list, before the
+    // rule's last item if that is a list, so that a final (0) stays last, else
+    // at the bottom.
+chAdd, jsp getRule
+    jsp argList
+    lac i [ixCell:0]
+    dac chNewC
+    lac i [ixLo:0]
+    dac chNew
+    lio chRl
+    jsp i [BOT:0]
+    jmp adBot               // not reached, since a rule holds its keyword
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp adBot
+    lio chRl
+    jsp i [LNKL:0]          // the bottom cell
+    lia
+    jmp adPut
+adBot, lio chRl
+adPut, dzm i [datHi:0]
+    lac chNew
+    dac i [datLo:0]
+    lac [FSUB]
+    dac i [datFlg:0]
+    jmp saPut
+
+    // RANK kw n replaces the rule's rank, the number just before its first
+    // list; with no number there, n goes in before the list. A rule with no
+    // list, a substitution only, gets LIST NOT FOUND.
+chRank, jsp getRule
+    lio chR
+    jsp i [itemNext:0]
+    jmp chNotFound
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp chNotFound
+    lac i [ixHi:0]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp chNotFound          // a word, not a number
+    lac i [ixLo:0]
+    dac rkN
+    lac chRl
+    dac rkR
+    dzm rkPrev
+rkLoop, lio rkR
+    jsp i [itemNext:0]
+    jmp chNotFound
+    dio rkR
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rkList
+    dzm rkPrev
+    lac i [ixHi:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rkNum
+    jmp rkLoop
+rkNum, lac i [ixCell:0]
+    dac rkPrev
+    jmp rkLoop
+rkList, dzm i [datHi:0]
+    lac rkN
+    dac i [datLo:0]
+    dzm i [datFlg:0]
+    lac rkPrev
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rkIns
+    lia
+    jsp i [SUBST:0]
+    jmp chEnd
+rkIns, lio i [ixCell:0]
+    jsp i [NEWBOT:0]
+    jmp i [noCells:0]
+    jmp chEnd
+
+// getRule -- set chRl to the rule the command's next item names, a word,
+// looked up by findRule, by the whole word when wholeKw is set. Anything
+// else, or no such rule, goes to chNotFound.
+// Does not preserve AC or IO; findRule's datHi, datLo and cwB are changed.
+// Called via jsp, from the commands only.
+getRule, dap grX
+    lio chR
+    jsp i [itemNext:0]
+    jmp chNotFound
+    dio chR
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp chNotFound
+    lac i [ixHi:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp chNotFound          // a number
+    dac i [frHi:0]
+    lac i [ixLo:0]
+    dac i [frLo:0]
+    lac i [wholeKw:0]
+    SKIP_NEXT_IF_AC_ZERO
+    lac i [ixCell:0]        // the keyword typed, for the whole-word lookup
+    dac i [frWord:0]
+    jsp i [findRule:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp chNotFound
+    dac chRl
+grX, jmp .
+
+// argList -- step to the command's next item, which must be a list, leaving
+// ixCell its cell and ixLo its header. Anything else goes to chNotFound.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp, from the commands only.
+argList, dap alX
+    lio chR
+    jsp i [itemNext:0]
+    jmp chNotFound
+    dio chR
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp chNotFound
+alX, jmp .
+
+chRtn, 0
+chCmd, 0                    // the command line's list
+chR, 0                      // the reader on it
+chRl, 0                     // the rule named
+chT, 0
+chHi, 0
+chOp, 0
+saR, 0                      // SUBST's and APPEND's reader on the rule
+saE, 0                      // and on a decomposition list
+saEs, 0                     // that list
+chOld, 0
+chNewC, 0                   // the command's cell holding new
+chNew, 0
+chApp, 0                    // not 0 for APPEND
+rkR, 0
+rkN, 0
+rkPrev, 0                   // the item before, its cell if a number, else 0
+
+// The commands, each one's first cell and its routine; 0 ends the table.
+chTab,
+    0637047                 // TYPE
+    0256060
+    chType:1
+    0626422                 // SUBST
+    0626360
+    chSubst:1
+    0214747                 // APPEND
+    0254524
+    chAppend:1
+    0212424                 // ADD
+    0606060
+    chAdd:1
+    0626321                 // START
+    0516360
+    chStart:1
+    0512145                 // RANK
+    0426060
+    chRank:1
+    0243162                 // DISPLA
+    0474321
+    chDispla:1
+    0
+endloc
+
+// prefix -- test whether the cells of list chOld begin list IO, datum for
+// datum, as the listing compares them; a sublist cell matches nothing.
+// Skips when they do.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp.
+local pfRtn, pfA, pfB, pfHi, pfLo, pfLoop, pfYes
+prefix, dac pfRtn
+    dio pfB
+    lac chOld
+    dac pfA
+pfLoop, lio pfA
+    jsp i [SEQLR:0]
+    dio pfA
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp pfYes               // old is used up
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp i pfRtn
+    lac i [datHi:0]
+    dac pfHi
+    lac i [datLo:0]
+    dac pfLo
+    lio pfB
+    jsp i [SEQLR:0]
+    dio pfB
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp i pfRtn             // the list ends first
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp i pfRtn
+    lac i [datHi:0]
+    SKIP_NEXT_IF_SAME pfHi
+    jmp i pfRtn
+    lac i [datLo:0]
+    SKIP_NEXT_IF_SAME pfLo
+    jmp i pfRtn
+    jmp pfLoop
+pfYes, idx pfRtn
+    jmp i pfRtn
+
+pfRtn, 0
+pfA, 0
+pfB, 0
+pfHi, 0
+pfLo, 0
+endloc
+
+// tprint -- TPRINT, print rule IO as the 3 March 1965 printout shows one. The
+// keyword line holds the atoms before the first list; then each
+// decomposition list follows a blank line, its pattern, its counter and its
+// reassembly rules a line each. A list whose first item is = (a link) prints
+// on a line by itself with no blank line before it; an atom after the first
+// list, on a line by itself.
+// Does not preserve AC or IO.
+// Called via jsp.
+local tqRtn, tqR, tqNx, tqEs, tqE, tqLoop, tqDec, tqItem, tqAtom, tqList, \
+    tqNext
+tprint, dac tqRtn
+    jsp i [txtRun:0]        // the keyword line, leaving the reader before the list
+    dio tqR
+tqLoop, lio tqR
+    jsp i [itemNext:0]
+    jmp i tqRtn
+    dio tqNx
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tqAtom
+    lac tqNx
+    dac tqR
+    lac i [ixLo:0]
+    dac tqEs
+    lio tqEs
+    jsp i [TOP:0]
+    jmp tqDec               // an empty list
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tqDec
+    lac i [datHi:0]
+    SKIP_NEXT_IF_SAME [EQHI]
+    jmp tqDec
+    lac i [datLo:0]
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp tqDec
+    lio tqEs
+    jsp i [txtAll:0]        // = KW
+    jmp tqLoop
+tqAtom, lio tqR
+    jsp prAtom
+    lac tqNx
+    dac tqR
+    jmp tqLoop
+
+tqDec, jsp i [farNl:0]      // a decomposition list, item by item
+    lac tqEs
+    dac tqE
+tqItem, lio tqE
+    jsp i [itemNext:0]
+    jmp tqLoop
+    dio tqNx
+    lac i [ixFl:0]
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tqList
+    lio tqE
+    jsp prAtom
+    jmp tqNext
+tqList, lio i [ixLo:0]
+    jsp i [txtAll:0]
+tqNext, lac tqNx
+    dac tqE
+    jmp tqItem
+
+tqRtn, 0
+tqR, 0
+tqNx, 0
+tqEs, 0
+tqE, 0
+endloc
+
+// prAtom -- print the atom itemNext just read (ixHi, ixLo) on a line by
+// itself, a number by MAD's format I3, the counter's way, a word as txtOne
+// prints it. IO is the reader before the atom.
+// Does not preserve AC or IO.
+// Called via jsp.
+local paX, paWord
+prAtom, dap paX
+    lac i [ixHi:0]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp paWord
+    lio i [ixLo:0]
+    jsp prI3
+    jmp paX
+paWord, jsp i [txtOne:0]
+paX, jmp .
+endloc
+
+// prI3 -- print IO by format I3, then newline. It is right-justified in three
+// columns, in more when it needs them; a negative number (one's complement)
+// has a minus sign before it. The number comes in IO, since jsp leaves the
+// return in AC.
+// Does not preserve AC or IO.
+// Called via jsp.
+local p3X, p3V, p3P, p3D, p3Any, p3Go, p3Dig, p3Sub, p3Put, p3Next, \
+    p3Pos
+prI3, dap p3X
+    dio p3V
+    lac p3V
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp p3Pos
+    cma
+    dac p3V
+    lio ['-']
+    jsp i [farPutc:0]
+    jmp p3Go
+p3Pos, dac p3V
+    sub [0d100]             // the blanks before fewer than three digits
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp p3Go
+    lio [040]
+    jsp i [farPutc:0]
+    lac p3V
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp p3Go
+    lio [040]
+    jsp i [farPutc:0]
+p3Go, lac [p3Pow:1]
+    dac p3P
+    dzm p3Any
+p3Dig, lac ['0']            // each digit by subtraction, leading zeros dropped
+    dac p3D
+p3Sub, lac p3V
+    sub i p3P
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp p3Put
+    dac p3V
+    idx p3D
+    jmp p3Sub
+p3Put, lac p3D
+    sub ['0']
+    ior p3Any
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp p3Next
+    dac p3Any
+    lio p3D
+    jsp i [farPutc:0]
+p3Next, idx p3P
+    lac i p3P
+    SKIP_NEXT_IF_AC_ZERO
+    jmp p3Dig
+    lac p3V                 // the units digit, always
+    add ['0']
+    lia
+    jsp i [farPutc:0]
+    jsp i [farNl:0]
+p3X, jmp .
+
+p3V, 0
+p3P, 0
+p3D, 0
+p3Any, 0
+p3Pow,
+    0d100000
+    0d10000
+    0d1000
+    0d100
+    0d10
+    0
+endloc
+
+// displa -- DISPLA. For buckets 0 to NBUCKETS (NONE's), it prints each rule
+// as a line *, the rule by TPRINT, its bucket by I3 and a blank line; then a
+// blank line, MEMORY LIST FOLLOWS, a blank line, and the memory rules by
+// TXTPRT.
+// Does not preserve AC or IO.
+// Called via jsp.
+local dsRtn, dsB, dsT, dsR, dsRl, dsK, dsRule, dsBucket, dsNextB, dsMem, \
+    dsMemN
+displa, dac dsRtn
+    dzm dsB
+dsBucket, lac dsB
+    add [keyTab:0]
+    dac dsT
+    lac i dsT
+    dac dsR
+dsRule, lio dsR
+    jsp i [SEQLR:0]
+    dio dsR
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp dsNextB
+    lac i [datLo:0]         // a bucket's cells hold its rules
+    dac dsRl
+    lio [txStar:1]
+    jsp i [farAsc:0]
+    jsp i [farNl:0]
+    lio dsRl
+    jsp tprint
+    lio dsB
+    jsp prI3
+    jsp i [farNl:0]
+    jmp dsRule
+dsNextB, idx dsB
+    sub [NBUCKETS+1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dsBucket
+    jsp i [farNl:0]
+    lio [txMemory:1]
+    jsp i [farAsc:0]
+    jsp i [farNl:0]
+    jsp i [farNl:0]
+    lac [myTran:0]
+    dac dsT
+    law i 4
+    dac dsK
+dsMem, lac i dsT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp dsMemN
+    lia
+    jsp i [txtAll:0]
+dsMemN, idx dsT
+    isp dsK
+    jmp dsMem
+    jmp i dsRtn
+
+dsRtn, 0
+dsB, 0
+dsT, 0
+dsR, 0
+dsRl, 0
+dsK, 0
+endloc
+
+// newRule -- NEWLST. The input, its first word * taken off, becomes a new
+// rule at the bottom of bucket HASH(its first cell, 5), and INPUT a new list.
+// A bare * is ignored. Out of cells, it goes to noCells.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp i from bank 0, returning through the caller's full address.
+local nrRtn, nrT, nrL
+newRule, dac nrRtn
+    lio i [inList:0]
+    jsp i [POPTOP:0]        // the *
+    jmp i nrRtn
+    lio i [inList:0]
+    jsp i [TOP:0]
+    jmp i nrRtn             // nothing after the *
+    lio [5]
+    jsp i [HASH:0]
+    add [keyTab:0]
+    dac nrT
+    lac i [inList:0]
+    dac nrL
+    jsp i [LIST:0]
+    jmp i [noCells:0]
+    dac i [inList:0]
+    dzm i [datHi:0]
+    lac nrL
+    dac i [datLo:0]
+    lac [FSUB]
+    dac i [datFlg:0]
+    lio i nrT
+    jsp i [NEWBOT:0]
+    jmp i [noCells:0]
+    jmp i nrRtn
+
+nrRtn, 0
+nrT, 0
+nrL, 0
+endloc
+
+txInstr, ascii "PLEASE INSTRUCT ME"
+txNotRec, ascii "CHANGE NOT RECOGNIZED"
+txNotFound, ascii "LIST NOT FOUND"
+txMemory, ascii "MEMORY LIST FOLLOWS"
+txStar, ascii "*"
+
+// farAsc, farNl, farPutc -- putAsc, newline and putc for a caller in another
+// bank, each returning through the caller's full address.
+// Does not preserve AC or IO.
+// Called via jsp i.
+bank 0
+local fpRtn
+farAsc, dac fpRtn
+    jsp putAsc
+    jmp i fpRtn
+farNl, dac fpRtn
+    jsp newline
+    jmp i fpRtn
+farPutc, dac fpRtn
+    jsp putc
+    jmp i fpRtn
+
+fpRtn, 0
+endloc
+bank 1

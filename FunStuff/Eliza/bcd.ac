@@ -1,0 +1,329 @@
+// bcd.ac -- characters, from ASCII to 7094 BCD and back, and the packing of a
+// word of BCD characters into list cells.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah and lists.ac. Every routine is called
+// via jsp with extend mode on, and returns with it on. Include the file where
+// it is not executed, since its tables and data words follow its code.
+
+local bcdInX, bcdOutX, bcdP, pwRtn, pwList, pwP, pwLeft, pwAdded, pwFirst, \
+    pwC, pwCell, pwFail, ptX, ptK, ptW, ptC, ptNext, ptBlank, ptPut
+
+// toBcd -- convert the ASCII character in IO (its low 7 bits) to its BCD
+// code. Lower case folds to upper; ? and ! read as a period, : and ; as a
+// comma, and anything else BCD lacks as a blank.
+// AC is the result, IO is preserved.
+// Called via jsp.
+toBcd, dap bcdInX
+    lai
+    and [0177]
+    add [bcdIn:.]
+    dac bcdP
+    lac i bcdP
+bcdInX, jmp .
+
+// toAscii -- convert the BCD code in IO (its low 6 bits) to its ASCII
+// character; a code BCD leaves undefined is a blank.
+// AC is the result, IO is preserved.
+// Called via jsp.
+toAscii, dap bcdOutX
+    lai
+    and [077]
+    add [bcdOut:.]
+    dac bcdP
+    lac i bcdP
+bcdOutX, jmp .
+
+// packWord -- add a word to the bottom of list IO as cells, six BCD
+// characters a cell, the last blank-filled, every cell but the last flagged
+// continued. A word of no characters is one blank cell.
+// IO is the list. pwSrc holds the full address of the first character, one
+// BCD code a word, and pwLen the number of characters.
+// Skips with the word's first cell in AC. Does not skip when the cells run
+// out, with the cells it added taken off again.
+// AC is the result, IO is not preserved. datHi, datLo and datFlg are
+// changed; pwSrc and pwLen are preserved.
+// Called via jsp.
+packWord, dac pwRtn
+    dio pwList
+    lac pwSrc
+    dac pwP
+    lac pwLen
+    dac pwLeft
+    dzm pwAdded
+    dzm pwFirst
+pwCell, jsp pwThree
+    dac datHi
+    jsp pwThree
+    dac datLo
+    lac pwLeft
+    SKIP_NEXT_IF_AC_ZERO
+    lac [FCONT]             // characters remain, so the word goes on
+    dac datFlg
+    lio pwList
+    jsp NEWBOT
+    jmp pwFail
+    dac pwC
+    lac pwFirst
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    lac pwC
+    dac pwFirst
+    idx pwAdded
+    lac pwLeft
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pwCell
+    idx pwRtn
+    lac pwFirst
+    jmp i pwRtn
+pwFail, lac pwAdded
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i pwRtn
+    sub [1]
+    dac pwAdded
+    lio pwList
+    jsp POPBOT
+    nop                     // never empty here, so both returns go on
+    jmp pwFail
+
+// pwThree -- return the word's next three characters, the first in the high
+// bits, with a blank for each past the word's end; pwP and pwLeft step past
+// them.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+pwThree, dap ptX
+    law i 3
+    dac ptK
+    dzm ptW
+ptNext, lac pwLeft
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ptBlank
+    sub [1]
+    dac pwLeft
+    lac i pwP
+    and [077]
+    dac ptC
+    idx pwP
+    jmp ptPut
+ptBlank, law BCDBLANK
+    dac ptC
+ptPut, lac ptW
+    ral 6s                  // not sal, which loses the top bit of a code of 040 up
+    ior ptC
+    dac ptW
+    isp ptK
+    jmp ptNext
+    lac ptW
+ptX, jmp .
+
+bcdP, 0
+pwRtn, 0
+pwList, 0
+pwP, 0
+pwLeft, 0
+pwAdded, 0
+pwFirst, 0
+pwC, 0
+ptK, 0
+ptW, 0
+ptC, 0
+endloc
+
+pwSrc, 0
+pwLen, 0
+
+// The input table, the BCD code of each ASCII code.
+bcdIn,
+    060                     // 000 NUL
+    060                     // 001 ctl 001
+    060                     // 002 ctl 002
+    060                     // 003 ctl 003
+    060                     // 004 ctl 004
+    060                     // 005 ctl 005
+    060                     // 006 ctl 006
+    060                     // 007 ctl 007
+    060                     // 010 ctl 010
+    060                     // 011 TAB
+    060                     // 012 LF
+    060                     // 013 ctl 013
+    060                     // 014 ctl 014
+    060                     // 015 CR
+    060                     // 016 ctl 016
+    060                     // 017 ctl 017
+    060                     // 020 ctl 020
+    060                     // 021 ctl 021
+    060                     // 022 ctl 022
+    060                     // 023 ctl 023
+    060                     // 024 ctl 024
+    060                     // 025 ctl 025
+    060                     // 026 ctl 026
+    060                     // 027 ctl 027
+    060                     // 030 ctl 030
+    060                     // 031 ctl 031
+    060                     // 032 ctl 032
+    060                     // 033 ESC
+    060                     // 034 ctl 034
+    060                     // 035 ctl 035
+    060                     // 036 ctl 036
+    060                     // 037 ctl 037
+    060                     // 040 blank
+    033                     // 041 !
+    060                     // 042 quote
+    060                     // 043 #
+    053                     // 044 $
+    060                     // 045 %
+    060                     // 046 &
+    014                     // 047 apostrophe
+    074                     // 050 (
+    034                     // 051 )
+    054                     // 052 *
+    020                     // 053 +
+    073                     // 054 ,
+    040                     // 055 -
+    033                     // 056 .
+    061                     // 057 /
+    000                     // 060 0
+    001                     // 061 1
+    002                     // 062 2
+    003                     // 063 3
+    004                     // 064 4
+    005                     // 065 5
+    006                     // 066 6
+    007                     // 067 7
+    010                     // 070 8
+    011                     // 071 9
+    073                     // 072 :
+    073                     // 073 ;
+    060                     // 074 <
+    013                     // 075 =
+    060                     // 076 >
+    033                     // 077 ?
+    060                     // 100 @
+    021                     // 101 A
+    022                     // 102 B
+    023                     // 103 C
+    024                     // 104 D
+    025                     // 105 E
+    026                     // 106 F
+    027                     // 107 G
+    030                     // 110 H
+    031                     // 111 I
+    041                     // 112 J
+    042                     // 113 K
+    043                     // 114 L
+    044                     // 115 M
+    045                     // 116 N
+    046                     // 117 O
+    047                     // 120 P
+    050                     // 121 Q
+    051                     // 122 R
+    062                     // 123 S
+    063                     // 124 T
+    064                     // 125 U
+    065                     // 126 V
+    066                     // 127 W
+    067                     // 130 X
+    070                     // 131 Y
+    071                     // 132 Z
+    060                     // 133 [
+    060                     // 134 backslash
+    060                     // 135 ]
+    060                     // 136 ^
+    060                     // 137 _
+    060                     // 140 backquote
+    021                     // 141 a
+    022                     // 142 b
+    023                     // 143 c
+    024                     // 144 d
+    025                     // 145 e
+    026                     // 146 f
+    027                     // 147 g
+    030                     // 150 h
+    031                     // 151 i
+    041                     // 152 j
+    042                     // 153 k
+    043                     // 154 l
+    044                     // 155 m
+    045                     // 156 n
+    046                     // 157 o
+    047                     // 160 p
+    050                     // 161 q
+    051                     // 162 r
+    062                     // 163 s
+    063                     // 164 t
+    064                     // 165 u
+    065                     // 166 v
+    066                     // 167 w
+    067                     // 170 x
+    070                     // 171 y
+    071                     // 172 z
+    060                     // 173 {
+    060                     // 174 |
+    060                     // 175 }
+    060                     // 176 ~
+    060                     // 177 DEL
+
+// The output table, the ASCII character of each BCD code.
+bcdOut,
+    0060                    // 00 0
+    0061                    // 01 1
+    0062                    // 02 2
+    0063                    // 03 3
+    0064                    // 04 4
+    0065                    // 05 5
+    0066                    // 06 6
+    0067                    // 07 7
+    0070                    // 10 8
+    0071                    // 11 9
+    0040                    // 12 undefined
+    0075                    // 13 =
+    0047                    // 14 apostrophe
+    0040                    // 15 undefined
+    0040                    // 16 undefined
+    0040                    // 17 undefined
+    0053                    // 20 +
+    0101                    // 21 A
+    0102                    // 22 B
+    0103                    // 23 C
+    0104                    // 24 D
+    0105                    // 25 E
+    0106                    // 26 F
+    0107                    // 27 G
+    0110                    // 30 H
+    0111                    // 31 I
+    0040                    // 32 undefined
+    0056                    // 33 .
+    0051                    // 34 )
+    0040                    // 35 undefined
+    0040                    // 36 undefined
+    0040                    // 37 undefined
+    0055                    // 40 -
+    0112                    // 41 J
+    0113                    // 42 K
+    0114                    // 43 L
+    0115                    // 44 M
+    0116                    // 45 N
+    0117                    // 46 O
+    0120                    // 47 P
+    0121                    // 50 Q
+    0122                    // 51 R
+    0040                    // 52 undefined
+    0044                    // 53 $
+    0052                    // 54 *
+    0040                    // 55 undefined
+    0040                    // 56 undefined
+    0040                    // 57 undefined
+    0040                    // 60 blank
+    0057                    // 61 /
+    0123                    // 62 S
+    0124                    // 63 T
+    0125                    // 64 U
+    0126                    // 65 V
+    0127                    // 66 W
+    0130                    // 67 X
+    0131                    // 70 Y
+    0132                    // 71 Z
+    0040                    // 72 undefined
+    0054                    // 73 ,
+    0050                    // 74 (
+    0040                    // 75 undefined
+    0040                    // 76 undefined
+    0040                    // 77 undefined

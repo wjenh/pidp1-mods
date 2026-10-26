@@ -1,0 +1,172 @@
+// hash.ac -- SLIP's HASH, the mid-square hash that picks a keyword's bucket
+// and a memory rule.
+//
+// HASH(D, n) clears D's top bit (the 7094's sign), squares the low 35 bits,
+// and keeps the n bits from bit 35 - n/2 up. For n up to 7 those bits lie in
+// the square's bits 32 to 38, so only its low 39 bits are made. With D cut
+// into 12-bit pieces d0, d1, d2 (d2 has 11 bits),
+//     D*D = d0*d0 + 2*d0*d1 << 12 + (d1*d1 + 2*d0*d2) << 24 + 2*d1*d2 << 36
+// and d2*d2, at bit 48 up, is not needed. Each product is held as its low 12
+// bits and the bits above, so no sum comes near the sign.
+//
+// Needs AIDS/skipmacros.ah and lists.ac (datHi, datLo). Called via jsp with
+// extend mode on. Include the file where it is not executed, since its data
+// words follow its code.
+
+local haRtn, haN, hd0, hd1, hd2, hT1, hT2, hC, hC3, hBits, hK, hP, haShr, \
+    haMask, hmX, hMB, hHi, hLo
+
+// HASH -- return HASH(D, n) for D in datHi (its high 18 bits) and datLo, and
+// n, from 1 to 7, in IO.
+// AC is the result, IO is not preserved; datHi and datLo are preserved.
+// Called via jsp.
+HASH, dac haRtn
+    dio haN
+    lac datLo
+    and [07777]
+    dac hd0
+    lac datHi
+    lio datLo
+    rcr 9s
+    rcr 3s                  // IO = D's bits 12 to 29
+    lai
+    and [07777]
+    dac hd1
+    lac datHi
+    rar 6s
+    and [03777]             // the 7094's sign is not squared
+    dac hd2
+
+    // Bits 12 to 23, the carry out of d0*d0 plus 2*d0*d1's low part.
+    lac hd0
+    dac hMB
+    lio hd0
+    jsp hMul
+    lac hHi
+    dac hT1
+    lac hd1
+    ral 1s
+    dac hMB
+    lio hd0
+    jsp hMul
+    lac hT1
+    add hLo
+    rar 9s
+    rar 3s
+    and [07]                // the carry out of bits 12 to 23
+    add hHi
+    dac hC
+
+    // Bits 24 to 35, that carry, d1*d1 and 2*d0*d2.
+    lac hd1
+    dac hMB
+    lio hd1
+    jsp hMul
+    lac hC
+    add hLo
+    dac hT2
+    lac hHi
+    dac hC3
+    lac hd2
+    ral 1s
+    dac hMB
+    lio hd0
+    jsp hMul
+    lac hT2
+    add hLo
+    dac hT2
+    lac hC3
+    add hHi
+    dac hC3
+    lac hT2
+    rar 9s
+    rar 3s
+    and [07]                // the carry out of bits 24 to 35
+    add hC3
+    dac hC3
+
+    // Bits 36 to 38, that carry and 2*d1*d2's low part.
+    lac hd2
+    ral 1s
+    dac hMB
+    lio hd1
+    jsp hMul
+    lac hC3
+    add hLo
+    and [07]
+    ral 4s
+    dac hBits
+    lac hT2
+    and [07777]
+    rar 8s
+    and [017]
+    ior hBits
+    dac hBits               // the square's bits 32 to 38
+
+    // Right by 3 - n/2, then keep n bits.
+    lac haN
+    rar 1s
+    and [03]
+    cma
+    add [3]                 // a zero result here is +0, since add never leaves -0
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp haMask
+    cma
+    dac hK
+haShr, lac hBits
+    rar 1s
+    dac hBits
+    isp hK
+    jmp haShr
+haMask, lac haN
+    and [07]
+    add [hashMasks:.]
+    dac hP
+    lac hBits
+    and i hP
+    jmp i haRtn
+
+// hMul -- multiply IO by hMB, each under 2^13, leaving the product's low 12
+// bits in hLo and the bits above in hHi.
+// Does not preserve AC or IO.
+// Called via jsp.
+hMul, dap hmX
+    lai
+    mul hMB
+    scr 1s                  // mul leaves the product one place left
+    dio hLo
+    scr 9s
+    scr 3s
+    dio hHi
+    lac hLo
+    and [07777]
+    dac hLo
+hmX, jmp .
+
+// n bits of ones, by n.
+hashMasks,
+    0
+    01
+    03
+    07
+    017
+    037
+    077
+    0177
+
+haRtn, 0
+haN, 0
+hd0, 0
+hd1, 0
+hd2, 0
+hT1, 0
+hT2, 0
+hC, 0
+hC3, 0
+hBits, 0
+hK, 0
+hP, 0
+hMB, 0
+hHi, 0
+hLo, 0
+endloc

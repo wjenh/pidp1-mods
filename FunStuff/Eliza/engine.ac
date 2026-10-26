@@ -1,0 +1,1760 @@
+// engine.ac -- the ELIZA 1965 engine, TREAD, the keyword scan and choice, the
+// memory, the matching routine, YMATCH, ASSMBL and TXTPRT, as the 1965
+// listing (L000470-002270) and SLIP-1965.mad run them, with the 1966 paper's
+// keystack, NEWKEY, PRE and (= KW) as a reassembly rule as Hay reconstructs
+// them.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah, lists.ac, bcd.ac, hash.ac, script.ac
+// (keyTab, memKwHi, memKwLo, myTran, chClass) and dcsio.ac, and noCells, where
+// a routine goes when the cells run out. The conversation ends there, so
+// nothing here returns without a cell. Every routine is called via jsp with
+// extend mode on, from bank 0. Include the file where it is not executed,
+// since each routine's data words follow its code. The arrays are in bank 1.
+//
+// INPUT (inList) holds the input's words as cells, a word's every cell but its
+// last flagged continued; a DLIST cell (eliza.ah, DLMARK) may follow a word.
+
+// itemNext -- step reader IO to the next item of the list it is in, a word,
+// its cells passed over, a number or a sublist.
+// Skips with IO the reader at the item's last cell, ixCell its first cell,
+// ixFl that cell's flags (FSUB for a sublist, its header in ixLo), and ixHi
+// and ixLo its datum (ixHi 0 for a number, in ixLo). Does not skip at the
+// list's end.
+// IO is the result, AC is not preserved; datHi and datLo are changed.
+// Called via jsp.
+local inxRtn, inxF, inxLoop, inxDone
+itemNext, dac inxRtn
+    jsp SEQLR
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp i inxRtn            // back at the header
+    dac ixFl
+    dac inxF
+    dio ixCell
+    lac datHi
+    dac ixHi
+    lac datLo
+    dac ixLo
+inxLoop, lac inxF
+    and [FCONT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp inxDone
+    jsp SEQLR
+    dac inxF
+    jmp inxLoop
+inxDone, idx inxRtn
+    jmp i inxRtn
+
+inxRtn, 0
+inxF, 0
+endloc
+
+ixCell, 0
+ixFl, 0
+ixHi, 0
+ixLo, 0
+
+// cmpWords -- compare the word whose first cell is IO with the word whose
+// first cell is cwB, cell by cell, datum and continued flag.
+// Skips when they are the same word.
+// Does not preserve AC or IO; cwB, datHi and datLo are changed.
+// Called via jsp.
+local cwRtn, cwA, cwF, cwHi, cwLo, cwLoop, cwSame
+cmpWords, dac cwRtn
+    dio cwA
+cwLoop, lio cwB
+    jsp rdCell
+    and [FCONT]
+    dac cwF
+    lac datHi
+    dac cwHi
+    lac datLo
+    dac cwLo
+    lio cwA
+    jsp rdCell
+    and [FCONT]
+    SKIP_NEXT_IF_SAME cwF
+    jmp i cwRtn
+    lac datHi
+    SKIP_NEXT_IF_SAME cwHi
+    jmp i cwRtn
+    lac datLo
+    SKIP_NEXT_IF_SAME cwLo
+    jmp i cwRtn
+    lac cwF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cwSame
+    lio cwA
+    jsp cellPtrs
+    lac i cp1
+    dac cwA
+    lio cwB
+    jsp cellPtrs
+    lac i cp1
+    dac cwB
+    jmp cwLoop
+cwSame, idx cwRtn
+    jmp i cwRtn
+
+cwRtn, 0
+cwA, 0
+cwF, 0
+cwHi, 0
+cwLo, 0
+endloc
+
+cwB, 0
+
+// findRule -- the listing's keyword lookup (L000790-000850). It finds the
+// first rule in bucket HASH(frHi frLo, 5) whose first cell is frHi, frLo.
+// With frWord not 0, it finds the first whose keyword is the whole word at
+// frWord, as Hay's lookup does; every exit clears frWord.
+// Returns the rule's list in AC, 0 for none.
+// AC is the result, IO is not preserved; datHi, datLo and cwB are changed.
+// Called via jsp.
+local frRtn, frT, frR, frRule, frLoop, frFound, frNone
+findRule, dac frRtn
+    lac frHi
+    dac datHi
+    lac frLo
+    dac datLo
+    lio [5]
+    jsp HASH
+    add [keyTab]
+    dac frT
+    lac i frT
+    dac frR
+frLoop, lio frR
+    jsp SEQLR
+    dio frR
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp frNone
+    lac datLo               // a bucket's cells are its rules' sublists
+    dac frRule
+    lio frRule
+    jsp TOP
+    jmp frLoop
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp frLoop
+    lac datHi
+    SKIP_NEXT_IF_SAME frHi
+    jmp frLoop
+    lac datLo
+    SKIP_NEXT_IF_SAME frLo
+    jmp frLoop
+    lac frWord
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp frFound
+    lio frRule              // for the whole word, the keyword is compared too
+    jsp itemNext
+    jmp frLoop
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp frLoop
+    lac ixCell
+    dac cwB
+    lio frWord
+    jsp cmpWords
+    jmp frLoop
+frFound, dzm frWord
+    lac frRule
+    jmp i frRtn
+frNone, dzm frWord
+    cla
+    jmp i frRtn
+
+frRtn, 0
+frT, 0
+frR, 0
+frRule, 0
+endloc
+
+frHi, 0
+frLo, 0
+frWord, 0                   // a word's first cell, for a whole-word lookup
+wholeKw, 0                  // not 0 when the scan looks keywords up by the whole word
+
+// copyWord -- put a copy of the word whose first cell is IO at the bottom of
+// list asOut. Out of cells, it goes to noCells.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local cpwX, cpwC, cpwF, cpwLoop
+copyWord, dap cpwX
+    dio cpwC
+cpwLoop, lio cpwC
+    jsp rdCell
+    and [FCONT]
+    dac datFlg
+    dac cpwF
+    lio asOut
+    jsp NEWBOT
+    jmp noCells
+    lac cpwF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cpwX
+    lio cpwC
+    jsp cellPtrs
+    lac i cp1
+    dac cpwC
+    jmp cpwLoop
+cpwX, jmp .
+
+cpwC, 0
+cpwF, 0
+endloc
+
+// tread -- TREAD (S001083 on), here reading the line in lnBuf into INPUT,
+// which is emptied first. Letters, apostrophes and digits make up words; a
+// blank, ( and ) end one; = + - $ * / . and , are each a word by itself.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local trRtn, trP, trEnd, trC, trT, trLoop, trDone, trAdd, trOne, trEndW, \
+    tfX, trFlush
+tread, dac trRtn
+    lio inList
+    jsp MTLIST
+    dzm twLen
+    lac [lnBuf:1]
+    dac trP
+    add lnLen
+    dac trEnd
+trLoop, lac trP
+    SKIP_NEXT_IF_DIFFERENT trEnd
+    jmp trDone
+    lio i trP
+    idx trP
+    jsp toBcd
+    dac trC
+    add [chClass]
+    dac trT
+    lac i trT
+    SKIP_NEXT_IF_DIFFERENT [C_LETTER]
+    jmp trAdd
+    SKIP_NEXT_IF_DIFFERENT [C_APOS]
+    jmp trAdd
+    SKIP_NEXT_IF_DIFFERENT [C_DIGIT]
+    jmp trAdd
+    SKIP_NEXT_IF_DIFFERENT [C_BLANK]
+    jmp trEndW
+    SKIP_NEXT_IF_DIFFERENT [C_LPAR]
+    jmp trEndW
+    SKIP_NEXT_IF_DIFFERENT [C_RPAR]
+    jmp trEndW
+trOne, jsp trFlush          // a word by itself
+    lac trC
+    dac i [twBuf:1]
+    law 1
+    dac twLen
+trEndW, jsp trFlush
+    jmp trLoop
+trAdd, lac twLen
+    add [twBuf:1]
+    dac trT
+    lac trC
+    dac i trT
+    idx twLen
+    jmp trLoop
+trDone, jsp trFlush
+    jmp i trRtn
+
+// trFlush -- put the word going, if any, at the bottom of INPUT.
+// Does not preserve AC or IO.
+// Called via jsp, from tread only.
+trFlush, dap tfX
+    lac twLen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tfX
+    lac [twBuf:1]
+    dac pwSrc
+    lac twLen
+    dac pwLen
+    dzm twLen
+    lio inList
+    jsp packWord
+    jmp noCells
+tfX, jmp .
+
+trRtn, 0
+trP, 0
+trEnd, 0
+trC, 0
+trT, 0
+endloc
+
+twLen, 0                    // the characters of the word going, in twBuf
+
+// substWord -- TESTS' substitution. The input word whose first cell is wCell
+// is replaced by a copy of the word whose first cell is sbSrc; wCell and
+// wLast are left at the copy's first and last cells. Out of cells, it goes to
+// noCells.
+// Does not preserve AC or IO; sbSrc, datHi, datLo and datFlg are changed.
+// Called via jsp.
+local sbX, sbP, sbQ, sbF, sbDrop, sbAdd, sbDone
+substWord, dap sbX
+    lio wCell
+    jsp LNKL
+    dac sbP                 // the cell before the word
+sbDrop, lio sbP
+    jsp POPTOP              // the cell after sbP
+    nop                     // never empty here, so both returns go on
+    and [FCONT]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sbDrop
+    lac sbP
+    dac sbQ
+sbAdd, lio sbSrc
+    jsp rdCell
+    and [FCONT]
+    dac datFlg
+    dac sbF
+    lio sbQ
+    jsp NEWTOP
+    jmp noCells
+    dac sbQ
+    lac sbF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sbDone
+    lio sbSrc
+    jsp cellPtrs
+    lac i cp1
+    dac sbSrc
+    jmp sbAdd
+sbDone, lio sbP
+    jsp cellPtrs
+    lac i cp1
+    dac wCell
+    lac sbQ
+    dac wLast
+sbX, jmp .
+
+sbP, 0
+sbQ, 0
+sbF, 0
+endloc
+
+sbSrc, 0
+
+// respond -- print the reply to the input in INPUT, which is not empty. It
+// runs the scan (L000600-001100), then the memory, the matching routine and
+// the built-in messages (L001120-002270), with the 1966 keystack as Hay's
+// eliza::response has it. Each keyword with something after its keyword,
+// substitution and rank goes on the keystack, to the top when its rank beats
+// the best so far, else to the bottom, so the top is the keyword 1965 chose.
+// Then the top is popped, a memory formed if it is the memory keyword, and
+// its decompositions tried in order. (NEWKEY) pops the next, NONE when there
+// is none; (= KW), as a decomposition or a reassembly, puts KW's rule on top;
+// (PRE (r) (= KW)) makes the input r assembled, then puts KW's rule on top.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local rpRtn, scR, cand, rrd, rr2, rr3, prednc, scPos, scRk, wHi, wLo, sdC, \
+    mlRule, mlR, mlEs, rpOut, rpT, rpRa, rpNew, scLoop, scNotDelim, scNext, \
+    scDl, scChoose, scPush, scFront, scDelim, scLeft, scRight, scEnd, rpPop, \
+    mlLoop, mlTry, rpLink, rpNewkey, rpPre, rpPreBad, rpSay, rpNone, \
+    rpNoneRule, rpBuiltin
+respond, dac rpRtn
+    law KSMID
+    dac ksLo
+    dac ksHi
+    dzm prednc
+    dzm links
+    lac inList
+    dac scR
+scLoop, lio scR
+    jsp SEQLR
+    dio scR
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp scEnd
+    lac datHi
+    SKIP_NEXT_IF_DIFFERENT [DLMARK]
+    jmp scLoop
+    lac scR
+    dac wCell
+    lac datHi
+    dac wHi                 // the word's first cell
+    lac datLo
+    dac wLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp scNotDelim
+    lac datHi
+    SKIP_NEXT_IF_DIFFERENT [PERIODHI]
+    jmp scDelim
+    SKIP_NEXT_IF_DIFFERENT [COMMAHI]
+    jmp scDelim
+    SKIP_NEXT_IF_DIFFERENT [BUTHI]
+    jmp scDelim
+scNotDelim, lac wHi
+    dac frHi
+    lac wLo
+    dac frLo
+    lac wholeKw
+    SKIP_NEXT_IF_AC_ZERO
+    lac wCell
+    dac frWord
+    jsp findRule
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp scNext
+    dac cand
+    lio cand                // in TESTS, the rule's keyword must be the word
+    jsp itemNext
+    jmp scNext
+    dio rrd
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp scNext
+    lac ixCell
+    dac cwB
+    lio wCell
+    jsp cmpWords
+    jmp scNext
+    lio wCell
+    jsp wordLast
+    dac wLast
+    lio rrd                 // = and a word, which replaces the input's
+    jsp itemNext
+    jmp scDl
+    dio rr2
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp scDl
+    lac ixHi
+    SKIP_NEXT_IF_SAME [EQHI]
+    jmp scDl
+    lac ixLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp scDl
+    lio rr2
+    jsp itemNext
+    jmp scDl
+    dio rr3
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp scDl
+    lac ixHi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp scDl                // a number
+    lac rr3
+    dac rrd
+    lac ixCell
+    dac sbSrc
+    jsp substWord
+scDl, lio cand              // the rule's DLIST goes into INPUT after the word
+    jsp LSTNAM
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp scChoose
+    dac datLo
+    lac [DLMARK]
+    dac datHi
+    dzm datFlg
+    lio wLast
+    jsp NEWTOP
+    jmp noCells
+scChoose, lac wLast
+    dac scR
+    lio rrd
+    jsp itemNext
+    jmp scLoop              // a keyword with nothing after it
+    dio rr2
+    dzm scRk
+    lac rrd
+    dac scPos
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp scPush              // a decomposition, so no rank
+    lac ixHi
+    SKIP_NEXT_IF_AC_ZERO
+    jmp scPush              // a word, so no rank
+    lac ixLo                // a rank, which something must follow
+    dac scRk
+    lac rr2
+    dac scPos
+    lio rr2
+    jsp itemNext
+    jmp scLoop
+scPush, lac scRk
+    sub prednc
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp scFront
+    lac ksHi                // to the bottom
+    add [ksRule:1]
+    dac rpT
+    lac cand
+    dac i rpT
+    lac ksHi
+    add [ksPos:1]
+    dac rpT
+    lac scPos
+    dac i rpT
+    idx ksHi
+    jmp scLoop
+scFront, lac scRk           // to the top, the best so far
+    dac prednc
+    lac cand
+    dac ksNewR
+    lac scPos
+    dac ksNewP
+    jsp ksFront
+    jmp scLoop
+scNext, lio wCell
+    jsp wordLast
+    dac scR
+    jmp scLoop
+
+scDelim, lac ksLo
+    SKIP_NEXT_IF_SAME ksHi
+    jmp scRight
+scLeft, lio inList          // no keyword yet, so INPUT up to the delimiter goes
+    jsp SEQLR
+    dio sdC
+    lio inList
+    jsp POPTOP
+    nop
+    lac sdC
+    SKIP_NEXT_IF_SAME wCell
+    jmp scLeft
+    lac inList
+    dac scR
+    jmp scLoop
+scRight, lio inList         // a keyword, so INPUT from the delimiter on goes
+    jsp LNKL
+    dac sdC
+    lio inList
+    jsp POPBOT
+    nop
+    lac sdC
+    SKIP_NEXT_IF_SAME wCell
+    jmp scRight
+
+scEnd, jsp buildWords
+    lac ksLo
+    SKIP_NEXT_IF_DIFFERENT ksHi
+    jmp rpNone
+
+rpPop, lac ksLo             // the top keyword
+    SKIP_NEXT_IF_DIFFERENT ksHi
+    jmp rpBuiltin           // not reached, since every pop ends in a reply or a push
+    add [ksRule:1]
+    dac rpT
+    lac i rpT
+    dac mlRule
+    lac ksLo
+    add [ksPos:1]
+    dac rpT
+    lac i rpT
+    dac mlR
+    idx ksLo
+    lio mlRule              // the memory keyword makes a memory of the input as it is
+    jsp TOP
+    jmp mlLoop
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mlLoop
+    lac datHi
+    SKIP_NEXT_IF_SAME memKwHi
+    jmp mlLoop
+    lac datLo
+    SKIP_NEXT_IF_SAME memKwLo
+    jmp mlLoop
+    jsp remember
+mlLoop, lio mlR             // the keyword's decompositions in order
+    jsp itemNext
+    jmp rpBuiltin
+    dio mlR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mlLoop
+    lac ixLo
+    dac mlEs
+    lio mlEs                // (= KW) puts KW's rule on top
+    jsp TOP
+    jmp mlTry
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mlTry
+    lac datHi
+    SKIP_NEXT_IF_SAME [EQHI]
+    jmp mlTry
+    lac datLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp mlTry
+    lio mlEs
+    jsp itemNext
+    jmp rpBuiltin
+    jsp itemNext
+    jmp rpBuiltin
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpBuiltin
+    lac ixHi
+    dac frHi
+    lac ixLo
+    dac frLo
+rpLink, jsp pushKw
+    jmp rpBuiltin
+    jmp rpPop
+mlTry, lio mlEs
+    jsp tryEs
+    jmp mlLoop
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpBuiltin           // a pattern with no reassembly
+    dac rpRa
+    lio rpRa
+    jsp raKind
+    SKIP_NEXT_IF_DIFFERENT [RANEWKEY]
+    jmp rpNewkey
+    SKIP_NEXT_IF_DIFFERENT [RALINK]
+    jmp rpLink
+    SKIP_NEXT_IF_DIFFERENT [RAPRE]
+    jmp rpPre
+    lio rpRa                // a reply
+    jsp assmbl
+    jmp rpBuiltin
+rpSay, dac rpOut
+    lio rpOut
+    jsp txtprt
+    lio rpOut
+    jsp IRALST
+    jmp i rpRtn
+
+rpNewkey, lac ksLo          // (NEWKEY) takes the next keyword, NONE if none is left
+    SKIP_NEXT_IF_DIFFERENT ksHi
+    jmp rpNoneRule
+    jmp rpPop
+
+rpPre, lio raPre            // (PRE (r) (= KW)) makes the input r assembled
+    jsp assmblDl
+    jmp rpBuiltin
+    dac rpNew
+    jsp pushKw
+    jmp rpPreBad
+    lio inList
+    jsp IRALST
+    lac rpNew
+    dac inList
+    jsp buildWords
+    jmp rpPop
+rpPreBad, lio rpNew
+    jsp IRALST
+    jmp rpBuiltin
+
+rpNone, lac limit           // no keyword, so a memory at LIMIT 4, else NONE
+    SKIP_NEXT_IF_SAME [4]
+    jmp rpNoneRule
+    lio myList
+    jsp POPTOP
+    jmp rpNoneRule
+    lac datLo
+    jmp rpSay
+rpNoneRule, lio keyTab+NBUCKETS
+    jsp TOP
+    jmp rpBuiltin
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpBuiltin
+    lio datLo
+    jsp BOT                 // NONE's last decomposition
+    jmp rpBuiltin
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpBuiltin
+    lio datLo
+    jsp tryEs
+    jmp rpBuiltin
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpBuiltin
+    lia
+    jsp assmbl
+    jmp rpBuiltin
+    jmp rpSay
+
+rpBuiltin, lac limit        // the built-in messages, by LIMIT
+    add [nmTab-1]
+    dac rpT
+    lio i rpT
+    jsp putAsc
+    jsp newline
+    jmp i rpRtn
+
+rpRtn, 0
+scR, 0
+cand, 0
+rrd, 0
+rr2, 0
+rr3, 0
+prednc, 0
+scPos, 0
+scRk, 0
+wHi, 0
+wLo, 0
+sdC, 0
+mlRule, 0
+mlR, 0
+mlEs, 0
+rpOut, 0
+rpT, 0
+rpRa, 0
+rpNew, 0
+endloc
+
+// The keystack's state for the reply going; the entries are ksRule and ksPos.
+ksLo, 0                     // the top entry
+ksHi, 0                     // one past the bottom; ksLo = ksHi when empty
+ksNewR, 0                   // ksFront's entry, the rule
+ksNewP, 0                   // and the reader
+links, 0                    // links followed in this reply
+raPre, 0                    // a PRE's r, set by raKind
+
+// ksFront -- put the entry ksNewR, ksNewP on top of the keystack.
+// AC is not preserved, IO is preserved.
+// Called via jsp.
+local kfX, kfT
+ksFront, dap kfX
+    lac ksLo
+    sub [1]
+    dac ksLo
+    add [ksRule:1]
+    dac kfT
+    lac ksNewR
+    dac i kfT
+    lac ksLo
+    add [ksPos:1]
+    dac kfT
+    lac ksNewP
+    dac i kfT
+kfX, jmp .
+
+kfT, 0
+endloc
+
+// pushKw -- put the rule of the keyword whose first cell is frHi, frLo
+// (findRule) on top of the keystack, its decompositions read from its header.
+// A reply follows at most LINKMAX links, so a script whose links loop cannot
+// hang.
+// Skips; does not skip when the rule is not found or the links are spent.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp.
+local pkRtn
+pushKw, dac pkRtn
+    idx links
+    sub [LINKMAX+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp i pkRtn
+    jsp findRule
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i pkRtn
+    dac ksNewR
+    dac ksNewP
+    jsp ksFront
+    idx pkRtn
+    jmp i pkRtn
+
+pkRtn, 0
+endloc
+
+// raKind -- tell what reassembly rule IO (its list) is, by Hay's shapes,
+// (NEWKEY), (= KW), (PRE (r) (= KW)), else a reply. NEWKEY, = and PRE are
+// compared whole, one cell each.
+// Returns RAREPLY, RANEWKEY, RALINK or RAPRE in AC. For RALINK and RAPRE,
+// frHi and frLo are KW's first cell, and for RAPRE raPre is r's list.
+// AC is the result, IO is not preserved; datHi and datLo are changed.
+// Called via jsp.
+local rkRtn, rkR, rkK, rkL, rkNew, rkEq, rkKw, rkPreEq, rkGot, rkGot0, rkReply
+raKind, dac rkRtn
+    jsp itemNext
+    jmp rkReply             // an empty rule
+    dio rkR
+    lac ixFl
+    and [FSUB+FCONT]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rkReply             // a sublist or a long word first
+    lac ixHi
+    SKIP_NEXT_IF_DIFFERENT [NEWKEYHI]
+    jmp rkNew
+    SKIP_NEXT_IF_DIFFERENT [EQHI]
+    jmp rkEq
+    SKIP_NEXT_IF_SAME [PREHI]
+    jmp rkReply
+    lac ixLo                // PRE, a list, a list, nothing more
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp rkReply
+    lio rkR
+    jsp itemNext
+    jmp rkReply
+    dio rkR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rkReply
+    lac ixLo
+    dac raPre
+    lio rkR
+    jsp itemNext
+    jmp rkReply
+    dio rkR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rkReply
+    lac ixLo
+    dac rkL
+    lio rkR
+    jsp itemNext
+    jmp rkPreEq
+    jmp rkReply
+rkPreEq, lio rkL            // the last list, = and KW
+    jsp itemNext
+    jmp rkReply
+    dio rkR
+    lac ixFl
+    and [FSUB+FCONT]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rkReply
+    lac ixHi
+    SKIP_NEXT_IF_SAME [EQHI]
+    jmp rkReply
+    lac ixLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp rkReply
+    law RAPRE
+    dac rkK
+    jmp rkKw
+rkNew, lac ixLo             // NEWKEY, nothing more
+    SKIP_NEXT_IF_SAME [NEWKEYLO]
+    jmp rkReply
+    lio rkR
+    jsp itemNext
+    jmp rkGot0
+    jmp rkReply
+rkEq, lac ixLo              // =, KW, nothing more
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp rkReply
+    law RALINK
+    dac rkK
+rkKw, lio rkR               // after the =, a word, then nothing
+    jsp itemNext
+    jmp rkReply
+    dio rkR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rkReply
+    lac ixHi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rkReply             // a number
+    dac frHi
+    lac ixLo
+    dac frLo
+    lio rkR
+    jsp itemNext
+    jmp rkGot
+rkReply, cla
+    jmp i rkRtn
+rkGot, lac rkK
+    jmp i rkRtn
+rkGot0, law RANEWKEY
+    jmp i rkRtn
+
+rkRtn, 0
+rkR, 0
+rkK, 0
+rkL, 0
+endloc
+
+wCell, 0                    // the scan's word, its first cell
+wLast, 0                    // and its last
+
+// The built-in messages, by LIMIT 1 to 4 (L002200-002270).
+nmTab,
+    nm1
+    nm2
+    nm3
+    nm4
+nm1, ascii "PLEASE CONTINUE"
+nm2, ascii "HMMM"
+nm3, ascii "GO ON , PLEASE"
+nm4, ascii "I SEE"
+
+// buildWords -- put the input's words into wFirst and wDl, their number into
+// nIn.
+// Does not preserve AC or IO.
+// Called via jsp.
+local bwRtn, bwR, bwPrev, bwF, bwT, bwLoop, bwNotDl, bwDone
+buildWords, dac bwRtn
+    dzm nIn
+    dzm bwPrev
+    lac inList
+    dac bwR
+bwLoop, lio bwR
+    jsp SEQLR
+    dio bwR
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp i bwRtn
+    and [FCONT]
+    dac bwF
+    lac datHi
+    SKIP_NEXT_IF_SAME [DLMARK]
+    jmp bwNotDl
+    lac nIn                 // a DLIST, the word before's
+    sub [1]
+    add [wDl:1]
+    dac bwT
+    lac datLo
+    dac i bwT
+    dzm bwPrev
+    jmp bwLoop
+bwNotDl, lac bwPrev
+    SKIP_NEXT_IF_AC_ZERO
+    jmp bwDone              // a word's later cell
+    lac nIn
+    SKIP_NEXT_IF_DIFFERENT [WMAX]
+    jmp bwDone
+    add [wFirst:1]
+    dac bwT
+    lac bwR
+    dac i bwT
+    lac nIn
+    add [wDl:1]
+    dac bwT
+    dzm i bwT
+    idx nIn
+bwDone, lac bwF
+    dac bwPrev
+    jmp bwLoop
+
+bwRtn, 0
+bwR, 0
+bwPrev, 0
+bwF, 0
+bwT, 0
+endloc
+
+nIn, 0                      // the input's words
+
+// remember -- the memory (REGEL, L001200-001280). The memory rule picked by
+// HASH(the last cell of INPUT's last word, 2) is matched against the input
+// and, if it matches, its reassembly is queued on myList.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local mmRtn, mmC, mmT, mmHash
+remember, dac mmRtn
+    lio inList
+    jsp LNKL
+    dac mmC
+    lio mmC
+    jsp rdCell
+    lac datHi
+    SKIP_NEXT_IF_SAME [DLMARK]
+    jmp mmHash
+    lio mmC                 // a DLIST cell, so the word before it
+    jsp LNKL
+    lia
+    jsp rdCell
+mmHash, lio [2]
+    jsp HASH
+    add [myTran]
+    dac mmT
+    lac i mmT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i mmRtn             // the script has no MEMORY
+    lia
+    jsp patLoad
+    jmp i mmRtn
+    jsp ymatch
+    jmp i mmRtn
+    lio plEnd
+    jsp assmbl
+    jmp i mmRtn
+    dac datLo
+    dzm datHi
+    lac [FSUB]
+    dac datFlg
+    lio myList
+    jsp NEWBOT
+    jmp noCells
+    jmp i mmRtn
+
+mmRtn, 0
+mmC, 0
+mmT, 0
+endloc
+
+// patLoad -- load the items of list IO, up to its end or a word =, into pKind
+// and pVal, their number into nPat; plEnd is left the reader at the = or at
+// the last item.
+// Skips; does not skip when there are more than PMAX.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp.
+local plRtn, plR, plK, plV, plT, plLoop, plWord, plNum, plList, plPut, plDone
+patLoad, dac plRtn
+    dio plR
+    dio plEnd
+    dzm nPat
+plLoop, lio plR
+    jsp itemNext
+    jmp plDone
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp plList
+    lac ixHi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp plNum
+    SKIP_NEXT_IF_SAME [EQHI]
+    jmp plWord
+    lac ixLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp plWord
+    dio plEnd               // the =
+    jmp plDone
+plWord, law KWORD
+    dac plK
+    lac ixCell
+    jmp plPut
+plNum, law KNUM
+    dac plK
+    lac ixLo
+    jmp plPut
+plList, law KLIST
+    dac plK
+    lac ixLo
+plPut, dac plV
+    dio plR
+    dio plEnd
+    lac nPat
+    SKIP_NEXT_IF_DIFFERENT [PMAX]
+    jmp i plRtn
+    add [pKind:1]
+    dac plT
+    lac plK
+    dac i plT
+    lac nPat
+    add [pVal:1]
+    dac plT
+    lac plV
+    dac i plT
+    idx nPat
+    jmp plLoop
+plDone, idx plRtn
+    jmp i plRtn
+
+plRtn, 0
+plR, 0
+plK, 0
+plV, 0
+plT, 0
+endloc
+
+nPat, 0                     // the pattern's elements
+plEnd, 0
+
+// elemAt -- set eaK and eaV to pKind and pVal of pattern element IO.
+// AC is not preserved, IO is preserved.
+// Called via jsp.
+local eaX, eaT
+elemAt, dap eaX
+    lai
+    add [pKind:1]
+    dac eaT
+    lac i eaT
+    dac eaK
+    lai
+    add [pVal:1]
+    dac eaT
+    lac i eaT
+    dac eaV
+eaX, jmp .
+
+eaT, 0
+endloc
+
+eaK, 0
+eaV, 0
+
+// elMatch -- test whether pattern element eaK, eaV, a word or a sublist,
+// matches input word IO. A word matches by all its cells; (* w ...) matches a
+// word equal to one of the w (whole words); (/ t ...) matches a word whose
+// DLIST holds one of the t (GOODY, XLOOK; first cells compared).
+// Skips on a match.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp.
+local emRtn, emX, emT, emW, emR, emA, emAHi, emALo, emD, emList, emStar, \
+    emSlash, emTags, emYes
+elMatch, dac emRtn
+    dio emX
+    lai
+    add [wFirst:1]
+    dac emT
+    lac i emT
+    dac emW
+    lac eaK
+    SKIP_NEXT_IF_SAME [KWORD]
+    jmp emList
+    lac eaV
+    dac cwB
+    lio emW
+    jsp cmpWords
+    jmp i emRtn
+    jmp emYes
+emList, SKIP_NEXT_IF_SAME [KLIST]
+    jmp i emRtn             // a number here never matches
+    lio eaV
+    jsp itemNext
+    jmp i emRtn
+    dio emR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp i emRtn
+    lac ixLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp i emRtn
+    lac ixHi
+    SKIP_NEXT_IF_DIFFERENT [STARHI]
+    jmp emStar
+    SKIP_NEXT_IF_SAME [SLASHHI]
+    jmp i emRtn
+    lac emX                 // (/ ...)
+    add [wDl:1]
+    dac emT
+    lac i emT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i emRtn
+    dac emD
+emSlash, lio emR
+    jsp itemNext
+    jmp i emRtn
+    dio emR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp emSlash
+    lac ixHi
+    dac emAHi
+    lac ixLo
+    dac emALo
+    lac emD
+    dac emA
+emTags, lio emA
+    jsp itemNext
+    jmp emSlash
+    dio emA
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp emTags
+    lac ixHi
+    SKIP_NEXT_IF_SAME emAHi
+    jmp emTags
+    lac ixLo
+    SKIP_NEXT_IF_SAME emALo
+    jmp emTags
+    jmp emYes
+emStar, lio emR             // (* ...)
+    jsp itemNext
+    jmp i emRtn
+    dio emR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp emStar
+    lac ixHi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp emStar
+    lac ixCell
+    dac cwB
+    lio emW
+    jsp cmpWords
+    jmp emStar
+emYes, idx emRtn
+    jmp i emRtn
+
+emRtn, 0
+emX, 0
+emT, 0
+emW, 0
+emR, 0
+emA, 0
+emAHi, 0
+emALo, 0
+emD, 0
+endloc
+
+// ymatch -- YMATCH (S009880) as Hay's match, the input's nIn words against
+// the pattern's nPat elements. The pattern is cut into segments, each starting at
+// a 0; a 0 starting a segment other than the last takes the fewest words that
+// let the segment match, the last segment ends at the input's end, and there
+// is no further backtracking. A number n takes n words; a word or a sublist,
+// one. Each element's part, its first word and its count, goes into partS
+// and partN.
+// Skips on a match.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp.
+local ymRtn, ymW, ymP, ymP0, ymFix, ymRoom, ymWild, ymWl, ymWend, ymQ, \
+    ymX, ymT, ymT2, ymOk2, ymSeg, ymScan, ymN, ymOne, ymStep, ymScanned, ymWildMid, \
+    ymNotWild, ymTry, ymEl, ymLit, ymPart, ymElNext, ymOk, ymNext, ymEnd, \
+    ymFail
+ymatch, dac ymRtn
+    dzm ymW
+    dzm ymP
+ymSeg, lac ymP
+    SKIP_NEXT_IF_DIFFERENT nPat
+    jmp ymEnd
+    dac ymP0
+    dzm ymFix
+ymScan, lac ymP             // the segment, to the next 0 or the end
+    SKIP_NEXT_IF_DIFFERENT nPat
+    jmp ymScanned
+    lio ymP
+    jsp elemAt
+    lac eaK
+    SKIP_NEXT_IF_SAME [KNUM]
+    jmp ymOne
+    lac eaV
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ymN
+    lac ymP
+    SKIP_NEXT_IF_DIFFERENT ymP0
+    jmp ymStep              // the 0 this segment starts at
+    jmp ymScanned
+ymN, SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ymOne
+    add ymFix
+    dac ymFix
+    jmp ymStep
+ymOne, idx ymFix
+ymStep, idx ymP
+    jmp ymScan
+ymScanned, lac nIn
+    sub ymW
+    sub ymFix
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ymFail
+    dac ymRoom              // the words a starting 0 may take
+    dzm ymWild
+    dzm ymWl
+    dzm ymWend
+    lio ymP0
+    jsp elemAt
+    lac eaK
+    SKIP_NEXT_IF_SAME [KNUM]
+    jmp ymTry
+    lac eaV
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ymTry
+    law 1
+    dac ymWild
+    lac ymRoom
+    dac ymWend
+    lac ymP
+    SKIP_NEXT_IF_SAME nPat
+    jmp ymTry               // not the last segment, so fewest words first
+    lac ymRoom
+    dac ymWl                // the last, to the input's end
+ymTry, lac ymP0
+    add ymWild
+    dac ymQ
+    lac ymW
+    add ymWl
+    dac ymX
+ymEl, lac ymQ
+    SKIP_NEXT_IF_DIFFERENT ymP
+    jmp ymOk
+    lio ymQ
+    jsp elemAt
+    lac eaK
+    SKIP_NEXT_IF_SAME [KNUM]
+    jmp ymLit
+    lac eaV
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ymNext              // a negative number matches nothing
+    jmp ymPart
+ymLit, lio ymX
+    jsp elMatch
+    jmp ymNext
+    law 1
+ymPart, dac ymT             // element ymQ takes ymT words from ymX
+    lac ymQ
+    add [partS:1]
+    dac ymT2
+    lac ymX
+    dac i ymT2
+    lac ymQ
+    add [partN:1]
+    dac ymT2
+    lac ymT
+    dac i ymT2
+    lac ymX
+    add ymT
+    dac ymX
+ymElNext, idx ymQ
+    jmp ymEl
+ymOk, lac ymWild
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ymOk2
+    lac ymP0
+    add [partS:1]
+    dac ymT2
+    lac ymW
+    dac i ymT2
+    lac ymP0
+    add [partN:1]
+    dac ymT2
+    lac ymWl
+    dac i ymT2
+ymOk2, lac ymX
+    dac ymW
+    jmp ymSeg
+ymNext, lac ymWl
+    SKIP_NEXT_IF_DIFFERENT ymWend
+    jmp ymFail
+    idx ymWl
+    jmp ymTry
+ymEnd, lac ymW
+    SKIP_NEXT_IF_SAME nIn
+    jmp ymFail
+    idx ymRtn
+ymFail, jmp i ymRtn
+
+ymRtn, 0
+ymW, 0
+ymP, 0
+ymP0, 0
+ymFix, 0
+ymRoom, 0
+ymWild, 0
+ymWl, 0
+ymWend, 0
+ymQ, 0
+ymX, 0
+ymT, 0
+ymT2, 0
+endloc
+
+// assmbl -- ASSMBL (S010360), a new list of the items after reader IO, each
+// number n replaced by a copy of the words of the matched part n, sublists
+// left out. assmblDl does the same for PRE's new input, where a copied input
+// word's DLIST cell follows its copy. Out of cells, it goes to noCells.
+// Skips with the list in AC; does not skip, with the list returned, when a
+// number is not a part.
+// AC is the result, IO is not preserved; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local asRtn, asR, asN, asI, asQ, asT, asKeep, asGo, asLoop, asNum, asPart, \
+    asCopy, asNext, asBad, asDone
+assmblDl, dac asRtn
+    law 1
+    jmp asGo
+assmbl, dac asRtn
+    cla
+asGo, dac asKeep
+    dio asR
+    jsp LIST
+    jmp noCells
+    dac asOut
+asLoop, lio asR
+    jsp itemNext
+    jmp asDone
+    dio asR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp asLoop
+    lac ixHi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp asNum
+    lio ixCell
+    jsp copyWord
+    jmp asLoop
+asNum, lac ixLo
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp asPart
+    jmp asBad
+asPart, lac nPat
+    sub ixLo
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp asBad
+    lac ixLo
+    sub [1]
+    dac asQ                 // part n is element n-1's
+    add [partN:1]
+    dac asT
+    lac i asT
+    dac asN
+    lac asQ
+    add [partS:1]
+    dac asT
+    lac i asT
+    dac asI
+asCopy, lac asN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp asLoop
+    lac asI
+    add [wFirst:1]
+    dac asT
+    lio i asT
+    jsp copyWord
+    lac asKeep
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp asNext
+    lac asI
+    add [wDl:1]
+    dac asT
+    lac i asT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp asNext
+    dac datLo
+    lac [DLMARK]
+    dac datHi
+    dzm datFlg
+    lio asOut
+    jsp NEWBOT
+    jmp noCells
+asNext, idx asI
+    lac asN
+    sub [1]
+    dac asN
+    jmp asCopy
+asBad, lio asOut
+    jsp IRALST
+    jmp i asRtn
+asDone, idx asRtn
+    lac asOut
+    jmp i asRtn
+
+asRtn, 0
+asR, 0
+asN, 0
+asI, 0
+asQ, 0
+asT, 0
+asKeep, 0
+endloc
+
+asOut, 0                    // the list being assembled
+
+// tryEs -- try decomposition list IO. Its pattern is matched against the
+// input and, on a match, its next reassembly rule is chosen by the counter,
+// the parts left in partS and partN for ASSMBL. The counter is the listing's
+// (L001510-001720), a number cell put after the pattern the first time it
+// matches, holding the rule last used; the rules come in turn, then from the
+// first again. Out of cells, it goes to noCells.
+// Does not skip when the pattern does not match. Skips with the reassembly
+// rule's list in AC, or 0 when there is no rule.
+// AC is the result, IO is not preserved; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local teRtn, teEs, tePc, teCc, teC, teUse, teR, teNew, teFind, teWalk, \
+    teWrap, teGot, teFail
+tryEs, dac teRtn
+    dio teEs
+    jsp itemNext
+    jmp i teRtn
+    dio tePc
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i teRtn
+    lio ixLo
+    jsp patLoad
+    jmp i teRtn
+    jsp ymatch
+    jmp i teRtn
+    idx teRtn               // matched
+    lio tePc
+    jsp itemNext
+    jmp teNew
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp teNew
+    lac ixHi
+    SKIP_NEXT_IF_AC_ZERO
+    jmp teNew
+    lac ixCell
+    dac teCc
+    lac ixLo
+    dac teC
+    jmp teFind
+teNew, dzm datHi
+    dzm datLo
+    dzm datFlg
+    lio tePc
+    jsp NEWTOP
+    jmp noCells
+    dac teCc
+    dzm teC
+teFind, dzm teUse           // the rule after the one last used
+    lac teCc
+    dac teR
+teWalk, lio teR
+    jsp itemNext
+    jmp teWrap
+    dio teR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp teWalk
+    lac teUse
+    SKIP_NEXT_IF_DIFFERENT teC
+    jmp teGot
+    idx teUse
+    jmp teWalk
+teWrap, lac teC
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp teFail              // no rule at all
+    dzm teC                 // past the last, so the first again
+    jmp teFind
+teGot, lac ixLo
+    dac teR
+    dzm datHi
+    lac teUse
+    add [1]
+    dac datLo
+    dzm datFlg
+    lio teCc
+    jsp SUBST
+    lac teR
+    jmp i teRtn
+teFail, cla
+    jmp i teRtn
+
+teRtn, 0
+teEs, 0
+tePc, 0
+teCc, 0
+teC, 0
+teUse, 0
+teR, 0
+endloc
+
+// txtprt -- TXTPRT (S011560), print the words of list IO with one blank
+// between, in lines of at most ROOM characters, broken at the last blank; a
+// word longer than a line is cut at the line's end. Every line ends with
+// newline. A reply's numbers and sublists do not print.
+// txtAll does the same for CHANGE, where every item of list IO prints, a
+// number as its six characters (unpack), a sublist as ( and ) around its
+// items. txtRun is as txtAll, from reader IO, the items up to the next
+// sublist of that list, or its end. txtOne is as txtAll, from reader IO, the
+// next item only.
+// Returns in IO the reader at the last item printed.
+// IO is the result, AC is not preserved; datHi and datLo are changed.
+// Called via jsp.
+local tpRtn, tpR, tpNx, tpCol, tpI, tpT, tpMode, tpDep, tpCnt, tpGo, \
+    tpLoop, tpOneChk, tpCount, tpTake, tpClose, tpTok, tpAtom, tpUnpk, \
+    tpWord, tpBlank, tpLong, tpChars, tpCh, tpPut, tpEnd
+txtprt, dac tpRtn
+    cla
+    jmp tpGo
+txtAll, dac tpRtn
+    law TPALL
+    jmp tpGo
+txtRun, dac tpRtn
+    law TPRUN
+    jmp tpGo
+txtOne, dac tpRtn
+    law TPONE
+tpGo, dac tpMode
+    dio tpR
+    dzm tpCol
+    dzm tpDep
+    dzm tpCnt
+tpLoop, lio tpR
+    jsp itemNext
+    jmp tpClose
+    dio tpNx
+    lac tpDep               // inside a sublist every item prints
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tpTake
+    lac tpMode              // at the top, where txtRun and txtOne stop
+    and [TPONEBIT]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tpOneChk
+    lac tpMode
+    and [TPRUNBIT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpCount
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tpEnd               // the reader stays before the sublist
+tpCount, idx tpCnt
+tpTake, lac tpNx
+    dac tpR
+    lac ixFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpAtom
+    lac tpMode
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpLoop              // a reply prints no sublist
+    lac tpDep
+    SKIP_NEXT_IF_DIFFERENT [DEPTHMAX]
+    jmp tpLoop              // deeper than rdList reads, so not printed
+    add [tpStk:1]
+    dac tpT
+    lac tpR
+    dac i tpT
+    idx tpDep
+    lac ixLo
+    dac tpR
+    law BCDLPAR
+    jmp tpTok
+tpOneChk, lac tpCnt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpCount
+    jmp tpEnd
+tpClose, lac tpDep          // at a list's end the enclosing list goes on
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpEnd
+    sub [1]
+    dac tpDep
+    add [tpStk:1]
+    dac tpT
+    lac i tpT
+    dac tpR
+    law BCDRPAR
+tpTok, dac i [tpBuf:1]      // ( or ), a word of one character
+    law 1
+    dac tpLen
+    jmp tpWord
+tpAtom, lac ixHi
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tpUnpk
+    lac tpMode
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpLoop              // a reply prints no number
+tpUnpk, lio ixCell
+    jsp unpack
+tpWord, lac tpLen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpLoop
+    lac [ROOM]
+    sub tpLen
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp tpLong
+    lac tpCol
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpChars
+    add tpLen
+    add [1]
+    dac tpT
+    lac [ROOM]
+    sub tpT
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp tpBlank
+    jsp newline             // it does not fit after a blank
+    dzm tpCol
+    jmp tpChars
+tpBlank, lio [040]
+    jsp putc
+    idx tpCol
+    jmp tpChars
+tpLong, lac tpCol
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpChars
+    jsp newline
+    dzm tpCol
+tpChars, dzm tpI
+tpCh, lac tpI
+    SKIP_NEXT_IF_DIFFERENT tpLen
+    jmp tpLoop
+    lac tpCol
+    SKIP_NEXT_IF_SAME [ROOM]
+    jmp tpPut
+    jsp newline             // a long word goes on on the next line
+    dzm tpCol
+tpPut, lac tpI
+    add [tpBuf:1]
+    dac tpT
+    lio i tpT
+    jsp toAscii
+    lia
+    jsp putc
+    idx tpCol
+    idx tpI
+    jmp tpCh
+tpEnd, jsp newline
+    lio tpR
+    jmp i tpRtn
+
+tpRtn, 0
+tpR, 0
+tpNx, 0
+tpCol, 0
+tpI, 0
+tpT, 0
+tpMode, 0                   // 0 for a reply, else TPALL, TPRUN or TPONE
+tpDep, 0                    // sublists open, their readers in tpStk
+tpCnt, 0                    // top-level items printed
+endloc
+
+// unpack -- put the characters of the word whose first cell is IO into
+// tpBuf, one BCD code a word, blanks left out, and their number into tpLen.
+// Does not preserve AC or IO; datHi and datLo are changed.
+// Called via jsp.
+local upX, upC, upF, upCell, u3X, u3W, u3K, u3C, u3T, u3L, u3N, up3
+unpack, dap upX
+    dio upC
+    dzm tpLen
+upCell, lio upC
+    jsp rdCell
+    and [FCONT]
+    dac upF
+    lac datHi
+    dac u3W
+    jsp up3
+    lac datLo
+    dac u3W
+    jsp up3
+    lac upF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp upX
+    lio upC
+    jsp cellPtrs
+    lac i cp1
+    dac upC
+    jmp upCell
+upX, jmp .
+
+// up3 -- add the three characters of u3W, the first in its high bits, to
+// tpBuf, blanks left out.
+// Does not preserve AC or IO.
+// Called via jsp, from unpack only.
+up3, dap u3X
+    law i 3
+    dac u3K
+u3L, lac u3W
+    ral 6s
+    dac u3W
+    and [077]
+    SKIP_NEXT_IF_DIFFERENT [BCDBLANK]
+    jmp u3N
+    dac u3C
+    lac tpLen
+    add [tpBuf:1]
+    dac u3T
+    lac u3C
+    dac i u3T
+    idx tpLen
+u3N, isp u3K
+    jmp u3L
+u3X, jmp .
+
+upC, 0
+upF, 0
+u3W, 0
+u3K, 0
+u3C, 0
+u3T, 0
+endloc
+
+tpLen, 0                    // the characters in tpBuf
+
+// The conversation's state, set by the program when a script is read.
+inList, 0                   // INPUT
+myList, 0                   // the memory queue, each cell a reply, a sublist
+limit, 0                    // LIMIT, 1 to 4

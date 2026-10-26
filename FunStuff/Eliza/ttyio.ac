@@ -1,0 +1,115 @@
+// ttyio.ac -- characters out and in on the typewriter, a character typed by
+// tyo and a key read by tyi, converted between ASCII and FIO-DEC concise code
+// by the tables in ttytab.ac. dcsio.ac's putc and getLine call these when
+// useTty is set.
+//
+// Typed keys carry their case shift codes, and typing and tyo share the
+// typewriter's one case, so ttShift follows both the shifts typed here and
+// those read.
+//
+// Needs eliza.ah and AIDS/skipmacros.ah, and ttytab.ac in bank 1. Every
+// routine is called via jsp with extend mode on, from bank 0. Include the
+// file where it is not executed, since its data words follow its code.
+
+local tpX, tpE, tpLower, tpType, tpCr, tgX, tgC, tgWait, tgUp, tgLook, \
+    tgLower, tgUpper
+
+// ttyPut -- type the ASCII character in IO, with a case shift first when it
+// needs the case the typewriter is not in; LF is the carriage return. A
+// character the typewriter lacks ($), a control character and lower case are
+// not typed.
+// Does not preserve AC or IO.
+// Called via jsp.
+ttyPut, dap tpX
+    lai
+    SKIP_NEXT_IF_DIFFERENT [012]
+    jmp tpCr
+    sub [040]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp tpX
+    dac tpE
+    sub [0100]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp tpX
+    lac tpE
+    add [ttyOut:1]
+    dac tpE
+    lac i tpE
+    dac tpE                 // the code and the case it needs
+    and [TTNONE]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tpX
+    lac tpE
+    and [TTUPPER]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpLower
+    lac ttShift
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp tpType
+    lio [TTUC]
+    tyo i
+    law 1
+    dac ttShift
+    jmp tpType
+tpLower, lac tpE
+    and [TTLOWER]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpType              // no case, the blank
+    lac ttShift
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tpType
+    lio [TTLC]
+    tyo i
+    dzm ttShift
+tpType, lac tpE
+    and [077]
+    lia
+    tyo i
+tpX, jmp .
+tpCr, lio [TTCR]
+    tyo i
+    jmp tpX
+
+// ttyGet -- wait for a key and read it. The typewriter types the key itself,
+// so nothing is echoed.
+// Returns in IO the ASCII character it reads as (ttyIn), 0 for a case shift
+// or a key with none.
+// IO is the result, AC is not preserved.
+// Called via jsp.
+ttyGet, dap tgX
+tgWait, szf 1 i
+    jmp tgWait
+    cli
+    tyi
+    clf 1                   // tyi leaves the flag set
+    lai
+    and [077]
+    dac tgC
+    SKIP_NEXT_IF_DIFFERENT [TTLC]
+    jmp tgLower
+    SKIP_NEXT_IF_DIFFERENT [TTUC]
+    jmp tgUpper
+    lac ttShift             // the case unknown reads as lower
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp tgUp
+    lac tgC
+    jmp tgLook
+tgUp, lac tgC
+    add [0100]
+tgLook, add [ttyIn:1]
+    dac tgC
+    lio i tgC
+tgX, jmp .
+tgLower, dzm ttShift
+    cli
+    jmp tgX
+tgUpper, law 1
+    dac ttShift
+    cli
+    jmp tgX
+
+tpE, 0
+tgC, 0
+endloc
+
+ttShift, 0                  // the typewriter's case, 0 lower, 1 upper or TTUNKNOWN

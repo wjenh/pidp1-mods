@@ -1,0 +1,271 @@
+ELIZA 1965
+// Joseph Weizenbaum's ELIZA from the 1965 listing with the 1966 paper's additions
+// It uses port 2030 in DCS mode, ss6 off.
+// Each connection restarts the conversation.
+// It asks WHICH SCRIPT DO YOU WISH TO PLAY, reads the script, prints its greeting,
+// then replies to each line.
+// An empty line ends the conversation and closes the connection.
+// With sense switch 6 on, the conversation is on the typewriter instead
+// and an empty line goes back to the initial script question.
+// An input whose first word is + enters CHANGE, the script editor.
+// One whose first word is * adds a rule.
+// The empty line first asks WHAT IS TO BE THE NUMBER OF THE NEW SCRIPT and writes
+// the script back to the Type 550 Microtape on drive 1.
+// DIR at the script question lists the tape.
+// RUNNING.md describes how to build, run and use it.
+//
+// The list kernel follows SLIP, Copyright (c) MIT.
+// Script 200 is (c) 1966 Association for Computing Machinery.
+//
+// 26-Oct-2026 Claude/wje initial version
+
+#include <AIDS/skipmacros.ah>
+#include <DCS/dcs2defs.ah>
+#include <MICROTAPE/type550defs.ah>
+#include "eliza.ah"
+
+100/
+go, lem
+    eem                     // extend mode on throughout
+    cli
+    lio [scbrst]
+    scb
+mainLoop, szs 60            // sense switch 6 on means the typewriter
+    jmp ttyConv
+    cli                     // listen, if the channel is not open yet
+    rcs
+    lai
+    and [dsfopn]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp waitConn
+    lio [scbset elCtl]
+    scb
+waitConn, szs 60
+    jmp ttyConv
+    cli
+    rcs
+    lai
+    and [dsfcon]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp waitConn
+    cli
+    ssb
+    dzm useTty
+    dzm ioErr
+    dzm lnCr
+    jmp cvAsk
+
+ttyConv, law 1              // a conversation on the typewriter, whose case
+    dac useTty              // another program may have left either way
+    law TTUNKNOWN
+    dac ttShift
+    dzm lnCr
+
+cvAsk, lio [txWhich]        // which script
+    jsp putAsc
+    jsp newline
+    jsp newline
+    jsp getLine
+    jmp hangUp
+    jsp newline
+    jsp newline
+    lac lnLen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp hangUp              // an empty answer
+    jsp i [tryDir:*]        // DIR lists the tape's scripts
+    jmp cvAsk
+    jsp lineNum
+    jmp cvAsk
+    dac cvNum
+    lio cvNum
+    jsp rdScript
+    jmp cvNoScript
+    dzm wholeKw             // script 200 finds keywords by the whole word,
+    lac scBase              // as does a tape script descended from it
+    SKIP_NEXT_IF_DIFFERENT [0d200]
+    idx wholeKw
+    jsp LIST
+    jmp noCells
+    dac inList
+    jsp LIST
+    jmp noCells
+    dac myList
+    law 1
+    dac limit
+    lio greeting
+    jsp txtprt
+    jsp newline
+
+cvLoop, jsp getLine         // the conversation
+    jmp hangUp
+    jsp newline
+    jsp newline
+    jsp tread
+    lac limit               // LIMIT steps before the empty input is seen
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT [5]
+    law 1
+    dac limit
+    lio inList
+    jsp LISTMT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cvEnd               // an empty input ends the conversation
+    lio inList              // a first word + is CHANGE, * a new rule
+    jsp TOP
+    jmp cvResp              // not reached, since INPUT is not empty
+    lac datLo
+    SKIP_NEXT_IF_SAME [BLANKLO]
+    jmp cvResp
+    lac datHi
+    SKIP_NEXT_IF_DIFFERENT [PLUSHI]
+    jmp cvChange
+    SKIP_NEXT_IF_DIFFERENT [STARHI]
+    jmp cvNewRule
+cvResp, jsp respond
+    jsp newline
+    jmp cvLoop
+cvChange, jsp i [change:1]
+    jmp cvLoop
+cvNewRule, jsp i [newRule:1]
+    jmp cvLoop
+
+cvEnd, jsp i [endPla:*]     // ENDPLA writes the script back
+    jmp hangUp
+
+cvNoScript, SKIP_NEXT_IF_SAME [RDNOSCR]
+    jmp noCells
+    jmp cvAsk
+
+// noCells -- the cells ran out, so print LIST SPACE EXHAUSTED and end the
+// conversation. hangUp ends it without a message. Both are reached by jmp
+// and go back to mainLoop.
+noCells, lio [txCells]
+    jsp putAsc
+    jsp newline
+hangUp, lac useTty           // the typewriter has no connection to close,
+    SKIP_NEXT_IF_AC_ZERO    // so back to the switch and the script question
+    jmp mainLoop
+    lio [scbbnd]
+    scb
+    jmp mainLoop
+
+// lineNum -- read the decimal number typed in lnBuf, at most five digits,
+// with the blanks around them ignored.
+// Skips with the number in AC; does not skip when the line is not a number.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+local lnRtn, lnP, lnE, lnN, lnD, lnC, lnT, lnLoop, lnDone
+lineNum, dac lnRtn
+    dzm lnN
+    dzm lnD
+    lac [lnBuf:1]
+    dac lnP
+    add lnLen
+    dac lnE
+lnLoop, lac lnP
+    SKIP_NEXT_IF_DIFFERENT lnE
+    jmp lnDone
+    lio i lnP
+    idx lnP
+    lai
+    SKIP_NEXT_IF_DIFFERENT [040]
+    jmp lnLoop
+    sub ['0']
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp i lnRtn
+    dac lnC
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp i lnRtn
+    lac lnD
+    SKIP_NEXT_IF_DIFFERENT [5]
+    jmp i lnRtn
+    idx lnD
+    lac lnN
+    ral 1s
+    dac lnT
+    ral 2s
+    add lnT                 // ten times
+    add lnC
+    dac lnN
+    jmp lnLoop
+lnDone, lac lnD
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i lnRtn
+    idx lnRtn
+    lac lnN
+    jmp i lnRtn
+
+lnRtn, 0
+lnP, 0
+lnE, 0
+lnN, 0
+lnD, 0
+lnC, 0
+lnT, 0
+endloc
+
+#include "dcsio.ac"
+#include "ttyio.ac"
+#include <DCS/getach.ac>
+#include "engine.ac"
+#include "lists.ac"
+#include "bcd.ac"
+#include "hash.ac"
+#include "script.ac"
+
+constants
+
+// The setting of DCS2 channel 0, ascii mode with telnet, echo and server, on
+// port 2030.
+elCtl, dcftel dcfecho dcfsrv
+    0d2030
+
+txWhich, ascii "WHICH SCRIPT DO YOU WISH TO PLAY"
+txCells, ascii "LIST SPACE EXHAUSTED"
+
+cvNum, 0                    // the script chosen
+
+// The engine's arrays.
+bank 1
+lnBuf,                      // the line typed, one ASCII character a word
+    table LINEMAX
+twBuf,                      // tread's word going, one BCD code a word
+    table LINEMAX
+tpBuf,                      // txtprt's word, one BCD code a word
+    table WMAX
+tpStk,                      // txtAll's readers in the lists it is inside
+    table DEPTHMAX
+wFirst,                     // each input word's first cell
+    table WMAX
+wDl,                        // and its DLIST, 0 for none
+    table WMAX
+pKind,                      // each pattern element's kind, KWORD, KNUM or KLIST
+    table PMAX
+pVal,                       // its first cell, number or sublist
+    table PMAX
+partS,                      // the first word of its matched part
+    table PMAX
+partN,                      // and the part's words
+    table PMAX
+ksRule,                     // the keystack, each entry's rule
+    table KSSIZE
+ksPos,                      // and the reader its decompositions start after
+    table KSSIZE
+
+#include "ttytab.ac"
+#include "change.ac"
+
+constants
+
+// Script write-back, its code in bank 012. The slot's buffer, TBUF, is banks
+// 010 and 011.
+bank 012
+#include "tape.ac"
+#include "writeback.ac"
+
+constants
+
+#include "scripts.ac"
+
+start go

@@ -1,0 +1,631 @@
+// script.ac -- the script reader. It reads a script's packed text into lists
+// by SLIP's LISTRD word rules, and sorts the lists as ELIZA 1965 sorts them,
+// into the keyword buckets, NONE and MEMORY.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah, lists.ac, bcd.ac (packWord, toBcd),
+// hash.ac and scripts.ac, writeback.ac's tapeFind, and for rdLine lnBuf and
+// lnLen (dcsio.ac). Every routine is called via jsp with extend mode on, and
+// returns with it on. Include the file where it is not executed, since its
+// tables and data words follow its code.
+
+local rsRtn, rsNum, rsP, rsL, rsF, rsK, rsT, rsFind, rsGot, rsKeys, rsNext, \
+    rsNotNone, rsMem, rsMemC, rsMemR, rsMem4, rsKey, rsEmpty, rsDone, \
+    rsUnknown, rsNoCells, rsBad, rsFail, rsTape, rsBase, \
+    snRtn, snC, snHave, snLine, snOpen, snClose, snGot, snIo, scP, scPh, \
+    scW, scLeft, scLine, scI, rnRtn, rnBad, \
+    rlRtn, rlC, rlT, rlT2, rlK, rlCl, rlD, rlCur, rlNew, rlKind, rlLen, \
+    rlNum, rlNeg, rlNNeg, rlLoop, rlIn, rlTop, rlEnd, rlLet, rlAdd, rlDig, \
+    rlDig2, rlBlank, rlOne, rlMinus, rlOpen, rlOpCmp, rlSub, rlClose, \
+    rlDone, rlBad, rlNoCells, rlActs, rlStk, rlBuf, dlWord, \
+    rlPush, rpX, rlFlush, rfX, rfNum, rfPos
+
+// rdScript -- read script number IO (decimal, as typed at WHICH SCRIPT DO YOU
+// WISH TO PLAY) into the lists, from INITAS on. The first list is the
+// greeting, kept in greeting. Then, list by list, to an empty list or the end
+// of the text, (NONE ...) goes to the top of bucket NBUCKETS; (MEMORY kw r1 r2
+// r3 r4) sets memKwHi and memKwLo to kw's first cell and myTran to the four
+// rules; any other list goes to the bottom of bucket HASH(its first cell, 5).
+// Each bucket holds its rule lists as sublists. A number not built in is
+// looked for on the microtape (tapeFind). scBase is set to the built-in
+// script the one read descends from.
+// Skips with 0 in AC when the script is read. Does not skip, with the lists
+// part built, when AC holds RDNOSCR (no such script), RDNOCELL (out of cells)
+// or RDBAD (malformed).
+// AC is the result, IO is not preserved.
+// Called via jsp.
+rdScript, dac rsRtn
+    dio rsNum
+    lac [scrTab:*]            // in whatever bank scripts.ac puts it
+    dac rsP
+rsFind, lac i rsP
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rsTape
+    SKIP_NEXT_IF_DIFFERENT rsNum
+    jmp rsGot
+    lac rsP
+    add [3]
+    dac rsP
+    jmp rsFind
+rsGot, idx rsP
+    lac i rsP
+    dac scP
+    idx rsP
+    lac i rsP
+    dac scLeft
+    lac rsNum
+rsBase, dac scBase
+    dzm scPh
+    jsp INITAS
+    law keyTab
+    dac rsT
+    law i NBUCKETS+1
+    dac rsK
+rsKeys, jsp LIST
+    jmp rsNoCells
+    dac i rsT
+    idx rsT
+    isp rsK
+    jmp rsKeys
+    dzm memKwHi
+    dzm memKwLo
+    dzm myTran
+    dzm myTran+1
+    dzm myTran+2
+    dzm myTran+3
+    dzm greeting
+    jsp rdList
+    jmp rsFail
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rsBad               // no greeting
+    dac greeting
+rsNext, jsp rdList
+    jmp rsFail
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rsDone              // the end of the text
+    dac rsL
+    lio rsL
+    jsp TOP
+    jmp rsEmpty
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rsBad               // a rule must start with a word or a number
+    lac datHi
+    SKIP_NEXT_IF_SAME [NONEHI]
+    jmp rsNotNone
+    lac datLo
+    SKIP_NEXT_IF_SAME [NONELO]
+    jmp rsNotNone
+    dzm datHi
+    lac rsL
+    dac datLo
+    lac [FSUB]
+    dac datFlg
+    lio keyTab+NBUCKETS
+    jsp NEWTOP
+    jmp rsNoCells
+    jmp rsNext
+rsNotNone, lac datHi
+    SKIP_NEXT_IF_SAME [MEMORYHI]
+    jmp rsKey
+    lac datLo
+    SKIP_NEXT_IF_SAME [MEMORYLO]
+    jmp rsKey
+rsMem, lio rsL
+    jsp POPTOP              // MEMORY itself
+    jmp rsBad
+    lio rsL
+    jsp POPTOP              // the keyword
+    jmp rsBad
+    dac rsF
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rsBad
+    lac datHi
+    dac memKwHi
+    lac datLo
+    dac memKwLo
+rsMemC, lac rsF             // a keyword's later cells are dropped
+    and [FCONT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rsMemR
+    lio rsL
+    jsp POPTOP
+    jmp rsBad
+    dac rsF
+    jmp rsMemC
+rsMemR, law myTran
+    dac rsT
+    law i 4
+    dac rsK
+rsMem4, lio rsL
+    jsp POPTOP
+    jmp rsBad
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rsBad
+    lac datLo
+    dac i rsT
+    idx rsT
+    isp rsK
+    jmp rsMem4
+    lio rsL
+    jsp IRALST
+    jmp rsNext
+rsKey, lio [5]              // TOP left the first cell in datHi, datLo
+    jsp HASH
+    add [keyTab]
+    dac rsT
+    lio i rsT
+    dzm datHi
+    lac rsL
+    dac datLo
+    lac [FSUB]
+    dac datFlg
+    jsp NEWBOT
+    jmp rsNoCells
+    jmp rsNext
+rsEmpty, lio rsL
+    jsp IRALST
+rsDone, idx rsRtn
+    cla
+    jmp i rsRtn
+rsTape, lio rsNum           // not built in, so the microtape's, read into TBUF
+    jsp i [tapeFind:*]
+    jmp rsUnknown
+    dac scLeft
+    lac [TBUF]
+    dac scP
+    lai                     // the built-in script it descends from
+    jmp rsBase
+rsUnknown, law RDNOSCR
+    jmp i rsRtn
+rsNoCells, law RDNOCELL
+    jmp i rsRtn
+rsBad, law RDBAD
+rsFail, jmp i rsRtn
+
+// scNext -- return the next character of the script being read. scP is the
+// full address of its next word, scPh the characters left in scW, scLeft
+// those left in the text. With scLine set, it is the next of the line rdLine
+// reads, and scI counts the characters given so far.
+// Skips with the BCD code in AC; does not skip at the end of the text.
+// AC is the result, IO is preserved.
+// Called via jsp.
+scNext, dac snRtn
+    lac scLeft
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i snRtn
+    sub [1]
+    dac scLeft
+    lac scLine
+    SKIP_NEXT_IF_AC_ZERO
+    jmp snLine
+    lac scPh
+    SKIP_NEXT_IF_AC_ZERO
+    jmp snHave
+    lac i scP
+    dac scW
+    idx scP
+    law 3
+snHave, sub [1]
+    dac scPh
+    lac scW
+    ral 6s                  // the next character to the low bits
+    dac scW
+    and [077]
+    dac snC
+    idx snRtn
+    lac snC
+    jmp i snRtn
+snLine, dio snIo            // the line in lnBuf, a ( before it and a ) after
+    idx scI
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp snOpen
+    lac scLeft
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp snClose
+    lac scI
+    add [lnBuf:1]
+    sub [2]                 // the (scI-1)th character typed
+    dac snC
+    lio i snC
+    jsp toBcd
+    jmp snGot
+snOpen, law BCDLPAR
+    jmp snGot
+snClose, law BCDRPAR
+snGot, dac snC
+    lio snIo
+    idx snRtn
+    lac snC
+    jmp i snRtn
+
+// rdLine -- read the line in lnBuf (lnLen characters) as one list, as if it
+// were typed inside ( ), by rdList's rules. A malformed line's list is
+// returned to the free list.
+// Skips with the list's header in AC; does not skip, with RDNOCELL or RDBAD
+// in AC.
+// AC is the result, IO is not preserved; datHi, datLo and datFlg are changed.
+// Called via jsp.
+rdLine, dac rnRtn
+    law 1
+    dac scLine
+    lac lnLen
+    add [2]
+    dac scLeft
+    dzm scI
+    jsp rdList
+    jmp rnBad
+    dzm scLine
+    idx rnRtn
+    lac rlStk
+    jmp i rnRtn
+rnBad, dzm scLine
+    SKIP_NEXT_IF_SAME [RDBAD]
+    jmp i rnRtn             // out of cells
+    lio rlStk               // the line's ( was read first, so its list is there
+    jsp IRALST
+    law RDBAD
+    jmp i rnRtn
+
+// rdList -- read the next top-level list of the script, by LISTRD's word
+// rules (SLIP-1965.mad, LISTRD mode, with the character classes of
+// letter.mad). Outside every list only ( counts. Inside one, a word is
+// letters, apostrophes, and digits once it has begun; a number is digits
+// with no word going, its datum high word 0; a blank ends either; = + $ * / ,
+// and . end it and are atoms by themselves; - ends it and is the sign of a
+// number right after, never an atom; ( opens a sublist, or right after the
+// word DLIST the current list's DLIST; ) closes.
+// Skips with the list's header in AC, or 0 at the end of the text; does not
+// skip, with RDNOCELL or RDBAD in AC.
+// AC is the result, IO is not preserved; datHi, datLo and datFlg are changed.
+// Called via jsp.
+rdList, dac rlRtn
+    dzm rlD
+    dzm rlKind
+    dzm rlLen
+    dzm rlNeg
+rlLoop, jsp scNext
+    jmp rlEnd
+    dac rlC
+    add [chClass]
+    dac rlT
+    lac i rlT
+    dac rlCl
+    lac rlD
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rlIn
+    lac rlCl
+    SKIP_NEXT_IF_DIFFERENT [C_LPAR]
+    jmp rlTop
+    SKIP_NEXT_IF_DIFFERENT [C_RPAR]
+    jmp rlBad               // a ) outside every list
+    jmp rlLoop
+rlIn, lac rlCl
+    add [rlActs-1]
+    dac rlT
+    lac i rlT
+    dac rlT
+    jmp i rlT
+
+rlTop, jsp LIST
+    jmp rlNoCells
+    dac rlCur
+    jsp rlPush
+    jmp rlLoop
+
+rlEnd, lac rlD
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rlBad               // a list still open
+    idx rlRtn
+    cla
+    jmp i rlRtn
+
+rlLet, lac rlKind
+    SKIP_NEXT_IF_DIFFERENT [KNUM]
+    jsp rlFlush             // a number ends where a word begins
+rlAdd, lac rlLen
+    SKIP_NEXT_IF_DIFFERENT [WORDMAX]
+    jmp rlBad
+    add [rlBuf]
+    dac rlT
+    lac rlC
+    dac i rlT
+    idx rlLen
+    law KWORD
+    dac rlKind
+    jmp rlLoop
+
+rlDig, lac rlKind
+    SKIP_NEXT_IF_DIFFERENT [KWORD]
+    jmp rlAdd               // a digit in a word
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rlDig2              // a number going on
+    dzm rlNum
+    lac rlNeg
+    dac rlNNeg
+    law KNUM
+    dac rlKind
+rlDig2, lac rlNum
+    ral 1s
+    dac rlT
+    ral 2s
+    add rlT                 // ten times
+    add rlC                 // a digit's BCD code is its value
+    dac rlNum
+    jmp rlLoop
+
+rlBlank, jsp rlFlush
+    jmp rlLoop
+
+rlOne, jsp rlFlush
+    lac rlC
+    dac rlBuf
+    law 1
+    dac rlLen
+    law KWORD
+    dac rlKind
+    jsp rlFlush
+    jmp rlLoop
+
+rlMinus, jsp rlFlush
+    law 1
+    dac rlNeg
+    jmp rlLoop
+
+rlOpen, lac rlKind
+    SKIP_NEXT_IF_SAME [KWORD]
+    jmp rlSub
+    lac rlLen
+    SKIP_NEXT_IF_SAME [5]
+    jmp rlSub
+    law rlBuf
+    dac rlT
+    law dlWord
+    dac rlT2
+    law i 5
+    dac rlK
+rlOpCmp, lac i rlT
+    SKIP_NEXT_IF_SAME i rlT2
+    jmp rlSub
+    idx rlT
+    idx rlT2
+    isp rlK
+    jmp rlOpCmp
+    dzm rlKind              // DLIST( makes the list the current list's DLIST
+    dzm rlLen
+    dzm rlNeg
+    jsp LIST
+    jmp rlNoCells
+    dac rlNew
+    dac datLo
+    lio rlCur
+    jsp MAKEDL
+    lac rlNew
+    dac rlCur
+    jsp rlPush
+    jmp rlLoop
+rlSub, jsp rlFlush
+    jsp LIST
+    jmp rlNoCells
+    dac rlNew
+    dac datLo
+    dzm datHi
+    lac [FSUB]
+    dac datFlg
+    lio rlCur
+    jsp NEWBOT
+    jmp rlNoCells
+    lac rlNew
+    dac rlCur
+    jsp rlPush
+    jmp rlLoop
+
+rlClose, jsp rlFlush
+    lac rlD
+    sub [1]
+    dac rlD
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rlDone
+    add [rlStk-1]
+    dac rlT
+    lac i rlT
+    dac rlCur
+    jmp rlLoop
+rlDone, idx rlRtn
+    lac rlStk
+    jmp i rlRtn
+
+rlBad, law RDBAD
+    jmp i rlRtn
+rlNoCells, law RDNOCELL
+    jmp i rlRtn
+
+// rlPush -- push list rlCur on the stack of open lists. Too deep, it leaves
+// rdList with RDBAD.
+// AC is not preserved, IO is preserved.
+// Called via jsp, from rdList only.
+rlPush, dap rpX
+    lac rlD
+    SKIP_NEXT_IF_DIFFERENT [DEPTHMAX]
+    jmp rlBad
+    add [rlStk]
+    dac rlT
+    lac rlCur
+    dac i rlT
+    idx rlD
+rpX, jmp .
+
+// rlFlush -- put the word or number going, if any, at the bottom of list
+// rlCur; the sign is spent either way. Out of cells, it leaves rdList with
+// RDNOCELL.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp, from rdList only.
+rlFlush, dap rfX
+    dzm rlNeg
+    lac rlKind
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rfX
+    dzm rlKind
+    SKIP_NEXT_IF_DIFFERENT [KNUM]
+    jmp rfNum
+    law rlBuf
+    dac pwSrc
+    lac rlLen
+    dac pwLen
+    dzm rlLen
+    lio rlCur
+    jsp packWord
+    jmp rlNoCells
+    jmp rfX
+rfNum, dzm datHi
+    lac rlNum
+    lio rlNNeg
+    SKIP_NEXT_IF_IO_IS_ZERO
+    cma                     // a minus sign before it
+    dac datLo
+    dzm datFlg
+    lio rlCur
+    jsp NEWBOT
+    jmp rlNoCells
+rfX, jmp .
+
+// What each character class does inside a list, by class (chClass).
+rlActs,
+    rlOne                   // 1 =
+    rlMinus                 // 2 -
+    rlOne                   // 3 +
+    rlLet                   // 4 letter
+    rlOne                   // 5 .
+    rlClose                 // 6 )
+    rlOne                   // 7 $
+    rlOne                   // 8 *
+    rlBlank                 // 9 blank
+    rlOpen                  // 10 (
+    rlOne                   // 11 /
+    rlDig                   // 12 digit
+    rlOne                   // 13 ,
+    rlLet                   // 14 '
+
+// letter.mad's class of each BCD code.
+chClass,
+    C_DIGIT                 // 00 0
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT
+    C_DIGIT                 // 11 9
+    C_LETTER
+    C_EQ                    // 13 =
+    C_APOS                  // 14 '
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_PLUS                  // 20 +
+    C_LETTER                // 21 A
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER                // 31 I
+    C_LETTER
+    C_PERIOD                // 33 .
+    C_RPAR                  // 34 )
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_MINUS                 // 40 -
+    C_LETTER                // 41 J
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER                // 51 R
+    C_LETTER
+    C_DOLLAR                // 53 $
+    C_STAR                  // 54 *
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_BLANK                 // 60 blank
+    C_SLASH                 // 61 /
+    C_LETTER                // 62 S
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER
+    C_LETTER                // 71 Z
+    C_LETTER
+    C_COMMA                 // 73 ,
+    C_LPAR                  // 74 (
+    C_LETTER
+    C_LETTER
+    C_LETTER
+
+// DLIST, the word whose ( opens a DLIST.
+dlWord,
+    024                     // D
+    043                     // L
+    031                     // I
+    062                     // S
+    063                     // T
+
+rsRtn, 0
+rsNum, 0
+rsP, 0
+rsL, 0
+rsF, 0
+rsK, 0
+rsT, 0
+snRtn, 0
+snC, 0
+scP, 0
+scPh, 0
+scW, 0
+scLeft, 0
+scLine, 0                   // not 0 while scNext reads lnBuf for rdLine
+scI, 0
+snIo, 0
+rnRtn, 0
+rlRtn, 0
+rlC, 0
+rlT, 0
+rlT2, 0
+rlK, 0
+rlCl, 0
+rlD, 0
+rlCur, 0
+rlNew, 0
+rlKind, 0
+rlLen, 0
+rlNum, 0
+rlNeg, 0
+rlNNeg, 0
+rlStk,
+    table DEPTHMAX
+rlBuf,
+    table WORDMAX
+endloc
+
+// What rdScript built.
+keyTab,
+    table NBUCKETS+1        // the bucket lists; the last is NONE's
+memKwHi, 0                  // the memory keyword's first cell
+memKwLo, 0
+myTran,
+    table 4                 // the memory rules, the lists themselves
+greeting, 0
+scBase, 0                   // the built-in script the one read descends from

@@ -1,0 +1,144 @@
+#ifndef ELIZA_AH
+#define ELIZA_AH
+// Constants shared by the Eliza sources, for the list cells and their flags,
+// the characters, the script reader, the engine, the typewriter and the
+// microtape.
+
+// A cell is CELLSIZE words, the left link and flags, the right link, the
+// datum's high word and its low word. A link is a cell number, not an address; cell n is at
+// CELLBASE + CELLSIZE*n, a full address that the list routines use with
+// extend mode on. Only lists.ac knows the layout.
+#define CELLSIZE    4
+#define CELLBASE    020000          // bank 2, word 0
+#define CELLCOUNT   010000          // 4096, banks 2 to 5, every word
+
+// Offsets of a cell's words.
+#define CELLLEFT    0
+#define CELLRIGHT   1
+#define CELLHI      2
+#define CELLLO      3
+
+// The left-link word's high bits. FHEAD is the sign, so a reader's flags
+// test for the end of a list with one skip.
+#define FHEAD       0400000         // the cell is a list's header
+#define FSUB        0200000         // the datum is a sublist's header
+#define FCONT       0100000         // the word goes on in the next cell
+#define FLAGMASK    0700000
+#define LINKMASK    07777
+
+// 7094 BCD.
+#define BCDBLANK    060
+
+// The script reader (script.ac). The keyword buckets are the 1965 listing's
+// 32, with NONE's list after them.
+#define NBUCKETS    040
+#define RDNOSCR     1               // rdScript found no such script
+#define RDNOCELL    2               // out of cells
+#define RDBAD       3               // the script is malformed
+#define WORDMAX     0100            // characters in a script word
+#define DEPTHMAX    040             // lists open at once
+
+// The first cells of NONE and MEMORY, as rdScript compares them.
+#define NONEHI      0454645         // NON
+#define NONELO      0256060         // E and two blanks
+#define MEMORYHI    0442544         // MEM
+#define MEMORYLO    0465170         // ORY
+
+// What the reader has going, nothing (0), a word or a number.
+#define KWORD       1
+#define KNUM        2
+#define KLIST       3               // a sublist, in the engine's pattern elements
+
+// The character classes of letter.mad, as reconstructed for ELIZA on CTSS.
+#define C_EQ        1
+#define C_MINUS     2
+#define C_PLUS      3
+#define C_LETTER    4
+#define C_PERIOD    5
+#define C_RPAR      6
+#define C_DOLLAR    7
+#define C_STAR      010
+#define C_BLANK     011
+#define C_LPAR      012
+#define C_SLASH     013
+#define C_DIGIT     014
+#define C_COMMA     015
+#define C_APOS      016
+
+// The engine (engine.ac, dcsio.ac). An input word's DLIST is a cell after it
+// in INPUT, its high datum word DLMARK, which no word has (toBcd never gives
+// 077), and its low word the DLIST's header.
+#define DLMARK      0777777
+#define LINEMAX     0377            // the characters an input keeps
+#define WMAX        0400            // words in an input
+#define PMAX        040             // elements in a pattern
+#define ROOM        0110            // 72, a line as the 1965 printouts break it
+
+// The first cells of the one-cell words the engine looks for; the low word
+// of each is three blanks.
+#define BLANKLO     0606060
+#define EQHI        0136060         // =
+#define PERIODHI    0336060         // .
+#define COMMAHI     0736060         // ,
+#define BUTHI       0226463         // BUT
+#define STARHI      0546060         // *
+#define SLASHHI     0616060         // /
+#define PREHI       0475125         // PRE
+
+#define PLUSHI      0206060         // +
+
+// txtprt's walks (tpMode). TPALL prints numbers and sublists; TPRUN stops
+// before a sublist, TPONE after one item, each also TPALL.
+#define TPALL       1
+#define TPRUNBIT    2
+#define TPONEBIT    4
+#define TPRUN       3
+#define TPONE       5
+#define BCDLPAR     074             // (
+#define BCDRPAR     034             // )
+
+// NEWKEY's one cell.
+#define NEWKEYHI    0452566         // NEW
+#define NEWKEYLO    0422570         // KEY
+
+// The keystack (engine.ac) is ksRule and ksPos in bank 1, an entry's rule and
+// the reader its decompositions start after. The top grows down from KSMID
+// and the bottom up from it; the scan pushes at most one entry a word, and a
+// link pushes one only after a pop.
+#define KSSIZE      01002
+#define KSMID       0401
+#define LINKMAX     0100            // links in one reply, then a built-in message
+
+// What a reassembly rule is (raKind).
+#define RAREPLY     0
+#define RANEWKEY    1
+#define RALINK      2
+#define RAPRE       3
+
+// The typewriter (ttyio.ac, ttytab.ac). A ttyOut entry is a concise code
+// with the case it needs, or TTNONE; ttShift is 0 for lower case, 1 for upper
+// and TTUNKNOWN until a shift code has been typed or read.
+#define TTLOWER     0100
+#define TTUPPER     0200
+#define TTNONE      0400
+#define TTUNKNOWN   2
+#define TTLC        072             // the lower case shift code
+#define TTUC        074             // the upper case shift code
+#define TTCR        077             // the carriage return, which ends a line
+
+// Script write-back (tape.ac, writeback.ac), to the Type 550 Microtape on
+// drive 1. The directory is in block DIRBLK, NSLOTS entries of DIRENT words,
+// and slot k starts at block SLOT0 + SLOTBLKS*k. A slot is read and written through
+// TBUF, banks 010 and 011, a script's text TMAXCH characters at most.
+#define TBUF        0100000
+#define DIRBLK      1
+#define SLOT0       2
+#define SLOTBLKS    040             // tpFirst multiplies by it with a shift
+#define NSLOTS      021
+#define DIRENT      4
+#define SEEKTURNS   024             // a seek's reversals before it gives up
+#define TMAXCH      060000          // SLOTBLKS blocks, three characters a word
+#define WKMAX       DEPTHMAX        // lists wrText's walk is inside at once
+#define BCDMINUS    040             // -
+
+#endif

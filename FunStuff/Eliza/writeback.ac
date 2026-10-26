@@ -1,0 +1,824 @@
+// writeback.ac -- the 1965 listing's ENDPLA, which writes the script back at
+// the end of a conversation, and what reads it again. It asks WHAT IS TO BE
+// THE NUMBER OF THE NEW SCRIPT, walks the lists into packed BCD text as
+// LPRINT does, and writes the text to its tape slot. It also answers DIR at
+// the script question, and does the lookup rdScript makes for a number not
+// built in.
+//
+// The text is the script as LISTRD reads it, the greeting, (MEMORY kw r1 r2
+// r3 r4), every bucket's rules in order, NONE's last, then (). There is one
+// blank between atoms and between lists; a number is BCDIT's six digits; a
+// word's cells run together; a list's DLIST is written as DLIST( ... ) after
+// its items. Unlike ENDPLA, it writes the greeting and the DLISTs. It is
+// packed three characters a word, as scripts.ac holds the built-in scripts,
+// into TBUF, banks 010 and 011, the slot's blocks, so scNext reads it back as
+// it reads a built-in script.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah, tape.ac, lists.ac (SEQLR, LSTNAM),
+// script.ac (greeting, keyTab, memKwHi, memKwLo, myTran, scBase, scrTab),
+// dcsio.ac (getLine, lnBuf, lnLen), the program's lineNum, and change.ac's
+// farAsc, farNl and farPutc. The code is in bank 012, included there, with
+// extend mode on. endPla, tryDir and tapeFind are called via jsp i from bank
+// 0 and return through the caller's full address; the rest are called via
+// jsp from bank 012, an argument in IO, since jsp overwrites AC with the
+// return.
+// Each routine's data words follow its code.
+
+// endPla -- ENDPLA. It asks for the new script's number and writes the
+// script there. An empty answer writes nothing; a number not from 1 to 999,
+// or built in, asks again; a number on the tape is written over in its slot,
+// a new one takes the first free slot. A text too long for a slot, no tape, a
+// tape error or no free slot prints SCRIPT NOT WRITTEN.
+// Does not preserve AC or IO.
+// Called via jsp i from bank 0, returning through the caller's full address.
+local epRtn, epNum, epBlk, epEnt, epAsk, epFree, epGot, epNot, epNoW
+endPla, dac epRtn
+epAsk, lio [txNew:*]
+    jsp i [farAsc:0]
+    jsp i [farNl:0]
+    jsp i [farNl:0]
+    jsp i [getLine:0]
+    jmp i epRtn             // the connection is lost
+    jsp i [farNl:0]
+    jsp i [farNl:0]
+    lac i [lnLen:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i epRtn             // an empty answer
+    jsp i [lineNum:0]
+    jmp epAsk
+    dac epNum
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp epAsk
+    sub [0d1000]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp epAsk
+    lio epNum
+    jsp builtIn
+    jmp epAsk               // the image cannot be rewritten
+    jsp wrText
+    jmp epNoW               // the tape not yet selected
+    lio wcWds
+    jsp tpBlocks
+    dac epBlk
+    lio epBlk
+    jsp tpCkAll             // before the tape moves
+    jsp tpOpen
+    jsp tpDir
+    jmp epNot
+    lio epNum
+    jsp tpEntry
+    jmp epFree
+    jmp epGot
+epFree, cli
+    jsp tpEntry
+    jmp epNot
+epGot, dac epEnt
+    lio epBlk
+    jsp tpWrSlot
+    jmp epNot
+    lac epNum               // the entry, once the slot is written
+    dac i epEnt
+    idx epEnt
+    lac wcN
+    dac i epEnt
+    idx epEnt
+    lac wcWds
+    dac i epEnt
+    idx epEnt
+    lac i [scBase:0]
+    dac i epEnt
+    lac [dirBuf:*]
+    dac tpAddr
+    jsp tpSum
+    dac tpCks
+    lio [DIRBLK]
+    jsp tpWrBlk
+    jmp epNot
+    jsp tpStop
+    jmp i epRtn
+epNot, jsp tpStop
+epNoW, lio [txNotWr:*]
+    jsp i [farAsc:0]
+    jsp i [farNl:0]
+    jsp i [farNl:0]
+    jmp i epRtn
+
+epRtn, 0
+epNum, 0
+epBlk, 0
+epEnt, 0
+endloc
+
+// builtIn -- test whether script number IO is in the image (scrTab).
+// Does not skip when it is; skips when it is not.
+// AC is not preserved, IO is preserved.
+// Called via jsp.
+local biX, biN, biP, biLoop, biNot
+builtIn, dap biX
+    dio biN
+    lac [scrTab:*]
+    dac biP
+biLoop, lac i biP
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp biNot
+    SKIP_NEXT_IF_DIFFERENT biN
+    jmp biX
+    lac biP
+    add [3]
+    dac biP
+    jmp biLoop
+biNot, idx biX
+biX, jmp .
+
+biN, 0
+biP, 0
+endloc
+
+// wrText -- pack the script's text, as ENDPLA writes it, into TBUF on, wcN
+// characters in wcWds words, the last word filled with blanks and the rest of
+// its block with zeros.
+// Skips with the text made; does not skip when it is longer than a slot or
+// its lists nest deeper than WKMAX.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local wtX, wtB, wtR, wtK, wtT, wtMemR, wtMemN, wtKeys, wtBucket, wtRule, \
+    wtNextB, wtEnd, wtPad, wtZero, wtDone, wtOk
+wrText, dap wtX
+    lac [TBUF]
+    dac wcP
+    dzm wcN
+    dzm wcW
+    dzm wcIn
+    dzm wcOver
+    lio i [greeting:0]
+    jsp wkList
+    lac i [memKwHi:0]       // (MEMORY kw r1 r2 r3 r4), if the script has one
+    ior i [memKwLo:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wtKeys
+    jsp wcBlank
+    lio [BCDLPAR]
+    jsp wcPut
+    lio [wtMemTx:*]
+    jsp wcCodes
+    jsp wcBlank
+    lio i [memKwHi:0]
+    jsp wc3
+    lio i [memKwLo:0]
+    jsp wc3
+    lac [myTran:0]
+    dac wtT
+    law i 4
+    dac wtK
+wtMemR, lac i wtT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wtMemN
+    jsp wcBlank
+    lio i wtT
+    jsp wkList
+wtMemN, idx wtT
+    isp wtK
+    jmp wtMemR
+    lio [BCDRPAR]
+    jsp wcPut
+wtKeys, dzm wtB             // the buckets, NONE's last
+wtBucket, lac wtB
+    add [keyTab:0]
+    dac wtT
+    lac i wtT
+    dac wtR
+wtRule, lio wtR
+    jsp i [SEQLR:0]
+    dio wtR
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp wtNextB
+    jsp wcBlank
+    lio i [datLo:0]         // a bucket's cells hold its rules
+    jsp wkList
+    jmp wtRule
+wtNextB, idx wtB
+    sub [NBUCKETS+1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp wtBucket
+wtEnd, jsp wcBlank          // () ends the script
+    lio [BCDLPAR]
+    jsp wcPut
+    lio [BCDRPAR]
+    jsp wcPut
+wtPad, lac wcIn             // the last word filled with blanks
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wtZero
+    lio [BCDBLANK]
+    jsp wcPack
+    jmp wtPad
+wtZero, lac wcP
+    sub [TBUF]
+    dac wcWds
+wtDone, lac wcP             // the rest of the last block zeros
+    sub [TBUF]
+    and [MTWDS-1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wtOk
+    dzm i wcP
+    idx wcP
+    jmp wtDone
+wtOk, lac wcOver
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    idx wtX
+wtX, jmp .
+
+wtB, 0
+wtR, 0
+wtK, 0
+wtT, 0
+endloc
+
+// wkList -- write list IO as LPRINT walks it, with a stack of the lists it is
+// inside. It writes each item, a blank between, a sublist in ( ), then the
+// list's DLIST, if it has one, as DLIST( ... ), then ). A list deeper than
+// WKMAX sets wcOver and is left out.
+// Does not preserve AC or IO; datHi, datLo and datFlg are changed.
+// Called via jsp.
+local wlX, wlEnter, wlNext, wlWord, wlNum, wlSub, wlEnd, wlClose, \
+    wkH, wkR, wkF, wkPh, wkFl, wkT, wkD, kpX, kqX, kpT, kpFull
+wkList, dap wlX
+    dzm wkD
+wlEnter, dio wkH            // IO = the list's header
+    dio wkR
+    law 1
+    dac wkF                 // nothing written in it yet
+    dzm wkPh                // its items, not yet its DLIST
+    lio [BCDLPAR]
+    jsp wcPut
+wlNext, lio wkR
+    jsp i [SEQLR:0]
+    dio wkR
+    dac wkFl
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp wlEnd               // back at the header
+    lac wkF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jsp wcBlank
+    dzm wkF
+    lac wkFl
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp wlSub
+    lac i [datHi:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wlNum
+wlWord, lio i [datHi:0]     // a word, its cells run together
+    jsp wc3
+    lio i [datLo:0]
+    jsp wc3
+    lac wkFl
+    and [FCONT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wlNext
+    lio wkR
+    jsp i [SEQLR:0]
+    dio wkR
+    dac wkFl
+    jmp wlWord
+wlNum, lio i [datLo:0]
+    jsp wcNum
+    jmp wlNext
+wlSub, lio i [datLo:0]
+    jsp wkPush
+    jmp wlNext              // too deep, so left out
+    jmp wlEnter
+wlEnd, lac wkPh
+    SKIP_NEXT_IF_AC_ZERO
+    jmp wlClose
+    law 1
+    dac wkPh
+    lio wkH
+    jsp i [LSTNAM:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wlClose
+    dac wkT
+    lac wkF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jsp wcBlank
+    lio [wtDlTx:*]          // DLIST, then the DLIST's ( at once, as LISTRD wants it
+    jsp wcCodes
+    lio wkT
+    jsp wkPush
+    jmp wlClose
+    jmp wlEnter
+wlClose, lio [BCDRPAR]
+    jsp wcPut
+    lac wkD
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wlX                 // the top list is done
+    jsp wkPop
+    lac wkPh
+    SKIP_NEXT_IF_AC_ZERO
+    jmp wlClose             // back from a DLIST, its list is done too
+    jmp wlNext
+wlX, jmp .
+
+// wkPush -- push the list being walked onto the stack.
+// Skips; does not skip, with wcOver set, when the stack is full.
+// wkPop takes the list it is inside back off the stack.
+// AC is not preserved, IO is preserved.
+// Called via jsp, from wkList only.
+wkPush, dap kpX
+    lac wkD
+    SKIP_NEXT_IF_DIFFERENT [WKMAX]
+    jmp kpFull
+    add [wkStk:*]
+    dac kpT
+    lac wkH
+    dac i kpT
+    lac kpT
+    add [WKMAX]
+    dac kpT
+    lac wkR
+    dac i kpT
+    lac kpT
+    add [WKMAX]
+    dac kpT
+    lac wkF
+    dac i kpT
+    lac kpT
+    add [WKMAX]
+    dac kpT
+    lac wkPh
+    dac i kpT
+    idx wkD
+    idx kpX
+    jmp kpX
+kpFull, law 1
+    dac wcOver
+kpX, jmp .
+
+wkPop, dap kqX
+    lac wkD
+    sub [1]
+    dac wkD
+    add [wkStk:*]
+    dac kpT
+    lac i kpT
+    dac wkH
+    lac kpT
+    add [WKMAX]
+    dac kpT
+    lac i kpT
+    dac wkR
+    lac kpT
+    add [WKMAX]
+    dac kpT
+    lac i kpT
+    dac wkF
+    lac kpT
+    add [WKMAX]
+    dac kpT
+    lac i kpT
+    dac wkPh
+kqX, jmp .
+
+kpT, 0
+wkH, 0                     // the list being walked, its header
+wkR, 0                      // the reader in it
+wkF, 0                      // not 0 while nothing is written in it
+wkPh, 0                     // not 0 once its items are done and its DLIST is next
+wkFl, 0                     // the flags of the cell just read
+wkT, 0
+wkD, 0                      // the lists it is inside, on wkStk
+endloc
+
+// wcNum -- write number IO as BCDIT writes it, six digits, zero padded; a
+// negative one (one's complement) has a minus sign right before them.
+// Does not preserve AC or IO.
+// Called via jsp.
+local wnX, wnV, wnP, wnD, wnPos, wnDig, wnSub, wnPut
+wcNum, dap wnX
+    dio wnV
+    lac wnV
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp wnPos
+    cma
+    dac wnV
+    lio [BCDMINUS]
+    jsp wcPut
+wnPos, lac [wnPow:*]
+    dac wnP
+wnDig, dzm wnD              // each digit by subtraction
+wnSub, lac wnV
+    sub i wnP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp wnPut
+    dac wnV
+    idx wnD
+    jmp wnSub
+wnPut, lio wnD              // a digit's BCD code is its value
+    jsp wcPut
+    idx wnP
+    lac i wnP
+    SKIP_NEXT_IF_AC_ZERO
+    jmp wnDig
+wnX, jmp .
+
+wnV, 0
+wnP, 0
+wnD, 0
+wnPow,
+    0d100000
+    0d10000
+    0d1000
+    0d100
+    0d10
+    1
+    0
+endloc
+
+// wc3 -- write the three characters of datum word IO, blanks left out.
+// Does not preserve AC or IO.
+// Called via jsp.
+local w3X, w3W, w3K, w3L, w3N
+wc3, dap w3X
+    dio w3W
+    law i 3
+    dac w3K
+w3L, lac w3W
+    ral 6s                  // the next character to the low bits
+    dac w3W
+    and [077]
+    SKIP_NEXT_IF_DIFFERENT [BCDBLANK]
+    jmp w3N
+    lia
+    jsp wcPut
+w3N, isp w3K
+    jmp w3L
+w3X, jmp .
+
+w3W, 0
+w3K, 0
+endloc
+
+// wcCodes -- write the BCD codes at full address IO, ended by -0.
+// Does not preserve AC or IO.
+// Called via jsp.
+local ccX, ccP, ccL
+wcCodes, dap ccX
+    dio ccP
+ccL, lac i ccP
+    SKIP_NEXT_IF_DIFFERENT [0777777]
+    jmp ccX
+    lia
+    jsp wcPut
+    idx ccP
+    jmp ccL
+ccX, jmp .
+
+ccP, 0
+endloc
+
+// wcBlank -- write a blank. wcPut writes character IO, counted; past TMAXCH
+// characters wcOver is set and nothing more is kept. wcPack puts character IO
+// into the word going, uncounted, the word stored when it holds three.
+// Does not preserve AC or IO.
+// Called via jsp.
+local cbX, cpX, cpC, cpFull, ckX, ckC
+wcBlank, dap cbX
+    lio [BCDBLANK]
+    jsp wcPut
+cbX, jmp .
+
+wcPut, dap cpX
+    dio cpC
+    lac wcN
+    SKIP_NEXT_IF_DIFFERENT [TMAXCH]
+    jmp cpFull
+    idx wcN
+    lio cpC
+    jsp wcPack
+    jmp cpX
+cpFull, law 1
+    dac wcOver
+cpX, jmp .
+
+wcPack, dap ckX
+    dio ckC
+    lac wcW
+    ral 6s
+    ior ckC
+    dac wcW
+    idx wcIn
+    SKIP_NEXT_IF_SAME [3]
+    jmp ckX
+    lac wcW
+    dac i wcP
+    idx wcP
+    dzm wcW
+    dzm wcIn
+ckX, jmp .
+
+cpC, 0
+ckC, 0
+endloc
+
+wcP, 0                      // the full address of the next word of TBUF
+wcN, 0                      // the characters written
+wcW, 0                      // the word going
+wcIn, 0                     // its characters, 0 to 2
+wcWds, 0                    // the words the text takes
+wcOver, 0                   // not 0 when too long, or nested too deep
+prW, 0                      // prNum's columns
+
+// tryDir -- DIR, typed as the answer to WHICH SCRIPT DO YOU WISH TO PLAY, in
+// either case, with blanks around it. It lists the scripts on the tape in
+// number order, a line each (the number, its words, the built-in script it
+// descends from), then a blank line. It prints NO SCRIPTS ON TAPE for none,
+// and NO TAPE for no tape or a tape error. DIR is an extension to the
+// original.
+// Does not skip when the line was DIR, listed; skips when it was not.
+// Does not preserve AC or IO.
+// Called via jsp i from bank 0, returning through the caller's full address.
+local tdRtn, tdP, tdE, tdLast, tdBest, tdBestE, tdN, tdE2, tdK, tdL, tdD, \
+    tdT, tdNot, tdNext, tdScan, tdSkip, tdPrint, tdNone, tdDone, tdNoTape, \
+    tdGet, tgX, tgEnd, tdTake, tdBlank
+tryDir, dac tdRtn
+    lac [lnBuf:*]
+    dac tdP
+    add i [lnLen:0]
+    dac tdE
+tdL, jsp tdGet
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tdD
+    jmp tdL                 // a blank before it
+tdD, SKIP_NEXT_IF_SAME ['D']
+    jmp tdNot
+    jsp tdGet
+    SKIP_NEXT_IF_SAME ['I']
+    jmp tdNot
+    jsp tdGet
+    SKIP_NEXT_IF_SAME ['R']
+    jmp tdNot
+tdT, jsp tdGet
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tdT                 // a blank after it
+    SKIP_NEXT_IF_SAME [0777777]
+    jmp tdNot
+    jsp tpOpen
+    jsp tpDir
+    jmp tdNoTape
+    jsp tpStop
+    dzm tdLast
+    dzm tdN
+tdNext, dzm tdBest          // the lowest number above the last listed
+    lac [dirBuf:*]
+    dac tdE2
+    law i NSLOTS
+    dac tdK
+tdScan, lac i tdE2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tdSkip
+    sub tdLast
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp tdSkip
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tdSkip
+    lac tdBest
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tdTake
+    lac i tdE2
+    sub tdBest
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp tdSkip
+tdTake, lac i tdE2
+    dac tdBest
+    lac tdE2
+    dac tdBestE
+tdSkip, lac tdE2
+    add [DIRENT]
+    dac tdE2
+    isp tdK
+    jmp tdScan
+    lac tdBest
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tdDone
+tdPrint, law 3
+    dac prW
+    lio tdBest
+    jsp prNum
+    lio [txTwo:*]
+    jsp i [farAsc:0]
+    lac tdBestE
+    add [2]
+    dac tdBestE
+    law 4
+    dac prW
+    lio i tdBestE           // its words
+    jsp prNum
+    lio [txWords:*]
+    jsp i [farAsc:0]
+    idx tdBestE
+    law 3
+    dac prW
+    lio i tdBestE           // the built-in script it descends from
+    jsp prNum
+    jsp i [farNl:0]
+    lac tdBest
+    dac tdLast
+    idx tdN
+    jmp tdNext
+tdDone, lac tdN
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tdBlank
+    lio [txNoScr:*]
+tdNone, jsp i [farAsc:0]
+    jsp i [farNl:0]
+tdBlank, jsp i [farNl:0]
+    jmp i tdRtn
+tdNoTape, lio [txNoTape:*]
+    jmp tdNone
+tdNot, idx tdRtn
+    jmp i tdRtn
+
+// tdGet -- return the next character of the line, upper case, a blank as 0,
+// and -0 at the line's end.
+// AC is the result, IO is not preserved.
+// Called via jsp, from tryDir only.
+tdGet, dap tgX
+    lac tdP
+    SKIP_NEXT_IF_DIFFERENT tdE
+    jmp tgEnd
+    lio i tdP
+    idx tdP                 // which leaves the pointer in AC
+    lai
+    and [0137]              // lower case folds; a blank is 0
+    jmp tgX
+tgEnd, lac [0777777]
+tgX, jmp .
+
+tdRtn, 0
+tdP, 0
+tdE, 0
+tdLast, 0
+tdBest, 0
+tdBestE, 0
+tdN, 0
+tdE2, 0
+tdK, 0
+endloc
+
+// prNum -- print IO in decimal, right-justified in prW columns, in more when
+// it needs them.
+// Does not preserve AC or IO.
+// Called via jsp.
+local pnX, pnV, pnP, pnD, pnN, pnT, pnDig, pnSub, pnPut, pnNext, \
+    pnPad, pnOut, pnOutL
+prNum, dap pnX
+    dio pnV
+    dzm pnN
+    lac [pnPow:*]
+    dac pnP
+pnDig, lac ['0']            // each digit by subtraction, leading zeros dropped
+    dac pnD
+pnSub, lac pnV
+    sub i pnP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pnPut
+    dac pnV
+    idx pnD
+    jmp pnSub
+pnPut, lac pnD
+    sub ['0']
+    ior pnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pnNext
+    lac pnN
+    add [pnBuf:*]
+    dac pnT
+    lac pnD
+    dac i pnT
+    idx pnN
+pnNext, idx pnP
+    lac i pnP
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pnDig
+    lac pnN                 // the units digit, always
+    add [pnBuf:*]
+    dac pnT
+    lac pnV
+    add ['0']
+    dac i pnT
+    idx pnN
+pnPad, lac prW
+    sub pnN
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pnOut
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pnOut
+    lac prW
+    sub [1]
+    dac prW
+    lio [040]
+    jsp i [farPutc:0]
+    jmp pnPad
+pnOut, lac [pnBuf:*]
+    dac pnT
+pnOutL, lio i pnT
+    jsp i [farPutc:0]
+    idx pnT
+    sub [pnBuf:*]
+    SKIP_NEXT_IF_SAME pnN
+    jmp pnOutL
+pnX, jmp .
+
+pnV, 0
+pnP, 0
+pnD, 0
+pnN, 0
+pnT, 0
+pnPow,
+    0d100000
+    0d10000
+    0d1000
+    0d100
+    0d10
+    0
+pnBuf,
+    table 6
+endloc
+
+// tapeFind -- read script number IO from the tape into TBUF, for rdScript.
+// Skips with its characters in AC and the built-in script it descends from
+// in IO. Does not skip when there is no such script, no tape, or a tape
+// error, with the tape stopped.
+// AC and IO are both results.
+// Called via jsp i from bank 0, returning through the caller's full address.
+local tfRtn, tfNum, tfE, tfT, tfFail
+tapeFind, dac tfRtn
+    dio tfNum
+    lac tfNum
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i tfRtn
+    jsp tpOpen
+    jsp tpDir
+    jmp tfFail
+    lio tfNum
+    jsp tpEntry
+    jmp tfFail
+    dac tfE
+    add [2]                 // its words
+    dac tfT
+    lio i tfT
+    jsp tpBlocks
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp tfFail
+    dac tfT
+    sub [SLOTBLKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp tfFail              // more than a slot, so not a directory of ours
+    lio tfT
+    jsp tpRdSlot
+    jmp tfFail
+    jsp tpStop
+    idx tfRtn               // first, since idx leaves its count in AC
+    lac tfE
+    add [3]
+    dac tfT
+    lio i tfT
+    lac tfE
+    add [1]
+    dac tfT
+    lac i tfT
+    jmp i tfRtn
+tfFail, jsp tpStop
+    jmp i tfRtn
+
+tfRtn, 0
+tfNum, 0
+tfE, 0
+tfT, 0
+endloc
+
+txNew, ascii "WHAT IS TO BE THE NUMBER OF THE NEW SCRIPT"
+txNotWr, ascii "SCRIPT NOT WRITTEN"
+txNoScr, ascii "NO SCRIPTS ON TAPE"
+txNoTape, ascii "NO TAPE"
+txTwo, ascii "  "
+txWords, ascii " WORDS  FROM "
+
+// MEMORY and DLIST in BCD, each ended by -0.
+wtMemTx,
+    044                     // M
+    025                     // E
+    044                     // M
+    046                     // O
+    051                     // R
+    070                     // Y
+    0777777
+wtDlTx,
+    024                     // D
+    043                     // L
+    031                     // I
+    062                     // S
+    063                     // T
+    0777777
+
+wkStk,                      // wkList's stack, of headers, readers, flags and phases
+    table 4*WKMAX

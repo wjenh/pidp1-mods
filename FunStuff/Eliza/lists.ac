@@ -1,0 +1,596 @@
+// lists.ac -- the list kernel, the cells, the free list and SLIP's list
+// operations, under SLIP's names, as ELIZA 1965 calls them.
+//
+// Needs eliza.ah and AIDS/skipmacros.ah included first. Assemble in bank 0.
+//
+// A list is a header cell and its cells, linked both ways in a ring. The
+// header's right link is the top cell, its left link the bottom. A cell is
+// named by its number (eliza.ah). The datum is two words, six BCD characters
+// or a number. A cell flagged FSUB holds a sublist, its header's number in the
+// low word, and that sublist belongs to that cell alone. It is returned with
+// the list that holds it, and a sublist must never be held twice.
+//
+// Every routine is called via jsp with extend mode on, and returns with it
+// on; the cells are reached through full addresses. Public routines return
+// through a full address (dac/jmp i), so they can be called from any bank.
+// A datum goes in and out in datHi, datLo and datFlg. A routine that needs
+// a cell skips on success and does not skip when none is free, leaving its
+// lists as they were; nothing here halts. Include the file where it is not
+// executed, since its data words follow its code.
+
+local inRtn, inN, inLoop, \
+    nuRtn, nuCell, nuOk, irRtn, irList, liRtn, liCell, lmRtn, lmList, lmNot, \
+    mtRtn, mtList, mtFirst, mtDone, ntRtn, ntGo, ntX, ntNew, ntR, \
+    rmX, rmC, rmR, rmL, rmW0, ppRtn, ppList, ppGo, tbRtn, tbList, tbGo, rdX, \
+    srRtn, sqRtn, sqGo, suRtn, suHi, suLo, suW0, lkRtn, mdRtn, lnRtn, \
+    cpRtn, cpR, cpD, cpDst, cpStk, cpFl, cpSubL, cpNew, cpNext, cpEnd, cpSub, \
+    cpFail, cpFailN, cpFail1, cpDone, \
+    wlRtn, wlC, wlLoop, wlDone, wfRtn, wfC, wfL, wfLoop, wfDone, \
+    fcRtn, fcN, fcLoop, fcDone, cpX
+
+// cellPtrs -- point cp0 to cp3 at the four words of cell IO.
+// AC is not preserved, IO is preserved.
+// Called via jsp, with extend mode on.
+cellPtrs, dap cpX
+    lai
+    ral 2s                  // CELLSIZE words a cell
+    add [CELLBASE]
+    dac cp0
+    add [1]
+    dac cp1
+    add [1]
+    dac cp2
+    add [1]
+    dac cp3
+cpX, jmp .
+
+// INITAS -- put every cell but cell 0 on the free list, in order. Run it at
+// every start, since core keeps the last run's lists.
+// Does not preserve AC or IO.
+// Called via jsp.
+INITAS, dac inRtn
+    law 1
+    dac avsl
+    dac inN
+inLoop, lio inN
+    jsp cellPtrs
+    dzm i cp0
+    lac inN
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT [CELLCOUNT]
+    cla                     // the last cell ends the free list
+    dac i cp1
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i inRtn
+    dac inN
+    jmp inLoop
+
+// NUCELL -- take the first free cell. If it held a sublist, the sublist goes
+// onto the free list now (SLIP's lazy return).
+// Skips with the cell in AC, its flags and left link 0; does not skip when
+// none is free.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+NUCELL, dac nuRtn
+    lac avsl
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i nuRtn
+    dac nuCell
+    lia
+    jsp cellPtrs
+    lac i cp1
+    dac avsl
+    lac i cp0
+    dzm i cp0
+    and [FSUB]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nuOk
+    lio i cp3
+    jsp IRALST
+nuOk, idx nuRtn
+    lac nuCell
+    jmp i nuRtn
+
+// IRALST -- return list IO, header and all, to the free list at once; its
+// sublists follow when NUCELL takes the cells that hold them.
+// Does not preserve AC or IO.
+// Called via jsp.
+IRALST, dac irRtn
+    dio irList
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    lia
+    jsp cellPtrs            // the bottom cell, or the header of an empty list
+    lac avsl
+    dac i cp1
+    lac irList
+    dac avsl
+    jmp i irRtn
+
+// LIST -- make a new empty list.
+// Skips with its header in AC; does not skip when no cell is free.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+LIST, dac liRtn
+    jsp NUCELL
+    jmp i liRtn
+    dac liCell
+    lia
+    jsp cellPtrs
+    lac liCell
+    dac i cp1
+    ior [FHEAD]
+    dac i cp0
+    dzm i cp2
+    dzm i cp3
+    idx liRtn
+    lac liCell
+    jmp i liRtn
+
+// LISTMT -- return 0 when list IO is empty, else 1, as SLIP's does.
+// AC is the result, IO is preserved.
+// Called via jsp.
+LISTMT, dac lmRtn
+    dio lmList
+    jsp cellPtrs
+    lac i cp1
+    SKIP_NEXT_IF_SAME lmList
+    jmp lmNot
+    cla
+    jmp i lmRtn
+lmNot, law 1
+    jmp i lmRtn
+
+// MTLIST -- empty list IO, its cells to the free list, and return the list.
+// AC is the result, IO is preserved.
+// Called via jsp.
+MTLIST, dac mtRtn
+    dio mtList
+    jsp cellPtrs
+    lac i cp1
+    SKIP_NEXT_IF_DIFFERENT mtList
+    jmp mtDone              // already empty
+    dac mtFirst
+    lac i cp0
+    and [LINKMASK]
+    lia
+    jsp cellPtrs            // the bottom cell
+    lac avsl
+    dac i cp1
+    lac mtFirst
+    dac avsl
+    lio mtList
+    jsp cellPtrs
+    lac mtList
+    dac i cp1
+    ior [FHEAD]
+    dac i cp0
+mtDone, lio mtList
+    lac mtList
+    jmp i mtRtn
+
+// NEWTOP -- put a new cell holding datHi, datLo, flagged datFlg, to the right
+// of cell IO. That is the top of a list when IO is its header, else just
+// after IO. NEWBOT does the same to the left of cell IO, the bottom of a list
+// when IO is its header, else just before IO.
+// Skips with the new cell in AC; does not skip when no cell is free, with
+// nothing changed.
+// AC is the result, IO is not preserved; datHi, datLo and datFlg are
+// preserved.
+// Called via jsp.
+NEWBOT, dac ntRtn
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    lia
+    jmp ntGo
+NEWTOP, dac ntRtn
+ntGo, dio ntX
+    jsp NUCELL
+    jmp i ntRtn
+    dac ntNew
+    lio ntX
+    jsp cellPtrs
+    lac i cp1
+    dac ntR                 // ntX's right neighbor
+    lac ntNew
+    dac i cp1
+    lio ntNew
+    jsp cellPtrs
+    lac ntX
+    ior datFlg
+    dac i cp0
+    lac ntR
+    dac i cp1
+    lac datHi
+    dac i cp2
+    lac datLo
+    dac i cp3
+    lio ntR
+    jsp cellPtrs
+    lac i cp0
+    and [FLAGMASK]
+    ior ntNew
+    dac i cp0
+    idx ntRtn
+    lac ntNew
+    jmp i ntRtn
+
+// rmCell -- unlink cell IO, never a header, and free it with its sublist flag
+// cleared, so a sublist it held is now the caller's.
+// Returns the cell's flags in AC and its datum in datHi and datLo.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+rmCell, dap rmX
+    dio rmC
+    jsp cellPtrs
+    lac i cp2
+    dac datHi
+    lac i cp3
+    dac datLo
+    lac i cp1
+    dac rmR
+    lac i cp0
+    dac rmW0
+    lac avsl
+    dac i cp1
+    dzm i cp0
+    lac rmC
+    dac avsl
+    lac rmW0
+    and [LINKMASK]
+    dac rmL
+    lia
+    jsp cellPtrs
+    lac rmR
+    dac i cp1               // the left neighbor's right link
+    lio rmR
+    jsp cellPtrs
+    lac i cp0
+    and [FLAGMASK]
+    ior rmL
+    dac i cp0               // the right neighbor's left link
+    lac rmW0
+    and [FLAGMASK]
+rmX, jmp .
+
+// POPTOP -- take the top cell of list IO. POPBOT takes the bottom cell.
+// Skips with the cell's flags in AC and its datum in datHi and datLo; with
+// FSUB, datLo is a sublist, now the caller's. Does not skip when the list is
+// empty.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+POPBOT, dac ppRtn
+    dio ppList
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    jmp ppGo
+POPTOP, dac ppRtn
+    dio ppList
+    jsp cellPtrs
+    lac i cp1
+ppGo, SKIP_NEXT_IF_DIFFERENT ppList
+    jmp i ppRtn             // the list is empty
+    lia
+    idx ppRtn
+    jsp rmCell
+    jmp i ppRtn
+
+// rdCell -- read cell IO, its flags into AC and its datum into datHi and
+// datLo.
+// AC is the result, IO is preserved.
+// Called via jsp.
+rdCell, dap rdX
+    jsp cellPtrs
+    lac i cp2
+    dac datHi
+    lac i cp3
+    dac datLo
+    lac i cp0
+    and [FLAGMASK]
+rdX, jmp .
+
+// TOP -- read the top cell of list IO without taking it. BOT reads the bottom
+// cell.
+// Skips with its flags in AC and its datum in datHi and datLo; does not skip
+// when the list is empty.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+BOT, dac tbRtn
+    dio tbList
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    jmp tbGo
+TOP, dac tbRtn
+    dio tbList
+    jsp cellPtrs
+    lac i cp1
+tbGo, SKIP_NEXT_IF_DIFFERENT tbList
+    jmp i tbRtn             // the list is empty
+    lia
+    idx tbRtn
+    jsp rdCell
+    jmp i tbRtn
+
+// SEQRDR -- make a reader on list IO, standing at its header. A reader is a
+// cell number, kept by the caller.
+// AC is the result, the reader; IO is preserved.
+// Called via jsp.
+SEQRDR, dac srRtn
+    lai
+    jmp i srRtn
+
+// SEQLR -- move reader IO one cell right. SEQLL moves it one cell left.
+// Returns the reader moved in IO, and in AC the flags of the cell it reached,
+// FHEAD (the sign) when it is back at the header, the end of the list. That
+// cell's datum is left in datHi and datLo.
+// AC and IO are both results.
+// Called via jsp.
+SEQLL, dac sqRtn
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    jmp sqGo
+SEQLR, dac sqRtn
+    jsp cellPtrs
+    lac i cp1
+sqGo, lia
+    jsp rdCell
+    jmp i sqRtn
+
+// SUBST -- replace the datum of cell IO, never a header, with datHi, datLo,
+// flagged datFlg.
+// Returns the old flags in AC and the old datum in datHi and datLo; a sublist
+// there is now the caller's.
+// AC is the result, IO is preserved, and so is datFlg.
+// Called via jsp.
+SUBST, dac suRtn
+    jsp cellPtrs
+    lac i cp2
+    dac suHi
+    lac datHi
+    dac i cp2
+    lac i cp3
+    dac suLo
+    lac datLo
+    dac i cp3
+    lac suHi
+    dac datHi
+    lac suLo
+    dac datLo
+    lac i cp0
+    dac suW0
+    and [~(FSUB|FCONT)]
+    ior datFlg
+    dac i cp0
+    lac suW0
+    and [FLAGMASK]
+    jmp i suRtn
+
+// LNKL -- return the left neighbor of cell IO.
+// AC is the result, IO is preserved.
+// Called via jsp.
+LNKL, dac lkRtn
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    jmp i lkRtn
+
+// MAKEDL -- make the list whose header is in datLo the DLIST of list IO. A
+// list's DLIST is its header's low datum word, which nothing else uses and
+// LIST sets to 0; it is not returned with the list.
+// AC is not preserved; IO and datLo are preserved.
+// Called via jsp.
+MAKEDL, dac mdRtn
+    jsp cellPtrs
+    lac datLo
+    dac i cp3
+    jmp i mdRtn
+
+// LSTNAM -- return the DLIST of list IO, 0 for none.
+// AC is the result, IO is preserved.
+// Called via jsp.
+LSTNAM, dac lnRtn
+    jsp cellPtrs
+    lac i cp3
+    jmp i lnRtn
+
+// LSSCPY -- copy list IO, its sublists copied too. The walk keeps its place
+// in each enclosing list on a stack that is itself a list, one cell a level,
+// the reader in its datHi and the copy's list in its datLo.
+// Skips with the copy in AC; does not skip when the cells run out, with every
+// cell the copy took returned.
+// AC is the result, IO is not preserved; datHi, datLo and datFlg are changed.
+// Called via jsp.
+LSSCPY, dac cpRtn
+    dio cpR
+    jsp LIST
+    jmp i cpRtn             // no cell, so nothing taken
+    dac cpDst
+    dac cpD
+    jsp LIST
+    jmp cpFail1
+    dac cpStk
+cpNext, lio cpR
+    jsp SEQLR
+    dio cpR
+    dac cpFl
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp cpEnd               // at a header, so this level is done
+    and [FSUB]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp cpSub
+    lac cpFl
+    and [FCONT]
+    dac datFlg
+    lio cpD
+    jsp NEWBOT
+    jmp cpFail
+    jmp cpNext
+cpEnd, lio cpStk
+    jsp POPTOP
+    jmp cpDone              // the stack is empty, so the top level is done
+    lac datHi
+    dac cpR
+    lac datLo
+    dac cpD
+    jmp cpNext
+cpSub, lac datLo
+    dac cpSubL
+    jsp LIST
+    jmp cpFail
+    dac cpNew
+    lac cpR
+    dac datHi
+    lac cpD
+    dac datLo
+    dzm datFlg
+    lio cpStk
+    jsp NEWTOP
+    jmp cpFailN
+    dzm datHi
+    lac cpNew
+    dac datLo
+    lac [FSUB]
+    dac datFlg
+    lio cpD
+    jsp NEWBOT
+    jmp cpFailN
+    lac cpSubL
+    dac cpR
+    lac cpNew
+    dac cpD
+    jmp cpNext
+cpFailN, lio cpNew
+    jsp IRALST
+cpFail, lio cpStk
+    jsp IRALST
+cpFail1, lio cpDst
+    jsp IRALST
+    jmp i cpRtn
+cpDone, lio cpStk
+    jsp IRALST
+    idx cpRtn
+    lac cpDst
+    jmp i cpRtn
+
+// wordLast -- return the last cell of the word whose first cell is IO,
+// following the cells flagged continued.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+wordLast, dac wlRtn
+wlLoop, dio wlC
+    jsp cellPtrs
+    lac i cp0
+    and [FCONT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wlDone
+    lio i cp1
+    jmp wlLoop
+wlDone, lac wlC
+    jmp i wlRtn
+
+// wordFirst -- return the first cell of the word whose last cell is IO,
+// going left while the cell before is flagged continued.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+wordFirst, dac wfRtn
+wfLoop, dio wfC
+    jsp cellPtrs
+    lac i cp0
+    and [LINKMASK]
+    dac wfL
+    lia
+    jsp cellPtrs
+    lac i cp0
+    and [FCONT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp wfDone
+    lio wfL
+    jmp wfLoop
+wfDone, lac wfC
+    jmp i wfRtn
+
+// freeCount -- count the cells on the free list, not counting those a
+// returned sublist still holds until NUCELL reaches its cell.
+// AC is the result, IO is not preserved.
+// Called via jsp.
+freeCount, dac fcRtn
+    dzm fcN
+    lio avsl
+fcLoop, lai
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp fcDone
+    idx fcN
+    jsp cellPtrs
+    lio i cp1
+    jmp fcLoop
+fcDone, lac fcN
+    jmp i fcRtn
+
+inRtn, 0
+inN, 0
+nuRtn, 0
+nuCell, 0
+irRtn, 0
+irList, 0
+liRtn, 0
+liCell, 0
+lmRtn, 0
+lmList, 0
+mtRtn, 0
+mtList, 0
+mtFirst, 0
+ntRtn, 0
+ntX, 0
+ntNew, 0
+ntR, 0
+rmC, 0
+rmR, 0
+rmL, 0
+rmW0, 0
+ppRtn, 0
+ppList, 0
+tbRtn, 0
+tbList, 0
+srRtn, 0
+sqRtn, 0
+suRtn, 0
+suHi, 0
+suLo, 0
+suW0, 0
+lkRtn, 0
+mdRtn, 0
+lnRtn, 0
+cpRtn, 0
+cpR, 0
+cpD, 0
+cpDst, 0
+cpStk, 0
+cpFl, 0
+cpSubL, 0
+cpNew, 0
+wlRtn, 0
+wlC, 0
+wfRtn, 0
+wfC, 0
+wfL, 0
+fcRtn, 0
+fcN, 0
+endloc
+
+// The datum passed to and from the routines.
+datHi, 0
+datLo, 0
+datFlg, 0                   // FSUB, FCONT or 0, for a datum going in
+
+avsl, 0                     // the first free cell, 0 for none
+
+// The four words of the cell cellPtrs was last given.
+cp0, 0
+cp1, 0
+cp2, 0
+cp3, 0

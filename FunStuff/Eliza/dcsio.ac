@@ -1,0 +1,162 @@
+// dcsio.ac -- characters out and in over DCS2 channel 0 in ascii mode, or on
+// the typewriter when useTty is set (ttyio.ac). It provides a character, a
+// line end, a text, and the line reader.
+//
+// Needs eliza.ah, AIDS/skipmacros.ah, DCS/dcs2defs.ah, DCS/getach.ac and
+// ttyio.ac. For DCS2 the channel must be connected and current (ssb). Every
+// routine is called via jsp with extend mode on, from bank 0. Include the
+// file where it is not executed, since its data words follow its code; lnBuf
+// is in bank 1.
+
+local pcX, pcC, pcAgain, pcTty, nlX, paX, paP, paLoop, gcX, gcTty, \
+    glRtn, glLoop, glC, glP, glErase, glEnd, glNotLf, glCrEnd
+
+// putc -- send the ASCII character in IO, waiting while the transmit buffer
+// is full, or type it. A lost connection sets ioErr, and every later call
+// returns at once.
+// Does not preserve AC or IO.
+// Called via jsp.
+putc, dap pcX
+    dio pcC
+    lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pcTty
+    lac ioErr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pcX
+pcAgain, lio pcC
+    tcb
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp pcX                 // sent
+    lai
+    and [0100000]           // bit 2 means the buffer is full, so try again
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pcAgain
+    law 1
+    dac ioErr
+    jmp pcX
+pcTty, lio pcC
+    jsp ttyPut
+pcX, jmp .
+
+// newline -- end the line; DCS2's telnet mode sends a newline as CR LF.
+// Does not preserve AC or IO.
+// Called via jsp.
+newline, dap nlX
+    lio [012]
+    jsp putc
+nlX, jmp .
+
+// putAsc -- send the text at IO, made by the ascii directive, two characters
+// a word, the first in the high 9 bits, ended by a 0 character.
+// Does not preserve AC or IO.
+// Called via jsp.
+putAsc, dap paX
+    dio paP
+paLoop, lac i paP
+    rar 9s
+    and [0377]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp paX
+    lia
+    jsp putc
+    lac i paP
+    and [0377]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp paX
+    lia
+    jsp putc
+    idx paP
+    jmp paLoop
+paX, jmp .
+
+// getc -- read the next character, a key on the typewriter (useTty), else one
+// from DCS2.
+// Returns the ASCII character in IO, 0 for none, negative when the
+// connection is lost.
+// IO is the result, AC is not preserved.
+// Called via jsp.
+getc, dap gcX
+    lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp gcTty
+    dac getach              // called as jda would call it, AC to its first word
+    jsp getach+1
+    jmp gcX
+gcTty, jsp ttyGet
+gcX, jmp .
+
+// getLine -- read a line into lnBuf, one ASCII character a word, and its
+// length into lnLen. CR or LF ends it, but an LF just after the CR that ended
+// the last line is ignored, so CR LF is one end (lnCr, which a new connection
+// clears). Backspace and delete erase the last character. Over DCS2 the erase
+// echoes blank and backspace after DCS2's echo; on the typewriter nothing is
+// echoed, and " erases too (ttyIn). A NUL is ignored; past LINEMAX characters
+// the rest are dropped.
+// Skips with the line read; does not skip when the connection is lost.
+// Does not preserve AC or IO.
+// Called via jsp.
+getLine, dac glRtn
+    dzm lnLen
+glLoop, jsp getc
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp i glRtn             // the connection is lost
+    lai
+    and [0377]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glLoop
+    dac glC
+    SKIP_NEXT_IF_SAME [012]
+    jmp glNotLf
+    lac lnCr
+    dzm lnCr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glLoop              // the LF of a CR LF
+    lac glC
+glNotLf, dzm lnCr
+    SKIP_NEXT_IF_DIFFERENT [010]
+    jmp glErase
+    SKIP_NEXT_IF_DIFFERENT [0177]
+    jmp glErase
+    SKIP_NEXT_IF_DIFFERENT [015]
+    jmp glCrEnd
+    SKIP_NEXT_IF_DIFFERENT [012]
+    jmp glEnd
+    lac lnLen
+    SKIP_NEXT_IF_DIFFERENT [LINEMAX]
+    jmp glLoop
+    add [lnBuf:1]
+    dac glP
+    lac glC
+    dac i glP
+    idx lnLen
+    jmp glLoop
+glErase, lac lnLen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glLoop
+    sub [1]
+    dac lnLen
+    lac useTty              // the typewriter shows the erase itself
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glLoop
+    lio [040]
+    jsp putc
+    lio [010]
+    jsp putc
+    jmp glLoop
+glCrEnd, law 1
+    dac lnCr
+glEnd, idx glRtn
+    jmp i glRtn
+
+pcC, 0
+paP, 0
+glRtn, 0
+glC, 0
+glP, 0
+endloc
+
+useTty, 0                   // not 0 when the conversation is on the typewriter
+ioErr, 0                    // the connection was lost while sending
+lnLen, 0                    // the characters in lnBuf
+lnCr, 0                     // the last line ended at a CR

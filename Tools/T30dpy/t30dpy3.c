@@ -34,81 +34,8 @@
  * This can be freely used, modified, whatever. Please just keep the attribution to me.
  *
  * 6-Jun-2026 wje initial version, cloned from t30dpy.c
- * 8-Jun-2026 wje general cleanup, some optimizations
- * 9-Jun-2026 wje major rework to use an active list instead of full iteration over all points,
- *    add workaround for SDL3 overwriting the meun bar if on the bottom of the screen
- * 10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
- * 11-Jun-2026 wje CPU optimization pass for high active-point counts.
- *    - replaced the per-screen-position pointData[1024][1024] active list with a compact
- *      index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
- *      to keep active-list traversal cache-friendly.
- *    - drawPoint() now computes row base pointers once per point instead of recomputing
- *      full address arithmetic for every one of the up to 9 pixels it can touch.
- *    - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
- *      SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
- *      SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
- *      every frame.
- * 11-Jun-2026 wje fix regression from above: in fullscreen with SDL_LOGICAL_PRESENTATION_LETTERBOX,
- *    removing the per-frame SDL_RenderClear() left the letterbox bars (and edge points'
- *    scaled bleed into them) uncleared from prior frames, showing as phantom points outside
- *    the 1024x1024 area. Restored SDL_RenderClear() before SDL_RenderTexture()
- * 12-Jun-2026 wje minor code cleanup, remove some unused vars
- * 13-Jun-2026 wje (Claude) switch pthread usage to SDL_Thread/_Mutex, preparation for win11 compatibility.
- *    No functional change on Linux.
- * 13-Jun-2026 wje (Claude) add Windows 11 (MSYS2/UCRT64) support via wincompat.h,
- *    guarded by #ifdef _WIN32. Sockets, signal handling, the monotonic clock and
- *    home-directory lookup are routed through small macros/wrappers so this
- *    single source file builds on both Linux and Windows. No functional change
- *    on Linux.
- * 15-Jun-2026 fix bit setting size error in lightpen commands
- * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
- * 17-Jun-2026 wje (Claude) declare activeListHead, freeListHead, quit as volatile to prevent
- *    the optimizer from caching them in registers across frames; symptom was display going
- *    blank after many hours while the program continued running.
- * 17-Jun-2026 wje (Claude) right-mouse-button drag: SDL_BUTTON_RIGHT down/up sets dragging
- *    state; SDL_EVENT_MOUSE_MOTION while dragging calls SDL_SetWindowPosition with the
- *    delta from the button-down origin. Drag coords are captured before any render-space
- *    conversion so they remain in raw window space.
- * 18-Jun-2026 wje (Claude) reclaim SIGINT from SDL3: SDL_HINT_NO_SIGNAL_HANDLERS before
- *    SDL_Init() prevents SDL3 from installing its own SIGINT handler; sighandler()
- *    registered for SIGINT along with SIGHUP/SIGTERM. SDL_WaitThread() added before
- *    mutex/SDL_Quit() cleanup to prevent use-after-free if reader thread exits late.
- * 18-Jun-2026 wje extract reportTiming() function; call from sighandler() and reconfigure()
- *    so timing data is output on SIGINT and SIGHUP as well as normal exit. Move startTime,
- *    frameMisses, frameDelay to global scope so reportTiming() can reach them.
- * 18-Jun-2026 wje (Claude) hardcode SDL_PIXELFORMAT_RGBA8888 instead of querying the
- *    renderer's preferred format. The software renderer on rpi trixie returns ARGB8888;
- *    with the premultiplied-alpha scheme (alpha stored as 255, brightness in RGB) the
- *    0xFF alpha byte lands in a color channel, causing all points to appear at full
- *    brightness. RGBA8888 matches t30dpy (SDL2) and works on all backends.
- * 18-Jun-2026 wje (Claude) remove explicit SDL_DestroyRenderer/SDL_DestroyWindow before
- *    SDL_Quit(). On X11, those calls trigger XTranslateCoordinates on the window after X
- *    has invalidated the resource, producing a BadWindow error. SDL_Quit() sequences the
- *    teardown correctly on its own.
- * 18-Jun-2026 wje (Claude) replace SDL_CreateWindowAndRenderer with
- *    SDL_CreateWindowWithProperties + SDL_CreateRenderer so SDL_WINDOWPOS_CENTERED can be
- *    specified. X11 honors this; Wayland ignores it but centers new windows by default.
- * 19-Jun-2026 wje (Claude) fix the long-standing 12+ hour blank-display/unresponsive hang.
- *    Hold busyLockP for the entire active-point walk in main() instead of only inside
- *    removeActivePoint().
- * 20-Jun-2026 wje create the window initially hidden to avoid sdl window initialization jitter
- * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
- *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
- *    point happened to be walked last in the active list won.
- *    Adjust point pattern vs intensity for more realistic rendering.
- * 02-Jul-2026 wje SDL_RenderClear() is only needed when the visible window's aspect ratio
- *    differs from the 1024x1024 logical area.
- * 14-Jul-2026 wje Process mouse events in subframe intervals, faster lightpen updats.
- * 30-Sep-2026 Claude - exit on Escape even when the display is idle (shut the socket down to wake the reader),
- *    and the SIGINT/SIGTERM handler only sets quit, so a kill can no longer deadlock inside SDL.
- * 30-Sep-2026 Claude - the SIGHUP reload runs from the main loop, not inside the signal handler.
- * 02-Oct-2026 wje - pixel fading moved to the GPU, now the CPU handles only each frame's new points.
- * 03-Oct-2026 wje - work around SDL3 picking lavapipe when remotely connected, the renderer is
- *    actively probed to find opengl, opengles2 or software and uses the first that opens,
- *    unless the new renderer setting or -r gives one explicitly.
- * 15-Oct-2026 Claude - light-pen cursors from penCursor.h, one for pen up and one for pen down,
- *    add "pencursor" on/off to the config file, default is on.
- * 15-Oct-2026 Claude - loadConfig()'s comment names the config files it reads.
+ * 26-Oct-2026 Claude - CPU fade: a pixel hit more than once between renders keeps the brightest hit.
+ * 26-Oct-2026 wje old history pruned, it was getting too long
 */
 
 #include <stdio.h>
@@ -1134,7 +1061,14 @@ static bool skipOne = false;
             }
             else
             {
-                activePool[pointIdx].intensity = intensity;
+                // A lifetime of 0 means the pixel was already hit since the last render. Two
+                // beams on one spot of phosphor show the brighter, so keep the greater; taking
+                // whichever came last makes a pixel two figures share change brightness at
+                // random as the 340's frame drifts against the render's.
+                if( (activePool[pointIdx].lifetime > 0) || (intensity > activePool[pointIdx].intensity) )
+                {
+                    activePool[pointIdx].intensity = intensity;
+                }
                 activePool[pointIdx].lifetime = 0;
             }
         }

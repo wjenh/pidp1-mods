@@ -30,86 +30,8 @@
  * This can be freely used, modified, whatever. Please just keep the attribution to me.
  *
  * 20-May-2026 wje initial version
- * 23-May-2026 wje much fiddling to try to get window scaling to give decent visual results
- * 23-May-2026 wje fix typo assigning to hostNameP from cmd line arg
- * 25-May-2026 wje allow setting of gamma, vsync and linear/nearest via command line,
- *    adjust default gamma to match linear intensity to human-perceived intensity,
- *    modify dot-size adjustment for best appearance,
- *    add config file for various settings
- * 26-May-2026 wje precompute all possible rgba values, completely avoids floating point calcs while running
- * 31-May-2026 wje add Mike Chaoponis mode, optimize idle time
- * 31-May-2026 wje completely rework blending and eliminate blue hold,
- *    it was too blue and the blending wasn't quite right
- * 3-Jun-2026 wje add config reload on sighup, clean exit on sigint
- * 4-Jun-2026 wje commentary and code cleanup, remove unused includes, no functional changes
- * 7-Jun-2026 wje use the Google AI generated suggestion for the dot matrix vs intensity drawing
- * 8-Jun-2026 wje and add the Claude enhancements to above, backport the new list optimization from t30dpy3
- * 10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
- * 11-Jun-2026 wje CPU optimization pass for high active-point counts.
- *    - replaced the per-screen-position pointData[1024][1024] active list with a compact
- *      index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
- *      to keep active-list traversal cache-friendly.
- *    - drawPoint() now computes row base pointers once per point instead of recomputing
- *      full address arithmetic for every one of the up to 9 pixels it can touch.
- *    - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
- *      SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
- *      SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
- *      every frame.
- * 12-Jun-2026 wje minor code cleanup, remove some unused vars
- * 13-Jun-2026 wje (Claude) switch pthread usage to SDL_Thread/_Mutex,
- *     in preparation for win11 compatibility. No functional change on Linux.
- * 13-Jun-2026 wje (Claude) add Windows 11 (MSYS2/UCRT64) support via wincompat.h,
- *     guarded by #ifdef _WIN32. Sockets, signal handling, the monotonic clock and
- *     home-directory lookup are routed through small macros/wrappers so this
- *     single source file builds on both Linux and Windows. No functional change
- *     on Linux.
- * 15-Jun-2026 fix bit setting size error in lightpen commands
- * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
- * 17-Jun-2026 wje (Claude) declare activeListHead, freeListHead, quit as volatile to prevent
- *     the optimizer from caching them in registers across frames; symptom was display going
- *     blank after many hours while the program continued running.
- * 17-Jun-2026 wje (Claude) right-mouse-button drag: SDL_BUTTON_RIGHT down/up sets dragging
- *     state; SDL_MOUSEMOTION while dragging calls SDL_SetWindowPosition with the delta
- *     from the button-down origin.
- * 17-Jun-2026 wje add window resizing. Most of the logic was already around from the work done on p7sim.
- * 18-Jun-2026 wje (Claude) reclaim SIGINT from SDL2: SDL_HINT_NO_SIGNAL_HANDLERS before
- *    SDL_Init() prevents SDL2 from installing its own SIGINT handler; sighandler()
- *    registered for SIGINT along with SIGHUP/SIGTERM. SDL_WaitThread() added before
- *    mutex/SDL_Quit() cleanup to prevent use-after-free if reader thread exits late.
- * 18-Jun-2026 wje extract reportTiming() function; call from sighandler() and reconfigure()
- *    so timing data is output on SIGINT and SIGHUP as well as normal exit. Move startTime,
- *    frameMisses, frameDelay to global scope so reportTiming() can reach them.
- *    instability on rpi trixie.
- * 18-Jun-2026 wje (Claude) remove explicit SDL_DestroyRenderer/SDL_DestroyWindow before
- *    SDL_Quit(). On X11, those calls trigger XTranslateCoordinates on the window after X
- *    has invalidated the resource, producing a BadWindow error. SDL_Quit() sequences the
- *    teardown correctly on its own.
- * 19-Jun-2026 wje (Claude) hold busyLockP for the entire active-point walk in main().
- *    RemoveActivePoint() no longer locks internally, callers must hold busyLockP first.
- *    Fix corner-artifact glitch on first fullscreen toggle under Wayland/labwc.
- * 20-Jun-2026 wje create the window initially hidden to avoid sdl window initialization jitter
- * 21-Jun-2026 wje when the window is made visible, do a RenderPresent() to get the black background
- * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
- *    Adjust point pattern vs intensity for more realistic rendering.
- *    Pre-fault brightBuffer[][] so its 256 pages are resident before the first rendered frame runs.
- * 02-Jul-2026 wje fix letterbox bars never being cleared when a window is
- *    edge-dragged into a non-square shape without ever going through the F11/F fullscreen toggle.
- * 11-Jul-2026 wje (Claude) read the pen position from the
- *    events x/y fields instead of a fresh SDL_GetMouseState() query, ported from t30dpy3.c.
- * 14-Jul-2026 - port the fast mouse update logic from t30dpy3, the motion prediction lib needs faster updates.
- * 30-Sep-2026 Claude - exit on Escape even when the display is idle (shut the socket down to wake the reader),
- *    and the SIGINT/SIGTERM handler only sets quit, so a kill can no longer deadlock inside SDL.
- * 30-Sep-2026 Claude - the SIGHUP reload runs from the main loop, not inside the signal handler.
- * 02-Oct-2026 Claude - GPU fade, ported from t30dpy3, the default (gpufade=false for the CPU fade): the renderer
- *    draws the persistence into faded render targets, and the CPU handles only each frame's new points.
- * 02-Oct-2026 Claude - the renderer flags were always just SDL_RENDERER_PRESENTVSYNC (| binds tighter than ?:),
- *    so vsync was on whatever the config said and acceleration was never asked for.
- * 02-Oct-2026 wje - the lightpen position scaling was broken after a (relatively) recent SDL 2 update,
- *    scaling fixed for windows not exactly 1024 in size.
- * 15-Oct-2026 Claude - light-pen cursors from penCursor.h, one for pen up and one for pen down,
- *    add "pencursor" on/off to the config file, default is on.
- * 15-Oct-2026 Claude - the home config file is ~/.t30dpy.config, as documented and as t30dpy3 reads it,
- *    not ~/.t30dpyconfig.
+ * 26-Oct-2026 Claude - CPU fade: a pixel hit more than once between renders keeps the brightest hit.
+ * 26-Oct-2026 wje old history pruned, it was getting too long
 */
 
 #include <stdio.h>
@@ -1110,7 +1032,14 @@ static bool skipOne = false;
             }
             else
             {
-                activePool[pointIdx].intensity = intensity;
+                // A lifetime of 0 means the pixel was already hit since the last render. Two
+                // beams on one spot of phosphor show the brighter, so keep the greater; taking
+                // whichever came last makes a pixel two figures share change brightness at
+                // random as the 340's frame drifts against the render's.
+                if( (activePool[pointIdx].lifetime > 0) || (intensity > activePool[pointIdx].intensity) )
+                {
+                    activePool[pointIdx].intensity = intensity;
+                }
                 activePool[pointIdx].lifetime = 0;
             }
         }

@@ -32,6 +32,8 @@
  * 20-May-2026 wje initial version
  * 26-Oct-2026 Claude - CPU fade: a pixel hit more than once between renders keeps the brightest hit.
  * 26-Oct-2026 wje old history pruned, it was getting too long
+ * 26-Oct-2026 Claude - linear=auto, the new default: nearest-neighbor only at a whole-number scale,
+ *    linear elsewhere, so a one-pixel line is never lost
 */
 
 #include <stdio.h>
@@ -80,7 +82,11 @@
 
 #define LOWCUTOFF 5             // alphas less than this are not displayed
 #define VSYNC false             // ask SDL renderer to use vsync
-#define LINEAR false            // ask SDL renderer to use linear scaling
+// The linear setting, the config file's linear and -l. Auto scales nearest-neighbor where the
+// window is a whole multiple of 1024 pixels and linear anywhere else, see applyScaleMode().
+#define SCALEAUTO 0
+#define SCALELINEAR 1
+#define SCALENEAREST 2
 
 // MAXACTIVEPOINTS bounds the size of the active-point pool (see ActivePoint below).
 // Worst-case observed live usage has been around 171000 simultaneously active points,
@@ -257,7 +263,8 @@ bool usingLabwc = false;
 volatile bool quit = false;
 volatile bool reloadRequested = false;  // set by SIGHUP, acted on by the main loop, see sighup()
 bool border;
-bool doLinear = LINEAR;
+int scaleSetting = SCALEAUTO;   // SCALEAUTO, SCALELINEAR or SCALENEAREST
+bool doLinear = false;          // the scale mode in use, set by applyScaleMode()
 bool doVsync = VSYNC;
 bool mikecMode = false;
 bool gpuFade = true;            // the GPU fade instead of the active-point walk, see FADETERMS
@@ -317,6 +324,7 @@ bool fadeTerm(int term);
 bool readTermPixel(int *valueP);
 int spreadPoint(SDL_FPoint *outP, int x, int y, int intensity);
 void renderGpuFrame(void);
+void applyScaleMode(void);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void flushLetterboxBars(void);
 void makePenCursors(void);
@@ -412,7 +420,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             break;
 
         case 'l':
-            doLinear = true;     // SDL linear scaling, else nearest neighbor
+            scaleSetting = SCALELINEAR;     // linear at every size, see applyScaleMode()
             break;
 
         case 'm':
@@ -563,15 +571,14 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     // Linear gives the best results balancing small screens vs larger ones but blurs the points some.
     // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
     // Select what works best for a given monitor and sceen size vial the command line or config file.
+    // The scale mode is set once the fade's textures exist, see applyScaleMode() below.
     // We control intensity by adjusting the alpha value.
     // This allows use of SDL_BLENDMODE_NONE, avoiding all the runtime blending SDL would otherwiae have to do.
     // Pixels use RGBA8888 representation, which is 32 bits.
     textures[0] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_NONE);
-    SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     textures[1] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     SDL_SetTextureBlendMode(textures[1], SDL_BLENDMODE_NONE);
-    SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
 
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     blackPixel = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
@@ -601,6 +608,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             }
         }
     }
+    applyScaleMode();
 
     // An async thread is used to read incoming data.
     // Lightpen updates are done in the main thread during the display update cycle.
@@ -730,6 +738,12 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                     // Fires for every resize that actually changes the window's size, whether
                     // edge-drag or compositor-driven, handles the delayed wayland update.
                     flushLetterboxBars();
+                    break;
+
+                case SDL_WINDOWEVENT_SIZE_CHANGED:
+                    // Every size change, a resize or the full-screen toggle, can change whether
+                    // the scale is a whole number.
+                    applyScaleMode();
                     break;
                 }
                 break;
@@ -1771,6 +1785,65 @@ uint64_t renderDelta;
     }
 }
 
+// Set the scale mode of every texture the display draws with, from scaleSetting and the window's
+// size in pixels, and record it in doLinear for selectFadeTerms().
+// Auto takes nearest-neighbor only at a whole-number scale. At any other, nearest-neighbor never
+// shows some of the 1024 columns and rows, a fixed set for each size, and a one-pixel line on one
+// of them is lost: a vertical at intensity 0 to 3, see drawPoint(). Linear shows every line.
+void
+applyScaleMode(void)
+{
+int w, h;
+int i;
+SDL_Texture *targetP;
+SDL_ScaleMode mode;
+
+    if( scaleSetting == SCALEAUTO )
+    {
+        // SDL2 reports a render target's size while one is set, so ask with the window as target.
+        // Letterboxed, the picture is a square the size of the smaller side.
+        targetP = SDL_GetRenderTarget(renderer);
+        if( targetP )
+        {
+            SDL_SetRenderTarget(renderer, NULL);
+        }
+        if( SDL_GetRendererOutputSize(renderer, &w, &h) != 0 )
+        {
+            w = 0;
+            h = 0;
+        }
+        if( targetP )
+        {
+            SDL_SetRenderTarget(renderer, targetP);
+        }
+        if( h < w )
+        {
+            w = h;
+        }
+        doLinear = ((w <= 0) || ((w % 1024) != 0));
+    }
+    else
+    {
+        doLinear = (scaleSetting == SCALELINEAR);
+    }
+
+    mode = (doLinear) ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
+    for( i = 0; i < 2; ++i )
+    {
+        if( textures[i] )
+        {
+            SDL_SetTextureScaleMode(textures[i], mode);
+        }
+    }
+    for( i = 0; i < FADETERMS; ++i )
+    {
+        if( termTextures[i] )
+        {
+            SDL_SetTextureScaleMode(termTextures[i], mode);
+        }
+    }
+}
+
 // For the real hardware, the Type 30 would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
@@ -2058,7 +2131,16 @@ char line[256];
             }
             else if( !strcmp(line, "linear") )
             {
-                doLinear = isTrue(cP);
+                // No or false is auto, not nearest: older config files say linear=no, and
+                // nearest-neighbor at a size that isn't a multiple of 1024 loses one-pixel lines.
+                if( !strncmp(cP, "nearest", 7) )
+                {
+                    scaleSetting = SCALENEAREST;
+                }
+                else
+                {
+                    scaleSetting = (isTrue(cP)) ? SCALELINEAR : SCALEAUTO;
+                }
             }
             else if( !strcmp(line, "mikecmode") )
             {
@@ -2191,8 +2273,7 @@ reconfigure(void)
     loadConfig(false);
     initializeRgbas();
     // These might have changed.
-    SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
-    SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    applyScaleMode();
     SDL_RenderSetVSync(renderer, doVsync);
     SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
     applyPenCursorSetting();
@@ -2260,7 +2341,8 @@ usage()
     fprintf(stderr, "-f, fade on the GPU even if the config says gpufade=false; the GPU fade is the default,\n");
     fprintf(stderr, "    the config's tail=seconds sets how long a point takes to fade out, 0.8 to 2.7,\n");
     fprintf(stderr, "    default %.1f, and -w and the config's cutoff apply to the CPU fade only\n", DEFAULTTAIL);
-    fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor, default neearest\n");
+    fprintf(stderr, "-l, use SDL linear scaling at every window size; the default, the config's linear=auto,\n");
+    fprintf(stderr, "    is nearest neighbor where the window is a multiple of 1024 pixels, else linear\n");
     fprintf(stderr, "-m, Mike C mode, see the documentation, default false\n");
     fprintf(stderr, "-n, start with no border, default bordered\n");
     fprintf(stderr, "-t, accumulate timing data, display on exit, default off\n");

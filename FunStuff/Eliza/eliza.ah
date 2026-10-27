@@ -4,6 +4,9 @@
 // the characters, the script reader, the engine, the typewriter and the
 // microtape.
 
+// The telnet port to bind to for DCS mode
+#define PORTNO 0d2030
+
 // A cell is CELLSIZE words, the left link and flags, the right link, the
 // datum's high word and its low word. A link is a cell number, not an address; cell n is at
 // CELLBASE + CELLSIZE*n, a full address that the list routines use with

@@ -38,6 +38,8 @@
  * 26-Oct-2026 wje old history pruned, it was getting too long
  * 26-Oct-2026 Claude - linear=auto, the new default: nearest-neighbor only at a whole-number scale,
  *    linear elsewhere, so a one-pixel line is never lost
+ * 27-Oct-2026 Claude - both fades grade a point's first fade step by its age, a line drawn a few ms
+ *    late dims by a part of a step, not a whole one
 */
 
 #include <stdio.h>
@@ -82,7 +84,14 @@
 
 #define YELLOWDECAYALPHA  0.85
 #define YELLOWRGB 179, 225, 0   // keep exactly this format, used as 3 args
-#define MAXLIFETIME 255         // number of frames a point will exist unless its alptha falls below LOWCUTOFF
+#define MAXLIFETIME 255         // renders since a point's last hit are counted up to this, see the walk in main()
+
+// A point's fade follows its age at a render, the time since its last hit, rather than the renders
+// it has missed. Up to one frame old it shows full; past that, each frame of age is one whole step of
+// the decay, taken in SUBSTEPS parts. A line drawn a few ms too late for a render then dims by a part
+// of the first step, the largest, instead of all of it.
+#define SUBSTEPS 8
+#define FADESTEPS (256 * SUBSTEPS)  // table entries per intensity, whole steps and their parts
 
 // After blending, the resulting alpha also has a power law applied to adjust for the nonlinear response of the eye.
 // Smaller values enhance the brightness of low alphas, larger dims them.
@@ -109,6 +118,9 @@
 // onto the screen at their weights. An 8-bit value multiplied alone stops falling once
 // v * n / 255 rounds back to v; the subtraction keeps every term falling to black, so the fade
 // ends in a short ramp instead of a step or a lasting glow.
+// A point the last frame drew and this one has not is drawn again after the fade, at a level graded
+// by its age as the CPU fade grades it, see SUBSTEPS: from full at one frame old to the faded level
+// at two, so a line drawn a few ms late dims by a part of a frame's fade.
 // The renderer does exactly v = round(v * n / 255) - s, at least 0, when n and s are sent as
 // n/255 and s/255 (measured on SDL 3.2.10 opengl, Pi 4, and SDL 3.4.2 opengl/opengles2/vulkan);
 // initializeGpuFade() checks it on the renderer in use.
@@ -116,6 +128,8 @@
 #define FASTTERM 0
 #define MAXNEWPOINTS 100000     // new points one frame takes in the GPU fade; more are dropped and counted
 #define MAXSPREAD 9             // pixels one point covers at the highest intensities, see drawPoint()
+#define NEWBUFFERS 3            // filling, drawn this frame, drawn last frame, see newPoints
+#define NOGROUP 0xFF            // a last-frame point not drawn again, see renderGpuFrame()
 #define DEFAULTTAIL 1.3f        // seconds until a full-intensity point has faded to black
 #define MINWEIGHT 0.005f        // a term weighted less than this is not drawn at all
 #define PACKPOINT(x, y, i) ((uint32_t)(x) | ((uint32_t)(y) << 10) | ((uint32_t)(i) << 20))
@@ -142,6 +156,7 @@
 
 #define CONSTRAIN(x) ((x) < 0?0:(((x) > 1023)?1023:(x)))    // keep a value in the range 0-1023
 #define FRAMETIME 33333333L         // nanoseconds between frames, this is 30 fps
+#define FRAMEUS 33333               // FRAMETIME in microseconds, the age a point shows full to
 #define EVENTPOLLNS NSECPERMSEC     // Instead of waiting for each frame to update mouse events,
                                     // we update this often in the idle wait loop.
                                     // Matches the granularity of the poll time on the pdp-1 side.
@@ -160,7 +175,8 @@ typedef uint32_t Rgba;
 // The description of a point to display.
 // It contains the values to select the intensity over time for the two phospors,
 // the fast-decay blue-purple and the slow-decay yellow-green.
-// The lifetime field is used to select the alpha for the decay interval and ranges from 0-255.
+// The hitUs field, the time of the point's last hit, selects the alpha for the decay interval.
+// The lifetime field counts the renders since that hit, 0-255; 0 means hit since the last render.
 // The phosphors decay in intensity by power-law decay, not exponential decay.
 // The intensity field ranges from 0-7 and is used to select scaled alpha values, 0 being dimmest, 7 brightest.
 // In the display loop, precomputed values are used and are selected by the combination of intensity and lifetime.
@@ -180,6 +196,7 @@ typedef struct ActivePoint {
     byte intensity;             // 0 - 7, PDP-1 intensity
     uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
     uint32_t nextIdx;           // index of the next entry in whichever list (active or free) this entry is on
+    uint32_t hitUs;             // now() in microseconds at the last hit; it wraps, so only differences count
 } ActivePoint, *ActivePointP;
 
 // One choice of the GPU fade's three terms. Each frame a term's value v (0-255) becomes
@@ -208,12 +225,12 @@ volatile uint32_t freeListHead;                 // head index of the free list, 
 uint64_t droppedPoints;                         // counts points dropped because the pool was exhausted
 SDL_Mutex *busyLockP;                           // for interlocking with the reader thread
 
-Rgba rgbaValues[8][256];        // The rgba values for each possibe intensity and internal time step.
+Rgba rgbaValues[8][FADESTEPS]; // The rgba values for each possibe intensity and internal time step, see SUBSTEPS.
 
-// Perceptual brightness for each possible intensity and lifetime.
+// Perceptual brightness for each possible intensity and time step.
 // This is the value drawPoint() uses to decide whether a point should override a pixel some other point already
 // wrote this frame.
-uint8_t brightValues[8][256];
+uint8_t brightValues[8][FADESTEPS];
 
 // Tracks the brightest value written to each screen pixel so far in the current frame.
 uint8_t brightBuffer[LOGICALSIZE][LOGICALSIZE];
@@ -251,17 +268,31 @@ SDL_Texture *termTextures[FADETERMS];   // one 8-bit render target per term
 SDL_BlendMode subtractMode;             // dst - src, for the per-frame subtraction
 SDL_BlendMode maxMode;                  // max(dst, src), for drawing points into a term
 
-// New points for the GPU fade, double buffered: the reader thread fills newPoints[newFill]
-// under busyLockP, and the main loop takes it and switches newFill under the same lock.
-uint32_t newPoints[2][MAXNEWPOINTS];
-uint32_t newCount;
+// New points for the GPU fade, in three buffers: the reader thread fills newPoints[newFill] under
+// busyLockP, stamping each point's arrival in newStamps, and the main loop takes it and moves newFill
+// on under the same lock. The buffer one frame drew is left alone until the next frame has drawn its
+// points again, graded by age, see renderGpuFrame().
+uint32_t newPoints[NEWBUFFERS][MAXNEWPOINTS];
+uint32_t newStamps[NEWBUFFERS][MAXNEWPOINTS];   // now() in microseconds, see ActivePoint's hitUs
+uint32_t newCounts[NEWBUFFERS];
 int newFill;
 
-// One frame's new points spread to their pixels, grouped by intensity, see renderGpuFrame().
+// One frame's new points spread to their pixels, grouped by intensity, and the last frame's points
+// not hit again, grouped by intensity and grade, see renderGpuFrame().
 SDL_FPoint spreadPoints[MAXNEWPOINTS * MAXSPREAD];
+SDL_FPoint prevSpread[MAXNEWPOINTS * MAXSPREAD];
+uint8_t prevGroups[MAXNEWPOINTS];   // a last-frame point's (intensity * SUBSTEPS) + grade, or NOGROUP
+
+// The frame that last drew a new point at each pixel, as a tag that advances every frame.
+uint8_t hitMark[LOGICALSIZE][LOGICALSIZE];
+uint8_t hitTag;
 
 float levelValues[8];           // each intensity's value drawn into a term, gamma applied
 float fastColor[3];             // the fast term's color at full scale, see selectFadeTerms()
+
+// Each term's color for each intensity and grade: grade 0 is the color a new point is drawn at, and
+// grade g lies g / SUBSTEPS of the way from it to that color after one frame's fade.
+float gradeColor[FADETERMS][8][SUBSTEPS][3];
 
 int pdp1FD;
 int portNum;
@@ -335,7 +366,7 @@ uint64_t now(void);
 int reader(void *argP);
 
 void initializePoints(void);
-void addActivePoint(uint16_t x, uint16_t y, byte intensity);
+void addActivePoint(uint16_t x, uint16_t y, byte intensity, uint32_t hitUs);
 void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
 
 void initializeRgbas(void);
@@ -403,6 +434,9 @@ uint32_t nextIdx;
 ActivePointP activePointP;
 uint8_t *pixels;
 uint32_t rgba;
+uint32_t walkUs;            // the walk's time, microseconds, see ActivePoint's hitUs
+int32_t age;
+int step;
 int pitch;
 
 SDL_Event event;
@@ -801,20 +835,42 @@ EventState evState;         // see typedef above main(): bundles the old penDown
             // across the full 1024x1024 grid.
             // This entire walk is done under a single lock acquisition, not just the individual removals.
             SDL_LockMutex(busyLockP);
+            walkUs = (uint32_t)(now() / 1000);
 
             for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
             {
                 activePointP = &activePool[pointIdx];
                 x = activePointP->x;
                 y = activePointP->y;
-                rgba = rgbaValues[activePointP->intensity][activePointP->lifetime];
+
+                // The step follows the point's age, see SUBSTEPS. Every hit the reader has applied
+                // was stamped before this walk took the lock, so the age is not negative; the signed
+                // difference keeps it right across the counter's wrap.
+                age = (int32_t)(walkUs - activePointP->hitUs);
+                if( age <= FRAMEUS )
+                {
+                    step = 0;
+                }
+                else if( age < (FRAMEUS * 257) )
+                {
+                    step = (((age - FRAMEUS) * SUBSTEPS) / FRAMEUS);
+                }
+                else
+                {
+                    step = FADESTEPS;                   // past the last step
+                }
+                rgba = (step < FADESTEPS) ? rgbaValues[activePointP->intensity][step] : blackPixel;
 
                 nextIdx = activePointP->nextIdx;        // Get this now before a possible point removal.
-                if( (rgba != blackPixel) && (activePointP->lifetime < MAXLIFETIME) )
+                if( rgba != blackPixel )
                 {
                     drawPoint(pixels, pitch, rgba, x, y, activePointP->intensity,
-                        brightValues[activePointP->intensity][activePointP->lifetime]);
-                    activePointP->lifetime++;
+                        brightValues[activePointP->intensity][step]);
+                    // Only the reader's rule for a shared pixel uses the count now, see reader().
+                    if( activePointP->lifetime < MAXLIFETIME )
+                    {
+                        activePointP->lifetime++;
+                    }
                     prevIdx = pointIdx;                 // Only update if we are not removing this point.
                     ++totalPoints;
                 }
@@ -999,6 +1055,7 @@ uint8_t intensity;
 int x, y;
 uint32_t cmd;
 uint32_t pointIdx;
+uint32_t batchUs;
 uint32_t buffer[READBUFSIZE];
 
 static bool skipOne = false;
@@ -1010,6 +1067,10 @@ static bool skipOne = false;
             quit = true;
             return(0);
         }
+
+        // Every point of a read is stamped with its arrival, taken before waiting for the lock, so a
+        // render that holds the lock doesn't age the points it delays.
+        batchUs = (uint32_t)(now() / 1000);
 
         count /= sizeof(uint32_t);          // command words
 
@@ -1046,9 +1107,10 @@ static bool skipOne = false;
             // The GPU fade keeps no active points, only this frame's new ones.
             if( gpuFade )
             {
-                if( newCount < MAXNEWPOINTS )
+                if( newCounts[newFill] < MAXNEWPOINTS )
                 {
-                    newPoints[newFill][newCount++] = PACKPOINT(x, y, intensity);
+                    newPoints[newFill][newCounts[newFill]] = PACKPOINT(x, y, intensity);
+                    newStamps[newFill][newCounts[newFill]++] = batchUs;
                 }
                 else
                 {
@@ -1058,14 +1120,14 @@ static bool skipOne = false;
             }
 
             // It is possible that this point is already active.
-            // If so, resetting the lifetime and intensity in its existing pool slot is all
-            // that is needed - the active list linkage doesn't change.
+            // If so, resetting the lifetime, the time of the hit and the intensity in its existing pool
+            // slot is all that is needed - the active list linkage doesn't change.
             // If not, a new slot must be pulled from the free list and linked in.
             pointIdx = pointIndex[y][x];
 
             if( pointIdx == NOINDEX )            // This is not a currently active point, add to active list
             {
-                addActivePoint((uint16_t)x, (uint16_t)y, intensity);
+                addActivePoint((uint16_t)x, (uint16_t)y, intensity, batchUs);
             }
             else
             {
@@ -1078,6 +1140,7 @@ static bool skipOne = false;
                     activePool[pointIdx].intensity = intensity;
                 }
                 activePool[pointIdx].lifetime = 0;
+                activePool[pointIdx].hitUs = batchUs;
             }
         }
 
@@ -1088,13 +1151,16 @@ static bool skipOne = false;
 }
 
 // Precompute the rgba values used for displaying points.
-// There are only 256 possible rgba values for each pdp-1 intensity,
-// one per each lifetime value which ranges from 0-255.
+// There are only FADESTEPS possible rgba values for each pdp-1 intensity,
+// one per time step, see SUBSTEPS.
 void
 initializeRgbas()
 {
-int i, j;
+int i, j, f;
 int intensity;
+float blue, blueNext;
+float yellow, yellowNext;
+float part;
 int delta;
 Uint8 r, g, b, a, bias;
 Uint8 blueAlpha, yellowAlpha;
@@ -1137,42 +1203,53 @@ Rgba rgba;
         // a bright blue-purple inital dot.
         // The alpha for both colors always starts at 255, 100%, but then drops by the power law for it,
         // which is why the bias is only needed for the first value.
-        bias = whiteBias;
-
-        for( j = 0; j < 256; ++j )    // for each lifetime value, 0 being initial, 255 being final
+        // Between whole steps both alphas go linearly, so whole step j is exactly the curve's value
+        // and its parts, see SUBSTEPS, lie between it and step j + 1 in proportion. The power law
+        // taken at a fraction would drop steepest in the first part, the one a late line shows.
+        // The bias fades out the same way over the first step.
+        for( j = 0; j < 256; ++j )    // for each whole step, 0 being initial, 255 being final
         {
-            blueAlpha = (Uint8)(powf((float)j+1, -BLUEDECAYALPHA) * 255.0f);
-            yellowAlpha = (Uint8)(powf((float)j+1, -YELLOWDECAYALPHA) * 255.0f);
+            blue = powf((float)j+1, -BLUEDECAYALPHA);
+            blueNext = powf((float)j+2, -BLUEDECAYALPHA);
+            yellow = powf((float)j+1, -YELLOWDECAYALPHA);
+            yellowNext = powf((float)j+2, -YELLOWDECAYALPHA);
 
-            // Yellow has a looong tailoff, so stop when it gets down to lowCutoff.
-            // The blended alpha needs to be gamma adjusted.
-            if( yellowAlpha > lowCutoff )
+            for( f = 0; f < SUBSTEPS; ++f )
             {
-                rgba = blend(BLUER + bias, BLUEG + bias, BLUEB, blueAlpha, YELLOWRGB, yellowAlpha);
-                SDL_GetRGBA(rgba, formatDetailsP, NULL, &r, &g, &b, &a);
-                a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
+                part = ((float)f / (float)SUBSTEPS);
+                blueAlpha = (Uint8)((blue + (part * (blueNext - blue))) * 255.0f);
+                yellowAlpha = (Uint8)((yellow + (part * (yellowNext - yellow))) * 255.0f);
+                bias = (j == 0) ? (Uint8)((whiteBias * (SUBSTEPS - f)) / SUBSTEPS) : 0;
 
-                // Premultiply the alpha into r, g, and b here, once, at table-build time,
-                // and store the result with alpha forced to fully opaque (255).
-                // This lets the display loop use SDL_BLENDMODE_NONE (a plain pixel copy)
-                // instead of SDL_BLENDMODE_BLEND (a per-pixel read-modify-write blend
-                // against the background), since the brightness scaling that alpha used
-                // to provide via blending is now baked directly into r, g, and b.
-                r = (Uint8)(((int)r * (int)a) / 255);
-                g = (Uint8)(((int)g * (int)a) / 255);
-                b = (Uint8)(((int)b * (int)a) / 255);
-                rgba = SDL_MapRGBA(formatDetailsP, NULL, r, g, b, 255);
-                bias = 0;           // only the first value
+                // Yellow has a looong tailoff, so stop when it gets down to lowCutoff.
+                // The blended alpha needs to be gamma adjusted.
+                if( yellowAlpha > lowCutoff )
+                {
+                    rgba = blend(BLUER + bias, BLUEG + bias, BLUEB, blueAlpha, YELLOWRGB, yellowAlpha);
+                    SDL_GetRGBA(rgba, formatDetailsP, NULL, &r, &g, &b, &a);
+                    a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
 
-                brightValues[i][j] = a;    // pre-premultiply alpha, see brightValues declaration
+                    // Premultiply the alpha into r, g, and b here, once, at table-build time,
+                    // and store the result with alpha forced to fully opaque (255).
+                    // This lets the display loop use SDL_BLENDMODE_NONE (a plain pixel copy)
+                    // instead of SDL_BLENDMODE_BLEND (a per-pixel read-modify-write blend
+                    // against the background), since the brightness scaling that alpha used
+                    // to provide via blending is now baked directly into r, g, and b.
+                    r = (Uint8)(((int)r * (int)a) / 255);
+                    g = (Uint8)(((int)g * (int)a) / 255);
+                    b = (Uint8)(((int)b * (int)a) / 255);
+                    rgba = SDL_MapRGBA(formatDetailsP, NULL, r, g, b, 255);
+
+                    brightValues[i][(j * SUBSTEPS) + f] = a;    // pre-premultiply alpha, see brightValues declaration
+                }
+                else
+                {
+                    rgba = blackPixel;
+                    brightValues[i][(j * SUBSTEPS) + f] = 0;
+                }
+
+                rgbaValues[i][(j * SUBSTEPS) + f] = rgba;
             }
-            else
-            {
-                rgba = blackPixel;
-                brightValues[i][j] = 0;
-            }
-
-            rgbaValues[i][j] = rgba;
         }
     }
 }
@@ -1256,7 +1333,7 @@ removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 // lit at once, far beyond any realistic load), the new point is silently dropped and
 // droppedPoints is incremented so this condition is observable via timing output.
 void
-addActivePoint(uint16_t x, uint16_t y, byte intensity)
+addActivePoint(uint16_t x, uint16_t y, byte intensity, uint32_t hitUs)
 {
 uint32_t newIdx;
 uint64_t u64tmp;
@@ -1276,6 +1353,7 @@ uint64_t u64tmp;
     activePool[newIdx].y = y;
     activePool[newIdx].intensity = intensity;
     activePool[newIdx].lifetime = 0;
+    activePool[newIdx].hitUs = hitUs;
 
     // Link it in as the new head of the active list.
     activePool[newIdx].nextIdx = activeListHead;
@@ -1427,6 +1505,10 @@ int row;
 int term;
 int i;
 int delta;
+int level;
+int grade;
+int v;
+float vf;
 float w;
 
     row = (int)((fadeTail * 10.0f) + 0.5f) - FADETABLEFIRST;
@@ -1458,6 +1540,27 @@ float w;
         if( fastColor[i] > 1.0f )
         {
             fastColor[i] = 1.0f;
+        }
+    }
+
+    // Grade g of a point lies g / SUBSTEPS of the way from the level it is drawn at to that level
+    // after one fadeTerm(), linearly, as the CPU fade's parts of a step do. Grade 0 is exactly the
+    // color a new point is drawn at.
+    for( term = 0; term < FADETERMS; ++term )
+    {
+        for( level = 0; level < 8; ++level )
+        {
+            for( i = 0; i < 3; ++i )
+            {
+                vf = (term == FASTTERM) ? (levelValues[level] * fastColor[i]) : levelValues[level];
+                v = (int)((vf * 255.0f) + 0.5f);
+                gradeColor[term][level][0][i] = vf;
+                for( grade = 1; grade < SUBSTEPS; ++grade )
+                {
+                    gradeColor[term][level][grade][i] = (vf - (((float)grade / (float)SUBSTEPS)
+                        * ((float)(v - fadeModel(v, fadeTermsP->n[term], fadeTermsP->s[term])) / 255.0f)));
+                }
+            }
         }
     }
 
@@ -1681,34 +1784,55 @@ int px, py;
 }
 
 // One frame of the GPU fade: take the reader's new points, fade every term and draw the new
-// points into it, then add the terms onto the screen. Nothing is drawn once all has faded out.
+// points into it, and the last frame's points not hit since at their grades, then add the terms
+// onto the screen. Nothing is drawn once all has faded out.
 void
 renderGpuFrame(void)
 {
 uint32_t *pointsP;
+uint32_t *prevP;
+uint32_t *prevStampsP;
 uint32_t count;
+uint32_t prevCount;
 uint32_t i;
 uint32_t packed;
+uint32_t renderUs;
+int32_t age;
+int cur;
+int prev;
 int term;
 int level;
+int group;
+int grade;
+int x, y;
 int perLevel[8];
 int start[8];
 int used[8];
-float lv;
+int perGroup[8 * SUBSTEPS];
+int prevStart[8 * SUBSTEPS];
+int prevUsed[8 * SUBSTEPS];
+float *colorP;
 uint64_t renderStart;
 uint64_t tAfterBuffer;
 uint64_t renderDelta;
 
-    // Swap buffers with the reader, so it fills the other while this frame's are drawn.
+    // Move the reader on to the next buffer, the one drawn two frames ago, while this frame's are
+    // drawn, and the last frame's are drawn again.
     SDL_LockMutex(busyLockP);
-    pointsP = newPoints[newFill];
-    count = newCount;
-    newFill ^= 1;
-    newCount = 0;
+    cur = newFill;
+    prev = ((cur + NEWBUFFERS - 1) % NEWBUFFERS);
+    newFill = ((cur + 1) % NEWBUFFERS);
+    newCounts[newFill] = 0;
     SDL_UnlockMutex(busyLockP);
+    renderUs = (uint32_t)(now() / 1000);
+    pointsP = newPoints[cur];
+    count = newCounts[cur];
+    prevP = newPoints[prev];
+    prevStampsP = newStamps[prev];
+    prevCount = newCounts[prev];
 
     // A point fades to black in fadeTermsP->life frames; after that the screen is black.
-    if( count > 0 )
+    if( (count > 0) || (prevCount > 0) )
     {
         gpuIdleFrames = 0;
     }
@@ -1747,6 +1871,66 @@ uint64_t renderDelta;
     }
     totalPoints += count;
 
+    // The last frame's points: one hit again since is drawn full by this frame's, and one two frames
+    // old or more is at the faded level the terms already hold, so neither is drawn again. The others
+    // are grouped by intensity and grade, as above. A pixel hit this frame bears this frame's tag;
+    // when the tag wraps every mark is cleared, so an old one can't match.
+    for( group = 0; group < (8 * SUBSTEPS); ++group )
+    {
+        perGroup[group] = 0;
+        prevUsed[group] = 0;
+    }
+    if( prevCount > 0 )
+    {
+        if( ++hitTag == 0 )
+        {
+            memset(hitMark, 0, sizeof(hitMark));
+            hitTag = 1;
+        }
+        for( i = 0; i < count; ++i )
+        {
+            hitMark[(pointsP[i] >> 10) & 01777][pointsP[i] & 01777] = hitTag;
+        }
+
+        for( i = 0; i < prevCount; ++i )
+        {
+            packed = prevP[i];
+            prevGroups[i] = NOGROUP;
+            if( hitMark[(packed >> 10) & 01777][packed & 01777] == hitTag )
+            {
+                continue;
+            }
+
+            age = (int32_t)(renderUs - prevStampsP[i]);
+            if( age >= (FRAMEUS * 2) )
+            {
+                continue;
+            }
+            grade = (age <= FRAMEUS) ? 0 : (((age - FRAMEUS) * SUBSTEPS) / FRAMEUS);
+            group = ((int)(((packed >> 20) & 7) * SUBSTEPS) + grade);
+            prevGroups[i] = (uint8_t)group;
+            ++perGroup[group];
+        }
+
+        prevStart[0] = 0;
+        for( group = 1; group < (8 * SUBSTEPS); ++group )
+        {
+            prevStart[group] = (prevStart[group - 1] + (perGroup[group - 1] * MAXSPREAD));
+        }
+        for( i = 0; i < prevCount; ++i )
+        {
+            if( (group = prevGroups[i]) == NOGROUP )
+            {
+                continue;
+            }
+            packed = prevP[i];
+            x = (int)(packed & 01777);
+            y = (int)((packed >> 10) & 01777);
+            prevUsed[group] += spreadPoint(&prevSpread[prevStart[group] + prevUsed[group]], x, y,
+                (group / SUBSTEPS));
+        }
+    }
+
     for( term = 0; term < FADETERMS; ++term )
     {
         if( fadeTermsP->w[term] < MINWEIGHT )
@@ -1756,28 +1940,28 @@ uint64_t renderDelta;
 
         SDL_SetRenderTarget(renderer, termTextures[term]);
         fadeTerm(term);
-        if( count > 0 )
+        SDL_SetRenderDrawBlendMode(renderer, maxMode);
+        for( level = 0; level < 8; ++level )
         {
-            SDL_SetRenderDrawBlendMode(renderer, maxMode);
-            for( level = 0; level < 8; ++level )
+            if( used[level] == 0 )
             {
-                if( used[level] == 0 )
-                {
-                    continue;
-                }
-
-                lv = levelValues[level];
-                if( term == FASTTERM )
-                {
-                    SDL_SetRenderDrawColorFloat(renderer, (lv * fastColor[0]), (lv * fastColor[1]),
-                        (lv * fastColor[2]), 1.0f);
-                }
-                else
-                {
-                    SDL_SetRenderDrawColorFloat(renderer, lv, lv, lv, 1.0f);
-                }
-                SDL_RenderPoints(renderer, &spreadPoints[start[level]], used[level]);
+                continue;
             }
+
+            colorP = gradeColor[term][level][0];
+            SDL_SetRenderDrawColorFloat(renderer, colorP[0], colorP[1], colorP[2], 1.0f);
+            SDL_RenderPoints(renderer, &spreadPoints[start[level]], used[level]);
+        }
+        for( group = 0; group < (8 * SUBSTEPS); ++group )
+        {
+            if( prevUsed[group] == 0 )
+            {
+                continue;
+            }
+
+            colorP = gradeColor[term][group / SUBSTEPS][group % SUBSTEPS];
+            SDL_SetRenderDrawColorFloat(renderer, colorP[0], colorP[1], colorP[2], 1.0f);
+            SDL_RenderPoints(renderer, &prevSpread[prevStart[group]], prevUsed[group]);
         }
     }
 

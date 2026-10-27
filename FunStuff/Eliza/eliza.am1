@@ -217,9 +217,9 @@ endloc
 constants
 
 // The setting of DCS2 channel 0, ascii mode with telnet, echo and server, on
-// port 2030.
+// PORTNO, port 2030 unless changed in eliza.ah.
 elCtl, dcftel dcfecho dcfsrv
-    0d2030
+    PORTNO
 
 txWhich, ascii "WHICH SCRIPT DO YOU WISH TO PLAY"
 txCells, ascii "LIST SPACE EXHAUSTED"

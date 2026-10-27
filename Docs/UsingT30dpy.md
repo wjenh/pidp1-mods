@@ -2,10 +2,10 @@
 
 This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.10
+This is version 1.11
 
-Updated 24-Oct-2026\
-minor corrections
+Updated 27-Oct-2026\
+add aging algorithm
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 
@@ -50,25 +50,6 @@ and there are none of the silly Wayland/labwc issues.
 
 ## Usage
 
-**t30dpy** [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
-
-**t30dpy3** [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [hostame]
-
-```
-g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
-w bias - set the white bias, added to the r and g channels of the blue phospor to increase whiteness
-l - ask SDL to use linear scaling instead of nearest-neighbor
-m - use Mike C mode, see below
-n - start borderless
-s size - set the screen size, >= 256, default is 1024
-p port - the port to connect to, default is 3400
-t - accumulate statistics, printed on exit
-v - ask SDL to use vsync for frame synchronization, not in t30dpy3
-hostname - the host to connect to, defaults to localhost
-```
-The defaults can be overridden in the configuration file.
-## Usage
-
 **t30dpy** [*-f*] [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
 
 **t30dpy3** [*-f*] [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*]
@@ -77,8 +58,9 @@ The defaults can be overridden in the configuration file.
 ```
 f - do aging on the GPU even if the configuration file says not to, see The GPU fade below
 g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
-w bias - set the white bias, added to the r and g channels of the blue phospor to increase whiteness
-l - ask SDL to use linear scaling instead of nearest-neighbor
+w bias - set the white bias,
+    added to the r and g channels of the blue phospor to increase whiteness
+l - use linear scaling instead of auto, see Window size, dragging, and pixel scaling
 m - use Mike C mode, see below
 n - start borderless
 s size - set the screen size, >= 256, default is 1024
@@ -242,21 +224,35 @@ display when large areas or many dots are being drawn.
 Both use a streaming texture for composing the dots which is then passed to the standard renderer for display.
 The SDL3 version also uses double-buffered textures for reduced chances of 'tearing' on some displays.
 
-The decay time of a displayed point is based on the time from when a point is initially displayed.
+The decay time of a displayed point is based on the time since the point was last updated by the host, its age.
 256 intensity steps are used occurring at 33 millsecond intervals, a frame rate of 30 frames per second.
-Thus, the total aging span is up to 8.4 seconds.
+Thus, the total aging span is up to 8.5 seconds.
 
-A power law decay results in a long, low intensity tail and potentially that is simulated.
+**The first step is graded by age.**
+
+For one frame, 33 milliseconds, a point shows at full intensity.
+Past that, each 33 milliseconds of age is one step, taken in eighths, so a point's intensity at each frame
+lies between two whole steps in proportion to its age.
+The first step is the largest of the decay, about two thirds of the blue's light and half of the yellow-green's.
+A line the program redraws every frame stays at full intensity.
+A line drawn a few milliseconds too late for a frame because of the sending program's timing
+dims by only part of that step, in proportion to how late it is, about an eighth for a 40 millisecond loop.
+A point drawn once fades up to one frame later, never sooner.
+
+A power law decay results in a long, low intensity tail and that is simulated.
 However, since LCDs can't duplicate the true analog intensity decay of a CRT, the intensity value drops below
-what the LCD can display fairly rapidly. Still, the decay is apparent and the time is proper for the phosphor.
+what the LCD can display fairly rapidly.
+Still, the decay is apparent and the time is proper for the phosphor.
 
 On startup, the rgba values needed by SDL at each step in the aging for both phosphors
 following the proper power law decay is computed.
 Additionally, a gamma correction is made to adjust for the human eye's nonlinear response to intensity.
 Most modern displays also adjust gamma, so t30dpy's gamma can be ajusted or effectively turned off.
 
-For each possible aging time which ranges from 0-255 and for each possible pdp-1 intensity which ranges
+For each possible aging time, which ranges from 0-255, and for each possible pdp-1 intensity, which ranges
 from 0-7, the rgba value for that combination is calculated and adjusted by the power law decay.
+Each step's eighths lie on a straight line between it and the next step, so every whole step keeps the power
+law's value; the white bias fades out over the first step the same way.
 
 Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
 The blended alpha has its value modified by the gamma correction factor and the point displayed.
@@ -275,13 +271,14 @@ The decay parameters are set so that the secondary phosphor drops to 10% of its 
 400 milliseconds.
 
 The results are all computed at startup and kept in a 2 diminsional array,
-*rgbaValues[pdp-1 intensity][lifetime step]*.
+*rgbaValues[pdp-1 intensity][aging step in eighths]*.
 The main display loop can then get the proper rgba value for a point with no floating point calculations needed.
 
 A table of point data 1024 x 1024 in size, to match the Type 30 resolution, is kept.
-As points come from the host, the proper cell is marked as in use and its lifetime set to 0.
-Each frame increments the lifetime after the rgba value is selected and if the 256 step limit has been reached
-or the rgba value is 0, the point is marked as inactive and will no longer be drawn.
+As points come from the host, the proper cell is marked as in use and the time it was drawn is recorded.
+Each frame selects the rgba value from the point's age at the current frame time
+and if the 256 step limit has been reached or the rgba value is 0,
+the point is marked as inactive and will no longer be drawn.
 
 In practice, the primary phosphor goes to 0 in a relatively few frames, the secondary trails off slowly
 as you would expect.
@@ -300,10 +297,16 @@ Both t30dpy and t30dpy3 by default will offload the phosphor's fade to the GPU.
 *-f* forces it on whatever the configuration file says.
 
 Instead of the CPU redrawing every fading point every frame, the renderer does the fading.
-Three render targets hold the decay, a fast, a middle and a slow part of it.
-Once a frame, the renderer dims each one.
-New points are drawn into all three and the three are added together on the screen.
-The CPU only handles the points that arrived during the frame.
+Three render targets hold the decay, a fast, a middle and a slow part.
+Once a frame, the renderer dims each active point.
+New points are drawn into all three targets and the three are added together on the screen.
+The CPU only handles the points that arrived during the current frame and the frame before.
+
+The first step is graded by age here also.
+A point the last frame drew but this frame has not is drawn again after the dimming, between its full level
+and its dimmed level in eighths by its age, just as the CPU fade does.
+A line drawn a few milliseconds late dims by part of one frame's dimming, not all of it.
+From there the point fades from that level, so a point drawn once fades up to one frame later than before.
 
 On a Raspberry Pi 4 running Rain340, this took t30dpy3 from 95% of a core to about 23%,
 its render time from 35 to 3 milliseconds a frame, and its late frames from over a thousand a minute
@@ -383,12 +386,19 @@ match the texture size, it depends on the size and seems to be generally worse f
 that 1024x1024.
 But, that isn't always the case.
 
-The code uses nearest-neighbor texture scaling by default, but if that doesn't give good results for a given
-screen size linear scaling can be used, which is actually bilinear scaling.
-Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
+By default, *linear=auto*, both versions scale nearest-neighbor when the window is a whole multiple of 1024
+pixels (1024, 2048, ...) and linear, which is actually bilinear, at any other size.
+Nearest-neighbor gives the sharpest dots, but at a size that isn't a multiple of 1024 it never shows some of
+the texture's columns and rows; for example at 952, about one column in 14.
+A dot at intensity 0 to 3 is one pixel wide, a vertical line at those intensities on one of those columns
+disappears entirely and which lines disappear changes as the window is resized.
 
-The SDL3 version is much better at scaling but it still allows selection ov nearest-neighbor or linear
-for the visual effect.
+Linear shows every line, softer and, below 1024, dimmer, since a one-pixel line is spread over two.
+The choice is made again whenever the window's size changes, including the full screen toggle.
+
+*-l* or *linear=yes* forces linear at every size, and *linear=nearest* forces nearest-neighbor at every size, lost
+lines included.
+*linear=no*, as older configuration files used, means auto.
 
 For both versions, the window can be dragged by holding down the *right* mouse button anywhere in the window,
 very useful for getting around the annoying Wayland/labwc behaviors.
@@ -487,7 +497,7 @@ If reloadable, a SIGHUP will reset the running t30dpy to use the new values.
 | nice        | priority lowered by | 5      | no |
 | border      | bordered window  | true      | yes |
 | vsync       | vsync            | false     | yes |
-| linear      | scaling method   | false     | yes |
+| linear      | rendering mode   | auto | yes |
 | gamma       | gamma            | 0.4545    | yes |
 | whitebias   | whitebias        | 180       | yes |
 | cutoff      | cutoff threshold | 5         | yes |

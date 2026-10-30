@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.10\
-Edit date 25-Oct-2026\
-Added the new Companion control buttons and the drum and microtape libraries.
+This is version 1.11\
+Edit date 30-Oct-2026\
+Added the scroll bar for short displays.
 
 ## What is pdp1central?
 
@@ -53,6 +53,11 @@ Options:
 The window can be moved by its title bar and resized using the standard edge and corner grabs.
 An additional drag mode is available to work around deficiences in the Pi Trixie window manager.
 Holding the right mouse button down in the window allows moving it, the same functionality that t30dpy provides.
+
+On a display too short for the full window, it opens only as tall as the display allows.
+A tab too tall for the window then gets a scroll bar at its right edge.
+The lights, buttons and tabs stay in view above it while the rest of the tab scrolls.
+The tab contents scroll except when over a list with a scroll bar of its own, then the list scrolls.
 
 ### The top strip
 

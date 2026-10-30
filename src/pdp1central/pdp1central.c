@@ -32,6 +32,7 @@
 //     images, and the Microtape tab mounts a tape from its library; a new tape name gets .mtp.
 // 25-Oct-2026 wje (Claude) - the Control tab's Companions row starts the typewriter, t30dpy and
 //     the console detached, with the commands of their desktop launchers.
+// 30-Oct-2026 wje - add vertical scrolling for small displays
 
 #include <errno.h>
 #include <limits.h>
@@ -61,6 +62,7 @@
 #define MAX_SCHEMES 8           // color schemes the Colors choice lists
 #define WINDOW_W 960
 #define WINDOW_H 680
+#define TITLE_MARGIN 32         // kept above a window that is opened to fit a short screen
 #define ROW_H 26
 #define AUDIO_RESTORE_MS 1000   // after a reload ends, time for the emulator to take its SIGHUP
 #define MULDIV_POLL_MS 2000     // how often the Live tab reads multiply and divide
@@ -103,7 +105,8 @@ typedef enum
     TAB_MICROTAPE,
     TAB_DRUMS,
     TAB_SETTINGS,
-    TAB_LOG
+    TAB_LOG,
+    TAB_COUNT
 } Tab;
 
 // A library as its tab shows it: the list, the folders opened in it, and the entry chosen, kept
@@ -266,6 +269,8 @@ static int muldivState = -1;    // multiply and divide as the last read gave it:
 static Uint32 muldivMs;         // when it was last read, 0 to read it at once
 
 static Tab tab = TAB_CONTROL;
+static float tabHeight[TAB_COUNT];      // the height each tab's rows took when last drawn
+static bool redrawNow;                  // a tab just changed sides of the fit, so don't wait for an event
 static int group;
 static bool diskConflict;       // pidp1.config changed on disk while there are unsaved edits
 static char savedNote[512];     // after a save: what still needs a restart
@@ -3241,6 +3246,7 @@ size_t len, skip;
 
     fontP = ctxP->style.font;
     len = strlen(textP);
+    outP[0] = '\0';             // an empty text never enters the loop, and the caller draws outP
     width -= 8;                 // the label's own padding
     for( skip = 0; skip < len; skip++ )
     {
@@ -3396,6 +3402,7 @@ drawDrums(struct nk_context *ctxP, float height)
 {
 static const float splitRatios[] = { 0.62f, 0.38f };
 static const float askRatios[] = { 0.55f, 0.15f, 0.15f, 0.15f };
+static const float holdsRatios[] = { 0.99f };
 const LibEntry *entryP;
 const char *lineP, *nlP;
 float listH;
@@ -3430,7 +3437,9 @@ int rows;
     }
     if( nk_group_begin(ctxP, "drumholds", NK_WINDOW_BORDER) )
     {
-        nk_layout_row_dynamic(ctxP, 18, 1);
+        // Short of the panel's width: this panel's width is whole, its left edge is not, so a
+        // full-width row ties with it and float rounding draws a horizontal bar at some widths.
+        nk_layout_row(ctxP, NK_DYNAMIC, 18, 1, holdsRatios);
         if( !drumHoldsPath[0] )
         {
             nk_label(ctxP, "Choose an image to see what it holds.", NK_TEXT_LEFT);
@@ -3739,12 +3748,60 @@ int i;
     nk_label(ctxP, "Until the next reload, the CPU tab's muldiv setting is the saved value.", NK_TEXT_LEFT);
 }
 
-// Draw the whole window for one frame.
+// Draw the current tab's rows in the height left, and remember what they took. The rows' last
+// spacing is not counted, or a tab that fits would get a bar for it.
+static void
+drawTab(struct nk_context *ctxP, float height)
+{
+float top;
+
+    top = nk_widget_bounds(ctxP).y;
+    if( tab == TAB_CONTROL )
+    {
+        drawControl(ctxP);
+    }
+    else if( tab == TAB_LIVE )
+    {
+        drawLive(ctxP);
+    }
+    else if( tab == TAB_MICROTAPE )
+    {
+        drawMicrotape(ctxP);
+    }
+    else if( tab == TAB_DRUMS )
+    {
+        drawDrums(ctxP, height);
+    }
+    else if( tab == TAB_SETTINGS )
+    {
+        drawSettings(ctxP, height);
+    }
+    else
+    {
+        drawLog(ctxP, height);
+    }
+    tabHeight[tab] = (nk_widget_bounds(ctxP).y - top - ctxP->style.window.spacing.y);
+}
+
+// True when the current tab takes more than the height left. Settings and Log are made to fill
+// what they are given, and scroll in their own lists.
+static bool
+tabScrolls(float height)
+{
+    return( (tab != TAB_SETTINGS) && (tab != TAB_LOG) && (tabHeight[tab] > height) );
+}
+
+// Draw the whole window for one frame. The main window never scrolls, so the lamps, the buttons
+// and the tabs stay in view. A tab that fits is drawn straight in it; one that does not is drawn
+// in a group with a bar. Each tab has a group name of its own, unlike any list's in the tabs,
+// because Nuklear keeps the scroll offset by name and a shared name shares the offset.
 static void
 drawFrame(struct nk_context *ctxP, int width, int height)
 {
+static const char *const groupNames[TAB_COUNT] = { "tabcontrol", "tablive", "tabmicrotape", "tabdrums", "", "" };
 struct nk_rect region;
-float used;
+float left;
+bool scrolls;
 
     if( nk_begin(ctxP, "pdp1central", nk_rect(0, 0, width, height), NK_WINDOW_NO_SCROLLBAR) )
     {
@@ -3779,33 +3836,42 @@ float used;
         }
 
         region = nk_window_get_content_region(ctxP);
-        used = (nk_widget_bounds(ctxP).y - region.y);
-        if( tab == TAB_CONTROL )
+        left = (region.h - (nk_widget_bounds(ctxP).y - region.y));
+        scrolls = tabScrolls(left);
+        if( !scrolls )
         {
-            drawControl(ctxP);
-        }
-        else if( tab == TAB_LIVE )
-        {
-            drawLive(ctxP);
-        }
-        else if( tab == TAB_MICROTAPE )
-        {
-            drawMicrotape(ctxP);
-        }
-        else if( tab == TAB_DRUMS )
-        {
-            drawDrums(ctxP, (region.h - used));
-        }
-        else if( tab == TAB_SETTINGS )
-        {
-            drawSettings(ctxP, (region.h - used));
+            drawTab(ctxP, left);
         }
         else
         {
-            drawLog(ctxP, (region.h - used));
+            nk_layout_row_dynamic(ctxP, left, 1);
+            if( nk_group_begin(ctxP, groupNames[tab], 0) )
+            {
+                drawTab(ctxP, left);
+                nk_group_end(ctxP);
+            }
         }
+        redrawNow = (scrolls != tabScrolls(left));
     }
     nk_end(ctxP);
+}
+
+// Where the window opens and how high. On a screen it fits, as it always did. On a shorter one
+// it takes the usable height, less room for its title bar, and opens at the top of that area:
+// centered on the whole screen, its title bar would be under the desktop's menu bar.
+static void
+fitWindow(int *yP, int *heightP)
+{
+SDL_Rect usable;
+
+    *yP = SDL_WINDOWPOS_CENTERED;
+    *heightP = WINDOW_H;
+    if( !SDL_GetDisplayUsableBounds(0, &usable) && (usable.h > TITLE_MARGIN) &&
+        ((WINDOW_H + TITLE_MARGIN) > usable.h) )
+    {
+        *yP = (usable.y + TITLE_MARGIN);
+        *heightP = (usable.h - TITLE_MARGIN);
+    }
 }
 
 // Move the window while the right button is held, as t30dpy does: a window that opens with its
@@ -3884,7 +3950,7 @@ SDL_Event event;
 const char *rootArgP, *schemaArgP;
 char error[512];
 struct stat st;
-int opt, width, height;
+int opt, width, height, y;
 
     rootArgP = DEFAULT_ROOT;
     schemaArgP = NULL;
@@ -3943,8 +4009,9 @@ int opt, width, height;
         return(1);
     }
 
-    if( !(windowP = SDL_CreateWindow("pdp1central", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_W,
-        WINDOW_H, (SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE))) )
+    fitWindow(&y, &height);
+    if( !(windowP = SDL_CreateWindow("pdp1central", SDL_WINDOWPOS_CENTERED, y, WINDOW_W, height,
+        (SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE))) )
     {
         fprintf(stderr, "pdp1central: SDL_CreateWindow: %s\n", SDL_GetError());
         return(1);
@@ -3976,7 +4043,7 @@ int opt, width, height;
     while( !exitNow )
     {
         nk_input_begin(ctxP);
-        if( SDL_WaitEventTimeout(&event, 250) )
+        if( SDL_WaitEventTimeout(&event, (redrawNow?0:250)) )
         {
             do
             {

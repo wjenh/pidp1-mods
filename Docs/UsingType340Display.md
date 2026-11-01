@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.13
+This is version 1.14
 
-Edit date 16-Oct-2026\
-Codes for left and right arrow were reversed for charset 2
+Edit date 31-Oct-2026\
+Add documentation for the Type 370 lightpen
 
 ## What is it?
 
@@ -25,6 +25,12 @@ It accomplished this by having what was essentially its own simple computer whic
 directly from main memory via a high-speed channel.
 
 With the Type 347 Subroutine Interface, it had multi-level graphic subroutine support for its instructions.
+
+It also added the Type 370 High Speed Lightpen which was necessary given the speed at which dots
+can be drawn, over 30 times faster than the Type 30.
+The original lightpen for the Type 30 display required 10's of microseconds to respond, which is why
+the 'hit' wasn't detected until the dpy delay of up to 45 microsecnds had elapsed, totally unacceptable
+for the Type 340.
 
 Character drawing required the additon of the Type 342 Character Generator.
 It supported one or two character sets, at least one of which was field-modifiable.
@@ -140,34 +146,34 @@ are x >> 1 and y >> 1.
 The x coordinate is in IO bits 0-8, the y coordinate in bits 9-17.
 The values are indeterminate if there has not been a lightpen hit.
 
-**Note 3** - See the section on motion prediction, below.
-The x and y coordinates do not include the least-significant-bit of the screen coordinate, the
-format is the same as Note 2.
-The values are indeterminate if the lightpen is not down.
+**Note 3** - this is deprecated, it is exactly eqivalent to drc now.
+Motion prediction is always done and is handled in the core display logic in the pidp-1 emulator.
 
 **Note 4** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\
 dsv dsh dss
 
 ## Motion prediction
 
-This is a non-standard addition to help with properly simulating the original lightpen,
-which was an immediate-response coincidence detector of an illuminated dot's coordinates.
+In order to match the performance of the Type 370 lightpen in the modern Linux world,
+some hidden trickery had to be done.
+The original lightpen was an immediate-response coincidence detector of an illuminated dot's coordinates.
 However, with modern raster displays the pseudo-lightpen position derived from mouse coordiates might
-not match the actual mouse position if it is moving quickly.
+not match the actual mouse position if it is moving quickly due to delays in not only the TCP/IP stack
+but from the Linux scheduler causing significant stalls.
 
 The motion predictor is a time-based cascaded exponential moving average filter,
 one for velocity and one for acceleration.
 The acceleration filter is dual slope, one alpha value for acceleration and a separate one for deceleration.
 The dual slope allows compensating for overshoot for rapid halts of the mouse movement.
 
-The result of the filters is used to drive a nonlinear motion estimator to give the probable current mouse
-coordinates even if the position doesn't match the reported lightpen hit coordinates.
+The result of the filters is used to drive a nonlinear motion estimator with overshoot compensation
+to give the probable current mouse coordinates even if the position
+doesn't match the display client's reported lightpen hit coordinates.
 
-This can be used to provide very fast target tracking.
-When a tracking target reports a hit, the motion prediction IOT is called to give the coordinates of where the
-mouse actually is.
-The target can then be recentered on these coordinates which ensures tracking isn't lost because of
-the inherent lag in coordinate reporting from the display client.
+This provides very fast target tracking and is totally transparent, it is implemented in the core
+display logic shared by this and by the Type 30 display emulation.
+Previously, this was a configurable feature and had a special IOT subcommand for using it, drp.
+That is now identical to drc, the subcommand is kept only for backwards compatibility.
 
 ## Scale factor
 

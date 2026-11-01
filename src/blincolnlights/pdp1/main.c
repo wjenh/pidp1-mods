@@ -53,6 +53,7 @@
  * Claude 08-Oct-2026 the sound comes back with the power if audio is on.
  * Claude 10-Oct-2026 the audio, display and panel calls come from audio.h, display.h and panel1.h, not
  *    externs of its own.
+ * wje 2-Nov-2026 motion prediction control removed, it is now always enabled.
 */
 
 #include <errno.h>
@@ -149,8 +150,6 @@ PDP1P pdp1P;      // Here because dynamic IOT code needs it
 extern bool lailiaEnabled;
 extern bool core1DEnabled;
 extern bool all1DEnabled;
-extern bool useMotionPrediction;
-
 static bool timingEnabled;
 
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
@@ -1517,12 +1516,6 @@ ConfigurationSettingP configSettingP;
     if( (configSettingP = findConfigurationSetting(configurationP, "pidp1timing")) )
     {
         timingEnabled = configSettingP->onOff;
-    }
-
-    // Control of the builtin exponential moving average filters for the lightpen
-    if( (configSettingP = findConfigurationSetting(configurationP, "motionPrediction")) )
-    {
-        useMotionPrediction = configSettingP->onOff;
     }
 
     // Type 340 has its own aperture control

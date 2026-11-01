@@ -19,46 +19,23 @@
 // 7-May-2026 wje reduce buffer sizes, 256 seems to be fine
 // 8-May-2026 wje minor cleanup in lightpen detection code
 // 13-Jun-2026 wje (Claude) handle EAGAIN/EWOULDBLOCK in flushDisplay(),
-//    Now EAGAIN/EWOULDBLOCK/EINTR leave the buffered commands in place for a later retry,
-//    partial writes shift the remainder to the front of the buffer,
-//    and addDpyCommand() retries (bounded by DPYFULLRETRIES)
-//    instead of risking a dpyBuf[] overflow if the buffer stays full after a flush.
 // 26-Jun-2026 wje (Claude) deep analysis of possible bottlenecks done, tuning changes made
 // 8-Aug-2026 wje add lightpen exponential moving average prediction logic
-// 14-Sep-2026 wje (Claude) a lightpen hit no longer uses up the pen position.
-//    checkLightpen() used to clear lpData on every hit, and only a new position from the client set it
-//    again. The client sends a position only when the mouse moves, so a pen held still got one hit and
-//    then none. A real pen sees phosphor, not motion: now every point drawn inside the aperture while
-//    the pen is down is a hit. lpData is cleared when the pen is lifted instead.
-//    With motion prediction on, a pen that stops is fed its last position again every
-//    PENHOLDRESAMPLE, so the prediction settles on where it stopped instead of extrapolating
-//    from the last velocity it saw.
+// 14-Sep-2026 wje (Claude) a lightpen hit no longer uses up the pen position
 // 14-Sep-2026 wje (Claude) predictLightpen() no longer dereferences a null control pointer when the
-//    screen is not configured, and it reads the filters under dataLock. lightpenReader() resets the
-//    filters on pen up under dataLock too; it did that unlocked while checkLightpen() predicted
-//    from them. initializeDisplay() publishes a new screen's control entry with a release store
-//    (getDisplayControlP() loads it with acquire), since the worker thread is already running.
+//    screen is not configured and it reads the filters under dataLock.
 // 22-Sep-2026 wje (Claude) fix the ctlP->fd race between the worker thread and setDisplayFD()
-//    found by ThreadSanitizer.
 // 23-Sep-2026 Claude - while pidp1timing is on, the worker accounts for its own host time (waits, lock,
 //    writes, lightpen reads, CPU) and for display()'s lock waits, one line a second to TIMING_FILE_DPY.
 // 24-Sep-2026 Claude - the worker holds controlLock only to copy the pending commands out, not while it
-//    converts and writes them, so a slow display client can no longer hold up display()'s callers,
-//    among them the emulator thread (Type 30, Type 33). Once a client's full socket has cost a
-//    command in a pass, the rest of that pass's commands are dropped without the retry wait.
-// 25-Sep-2026 Claude - the worker is woken per batch instead of per point, runs with 1 ns of timer slack, and
-//    stamps each point with its producer's time; a producer waits a bounded time on a full buffer, then drops,
-//    and a stalled client's commands are dropped without retrying until it takes data again.
-// 26-Sep-2026 Claude - the accounting is switched by displaytiming instead of pidp1timing, so the cycle
-//    report no longer brings a file that grows a line a second.
+//    converts and writes them, so a slow display client can no longer hold up display()'s callers.
+// 25-Sep-2026 Claude - the worker is woken per batch instead of per point
+// 26-Sep-2026 Claude - the accounting is switched by displaytiming instead of pidp1timing
 // 28-Sep-2026 Claude - while nothing is drawing and the pen is up, the worker waits IDLESLEEPTIME instead of
-//    WORKERSLEEPTIME, and the first point added during that wait wakes it.
-// 28-Sep-2026 Claude - first-time setup of the subsystem and of each screen is serialized by setupLock, and
-//    displayInitialized is published only once the worker exists, so concurrent first callers start one worker
-//    and build one control entry per screen.
+//    WORKERSLEEPTIME and the first point added during that wait wakes it.
+// 28-Sep-2026 Claude - first-time setup of the subsystem and of each screen is serialized by setupLock
 // 7-Oct-2026 wje/Claude - a partial write that ends inside a word no longer misaligns the client stream.
-//    flushDisplay() keeps how much was actually sent and starts the next write after that
-//    instead of sending those bytes again.
+// 31-Oct-2026 wje - useMotionPrediction removed, prediction is always used now.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -101,51 +78,36 @@
 #define LOG_BOUNDS 0
 #define LOG_FULL 0
 
-#define WORKERSLEEPTIME 250        // max time the worker thread will sleep while it has work, usecs
-// The worker's wait while it has nothing to do, in usecs: no point came in its last pass, nothing is
-// waiting to be written, and the pen is up on every screen. Its 250 us backstop cost 3,900 wakeups
-// a second of a Pi 4 core with nothing to do. Only the pen waits on it: a pen put down on an idle
-// screen is read up to this much later.
-#define IDLESLEEPTIME 10000
-#define PENBUFSIZE  64             // read up to this many lightpen update commands at once
-#define CMDBUFSIZE  4096           // buffer up to this many display commands (sized to the 4096-word display memory)
-// A producer wakes the worker with a point added this long after the worker last emptied the
-// buffer, in ns, or once a quarter of the buffer is used. Waking it for every point cost a pass, a
-// write() and a lightpen read per one to three points. A point reaches the client up to this much
-// later, half of it on average, and a lightpen position is read up to this much later too.
-#define POSTINTERVAL 250000
-// How long a producer yields to the worker on a full commandBuf before it drops the point, in ns.
-// A 340 held longer than its PACE_MAX_LAG slips against the CPU, which a program can see; a
-// dropped point on a refreshed display blinks for one frame.
-#define CMDFULLWAIT 3000000
-#define DPYBUFSIZE  4096           // buffer up to this many outgoing dpy commands
-#define DPYFULLRETRIES 100         // addDpyCommand: max retries while dpy buf is full before dropping a command
-// A pen that is down but has sent nothing for this long, in ns, has stopped moving, and the motion
-// prediction filters are given its last position again (see lightpenReader()).
-// It is the predictor's own extrapolation limit, so a pen that is merely moving slowly is not
-// mistaken for a stopped one.
-#define PENHOLDRESAMPLE ((uint64_t)(DELTA_TIME_CLAMP * 1000.0 * 1000.0 * 1000.0))
-#define TIMING_FILE_DPY "/tmp/pidp1-dpytiming.txt"
-#define TIMING_WINDOW_NS 1000000000ULL      // one report line per this much wall time
 #undef NEVER
 #define NEVER ~((uint64_t)0)       // a long time from now
 #define null 0
-// ctlP->fd is written by more than one thread (setDisplayFD() and the worker, see the 22-Sep-2026
-// header note), so every read outside the worker's own snapshot goes through an atomic load.
+
+#define WORKERSLEEPTIME 250        // max time the worker thread will sleep while it has work, usecs
+#define IDLESLEEPTIME 10000        // how long to sleep if there is nothing to do
+#define PENBUFSIZE  64             // read up to this many lightpen update commands at once
+#define CMDBUFSIZE  4096           // buffer up to this many display commands (sized to the 4096-word display memory)
+#define POSTINTERVAL 250000        // Wake the worker with a point added this long after it last emptied the buffer.
+#define CMDFULLWAIT 3000000        // how long to wait if the command buffer is full
+#define DPYBUFSIZE  4096           // buffer up to this many outgoing dpy commands
+#define DPYFULLRETRIES 100         // addDpyCommand: max retries while dpy buf is full before dropping a command
+
+// A pen that is down but has sent nothing for this long, in ns, has stopped moving.
+// The motion/ prediction filters are given its last position again.
+#define PENHOLDRESAMPLE ((uint64_t)(DELTA_TIME_CLAMP * 1000.0 * 1000.0 * 1000.0))
+#define TIMING_FILE_DPY "/tmp/pidp1-dpytiming.txt"
+#define TIMING_WINDOW_NS 1000000000ULL      // one report line per this much wall time
+// ctlP->fd is written by more than one thread, use atomics to coordinate
 #define isOpen(ctlP) (__atomic_load_n(&((ctlP)->fd), __ATOMIC_ACQUIRE) >= 0)
 
-bool useMotionPrediction = false;  // changed via config file motionPrediction setting
-
 static int curRadius2 = 6*6;       // setLightpenRadius2() will override this
-static bool displayInitialized;    // release-stored once the worker exists, see initializeDisplaySubsystem()
-// Held only for first-time setup, of the subsystem and of each screen's control entry, and never while another
-// lock is taken.
+static bool displayInitialized;    // set once the worker exists
 static pthread_mutex_t setupLock = PTHREAD_MUTEX_INITIALIZER;
 static sem_t runLock;
 static uint64_t dpyDropCount;      // count of dpy commands dropped because a client could not keep up
 
-// Host-time accounting, gathered only while displaytiming is on. It is read once, when the subsystem
-// starts, so a SIGHUP reload does not change it. The worker's counters are touched by the worker alone;
+// Host-time accounting, gathered only while displaytiming is on.
+// It is read once, when the subsystem starts, so a SIGHUP reload does not change it.
+// The worker's counters are touched by the worker alone,
 // the producer counters are added to by whichever thread calls display(), so they are atomic.
 typedef struct {
     uint64_t passes;        // worker wakeups
@@ -176,26 +138,17 @@ static uint64_t prodFullYields;     // atomic: yields because commandBuf was ful
 static uint64_t cmdDropCount;       // atomic: points producers dropped on a full commandBuf, always counted
 static uint64_t dpyWinCmdDrops;     // cmdDropCount when the window opened
 
-// Set by the worker while it takes the IDLESLEEPTIME wait, so a producer knows to wake it for the
-// first point instead of leaving the point for the timeout. The worker sets it before it checks
-// the command buffers under controlLock, and a producer reads it under controlLock after adding a
-// point, so either the worker sees the point or the producer sees the flag. See enterIdle().
-static bool workerIdle;
+static bool workerIdle;             // Set by the worker while in takes the IDLESLEEPTIME wait
 
 typedef struct {
-    int fd;                        // file descriptor to use; see the 22-Sep-2026 header note for
-                                    // who may write and close it
-    int closeFd;                   // an fd setDisplayFD() displaced, for the worker to close at the
-                                    // top of its next pass; -1 if none pending. Under controlLock.
-    int connGen;                   // bumped by setDisplayFD() on every install, under controlLock.
-                                    // Lets the worker notice a new connection even if the OS reused
-                                    // the same fd number, without setDisplayFD() itself touching
-                                    // dpyStalled (which the worker owns unlocked below).
-    int curX, curY;                // last x,y coordinates set, 0-1023
+    int fd;                         // file descriptor to use
+    int closeFd;                    // flag for the worker to close at the top of its next pass, -1 if none pending
+    int connGen;                    // bumped by setDisplayFD() on every install
     int intensity;                 // last intensity set
     uint64_t now;                  // the time of the worker's pass
     bool penDown;                  // lightpen is on the screen
     bool lpData;                   // set when a pen position comes in, cleared when the pen is lifted
+    int curX, curY;                // last x,y coordinates set, 0-1023
     int lpX, lpY;                  // last x,y lightpen coordinates received
     int rawX, rawY;                // last x,y the client sent, never replaced by a prediction
     uint64_t lpSampleTime;         // when the prediction filters were last given a position, ns
@@ -212,18 +165,16 @@ typedef struct {
     int numDpyCommands;
     uint32_t dpyBuf[DPYBUFSIZE];
     int dpySentBytes;              // bytes of dpyBuf[0] a partial write already sent, 0-3; the next
-                                    // write starts after them. Worker only.
-    bool dpyStalled;               // a command was dropped because the client's socket stayed full;
-                                    // commands are dropped without retrying until a write takes
-                                    // data again. Worker only.
+                                   // write starts after them. Worker only.
+    bool dpyStalled;               // a command was dropped because the client's socket stayed full.
+                                   // Commands are dropped without retrying until a write takes data again.
     LightpenCoordinateFilter xFilter;     // the two prediction filters
     LightpenCoordinateFilter yFilter;
 } DisplayControl, *DisplayControlP;
 
 static DisplayControlP displays[MAXDISPLAYS];
-// The worker thread's own record of the last connGen it saw installed per screen, so it can
-// reset its per-connection state exactly once per new connection. Touched only by the worker thread
-// (see worker()), so it needs no lock and no atomics of its own.
+// The worker thread's record of the last connGen it saw installed per screen, so it can
+// reset its per-connection state exactly once per new connection.
 static int lastSeenGen[MAXDISPLAYS];
 
 // External calls to manage various things.
@@ -277,13 +228,9 @@ static void dpyTimingCheck(void);
 extern int decflg(int flg);
 
 // Set the fd to use, true if screen is valid, false if out of range.
-// Automatically allocate the display if it isn't already.
+// Automatically allocate the display if it isn't already allocated.
 // An fd of -1 just closes the current fd if any.
-//
-// ctlP->fd is installed here synchronously (an atomic exchange, so getDisplayFD() right after this
-// call returns still sees it), but the fd this call displaces is never closed here -- the worker
-// thread may be mid read or mid write on it. It is handed to the worker instead (ctlP->closeFd),
-// which closes it at the top of its next pass. See the file header, 22-Sep-2026.
+// ctlP->fd is set here synchronously.
 bool
 setDisplayFD(int screenNo, int fd)
 {
@@ -301,16 +248,17 @@ DisplayControlP ctlP;
     fdFlags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, (fdFlags | O_NONBLOCK));
 
-    // Disable Nagle's algorithm. The display stream is latency-sensitive and is
-    // frequently flushed in small batches; TCP_QUICKACK is also set on the read side in lightpenReader().
+    // Disable Nagle's algorithm.
+    // The display stream is latency-sensitive and is frequently flushed.
+    // TCP_QUICKACK is also set on the read side.
     nodelay = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
     lockControl(ctlP);
 
-    // Don't overwrite a handoff the worker hasn't picked up yet (a reconnect faster than the
-    // worker's own pass rate), or that fd would leak. This only ever waits on the thread that
-    // accepted the new connection, never on the emulator or worker thread.
+    // Don't overwrite a handoff the worker hasn't picked up yet, a reconnect faster than the
+    // worker's pass rate), or the fd would leak.
+    // This only ever waits on the thread that accepted the new connection.
     while( ctlP->closeFd >= 0 )
     {
         unlockControl(ctlP);
@@ -326,14 +274,11 @@ DisplayControlP ctlP;
     }
     ctlP->connGen++;
 
-    // The worker's per-connection state (dpyBuf, dpyStalled) is NOT reset here (a second, prior stress
-    // test found this race too): the worker reads and writes it without a lock, same as ctlP->fd
-    // used to be. The worker resets it itself, once it notices the fd it just snapshotted is a
-    // new one -- see worker().
+    // The worker's per-connection state is NOT reset here.
+    // The worker reads and writes it without a lock, same as ctlP->fd
     unlockControl(ctlP);
 
-    // Wake the worker promptly rather than have the new connection, or the old fd above, wait
-    // out a full sleep.
+    // Wake the worker promptly rather than have the new connection or the old fd wait a full sleep.
     sem_post(&runLock);
 
     logger(LOG_FD,"screen %d fd now %d\n", screenNo, fd);
@@ -404,7 +349,6 @@ int i;
 DisplayControlP ctlP;
 
     (void)screenNo;             // kept in the signature to mirror getLightpenRadius2()'s
-                                 // per-screen API, but every screen shares one radius (see below)
     curRadius2 = radius2;       // will be used when a new screen is initialzed
 
     // All screens share the same radius setting
@@ -551,11 +495,9 @@ DisplayControlP ctlP;
     gotHit = false;
     // Use the distance equation for a circle to simulate an actual circular aperture.
 
-    if( useMotionPrediction )
-    {
-        ctlP->lpX = motionFilterPredict(&(ctlP->xFilter));
-        ctlP->lpY = motionFilterPredict(&(ctlP->yFilter));
-    }
+    // Adjust using the predictive filters.
+    ctlP->lpX = motionFilterPredict(&(ctlP->xFilter));
+    ctlP->lpY = motionFilterPredict(&(ctlP->yFilter));
 
     delx = ctlP->lpX - x;               // Find squared magnitudes of hit offset
     dely = ctlP->lpY - y;
@@ -587,17 +529,14 @@ bool predicted;
 
     // The filters and the pen state are changed by the display thread, so read them under its lock.
     lockDisplayDataByCtlP(ctlP);
+    *xP = ctlP->lpX;
+    *yP = ctlP->lpY;
     if( !isOpen(ctlP) || !ctlP->penDown )
     {
-        // Return whatever coords we last had, could be invalid.
-        *xP = ctlP->lpX;
-        *yP = ctlP->lpY;
         predicted = false;
     }
     else
     {
-        *xP = motionFilterPredict(&(ctlP->xFilter));
-        *yP = motionFilterPredict(&(ctlP->yFilter));
         predicted = true;
     }
     unlockDisplayDataByCtlP(ctlP);
@@ -607,7 +546,8 @@ bool predicted;
 
 // End of external functions, these are all internal.
 
-// Called initially to set up everything. Safe to call from any thread, any number of times.
+// Called initially to set up everything.
+// Safe to call from any thread, any number of times.
 static void
 initializeDisplaySubsystem()
 {
@@ -620,7 +560,8 @@ ConfigurationSettingP settingP;
 static bool runLockReady;       // under setupLock; a retry after a failed create must not re-init runLock
 
     // Every entry point comes through here, display() once per point, so the done case is one acquire
-    // load and no lock. It pairs with the release store at the end: a caller that sees true also sees
+    // load and no lock.
+    // It pairs with the release store at the end: a caller that sees true also sees
     // runLock and the settings initialized.
     if( __atomic_load_n(&displayInitialized, __ATOMIC_ACQUIRE) )
     {
@@ -648,11 +589,10 @@ static bool runLockReady;       // under setupLock; a retry after a failed creat
         runLockReady = true;
     }
 
-    // The worker thread is the only thread that moves bytes onto the display
-    // socket, so the smoothest output comes from it being the least likely of the
-    // emulator's threads to be starved. The real-time-priority path below is
-    // OPTIONAL and self-disabling: it tries to create the worker at a low SCHED_RR
-    // priority, but that requires process privilege (CAP_SYS_NICE / RLIMIT_RTPRIO).
+    // The worker thread is the only thread that moves bytes onto the display socket.
+    // it is the least likely of the emulator's threads to be starved.
+    // The real-time-priority path below is OPTIONAL and self-disabling.
+    // it tries to create the worker at a low SCHED_RR priority, but that requires process privilege.
     // When that privilege is absent, pthread_create() fails with EPERM and we transparently retry with
     // default (SCHED_OTHER) scheduling, so a worker is always created.
     haveAttr = false;
@@ -705,9 +645,7 @@ initializeDisplay(int screenNo)
 {
 DisplayControlP ctlP;
 
-    // displays[] has MAXDISPLAYS entries (valid indices 0..MAXDISPLAYS-1), so the
-    // upper bound must be >= MAXDISPLAYS, not > MAXDISPLAYS (which let index
-    // MAXDISPLAYS through and read/write one past the array).
+    // displays[] has MAXDISPLAYS entries so upper bound must be >= MAXDISPLAYS
     if( (screenNo < 0) || (screenNo >= MAXDISPLAYS) )
     {
         return(0);
@@ -720,9 +658,8 @@ DisplayControlP ctlP;
         return(ctlP);
     }
 
-    // Two threads can connect the same new screen at once (the display listener and the console's
-    // d command). The check, the build and the publish are one step under setupLock, so a screen gets
-    // one entry: a second one would be orphaned, and the connection put into it never serviced or closed.
+    // Two threads can connect the same new screen at once/
+    // The check, the build, and the publish are one step under setupLock, so a screen gets one entry.
     pthread_mutex_lock(&setupLock);
     if( !(ctlP = __atomic_load_n(&(displays[screenNo]), __ATOMIC_RELAXED)) )
     {
@@ -731,10 +668,6 @@ DisplayControlP ctlP;
             initializeDisplayControl(ctlP);
             motionFilterReset(&(ctlP->xFilter));
             motionFilterReset(&(ctlP->yFilter));
-
-            // The worker thread is already running and finds the entry through getDisplayControlP().
-            // Publish it only once it is complete, with a release store paired with that acquire load,
-            // so another core cannot see the pointer before the fields and the mutexes behind it.
             __atomic_store_n(&(displays[screenNo]), ctlP, __ATOMIC_RELEASE);
         }
     }
@@ -821,9 +754,9 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
 
     (void)argP;         // unused; pthread_create() is always called with null here
 
-    // The timed wait is one of the worker's regular wake-ups now that producers post per batch, and
-    // Linux's default 50 us of timer slack would be added to every one. The other threads inherit
-    // 1 ns from throttleConfigure(), but this one has been measured at the default, so set it here.
+    // The timed wait is one of the worker's regular wake-ups that producers post per batch.
+    // The other threads inherit 1 ns from throttleConfigure(),
+    // but this one has been measured at the default, so set it here.
     prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
 
     idle = false;
@@ -857,14 +790,11 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
                 continue;       // not allocated
             }
 
-            // Snapshot the fd once for this screen's whole pass, and pick up any fd a reconnect
-            // displaced since our last pass. Every function below is given this one value instead
-            // of re-reading ctlP->fd, so a reconnect mid-pass is picked up on the NEXT pass rather
-            // than switching the fd out from under a read or write in progress. See the file
-            // header, 22-Sep-2026.
-            // The pending commands are copied out under the lock too, and the buffer emptied.
-            // Converting and writing them happens after the lock is let go, so a producer (the
-            // emulator thread itself for the Type 30 and Type 33) never waits on a socket write.
+            // Snapshot the fd once for this screen's whole pass and pick up any fd a reconnect
+            // replaced since our last pass.
+            // The pending commands are copied out under the lock and the buffer emptied.
+            // Converting and writing them happens after the lock is released so a producer
+            //  never waits on a socket write.
             t0 = dpyStamp();
             lockControl(ctlP);
             t1 = 0;
@@ -893,15 +823,11 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
 
             if( (fd >= 0) && (gen != lastSeenGen[i]) )
             {
-                // A new connection since we last looked at this screen (connGen, not the fd
-                // number itself, since the OS can and does reuse fd numbers across a close and
-                // a later accept). Reset its state here, on the thread that reads and writes it
+                // A new connection since we last looked at this screen.
+                // Reset its state here, on the thread that reads and writes it
                 // unlocked below, instead of setDisplayFD() writing it under controlLock against
                 // that unlocked use.
-                // The new client starts with an empty buffer, as dropClient() leaves one: what the
-                // old client had not taken was drawn for it, and would reach the new one before
-                // current output. Its stream starts on a word, whatever part of one the old got.
-                ctlP->dpyStalled = false;
+                // The new client starts with an empty buffer, dropClient() leaves one.
                 ctlP->numDpyCommands = 0;
                 ctlP->dpySentBytes = 0;
             }
@@ -915,7 +841,8 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
 
             if( closeFd >= 0 )
             {
-                // The fd a reconnect displaced. Only ever closed here, never mid read/write on it.
+                // The fd a reconnect replaces.
+                // Only ever closed here, never mid read/write on it.
                 close(closeFd);
             }
 
@@ -935,16 +862,14 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
 
                 if( __atomic_load_n(&(ctlP->fd), __ATOMIC_ACQUIRE) != fd )
                 {
-                    fd = -1;    // putDpyCommand() found it dead, or a reconnect displaced it
+                    fd = -1;    // putDpyCommand() found it dead, or a reconnect replaced it
                 }
             }
 
             ctlP->now = currentTime();          // the lightpen goes by the pass's own time
 
-            // Re-check: the drain loop above may have found this fd dead, or a reconnect may have
-            // displaced it while we were not holding the lock. Either way, don't keep using a
-            // stale fd number for the rest of this pass; the next pass will pick up whatever is
-            // current.
+            // Don't keep using a stale fd.
+            // The next pass will pick up whatever is/ current.
             if( (fd < 0) || (__atomic_load_n(&(ctlP->fd), __ATOMIC_ACQUIRE) != fd) )
             {
                 continue;
@@ -952,8 +877,8 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
 
             if( !flushDisplay(ctlP, fd) )
             {
-                // The write found the client gone and fd is closed. Its number may already belong to
-                // another socket, so the lightpen read below must not use it.
+                // The write found the client gone and fd is closed.
+                // Its fd number may already belong to another socket, lightpen read below must not use it.
                 continue;
             }
 
@@ -965,7 +890,7 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
                 dpyAcc.penNs += (currentTime() - t0);
             }
 
-            // Commands a full client socket left behind (a stalled client included) need the flush
+            // Commands a full client socket left behind need the flush
             // retried soon, and a pen that is down needs reading at the short interval.
             if( (ctlP->numDpyCommands > 0) || ctlP->penDown )
             {
@@ -979,11 +904,10 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
     return(0);
 }
 
-// Called by the worker before it waits, once a pass found nothing to do. Sets workerIdle, then
-// checks every screen's command buffer, since a producer that added a point before the flag was
-// set did not wake the worker for it.
-// Returns true if every buffer is empty, so the IDLESLEEPTIME wait may be taken; false, with the
-// flag cleared again, if a point is waiting.
+// Called by the worker before it waits if a pass found nothing to do.
+// Sets workerIdle, then/ checks every screen's command buffer since a producer that added a point
+// before the flag was set did not wake the worker for it.
+// Returns true if every buffer is empty, false with the flag cleared if a point is waiting.
 static bool
 enterIdle(void)
 {
@@ -1014,13 +938,14 @@ DisplayControlP ctlP;
 
 // Puts a command into the worker command buffer.
 // X and y will be the usual Type 30 -511,511 10 bit coordinates.
-// If defer is false, the worker is woken when the buffer goes from empty to non-empty. If it is
-// true, the worker is woken only once a batch is ready: a quarter of the buffer used, or a point
-// added POSTINTERVAL or more after the worker last emptied it. Either way the worker is woken for a
-// point added during its IDLESLEEPTIME wait, at most one wakeup is posted between two drains, and the
-// worker's timed wait picks up whatever is left when points stop.
-// On a full buffer, the producer yields to the worker for up to CMDFULLWAIT and then drops the
-// point; once one is dropped, the rest are dropped at once until the worker next drains.
+// If defer is false, the worker is woken when the buffer goes from empty to non-empty.
+// If it is true, the worker is woken only once a batch is ready, a quarter of the buffer used, or a point
+// added POSTINTERVAL or more after the worker last emptied it.
+// Either way the worker is woken for a/ point added during its IDLESLEEPTIME wait,
+// at most one wakeup is posted between two drains, and the/;worker's timed wait picks up whatever is left
+// when points stop.
+// On a full buffer, the producer yields to the worker for up to CMDFULLWAIT and then drops the point.
+// Once one is dropped, more are dropped immediatel until the worker drains.
 static void
 addCommand(DisplayControlP ctlP, int x, int y, int intensity, bool defer)
 {
@@ -1058,7 +983,7 @@ uint64_t fullSince;
             return;
         }
 
-        // Buffer full: signal the worker and yield the CPU to it rather than
+        // Buffer full, signal the worker and yield the CPU to it rather than
         // sleeping a fixed interval.
         unlockControl(ctlP);
         if( dpyTimingOn )
@@ -1078,7 +1003,7 @@ uint64_t fullSince;
     hitThreshold = (ctlP->numCommands >= (CMDBUFSIZE / 4));
     if( defer )
     {
-        now = currentTime();        // read under the lock, so it is never earlier than lastDrain
+        now = currentTime();        // read under the lock so it is never earlier than lastDrain
         post = (hitThreshold || ((now - ctlP->lastDrain) >= POSTINTERVAL));
     }
     else
@@ -1086,7 +1011,7 @@ uint64_t fullSince;
         post = (wasEmpty || hitThreshold);
     }
 
-    // Read under the lock, after the point is in: see workerIdle.
+    // Read under the lock, after the point is in
     if( __atomic_load_n(&workerIdle, __ATOMIC_RELAXED) )
     {
         post = true;
@@ -1113,18 +1038,18 @@ uint64_t fullSince;
 
 // Puts a dpy-style command into the dpy command buffer.
 // If the buffer is full, try to flush it to make room.
-// The fd is non-blocking so a flush can fail with EAGAIN
-// without freeing any space.
+// The fd is non-blocking so a flush can fail with EAGAIN without freeing any space.
 // in that case retry a bounded number oftimes with a short delay,
 // giving the client a chance to drain its socket.
 // If the buffer is still full after DPYFULLRETRIES attempts, drop this command rather than
 // overflowing dpyBuf[] or blocking the worker thread indefinitely.
-// After one drop, the client is stalled until a write takes data again (flushDisplay() clears
-// it): a command that finds the buffer full is dropped at once, and the flush at the end of each
-// pass is what finds out whether the client is reading again. So a stopped client costs one retry
-// period, not one a pass: with passes every POSTINTERVAL, a retry period in each would keep the
+// After one drop, the client is stalled until a write can take data again.
+// A command that finds the buffer full is dropped at once and the flush at the end of each
+// pass will find out whether the client is reading again.
+// A stopped client costs one retry/ period, not one a pass.
+// With passes every POSTINTERVAL, a retry period in each would keep the
 // worker from emptying commandBuf, and the producers behind it would wait.
-// fd is this pass's snapshot of ctlP->fd (see worker()); it is not re-read from ctlP here.
+// fd is this pass's snapshot of ctlP->fd.
 static void
 addDpyCommand(DisplayControlP ctlP, int fd, uint32_t cmd)
 {
@@ -1177,12 +1102,11 @@ int retries;
     ctlP->dpyBuf[ctlP->numDpyCommands++] = cmd;
 }
 
-// The client on fd is gone, found by a failed write (flushDisplay()) or a read (lightpenReader()).
-// Its pen is lifted, so a later client on this screen does not inherit a pen that is down, and what
-// was buffered for it is dropped. Apart from setDisplayFD()'s handoff, this is the only place that
-// ends a display fd's life. ctlP->fd is cleared with a compare-exchange against fd: if setDisplayFD()
-// has already swapped in a newer connection, that call took ownership of closing fd (ctlP->closeFd),
-// so the compare fails and fd is left alone, or it would be closed twice.
+// The client on fd is gone, found by a failed write ora read.
+// Its pen is lifted so a later client on this screen does not inherit a pen that is down, and what
+// was buffered for it is dropped.
+// Apart from setDisplayFD()'s handoff, this is the only place that ends a display fd's life.
+// ctlP->fd is cleared with a compare-exchange against fd.
 // Worker thread only, holding no lock.
 static void
 dropClient(DisplayControlP ctlP, int fd)
@@ -1207,18 +1131,17 @@ int expected;
     ctlP->dpyStalled = false;
 }
 
-// Write any buffered dpy commands to fd, this pass's snapshot of ctlP->fd (see worker()); it is
-// not re-read from ctlP here, so a reconnect swapping ctlP->fd in mid-call can never make this
-// write, or dropClient()'s close, land on the wrong client's socket.
+// Write any buffered dpy commands to fd, this pass's snapshot of ctlP->fd.
 // The fd is non-blocking so write() can legitimately return -1/EAGAIN or EWOULDBLOCK when the socket's
 // send buffer is full.
 // In that case, leave the buffered commands in place and let the caller retry later.
-// A partial write is also possible on a non-blocking socket, and it can end inside a word. The words
-// it finished are moved out of the buffer, and dpySentBytes keeps how much of the next word went, so
-// the next attempt starts at the first byte not sent. The client reads 4-byte words with nothing to
-// resync by, so a byte sent twice, or one not sent, would garble every word after it.
-// Any other write() error means fd is gone, and dropClient() ends it.
-// Returns false if fd just died (the caller must stop using it), true otherwise.
+// A partial write is also possible on a non-blocking socket, and it can end inside a word.
+// The words it finished are moved out of the buffer and dpySentBytes keeps how much of the next word went.
+// The next attempt starts at the first byte not sent.
+// The client reads 4-byte words with nothing to resync by so a byte sent twice or one not sent
+// would garble every word after it.
+// Any other write() error means fd is gone and dropClient() ends it.
+// Returns false if fd just died, true otherwise.
 static bool
 flushDisplay(DisplayControlP ctlP, int fd)
 {
@@ -1286,8 +1209,8 @@ uint64_t t0;
         return(true);
     }
 
-    // Partial write: move the words it finished out, and keep the bytes it sent of the one after.
-    // A word partly sent stays in dpyBuf[0], so addDpyCommand()'s count of what is buffered still holds.
+    // Partial write, move the words it finished out and keep the bytes it sent of the one after.
+    // A word partly sent stays in dpyBuf[0] so addDpyCommand()'s count of what is buffered still holds.
     sentBytes = ctlP->dpySentBytes + resp;
     sentCommands = sentBytes / (int)sizeof(ctlP->dpyBuf[0]);
     memmove(ctlP->dpyBuf, &ctlP->dpyBuf[sentCommands],
@@ -1298,8 +1221,9 @@ uint64_t t0;
 }
 
 // Format and add a dpy format command, will be sent to the display.
-// Bits 23-31 are the protocol's delay field, sent as 0: each client fades the points on its own
-// clock. 511 there would mark an escape pair (then a delay word), which is never sent.
+// Bits 23-31 are the protocol's delay field, sent as 0, historical.
+// Each current client fades the points on its own.
+// 511 marks an escape pair then a delay word, which is never sent.
 static void
 putDpyCommand(DisplayControlP ctlP, int fd, unsigned int x, unsigned int y, unsigned int intensity)
 {
@@ -1322,7 +1246,7 @@ int cmd;
 }
 
 // The client sends x,y coordinates whenever the mouse is moved with mouse button 1 down.
-// When the button is releasde, a 'pen lifted' notice is sent.
+// When the button is released, a 'pen lifted' notice is sent.
 // The physical light pen aperture is simulated by having any match within the dot location
 // plus the aperture setting.
 //
@@ -1333,7 +1257,7 @@ int cmd;
 // dpy coordinates match the current position within the aperture boundaries and if so,
 // set the appropriate flags.
 // The position stays valid until the pen moves or is lifted; a hit does not use it up.
-// The client sends nothing while the mouse is still, so a pen held still is simply one
+// The client sends nothing while the mouse is still, a non-moving pen is simply one
 // whose last position is still current.
 //
 // A command from the client is a 32 bit word:
@@ -1415,8 +1339,9 @@ uint32_t cmd;
     }
 
     // A read of 0 is the client closing its end, and an error other than "nothing to read yet" is a
-    // failed connection: either way the client is gone. An idle screen writes nothing, so a failed
-    // write would not notice until the program drew again.
+    // failed connection.
+    // Either way, the client is gone.
+    // An idle screen writes nothing, so a failed/ write would not notice until the program drew again.
     if( (count == 0) || ((count < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) )
     {
         logger(LOG_FD,"fd %d closed, the client left\n", fd);
@@ -1445,10 +1370,10 @@ uint32_t cmd;
         motionFilterAdd(&(ctlP->yFilter), lastY);
         ctlP->lpSampleTime = ctlP->now;
     }
-    else if( penDown && useMotionPrediction && ((ctlP->now - ctlP->lpSampleTime) >= PENHOLDRESAMPLE) )
+    else if( penDown && ((ctlP->now - ctlP->lpSampleTime) >= PENHOLDRESAMPLE) )
     {
-        // The pen is down and has sent nothing for PENHOLDRESAMPLE: it is being held still.
-        // Without new samples the filters would go on extrapolating from the last velocity they saw,
+        // The pen is down and has sent nothing for PENHOLDRESAMPLE, it is being held still.
+        // Without new samples the filters would go on extrapolating from the last velocity they saw
         // and the prediction would stay off to one side of where the pen stopped.
         // Giving them the last position again lets the velocity decay and the prediction settle on it.
         motionFilterAdd(&(ctlP->xFilter), ctlP->rawX);
@@ -1466,7 +1391,7 @@ uint32_t cmd;
 
     // Turn on fast ack to minimize delays.
     // This might or might not improve lightpen performance.
-    // Only after the client has sent something: a pass with nothing read has nothing to acknowledge.
+    // Only after the client has sent something, a pass with nothing read has nothing to acknowledge.
     if( readAny )
     {
         setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &sockFlag, sizeof(sockFlag));

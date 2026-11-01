@@ -22,6 +22,7 @@
  *    display at the address in IO as a dla does.
  * 8-Oct-2026 Claude - each command, with a dla's address, is queued for the 340 thread in order, so a
  *    drs right after a dla no longer replaces the dla before the thread has taken it.
+ * 1-Nov-2026 wje - motion prediction is always used, drp is now obsolete and maps to drc.
  */
 
 #include <unistd.h>
@@ -131,12 +132,7 @@ EmuControlP ctlP;
             break;
 
         case 1:         // drc, display read coordinates
-            // Note that per documentation, the lsb is lost
-            emuGetXY(&dispNo, &x, &y);
-            IO(pdp1P) = ((x & 01776) << 8) | ((y >> 1) & 0777);
-            break;
-
-        case 2:         // drp, display read predicted coordinates, an extension, not original
+        case 2:         // drp, now obsolete, prediction is always used
             // Note that per documentation, the lsb is lost
             // We need the display number for this.
             emuGetXY(&dispNo, &x, &y);

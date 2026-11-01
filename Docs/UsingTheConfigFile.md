@@ -2,9 +2,9 @@
 
 This document describes /opt/pidp1-mods/pidp1.config and how to use it.
 
-This is version 1.4; it will be updated as needed.
-
-Edit date 22-Oct-2026
+This is version 1.5; it will be updated as needed.\
+Edit date 2-Nov-2026\
+motion prediction is always on, setting here removed
 
 ## What is the configuration file?
 
@@ -64,7 +64,7 @@ plugin that has an update function re-reads its own. The exceptions:
 - The panel settings are read by the hardware panel driver, which pdp1control reloadpanel
   reloads; panelrealtime applies only when the driver starts.
 - guilightpen applies when pdp1_periph starts.
-- motionPrediction, aperture, two340charsets, pidp1timing and the panel settings keep their old
+-  aperture, two340charsets, pidp1timing and the panel settings keep their old
   value when their line is removed, so going back to the default needs a restart.
 
 ### The debugger server
@@ -102,7 +102,6 @@ plugin that has an update function re-reads its own. The exceptions:
 | dpyshift | IOT_7 | The origin-shifting extended dpy; can conflict with sdb |
 | twoscreens | IOT_7 | Dual Type 30 screens, untested |
 | lightpen | IOT_7, IOT_27 | Lightpen support on the Type 30 and the Type 33 |
-| motionPrediction | pdp1 | Predict the lightpen's motion |
 | aperture | pdp1, IOT_7 | The lightpen's aperture, for the Type 340 and the Type 30 |
 | two340charsets | Type 340 plugin | Lower-shift characters from a second character set |
 | guilightpen | pdp1_periph | The lightpen in the unified control gui |

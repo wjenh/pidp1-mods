@@ -1,0 +1,2608 @@
+// The reader handles the terminal, the words as they are typed, and the
+// lexicon behind them (lexicon.ac). It polls the terminal, keeping term.ac's
+// channel and its output routines for the commands.
+// A line typed with a / first is a command. It is collected into tLine
+// without its /, and handed to the commands' dispatch by tReady, but for
+// /WORD, which is this file's.
+// Anything else is a sentence, read as the original's ETAOIN reads it
+// (morpho.13). It is read a character at a time, folded to upper case,
+// each word looked up as its delimiter is typed, so that an unknown word
+// stops the sentence at once.
+// The reader's amendments to the original are that ' joins the word as the
+// apostrophe, and that "word" is one word, learned if unknown and kept in
+// the sentence, as a noun and a name. Digits make numbers, as the
+// original means and fails to do.
+// A word the morphology derives, a learned word and a word given features
+// by /WORD are kept for the dialogue in the derived words' arena (bank 017,
+// DWBASE to DWLIM), which is searched before the dictionary.
+// A sentence read whole is parsed and its tree printed (parse.ac).
+// Bank 013, eem on throughout, so every indirect reference is a full
+// address. It is entered from bank 0 by rdInit and rdPoll, which return to
+// the full address in AC. It has output routines here, since term.ac's
+// output routines return into bank 0.
+// Needs shrdlu.ah, lexicon.ac (in bank 2, before it),
+// <DCS/dcs2defs.ah>, and term.ac's tConn, tReady, tLen, tLine and sBanner.
+
+// Sets the reader to its start state. Called from the start (shrdlu.am1).
+// Clears the derived words and the sentence, sets the parser's variables
+// as they start (pgm.ac), and sets the overlay manager's error hook
+// (parse.ac's ovFail).
+// Takes the return address in AC. AC and IO are clobbered.
+// Called via jsp from bank 0.
+rdInit,
+    local loop, rtn
+    dac rtn
+    lac [dwHash:013]
+    dac rdT
+    law LXBUCK
+    dac rdK
+loop, dzm i rdT
+    idx rdT
+    lac rdK
+    sub [1]
+    dac rdK
+    sza
+    jmp loop
+    lac [DWBASE]
+    dac dwNext
+    dzm rMode
+    law 1
+    dac rBol
+    jsp rdClear
+#ifndef NOOVHOOK
+    lac [ovFail:013]        // an overlay's error answered, not halted
+    dac ovErrHook
+#endif
+    XJSP(pgInit, 012)
+    jmp i rtn
+rtn, 0
+    endloc
+
+// Polls the terminal from the main loop. Takes what the user has typed, a
+// character at a time, until a command line is ready for the main loop
+// (tReady) or nothing more has come. On a new connection it makes channel 0
+// current and sends the banner. On a dropped one it rebinds. Never waits.
+// The idle labels (labels.ac) go off at the first character read, and on
+// when the poll ends with the reader waiting for a line's first.
+// Takes the return address in AC. AC and IO are clobbered.
+// Called via jsp from bank 0.
+rdPoll,
+    local loop, closed, out, rtn, st
+    dac rtn
+    lac i [tReady:0]
+    sza
+    jmp out
+    lac i [tConn:0]
+    sza
+    jmp loop
+    cli
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp out
+    // A client is on. Server mode needs roc before any output.
+    cli
+    roc
+    law 1
+    dac i [tConn:0]
+    dzm rMode
+    jsp rdClear
+    lac [sBanner:2]
+    jda wrs
+    jsp wrnl
+    jsp wrStar
+    jmp out
+loop, cli
+    rcs
+    lai
+    dac st
+    and [dsfcls]
+    sza
+    jmp closed
+    lac st
+    and [dsfrdy]
+    sza i
+    jmp out
+    rch rchclr
+    spi
+    jmp out                 // negative, so no character after all
+    XJSP(lbHide, 1)         // the idle labels off, before anything is read
+    lai
+    and [0177]
+    jda rdEcho
+    jda rdChar
+    lac i [tReady:0]
+    sza i
+    jmp loop
+    jmp out
+closed, lio [scbbnd]
+    scb
+    dzm i [tConn:0]
+out, XJSP(lbIdle, 1)        // nothing more to read, so the idle labels, if idle
+    jmp i rtn
+rtn, 0
+st, 0
+    endloc
+
+// Forgets the sentence so far, leaving no words, no word begun, no
+// punctuation and no quote open. The derived words stay.
+// AC and IO are clobbered. Called via jsp.
+rdClear,
+    local rtn
+    dap rtn
+    dzm rSLen
+    dzm rWLen
+    dzm rPunct
+    dzm rNew
+    dzm rQuote
+    dzm rFull
+rtn, jmp 0
+    endloc
+
+// Shows a character read, as typed. DCS2 echoes nothing (term.ac), and a
+// terminal may move back for an echoed rubout or not, so only rdChar's
+// erasing may touch the screen for one. Control characters show nothing.
+// A line's end is rdChar's wrBol.
+// Takes the character in AC and returns it unchanged in AC. IO is
+// clobbered. Called via jda.
+rdEcho,
+    local rtn, done
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdEcho
+    sub [040]
+    spa
+    jmp done
+    lac rdEcho
+    sad [0177]
+    jmp done
+    jda wrc
+done, lac rdEcho
+rtn, jmp 0
+    endloc
+
+// Takes one character as it is read. Lower case is folded to upper. rBol is
+// kept as whether the cursor is at a line's start. A CR or LF read away
+// from a line's start is followed by our LF.
+// Takes the character in AC. AC and IO are clobbered. Called via jda.
+rdChar,
+    local rtn, nofold, nolf, sent, scret, sdel, serase, sedw, skill, \
+        sslash, sapos, squote, sq2, spunct, sp2, seq, cmd, ccr, ceol, \
+        cerase, cempty, chand, wait, wcr, wgo
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdChar
+    sub ['a']
+    spa
+    jmp nofold
+    lac rdChar
+    sub ['z'+1]
+    sma
+    jmp nofold
+    lac rdChar
+    sub [040]
+    dac rdChar
+nofold, lac rdChar
+    sas [012]
+    jmp nolf
+    jsp wrBol               // a CR LF read as one
+nolf, lac rMode
+    sad [1]
+    jmp cmd
+    sad [2]
+    jmp wait
+
+    // A sentence.
+sent, lac rdChar
+    sad [015]
+    jmp scret
+    sad [012]
+    jmp sdel
+    sad [010]
+    jmp serase
+    sad [0177]
+    jmp serase
+    sad [025]
+    jmp skill
+    sub [040]
+    spa
+    jmp rtn                 // other control characters are dropped
+    dzm rBol
+    lac rdChar
+    sad ['/']
+    jmp sslash
+    sad [047]
+    jmp sapos
+    sad [042]
+    jmp squote
+    sad [' ']
+    jmp sdel
+    sad ['.']
+    jmp spunct
+    sad ['?']
+    jmp spunct
+    sad ['!']
+    jmp spunct
+    sad [':']
+    jmp spunct
+    sad [';']
+    jmp spunct
+    jda rdCode
+    sza i
+    jmp seq
+    jda rdAdd
+    jmp rtn
+    // = is a letter only as a word's first, which makes it a name.
+seq, lac rdChar
+    sas ['=']
+    jmp rtn
+    lac rWLen
+    sza
+    jmp rtn
+    law CH_EQ
+    jda rdAdd
+    jmp rtn
+scret, jsp wrBol
+sdel, jsp rdEndW
+    jmp rtn
+    // Rubout and backspace erase, within a word, the last character, which
+    // the screen loses too. At a word's start they erase the word before,
+    // and the sentence so far is shown again on a new line.
+serase, lac rWLen
+    sza i
+    jmp sedw
+    sub [1]
+    dac rWLen
+    jsp wrErase
+    jmp rtn
+sedw, lac rSLen
+    sza i
+    jmp rtn
+    sub [1]
+    dac rSLen
+    jsp wrnl
+    jsp rdShow
+    jmp rtn
+    // Ctrl-U erases the whole sentence and starts a new line.
+skill, jsp rdClear
+    jsp wrBol
+    jmp rtn
+    // A / opens a command only as a line's first character; elsewhere
+    // it is dropped, as any character the original does not know.
+sslash, lac rSLen
+    ior rWLen
+    ior rQuote
+    sza
+    jmp rtn
+    law 1
+    dac rMode
+    dzm rCLen
+    jmp rtn
+sapos, law CH_APOS
+    jda rdAdd
+    jmp rtn
+    // The first " opens a new word, the second ends it.
+squote, lac rQuote
+    sza
+    jmp sq2
+    law 1
+    dac rQuote
+    dac rNew
+    jmp rtn
+sq2, dzm rQuote
+    jsp rdEndW
+    jmp rtn
+spunct, lac rdChar
+    dac rPunct
+    lac rWLen
+    sza i
+    jmp sp2
+    jsp rdEndW
+    jmp rtn
+sp2, jsp rdPunc
+    jmp rtn
+
+    // A command line goes into tLine. An empty one is dropped.
+cmd, lac rdChar
+    sad [015]
+    jmp ccr
+    sad [012]
+    jmp ceol
+    sad [010]
+    jmp cerase
+    sad [0177]
+    jmp cerase
+    sub [040]
+    spa
+    jmp rtn
+    dzm rBol
+    lac rCLen
+    sub [LINEMAX]
+    sma
+    jmp rtn                 // a full line keeps what it has
+    lac rCLen
+    add [tLine:2]
+    dac rdT
+    lac rdChar
+    dac i rdT
+    idx rCLen
+    jmp rtn
+cerase, lac rCLen
+    sza i
+    jmp rtn
+    sub [1]
+    dac rCLen
+    jsp wrErase
+    jmp rtn
+ccr, jsp wrBol
+ceol, dzm rMode
+    lac rCLen
+    sza i
+    jmp rtn
+    add [tLine:2]
+    dac rdT
+    dzm i rdT
+    lac rCLen
+    dac i [tLen:0]
+    law 1
+    dac rBol
+    jsp rdIsWord
+    jmp chand
+    jsp cmdWord
+    jmp rtn
+chand, law 1
+    dac i [tReady:0]
+    jmp rtn
+
+    // After an unknown word, everything to the Return is dropped. Then
+    // the sentence so far is shown, to be continued.
+wait, lac rdChar
+    sad [015]
+    jmp wcr
+    sad [012]
+    jmp wgo
+    sub [040]
+    sma
+    dzm rBol
+    jmp rtn
+wcr, jsp wrBol
+wgo, dzm rMode
+    jsp rdShow
+rtn, jmp 0
+    endloc
+
+// Adds a character to the word being typed. Past WORDMAX it is dropped.
+// Takes the character's code in AC. AC and IO are clobbered. Called via jda.
+rdAdd,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac rWLen
+    sub [WORDMAX]
+    sma
+    jmp rtn
+    lac rWLen
+    add [rW:013]
+    dac rdT
+    lac rdAdd
+    dac i rdT
+    idx rWLen
+rtn, jmp 0
+    endloc
+
+// Handles a word's delimiter. The word is looked up (rdAnal) and put in
+// the sentence, or the sentence is stopped at it if it is unknown. Then any
+// punctuation that ended it is handled.
+// AC and IO are clobbered. Called via jsp.
+rdEndW,
+    local rtn, ok, one, full, punc
+    dap rtn
+    lac rWLen
+    sza i
+    jmp punc
+    dac aN
+    jsp rdAnal
+    sad [1]
+    jmp ok
+    sad [2]
+    jmp full
+    sad [3]
+    jmp punc-1
+    // Unknown. The original's two lines are printed, then nothing more is
+    // read but the Return that continues the sentence. The punctuation is lost.
+    jsp rdSorry
+    dzm rWLen
+    dzm rPunct
+    dzm rQuote
+    law 2
+    dac rMode
+    jmp rtn
+ok, lac rOut1
+    jda rdPut
+    lac rOutN
+    sad [1]
+    jmp one
+    lac rOut2
+    jda rdPut
+one, jmp punc-1
+full, law 1
+    dac rFull
+    dzm rWLen
+punc, lac rPunct
+    sza
+    jsp rdPunc
+rtn, jmp 0
+    endloc
+
+// Puts a word in the sentence. A sentence past SENTMAX words is marked
+// full, and gets NO ROOM at its end.
+// Takes the word's entry in AC. AC and IO are clobbered. Called via jda.
+rdPut,
+    local rtn, full
+    0                       // jda puts the argument here
+    dap rtn
+    lac rSLen
+    sub [SENTMAX]
+    sma
+    jmp full
+    lac rSLen
+    add [rSent:013]
+    dac rdT
+    lac rdPut
+    dac i rdT
+    idx rSLen
+    jmp rtn
+full, law 1
+    dac rFull
+rtn, jmp 0
+    endloc
+
+// Handles the punctuation in rPunct. . ? or ! ends the sentence, and : and
+// ; go into it as words (the original's PUNC).
+// AC and IO are clobbered. Called via jsp.
+rdPunc,
+    local rtn, fin, col
+    dap rtn
+    lac rPunct
+    dzm rPunct
+    sad ['.']
+    jmp fin
+    sad ['?']
+    jmp fin
+    sad ['!']
+    jmp fin
+    sad [':']
+    jmp col
+    lac [lxSemi:2]
+    jda rdPut
+    jmp rtn
+col, lac [lxColon:2]
+    jda rdPut
+    jmp rtn
+fin, dac rFin
+    jsp rdSent
+    jsp rdClear
+rtn, jmp 0
+    endloc
+
+// Reports a sentence read whole. Its words and its punctuation go on a
+// line after WORDS:, then what the parser made of it (parse.ac), or NO
+// ROOM. Then *. A sentence with no words gets only the *. The line is wrapped as the
+// replies are (print.ac's psFit), by psCol, which wrc does not keep.
+// AC and IO are clobbered. Called via jsp.
+rdSent,
+    local rtn, loop, star, p, k, w
+    dap rtn
+    jsp wrBol
+    lac rFull
+    sza i
+    jmp .+5
+    lac [sNoRoom:013]
+    jda wrs
+    jsp wrnl
+    jmp star
+    lac rSLen
+    sza i
+    jmp star
+    dac k
+    lac [sWords:4]
+    jda wrs
+    law 6                   // the length of WORDS:
+    dac psCol
+    lac [rSent:013]
+    dac p
+loop, lac i p
+    dac w
+    dzm wrLen
+    idx wrDry
+    lac w
+    jda wrSpell
+    dzm wrDry
+    lac wrLen
+    jda psFit
+    lac w
+    jda wrSpell
+    lac psCol
+    add wrLen
+    dac psCol
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    law 1
+    jda psFit
+    lac rFin
+    jda wrc
+    jsp wrnl
+    dzm psCol
+    jsp psParse
+star, jsp wrStar
+rtn, jmp 0
+p, 0
+k, 0
+w, 0
+    endloc
+
+// The sentence so far, each word followed by a space, for the user to go
+// on from (the original's DO).
+// AC and IO are clobbered. Called via jsp.
+rdShow,
+    local rtn, loop, p, k
+    dap rtn
+    lac rSLen
+    sza i
+    jmp rtn
+    dac k
+    lac [rSent:013]
+    dac p
+loop, lac i p
+    jda wrSpell
+    jsp wrsp
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Prints an unknown word's two lines, the first as the transcript has it,
+// the second as the code does, Return standing for its line feed.
+//     SORRY, I DON'T KNOW THE WORD "STEEPLE".
+//     PLEASE TYPE RETURN AND CONTINUE THE SENTENCE.
+// The word is the first aN characters of rW.
+// AC and IO are clobbered. Called via jsp.
+rdSorry,
+    local rtn
+    dap rtn
+    jsp wrBol
+    lac [sSorry:5]
+    jda wrs
+    law 042
+    jda wrc
+    lac aN
+    dac wcLen
+    lac [rW:013]
+    jda wrCodes
+    law 042
+    jda wrc
+    law '.'
+    jda wrc
+    jsp wrnl
+    lac [sPlease:1]
+    jda wrs
+    jsp wrnl
+rtn, jmp 0
+    endloc
+
+// rdAnal from any bank (evlisp.ac). AC and IO as rdAnal's. Called via jsp.
+rdAnalF, dac rdAr
+    jsp rdAnal
+    jmp i rdAr
+rdAr, 0
+
+// The original's ETAOIN from its WORD on (morpho.13:111-285), for the
+// first aN characters of rW. The result is the word found, or derived by
+// the morphology, or learned if a quote opened it (rNew), or unknown. A
+// word derived or learned is kept (rdNew). The words it gives the sentence
+// are rOut1 and, for a contraction of IS (THAT'S), rOut2. rOutN says which.
+// Where the original's ROOT is left from the word before, the possessive
+// of a word found as it is, the root here is that word, whose meaning
+// the possessive has.
+// Returns AC 0 if unknown, 1 if found, 2 if there is no room for it, 3 if
+// nothing is left of it (a lone 'S). IO is clobbered. Called via jsp.
+rdAnal,
+    local rtn, word, num, notone, nodig, eq, eqnext, eqdone, cut, notnt, \
+        nots1, noap, noly, noing, noed, noen, noer, noest, ly, lylook, \
+        fix, f2, f3, f3b, f3c, f3d, adde, sib, s2, s3, s4, s5, try, \
+        tless, tmod, no, wrd, notn, notp, plain, poss, empty, noroom, k, p
+    dap rtn
+    dzm rOutN
+    dzm rPossN
+    dzm rRoot
+word, lac aN
+    sza i
+    jmp empty
+    // A word of digits is a number (NUM, and NS for 1).
+    dac k
+    lac [rW:013]
+    dac p
+num, lac i p
+    sub [CH_0]
+    spa
+    jmp nodig
+    sub [0d10]
+    sma
+    jmp nodig
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp num
+    jsp rdLookW
+    sza
+    jmp wrd
+    jsp mZero
+    law fNUM
+    jda mSet
+    jsp rdOne
+    jmp notone
+    law fNS
+    jda mSet
+notone, dzm rNewRoot
+    lac [rW:013]
+    jda rdNewW
+    jmp wrd
+nodig, jsp rdLookW
+    sza
+    jmp wrd
+    // A word starting = is a name, a possessive one if it has an '.
+    lac rW
+    sas [CH_EQ]
+    jmp cut
+    jsp mZero
+    law fPROPN
+    jda mSet
+    law fNS
+    jda mSet
+    lac aN
+    dac k
+    lac [rW:013]
+    dac p
+eq, lac i p
+    sas [CH_APOS]
+    jmp eqnext
+    law fPOSS
+    jda mSet
+    jmp eqdone
+eqnext, idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp eq
+eqdone, dzm rNewRoot
+    lac [rW:013]
+    jda rdNewW
+    jmp wrd
+
+    // The endings (CUT), on the word's last three characters.
+cut, jsp rdLast3
+    lac aC1
+    sas [CH_T]
+    jmp notnt
+    lac aC2
+    sas [CH_APOS]
+    jmp notnt
+    lac aC3
+    sas [CH_N]
+    jmp notnt
+    law 3
+    jda rdStem
+    law CH_STAR
+    dac aEnd
+    jmp try
+notnt, lac aC1
+    sas [CH_S]
+    jmp nots1
+    lac aC2
+    sas [CH_APOS]
+    jmp nots1
+    jsp rdPossW
+    lac aN
+    sub [2]
+    dac aN
+    jmp word
+nots1, lac aC1
+    sas [CH_APOS]
+    jmp noap
+    jsp rdPossW
+    lac aN
+    sub [1]
+    dac aN
+    jmp word
+noap, lac aC1
+    sas [CH_Y]
+    jmp noly
+    lac aC2
+    sas [CH_L]
+    jmp noly
+    law 2
+    jda rdStem
+    jmp ly
+noly, lac aC1
+    sas [CH_G]
+    jmp noing
+    lac aC2
+    sas [CH_N]
+    jmp noing
+    lac aC3
+    sas [CH_I]
+    jmp noing
+    law 3
+    jda rdStem
+    law CH_G
+    dac aEnd
+    jmp fix
+noing, lac aC1
+    sas [CH_D]
+    jmp noed
+    lac aC2
+    sas [CH_E]
+    jmp noed
+    law 2
+    jda rdStem
+    law CH_D
+    dac aEnd
+    jmp fix
+noed, lac aC1
+    sas [CH_N]
+    jmp noen
+    lac aC2
+    sas [CH_E]
+    jmp noen
+    law 2
+    jda rdStem
+    law CH_N
+    dac aEnd
+    jmp fix
+noen, lac aC1
+    sas [CH_R]
+    jmp noer
+    lac aC2
+    sas [CH_E]
+    jmp noer
+    law 2
+    jda rdStem
+    law CH_R
+    dac aEnd
+    jmp fix
+noer, lac aC1
+    sas [CH_T]
+    jmp noest
+    lac aC2
+    sas [CH_S]
+    jmp noest
+    lac aC3
+    sas [CH_E]
+    jmp noest
+    law 3
+    jda rdStem
+    law CH_T
+    dac aEnd
+    jmp fix
+noest, lac aC1
+    sas [CH_S]
+    jmp no
+    law 1
+    jda rdStem
+    law CH_S
+    dac aEnd
+    jmp sib
+
+    // -LY makes an adverb of an adjective, the silent E put back first.
+ly, jsp rdStem3
+    lac aL
+    jda rdCls
+    and [1]
+    sza i
+    jmp lylook
+    lac aL
+    sad [CH_E]
+    jmp lylook
+    lac aX
+    jda rdCls
+    and [2]
+    sza
+    jsp rdAddE
+lylook, lac rRLen
+    sza i
+    jmp no
+    lac [rR:013]
+    dac pkSrc
+    lac rRLen
+    dac pkLen
+    jsp rdLook
+    sza i
+    jmp no
+    dac rNewRoot
+    jsp mZero
+    lac rNewRoot
+    jda mOrEnt
+    law fADJ
+    jda mTest
+    jmp no
+    jsp mZero
+    law fADV
+    jda mSet
+    law fVBAD
+    jda mSet
+    lac rNewRoot
+    dac rRoot
+    lac [rW:013]
+    jda rdNewW
+    jmp wrd
+
+    // -ING, -ED, -EN, -ER, -EST. The stem's spelling is mended by the
+    // original's three repairs in its order.
+fix, jsp rdStem3
+    // Undoubling, for a consonant not a liquid, twice (STOPPED).
+    lac aL
+    jda rdCls
+    and [6]
+    sas [2]
+    jmp f2
+    lac aL
+    sas aX
+    jmp f2
+    lac rRLen
+    sub [1]
+    dac rRLen
+    jmp try
+    // I to Y (TIDIED).
+f2, lac aL
+    sas [CH_I]
+    jmp f3
+    lac rRLen
+    add [rR:013]
+    sub [1]
+    dac rdT
+    law CH_Y
+    dac i rdT
+    jmp try
+    // The silent E (BAKED, TALLER from TALL does not get one).
+    // A consonant after a vowel not E after a consonant,
+f3, lac aL
+    jda rdCls
+    and [2]
+    sza i
+    jmp f3b
+    lac aX
+    jda rdCls
+    and [1]
+    sza i
+    jmp f3b
+    lac aX
+    sad [CH_E]
+    jmp f3b
+    lac aY
+    jda rdCls
+    and [2]
+    sza
+    jmp adde
+    // or a liquid after a consonant not a liquid,
+f3b, lac aL
+    jda rdCls
+    and [4]
+    sza i
+    jmp f3c
+    lac aX
+    jda rdCls
+    and [6]
+    sad [2]
+    jmp adde
+    // or TH,
+f3c, lac aL
+    sas [CH_H]
+    jmp f3d
+    lac aX
+    sad [CH_T]
+    jmp adde
+    // or one of C G S J V Z after a liquid, or after two vowels.
+f3d, lac aL
+    jda rdCls
+    and [010]
+    sza i
+    jmp try
+    lac aX
+    jda rdCls
+    and [4]
+    sza
+    jmp adde
+    lac aX
+    jda rdCls
+    and [1]
+    sza i
+    jmp try
+    lac aY
+    jda rdCls
+    and [1]
+    sza i
+    jmp try
+adde, jsp rdAddE
+    jmp try
+
+    // -S. The stem's spelling is mended (SIB).
+sib, jsp rdStem3
+    lac aL
+    sas [CH_E]
+    jmp try
+    lac aX
+    sas [CH_I]
+    jmp s2
+    lac rRLen               // FLIES, the IE to Y
+    sub [2]
+    dac rRLen
+    add [rR:013]
+    dac rdT
+    law CH_Y
+    dac i rdT
+    idx rRLen
+    jmp try
+s2, sas [CH_X]
+    jmp s3
+    lac rRLen               // BOXES
+    sub [1]
+    dac rRLen
+    jmp try
+s3, sas [CH_H]
+    jmp s4
+    lac aY
+    sad [CH_T]
+    jmp try
+    lac rRLen               // PUSHES, not CLOTHES
+    sub [1]
+    dac rRLen
+    jmp try
+s4, sad [CH_S]
+    jmp s5
+    sas [CH_Z]
+    jmp try
+s5, sas aY
+    jmp try
+    lac rRLen               // as the original does, GLASSES to GLAS
+    sub [2]
+    dac rRLen
+
+    // TRY. The stem is looked up in the lexicon, or an irregular form's
+    // root, with the ending's MOD applied to its features. Otherwise one E
+    // less is tried again.
+try, lac rRLen
+    sza i
+    jmp no
+    lac [rR:013]
+    dac pkSrc
+    lac rRLen
+    dac pkLen
+    jsp rdLook
+    sza i
+    jmp tless
+    dac rNewRoot
+    jsp mZero
+    lac rNewRoot
+    jda mOrEnt
+    lac rNewRoot
+    add [1]
+    dac rdT
+    lac i rdT
+    and [2]
+    sza i
+    jmp tmod
+    lac rNewRoot            // an irregular form's root
+    add [2]
+    dac rdT
+    lac i rdT
+    dac rNewRoot
+    jmp tmod
+tless, lac rRLen            // not found, so one E less, if it ends in E
+    add [rR:013]
+    sub [1]
+    dac rdT
+    lac i rdT
+    sas [CH_E]
+    jmp no
+    lac rRLen
+    sub [1]
+    dac rRLen
+    jmp try
+tmod, lac aEnd
+    jda rdMod
+    lac rNewRoot
+    dac rRoot
+    lac [rW:013]
+    jda rdNewW
+    jmp wrd
+no, lac rNew
+    sza i
+    jmp rtn                 // unknown, so AC is 0
+    // An unknown quoted word is learned as a noun and a name, its own
+    // root, then put into the sentence.
+    dzm rNew
+    jsp mZero
+    law fNOUN
+    jda mSet
+    law fPROPN
+    jda mSet
+    law fNS
+    jda mSet
+    dzm rNewRoot
+    lac [rW:013]
+    jda rdNewW
+    sza i
+    jmp noroom
+    dac rdT
+    add [2]
+    dac p
+    lac rdT
+    dac i p
+
+    // WRD. A possessive is made of a noun or a name. Anything else with
+    // 'S is the word and IS.
+wrd, sza i
+    jmp noroom
+    dac aE
+    lac rPossN
+    sza i
+    jmp plain
+    jsp mZero
+    lac aE
+    jda mOrEnt
+    law fNOUN
+    jda mTest
+    jmp notn
+    jmp poss
+notn, law fPROPN
+    jda mTest
+    jmp notp
+    jmp poss
+notp, lac aE
+    dac rOut1
+    lac [lxBeS:2]
+    dac rOut2
+    law 2
+    dac rOutN
+    law 1
+    jmp rtn
+poss, law fPOSS
+    jda mMeet
+    law fPOSS
+    jda mSet
+    // The root, whose meaning the possessive has (morpho.13:248), is the
+    // word's root if this word was derived, else the word. A kept derived
+    // word found again (BLOCKS) has no root bit, so its possessive has no
+    // meaning.
+    lac rRoot
+    sza i
+    lac aE
+    dac rNewRoot
+    lac rPossN
+    dac aN
+    lac [rPw:013]
+    jda rdNewW
+    sza i
+    jmp noroom
+    dac aE
+plain, lac aE
+    dac rOut1
+    law 1
+    dac rOutN
+    jmp rtn
+empty, law 3
+    jmp rtn
+noroom, law 2
+rtn, jmp 0
+k, 0
+p, 0
+    endloc
+
+// Skips if the number in the first aN characters of rW is 1, that is, the
+// one digit 1 past its leading zeros. AC and IO are clobbered. Called via
+// jsp.
+rdOne,
+    local rtn, loop, last, p, k
+    dap rtn
+    lac aN
+    dac k
+    lac [rW:013]
+    dac p
+loop, lac i p
+    sas [CH_0]
+    jmp last
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    jmp rtn                 // all zeros, so 0
+last, lac k
+    sas [1]
+    jmp rtn
+    lac i p
+    sad [CH_1]
+    idx rtn
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Looks up the first aN characters of rW.
+// Returns the entry in AC, or 0. IO is clobbered. Called via jsp.
+rdLookW,
+    local rtn
+    dap rtn
+    lac [rW:013]
+    dac pkSrc
+    lac aN
+    dac pkLen
+    jsp rdLook
+rtn, jmp 0
+    endloc
+
+// Keeps the word as typed, the first aN characters of rW, for its
+// possessive, in rPw and rPossN. AC and IO are clobbered. Called via jsp.
+rdPossW,
+    local rtn, loop, p, q, k
+    dap rtn
+    lac aN
+    dac rPossN
+    dac k
+    lac [rW:013]
+    dac p
+    lac [rPw:013]
+    dac q
+loop, lac i p
+    dac i q
+    idx p
+    idx q
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+p, 0
+q, 0
+k, 0
+    endloc
+
+// Gets the word's last three characters, aC1 the last, aC2, aC3, with 0
+// for each the word is too short to have. AC and IO are clobbered.
+// Called via jsp.
+rdLast3,
+    local rtn
+    dap rtn
+    lac aN
+    dac pkLen
+    lac [rW:013]
+    jda rdTail
+    lac rdTl1
+    dac aC1
+    lac rdTl2
+    dac aC2
+    lac rdTl3
+    dac aC3
+rtn, jmp 0
+    endloc
+
+// Gets the stem's last three characters, aL the last, aX, aY, with 0 for
+// each the stem is too short to have (the original's NIL, which is a vowel).
+// AC and IO are clobbered. Called via jsp.
+rdStem3,
+    local rtn
+    dap rtn
+    lac rRLen
+    dac pkLen
+    lac [rR:013]
+    jda rdTail
+    lac rdTl1
+    dac aL
+    lac rdTl2
+    dac aX
+    lac rdTl3
+    dac aY
+rtn, jmp 0
+    endloc
+
+// Gets the last three of pkLen characters, rdTl1 the last, rdTl2, rdTl3,
+// with 0 for each there are too few for.
+// Takes the characters' full address in AC. AC and IO are clobbered.
+// Called via jda.
+rdTail,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    dzm rdTl1
+    dzm rdTl2
+    dzm rdTl3
+    lac rdTail
+    add pkLen
+    dac p
+    lac pkLen
+    sza i
+    jmp rtn
+    sub [1]
+    dac pkLen
+    lac p
+    sub [1]
+    dac p
+    lac i p
+    dac rdTl1
+    lac pkLen
+    sza i
+    jmp rtn
+    sub [1]
+    dac pkLen
+    lac p
+    sub [1]
+    dac p
+    lac i p
+    dac rdTl2
+    lac pkLen
+    sza i
+    jmp rtn
+    lac p
+    sub [1]
+    dac p
+    lac i p
+    dac rdTl3
+rtn, jmp 0
+p, 0
+    endloc
+
+// Makes the stem, the word without its last n characters, in rR.
+// Takes n in AC. AC and IO are clobbered. Called via jda.
+rdStem,
+    local rtn, loop, p, q, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac aN
+    sub rdStem
+    dac rRLen
+    sza i
+    jmp rtn
+    dac k
+    lac [rW:013]
+    dac p
+    lac [rR:013]
+    dac q
+loop, lac i p
+    dac i q
+    idx p
+    idx q
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+p, 0
+q, 0
+k, 0
+    endloc
+
+// Adds an E to the stem. AC and IO are clobbered. Called via jsp.
+rdAddE,
+    local rtn
+    dap rtn
+    lac rRLen
+    add [rR:013]
+    dac rdT
+    law CH_E
+    dac i rdT
+    idx rRLen
+rtn, jmp 0
+    endloc
+
+// Gives a character's classes, 1 a vowel (0, the original's NIL, is one),
+// 2 a consonant, 4 a liquid, 010 one of C G S J V Z.
+// Takes the character's code in AC. Returns the classes in AC. IO is
+// clobbered. Called via jda.
+rdCls,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdCls
+    add [clsTab:013]
+    dac rdT
+    lac i rdT
+rtn, jmp 0
+    endloc
+
+// Applies an ending's MOD to mA. The features it removes are taken out,
+// then the features it adds are added (the original's MOD, a UNION of a
+// SETDIF).
+// Takes the code the ending is keyed on in AC. AC and IO are clobbered.
+// Called via jda.
+rdMod,
+    local rtn, loop, found, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac [modTab:2]
+    dac p
+loop, lac i p
+    sza i
+    jmp rtn
+    sad rdMod
+    jmp found
+    lac p
+    add [3]
+    dac p
+    jmp loop
+found, lac p
+    add [2]
+    dac rdT
+    lac i rdT
+    jda mDelLst
+    lac p
+    add [1]
+    dac rdT
+    lac i rdT
+    jda mOrLst
+rtn, jmp 0
+p, 0
+    endloc
+
+// Makes a new derived word, kept for the dialogue, with the features in
+// mA, the root rNewRoot, and the spelling the first aN characters at the
+// address given. It goes first in its chain, so it shadows any word of
+// that spelling.
+// Takes the characters' full address in AC. Returns the entry in AC, or 0
+// if the arena is full. IO is clobbered. Called via jda.
+rdNewW,
+    local rtn, ploop, spell, sloop, full, p, q, k, w, size
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdNewW
+    dac pkSrc
+    lac aN
+    dac pkLen
+    jsp rdPack
+    jsp mList
+    // Its size is 3, the features two to a word, and the spelling.
+    lac fCount
+    add [1]
+    sar 1s
+    add [3]
+    add rPkN
+    dac size
+    add dwNext
+    sub [DWLIM+1]
+    sma
+    jmp full
+    jsp rdHash
+    add [dwHash:013]
+    dac q
+    lac dwNext
+    dac p
+    lac i q
+    dac i p                 // the chain's head follows it
+    lac dwNext
+    dac i q
+    idx p
+    lac fCount
+    ral 3s
+    dac i p
+    idx p
+    lac rNewRoot
+    dac i p
+    idx p
+    lac [fList:013]
+    dac q
+    lac fCount
+    add [1]
+    sar 1s
+    sza i
+    jmp spell
+    dac k
+ploop, lac i q
+    ral 9s
+    dac w
+    idx q
+    lac i q                 // the list has a 0 after its last
+    ior w
+    dac i p
+    idx q
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp ploop
+spell, lac [rPk:013]
+    dac q
+    lac rPkN
+    dac k
+sloop, lac i q
+    dac i p
+    idx q
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp sloop
+    lac dwNext
+    dac p
+    add size
+    dac dwNext
+    lac p
+    jmp rtn
+full, cla
+rtn, jmp 0
+p, 0
+q, 0
+k, 0
+w, 0
+size, 0
+    endloc
+
+// Finds a spelling in the lexicon, the derived words first, then the
+// dictionary. The spelling is the pkLen characters at pkSrc.
+// Returns its entry in AC, or 0. IO is clobbered. Called via jsp.
+rdLook,
+    local rtn, h
+    dap rtn
+    jsp rdPack
+    jsp rdHash
+    dac h
+    add [dwHash:013]
+    dac rdT
+    lac i rdT
+    jda rdChain
+    sza
+    jmp rtn
+    lac h
+    add [lxHash:2]
+    dac rdT
+    lac i rdT
+    jda rdChain
+rtn, jmp 0
+h, 0
+    endloc
+
+// Finds the entry in a chain spelled as rPk.
+// Takes the chain's first entry in AC (0 for none). Returns the entry in
+// AC, or 0. IO is clobbered. Called via jda.
+rdChain,
+    local rtn, loop, cmp, next, found, e, p, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdChain
+    dac e
+loop, lac e
+    sza i
+    jmp rtn
+    jda rdSpOf
+    dac q
+    lac [rPk:013]
+    dac p
+cmp, lac i p
+    sas i q
+    jmp next
+    and [077]
+    sza i
+    jmp found
+    idx p
+    idx q
+    jmp cmp
+next, lac i e
+    dac e
+    jmp loop
+found, lac e
+rtn, jmp 0
+e, 0
+p, 0
+q, 0
+    endloc
+
+// Finds where an entry's spelling is, past its link, header, root and
+// features.
+// Takes the entry in AC. Returns the spelling's full address in AC.
+// IO is clobbered. Called via jda.
+rdSpOf,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdSpOf
+    add [1]
+    dac rdT
+    lac i rdT
+    rar 3s
+    and [077]
+    add [1]
+    sar 1s
+    add [3]
+    add rdSpOf
+rtn, jmp 0
+    endloc
+
+// Packs the pkLen characters at pkSrc into rPk, three codes to a word,
+// the first high, ending in a word whose low code is 0 (the packing
+// lexicon.ac's spellings use). rPkN is its length in words.
+// AC and IO are clobbered. Called via jsp.
+rdPack,
+    local rtn, wloop, cloop, pad, q, ix, k, w
+    dap rtn
+    dzm ix
+    dzm rPkN
+    lac [rPk:013]
+    dac q
+wloop, dzm w
+    law 3
+    dac k
+cloop, lac w
+    ral 6s
+    dac w
+    lac ix
+    sub pkLen
+    sma
+    jmp pad
+    lac pkSrc
+    add ix
+    dac rdT
+    lac i rdT
+    ior w
+    dac w
+    idx ix
+pad, lac k
+    sub [1]
+    dac k
+    sza
+    jmp cloop
+    lac w
+    dac i q
+    idx q
+    idx rPkN
+    lac w
+    and [077]
+    sza
+    jmp wloop
+rtn, jmp 0
+q, 0
+ix, 0
+k, 0
+w, 0
+    endloc
+
+// Finds the chain rPk is in, from its words XORed together, then the
+// three 6-bit fields of that (lexicon.ac's lxHashOf).
+// Returns the chain in AC, 0 to LXBUCK-1. IO is clobbered. Called via jsp.
+rdHash,
+    local rtn, loop, p, k, h, t
+    dap rtn
+    dzm h
+    lac [rPk:013]
+    dac p
+    lac rPkN
+    dac k
+loop, lac i p
+    xor h
+    dac h
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    lac h
+    rar 6s
+    xor h
+    dac t
+    lac h
+    rar 9s
+    rar 3s
+    xor t
+    and [077]
+rtn, jmp 0
+p, 0
+k, 0
+h, 0
+t, 0
+    endloc
+
+// Feature sets as masks of NFEATW words, feature f being bit f mod 18 of
+// word f/18, bit 0 the word's highest. mA is the set being built, and mB
+// another.
+
+// Empties mA. AC and IO are clobbered. Called via jsp.
+mZero,
+    local rtn, loop, p, k
+    dap rtn
+    lac [mA:013]
+    dac p
+    law NFEATW
+    dac k
+loop, dzm i p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Finds where feature f is in a mask, as mWord, its word's offset, and
+// mBit.
+// Takes f in AC. AC and IO are clobbered. Called via jda.
+mPos,
+    local rtn, loop, f
+    0                       // jda puts the argument here
+    dap rtn
+    lac mPos
+    dac f
+    dzm mWord
+loop, lac f
+    sub [0d18]
+    spa
+    jmp .+4
+    dac f
+    idx mWord
+    jmp loop
+    lac f
+    add [bitTab:013]
+    dac rdT
+    lac i rdT
+    dac mBit
+rtn, jmp 0
+f, 0
+    endloc
+
+// Adds a feature to mA. Takes the feature in AC. AC and IO are
+// clobbered. Called via jda.
+mSet,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac mSet
+    jda mPos
+    lac mWord
+    add [mA:013]
+    dac rdT
+    lac i rdT
+    ior mBit
+    dac i rdT
+rtn, jmp 0
+    endloc
+
+// Skips if mA has the feature. Takes the feature in AC. AC and IO are
+// clobbered. Called via jda.
+mTest,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac mTest
+    jda mPos
+    lac mWord
+    add [mA:013]
+    dac rdT
+    lac i rdT
+    and mBit
+    sza
+    idx rtn
+rtn, jmp 0
+    endloc
+
+// Applies mOp to each feature of an entry or a list, given by their count
+// and their words, two features to a word, the first high.
+// Takes the first word's full address in AC, the count in mN, and mOp = 0
+// to add each to mA, 1 to remove it, 2 to add it to mB. AC and IO are
+// clobbered. Called via jda.
+mEach,
+    local rtn, loop, one, intoB, outA, done, p, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac mEach
+    dac p
+    lac mN
+    sza i
+    jmp rtn
+    dac k
+loop, lac i p
+    rar 9s
+    and [0777]
+    jda one
+    lac k
+    sub [1]
+    dac k
+    sza i
+    jmp rtn
+    lac i p
+    and [0777]
+    jda one
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    jmp rtn
+one, 0
+    dap done
+    lac one
+    jda mPos
+    lac mOp
+    sad [2]
+    jmp intoB
+    lac mWord
+    add [mA:013]
+    dac rdT
+    lac mOp
+    sza
+    jmp outA
+    lac i rdT
+    ior mBit
+    dac i rdT
+    jmp done
+intoB, lac mWord
+    add [mB:013]
+    dac rdT
+    lac i rdT
+    ior mBit
+    dac i rdT
+    jmp done
+outA, lac mBit
+    cma
+    and i rdT
+    dac i rdT
+done, jmp 0
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Adds an entry's features to mA. Takes the entry in AC. AC and IO are
+// clobbered. Called via jda.
+mOrEnt,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac mOrEnt
+    add [1]
+    dac rdT
+    lac i rdT
+    rar 3s
+    and [077]
+    dac mN
+    dzm mOp
+    lac mOrEnt
+    add [3]
+    jda mEach
+rtn, jmp 0
+    endloc
+
+// Adds a list's features to mA. Takes the list in AC. AC and IO are
+// clobbered. Called via jda.
+mOrLst,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i mOrLst
+    dac mN
+    dzm mOp
+    lac mOrLst
+    add [1]
+    jda mEach
+rtn, jmp 0
+    endloc
+
+// Removes a list's features from mA. Takes the list in AC. AC and IO are
+// clobbered. Called via jda.
+mDelLst,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i mDelLst
+    dac mN
+    law 1
+    dac mOp
+    lac mDelLst
+    add [1]
+    jda mEach
+rtn, jmp 0
+    endloc
+
+// Keeps in mA only the features a part of speech's ELIM list keeps (the
+// original's MEET with it). Takes the part's feature in AC. AC and IO are
+// clobbered. Called via jda.
+mMeet,
+    local rtn, find, found, zero, and1, p, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac [elimTab:2]
+    dac p
+find, lac i p
+    sza i
+    jmp rtn                 // not a part of speech, so mA as it is
+    sad mMeet
+    jmp found
+    lac p
+    add [2]
+    dac p
+    jmp find
+found, lac [mB:013]
+    dac rdT
+    law NFEATW
+    dac k
+zero, dzm i rdT
+    idx rdT
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp zero
+    lac p                   // the part's list
+    add [1]
+    dac rdT
+    lac i rdT
+    dac p
+    lac i p
+    dac mN
+    law 2
+    dac mOp
+    lac p
+    add [1]
+    jda mEach
+    lac [mA:013]
+    dac p
+    lac [mB:013]
+    dac rdT
+    law NFEATW
+    dac k
+and1, lac i rdT
+    and i p
+    dac i p
+    idx p
+    idx rdT
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp and1
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Lists mA's features in order into fList, fCount of them, a 0 after.
+// AC and IO are clobbered. Called via jsp.
+mList,
+    local rtn, wloop, bloop, skip, w, b, f, p, q, k, kb
+    dap rtn
+    dzm fCount
+    dzm f
+    lac [mA:013]
+    dac p
+    lac [fList:013]
+    dac q
+    law NFEATW
+    dac k
+wloop, lac i p
+    dac w
+    lac [bitTab:013]
+    dac b
+    law 0d18
+    dac kb
+bloop, lac i b
+    and w
+    sza i
+    jmp skip
+    lac fCount
+    sub [FTMAX]
+    sma
+    jmp skip
+    lac f
+    dac i q
+    idx q
+    idx fCount
+skip, idx f
+    idx b
+    lac kb
+    sub [1]
+    dac kb
+    sza
+    jmp bloop
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp wloop
+    dzm i q
+rtn, jmp 0
+w, 0
+b, 0
+f, 0
+p, 0
+q, 0
+k, 0
+kb, 0
+    endloc
+
+// Skips if the command in tLine is WORD.
+// AC and IO are clobbered. Called via jsp.
+rdIsWord,
+    local rtn, loop, tail, yes, p, q
+    dap rtn
+    lac [tLine:2]
+    dac p
+    lac [kWord:013]
+    dac q
+loop, lac i q
+    sza i
+    jmp tail
+    sas i p
+    jmp rtn
+    idx p
+    idx q
+    jmp loop
+tail, lac i p
+    sza i
+    jmp yes
+    sas [' ']
+    jmp rtn
+yes, idx rtn
+rtn, jmp 0
+p, 0
+q, 0
+    endloc
+
+// /WORD x shows the word's features and root, derived or learned if need
+// be, one line for each word it gives (two for a contraction of IS), for
+// example
+//     TALLER: ADJ COMPAR ROOT TALL
+// A word neither found nor derived shows as the word, a colon, then UNKNOWN.
+// /WORD x f ... gives the word these features and no root, for the
+// dialogue, and shows it so. A wrong word or feature gets ERROR.
+// AC and IO are clobbered. Called via jsp.
+cmdWord,
+    local rtn, err, feat, fnext, fmiss, fdone, plain, found, unk, full, \
+        star, n, k, f
+    dap rtn
+    lac [tLine:2]
+    add [4]
+    dac cwP
+    jsp cwSkip
+    sza i
+    jmp err
+    lac [rW:013]
+    jda cwTok
+    sza i
+    jmp err
+    dac n
+    jsp cwSkip
+    sza i
+    jmp plain
+    // Features given.
+    jsp mZero
+feat, lac [cwT:013]
+    jda cwTok
+    sza i
+    jmp err
+    dac pkLen
+    lac [cwT:013]
+    dac pkSrc
+    jsp rdPack
+    law 1
+    dac f
+    law NDFEAT
+    dac k
+fnext, lac f
+    add [fnTab:2]
+    dac rdT
+    lac i rdT
+    jda cwSame
+    jmp fmiss
+    lac f
+    jmp fdone
+fmiss, idx f
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp fnext
+    jmp err
+fdone, jda mSet
+    jsp cwSkip
+    sza
+    jmp feat
+    dzm rNewRoot
+    lac n
+    dac aN
+    lac [rW:013]
+    jda rdNewW
+    sza i
+    jmp full
+    jda wrWord
+    jmp star
+    // The word alone, as the reader would take it.
+plain, dzm rNew
+    lac n
+    dac aN
+    jsp rdAnal
+    sad [1]
+    jmp found
+    sad [2]
+    jmp full
+    sza
+    jmp err
+    jmp unk
+found, lac rOut1
+    jda wrWord
+    lac rOutN
+    sad [1]
+    jmp star
+    lac rOut2
+    jda wrWord
+    jmp star
+unk, lac n
+    dac wcLen
+    lac [rW:013]
+    jda wrCodes
+    lac [sUnk:2]
+    jda wrs
+    jsp wrnl
+    jmp star
+full, lac [sNoRoom:013]
+    jda wrs
+    jsp wrnl
+    jmp star
+err, lac [sErr:013]
+    jda wrs
+    jsp wrnl
+star, jsp wrStar
+rtn, jmp 0
+n, 0
+k, 0
+f, 0
+    endloc
+
+// Skips the spaces at cwP. Returns the character after them in AC, 0 at
+// the line's end. IO is clobbered. Called via jsp.
+cwSkip,
+    local rtn, loop
+    dap rtn
+loop, lac i cwP
+    sas [' ']
+    jmp rtn
+    idx cwP
+    jmp loop
+rtn, jmp 0
+    endloc
+
+// Reads the token at cwP, to its space or the line's end, as codes at the
+// address given. Any character but a letter, a digit, ' " - = , * : ;
+// makes it wrong, as does one longer than WORDMAX.
+// Takes the address for its codes in AC. Returns its length in AC, 0 if
+// wrong. IO is clobbered. Called via jda.
+cwTok,
+    local rtn, loop, bad, n, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac cwTok
+    dac q
+    dzm n
+loop, lac i cwP
+    sza i
+    jmp rtn-1
+    sad [' ']
+    jmp rtn-1
+    jda rdCodeA
+    sza i
+    jmp bad
+    dac i q
+    idx q
+    idx cwP
+    idx n
+    sub [WORDMAX+1]
+    spa
+    jmp loop
+bad, dzm n
+    lac n
+rtn, jmp 0
+n, 0
+q, 0
+    endloc
+
+// Skips if the packed spelling at the address given is rPk.
+// Takes the spelling's full address in AC. AC and IO are clobbered.
+// Called via jda.
+cwSame,
+    local rtn, loop, same, p, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac cwSame
+    dac q
+    lac [rPk:013]
+    dac p
+loop, lac i p
+    sas i q
+    jmp rtn
+    and [077]
+    sza i
+    jmp same
+    idx p
+    idx q
+    jmp loop
+same, idx rtn
+rtn, jmp 0
+p, 0
+q, 0
+    endloc
+
+// Prints a word, its features and its root, on a line, for example
+//     PICK-UP: COMBINATION ... ROOT PICK UP
+// Takes the word's entry in AC. AC and IO are clobbered. Called via jda.
+wrWord,
+    local rtn, loop, one, odone, done, single, comb, nl, p, k, e
+    0                       // jda puts the argument here
+    dap rtn
+    lac wrWord
+    dac e
+    jda wrSpell
+    law ':'
+    jda wrc
+    lac e
+    add [1]
+    dac rdT
+    lac i rdT
+    rar 3s
+    and [077]
+    sza i
+    jmp done
+    dac k
+    lac e
+    add [3]
+    dac p
+loop, lac i p
+    rar 9s
+    and [0777]
+    jda one
+    lac k
+    sub [1]
+    dac k
+    sza i
+    jmp done
+    lac i p
+    and [0777]
+    jda one
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    jmp done
+one, 0
+    dap odone
+    jsp wrsp
+    lac one
+    add [fnTab:2]
+    dac rdT
+    lac i rdT
+    jda wrPack
+odone, jmp 0
+done, lac e
+    add [2]
+    dac rdT
+    lac i rdT
+    sza i
+    jmp nl
+    dac p
+    lac [sRoot:4]
+    jda wrs
+    lac e
+    add [1]
+    dac rdT
+    lac i rdT
+    and [1]
+    sza i
+    jmp single
+comb, lac i p               // a combination's words, to a 0
+    jda wrSpell
+    idx p
+    lac i p
+    sza i
+    jmp nl
+    jsp wrsp
+    jmp comb
+single, lac p
+    jda wrSpell
+nl, jsp wrnl
+rtn, jmp 0
+p, 0
+k, 0
+e, 0
+    endloc
+
+// The output, as term.ac's. It is ascii to channel 0, telnet mode turning
+// LF into CR LF. rBol follows whether the cursor is at a line's start.
+
+// Sends one character. A full transmit buffer is waited out (the display
+// keeps going on its breaks), and any other error drops the character.
+// With wrDry set it only counts the character in wrLen, to measure a word
+// before it is printed (print.ac's psFit).
+// Takes the character in AC. AC and IO are clobbered. Called via jda.
+wrc,
+    local rtn, again
+    0                       // jda puts the argument here
+    dap rtn
+    lac wrDry
+    sza i
+    jmp .+3
+    idx wrLen
+    jmp rtn
+    lac wrc
+    sad [012]
+    jmp .+3
+    dzm rBol
+    jmp .+3
+    law 1
+    dac rBol
+    lac i [tConn:0]
+    sza i
+    jmp rtn
+again, lio wrc
+    tcb
+    spi i
+    jmp rtn
+    lai
+    and [dseflf]
+    sza i
+    jmp rtn
+    jmp again
+rtn, jmp 0
+    endloc
+
+// Sends an ascii string, two characters a word, high half first, ended
+// by a 0 half.
+// Takes the string's full address in AC. AC and IO are clobbered.
+// Called via jda.
+wrs,
+    local rtn, loop, w
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac i wrs
+    dac w
+    sar 9s
+    and [0377]
+    sza i
+    jmp rtn
+    jda wrc
+    lac w
+    and [0377]
+    sza i
+    jmp rtn
+    jda wrc
+    idx wrs
+    jmp loop
+rtn, jmp 0
+w, 0
+    endloc
+
+// Sends wcLen codes as their characters.
+// Takes the codes' full address in AC. AC and IO are clobbered.
+// Called via jda.
+wrCodes,
+    local rtn, loop
+    0                       // jda puts the argument here
+    dap rtn
+    lac wcLen
+    sza i
+    jmp rtn
+loop, lac i wrCodes
+    add [cTab:013]
+    dac rdT
+    lac i rdT
+    jda wrc
+    idx wrCodes
+    lac wcLen
+    sub [1]
+    dac wcLen
+    sza
+    jmp loop
+rtn, jmp 0
+    endloc
+
+// Sends a packed spelling, to its 0 code.
+// Takes the spelling's full address in AC. AC and IO are clobbered.
+// Called via jda.
+wrPack,
+    local rtn, loop, one, odone, w
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac i wrPack
+    dac w
+    rar 9s
+    rar 3s
+    jda one
+    lac w
+    rar 6s
+    jda one
+    lac w
+    jda one
+    idx wrPack
+    jmp loop
+one, 0
+    dap odone
+    lac one
+    and [077]
+    sza i
+    jmp rtn                 // the end, out of both
+    add [cTab:013]
+    dac rdT
+    lac i rdT
+    jda wrc
+odone, jmp 0
+rtn, jmp 0
+w, 0
+    endloc
+
+// Sends an entry's spelling. Takes the entry in AC. AC and IO are
+// clobbered. Called via jda.
+wrSpell,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac wrSpell
+    jda rdSpOf
+    jda wrPack
+rtn, jmp 0
+    endloc
+
+// Ends a line with LF, which telnet mode sends as CR LF.
+// AC and IO are clobbered. Called via jsp.
+wrnl,
+    local rtn
+    dap rtn
+    law 012
+    jda wrc
+rtn, jmp 0
+    endloc
+
+// Ends a line unless the cursor is at a line's start already.
+// AC and IO are clobbered. Called via jsp.
+wrBol,
+    local rtn
+    dap rtn
+    lac rBol
+    sza i
+    jsp wrnl
+rtn, jmp 0
+    endloc
+
+// Sends a space. AC and IO are clobbered. Called via jsp.
+wrsp,
+    local rtn
+    dap rtn
+    law ' '
+    jda wrc
+rtn, jmp 0
+    endloc
+
+// Takes the last character off the screen.
+// AC and IO are clobbered. Called via jsp.
+wrErase,
+    local rtn
+    dap rtn
+    law 010
+    jda wrc
+    jsp wrsp
+    law 010
+    jda wrc
+rtn, jmp 0
+    endloc
+
+// Ends a reply with a line holding only *.
+// AC and IO are clobbered. Called via jsp.
+wrStar,
+    local rtn
+    dap rtn
+    law '*'
+    jda wrc
+    jsp wrnl
+rtn, jmp 0
+    endloc
+
+// Gives a typed character's code, a letter's or a digit's, else 0.
+// Takes the character, upper case, in AC. Returns the code in AC.
+// IO is clobbered. Called via jda.
+rdCode,
+    local rtn, dig, none
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdCode
+    sub ['A']
+    spa
+    jmp dig
+    sub [0d26]
+    sma
+    jmp none
+    add [0d27]              // A is 1
+    jmp rtn
+dig, lac rdCode
+    sub ['0']
+    spa
+    jmp none
+    sub [0d10]
+    sma
+    jmp none
+    add [0d10+CH_0]
+    jmp rtn
+none, cla
+rtn, jmp 0
+    endloc
+
+// Gives a /WORD token character's code. It is rdCode's, except that ' and
+// " both give the apostrophe, as the source spells it, and - = , * : ; give
+// the lexicon's codes.
+// Takes the character in AC. Returns the code in AC, 0 for none.
+// IO is clobbered. Called via jda.
+rdCodeA,
+    local rtn, loop, found, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac rdCodeA
+    jda rdCode
+    sza
+    jmp rtn
+    lac [cwPun:013]
+    dac p
+loop, lac i p
+    sza i
+    jmp rtn
+    sad rdCodeA
+    jmp found
+    lac p
+    add [2]
+    dac p
+    jmp loop
+found, idx p
+    lac i p
+rtn, jmp 0
+p, 0
+    endloc
+
+// The other characters of a /WORD token, and their codes.
+cwPun, 047; CH_APOS
+    042; CH_APOS
+    '-'; CH_DASH
+    '='; CH_EQ
+    ','; CH_COMMA
+    '*'; CH_STAR
+    ':'; CH_COLON
+    ';'; CH_SEMI
+    0
+
+// The codes' characters (the apostrophe as '). Past ; come the ones only
+// the symbols' names use (semantics.ac's names blocks), and the last three
+// are used only by the program's messages.
+cTab, 0
+    'A'; 'B'; 'C'; 'D'; 'E'; 'F'; 'G'; 'H'; 'I'; 'J'; 'K'; 'L'; 'M'
+    'N'; 'O'; 'P'; 'Q'; 'R'; 'S'; 'T'; 'U'; 'V'; 'W'; 'X'; 'Y'; 'Z'
+    '0'; '1'; '2'; '3'; '4'; '5'; '6'; '7'; '8'; '9'
+    047; '-'; '='; ','; '*'; ':'; ';'
+    '?'; '!'; '.'; '#'; '/'; '>'; '<'; '['; ']'; '+'; '&'; '%'
+    ' '; '('; ')'
+
+// The codes' classes for the morphology (rdCls), 1 a vowel, 2 a consonant,
+// 4 a liquid, 010 one of C G S J V Z (morpho.13's VOWEL, CONSO, LIQUID).
+clsTab, 1
+    1; 2; 012; 2; 1; 2; 012; 2; 1; 012; 2; 6; 2
+    2; 1; 2; 2; 6; 016; 2; 1; 016; 2; 2; 1; 016
+    0; 0; 0; 0; 0; 0; 0; 0; 0; 0
+    0; 0; 0; 0; 0; 0; 0
+
+// Each bit of a word, bit 0 the highest, giving a feature's bit in its
+// mask word.
+bitTab, 0400000; 0200000; 0100000; 040000; 020000; 010000
+    04000; 02000; 01000; 0400; 0200; 0100
+    040; 020; 010; 04; 02; 01
+
+kWord, 'W'; 'O'; 'R'; 'D'; 0
+
+sNoRoom, ascii "NO ROOM"
+sErr, ascii "ERROR"
+// The rest of the messages are in the spare words of other banks, to give
+// this bank the wrapping's room (print.ac's psFit).
+bank 4
+sWords, ascii "WORDS:"
+sRoot, ascii " ROOT "
+bank 5
+sSorry, ascii "SORRY, I DON'T KNOW THE WORD "
+bank 1
+sPlease, ascii "PLEASE TYPE RETURN AND CONTINUE THE SENTENCE."
+bank 2
+sUnk, ascii ": UNKNOWN"
+bank 013
+
+// The reader's state.
+rMode, 0                    // 0 a sentence, 1 a command line, 2 waiting
+                            // for the Return after an unknown word
+rBol, 0                     // the cursor is at a line's start
+rW,                         // the word being typed, as codes
+    table WORDMAX
+rWLen, 0
+rSent,                      // the sentence so far, its words' entries
+    table SENTMAX
+rSLen, 0
+rFull, 0                    // the sentence ran out of room
+rPunct, 0                   // the punctuation that ended the word
+rFin, 0                     // the punctuation that ended the sentence
+rNew, 0                     // the original's NEWWORD, a quote opened
+rQuote, 0                   // inside a quote
+rCLen, 0                    // the command line's length
+rdT, 0                      // a scratch pointer
+rdK, 0
+
+// The morphology's.
+aN, 0                       // the word's length as it is cut
+aE, 0
+aEnd, 0                     // the code of the ending, for its MOD
+aC1, 0
+aC2, 0
+aC3, 0
+aL, 0
+aX, 0
+aY, 0
+rR,                         // the stem
+    table WORDMAX+2
+rRLen, 0
+rPw,                        // the possessive as typed
+    table WORDMAX
+rPossN, 0
+rRoot, 0                    // the root the word was derived from
+rNewRoot, 0                 // the root a new word gets
+rOut1, 0                    // what the word gives the sentence
+rOut2, 0
+rOutN, 0
+rdTl1, 0
+rdTl2, 0
+rdTl3, 0
+
+// The lexicon's.
+pkSrc, 0                    // the characters to pack, a full address
+pkLen, 0
+rPk,                        // packed, WORDMAX codes, three to a word, and
+    table WORDMAX/3+2       // the end
+rPkN, 0
+mA,
+    table NFEATW
+mB,
+    table NFEATW
+mWord, 0
+mBit, 0
+mN, 0
+mOp, 0
+fList,
+    table FTMAX+1
+fCount, 0
+dwHash,                     // the derived words' chains' heads
+    table LXBUCK
+dwNext, 0                   // the derived words' arena's next free word
+
+// /WORD's.
+cwP, 0                      // the next character of tLine
+cwT,                        // a feature's name as codes
+    table WORDMAX
+wcLen, 0

@@ -1,0 +1,258 @@
+// The engine's heap between typed lines (atoms.ac). What a later line can
+// read is kept at the heap's bottom, and the rest of what the last line
+// used is given back. A later line can read each history's entries with
+// their points, the hand's point, and the lists and points of the records
+// made since the last time. An erased record's are never read again, and
+// nothing else holds a handle past its line. The machine is given values
+// (hooks.ac's psAtom), the location table holds numbers, and a plan's
+// points are used up by the line that made them.
+// Each word kept is copied above hpTop, with the address it will end at,
+// and the block is moved down to hpBot, so no second pass is needed. Each
+// is reached once, so the copy is no longer than the scratch, and hpCap
+// leaves that much room above it. A list's elements are atoms (cmds.ac
+// and hooks.ac build them), so only its spine is copied. Words already
+// below hpBot stay where they are, so a handle to one stays good.
+// This is in the drum overlay sm (shrdlu.am1), beside sm.ac's smPrint.
+// Bank 012, eem on. Needs shrdlu.ah, atoms.ac, db.ac and events.ac.
+// Switches: KEEPNOPT builds with a point left where it is, KEEPNODB with the
+// records' lists and points left where they are, and KEEPNOCAP with scratch
+// allowed all that is free.
+
+    export kpMain
+
+// Keeps what a later line can read at the heap's bottom and gives back the rest.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Entered via %%ovcall, with the return address in AC.
+kpMain, dac kpRtn
+    lac i [hpBot:4]
+    dac kpB
+    dac kpF
+    lac i [hpTop:4]
+    dac kpT
+    // The hand's point, always the heap's first three words.
+    lac i [handAt:4]
+    and [07777]
+    ior [HPBASE]
+    dac kpS
+    lac [HPBASE]
+    dac kpD
+    law 3
+    jda kpMove
+    lac [TPT]
+    dac i [handAt:4]
+    // Each history, down to the first entry already kept. p is the link
+    // that will hold the entry's final address.
+    lac [histTab:4]
+    dac kpO
+    law NOBJ
+    dac kpN
+kpHist, lac kpO
+    dac kpP
+kpChain, lac i kpP
+    dac kpE
+    sza i
+    jmp kpNext
+    sub kpB
+    spa
+    jmp kpNext
+    lac kpF
+    dac i kpP
+    lac kpE
+    dac kpS
+    lac kpT
+    dac kpP
+    law 4
+    jda kpTake
+    lac kpP
+    add [2]
+    dac kpQ
+    lac i kpQ
+    jda kpVal
+    dac i kpQ
+    jmp kpChain
+kpNext, idx kpO
+    lac kpN
+    sub [1]
+    dac kpN
+    sza
+    jmp kpHist
+#ifndef KEEPNODB
+    // The records made since the last time, but for the erased.
+    lac i [dbMark:4]
+    dac kpR
+kpRec, lac kpR
+    sad i [dbTop:4]
+    jmp kpDone
+    add [DARITY]
+    dac kpQ
+    lac i kpQ
+    dac kpN
+    sad [DERASED]
+    jmp kpRnext
+    lac kpR
+    add [DARG]
+    dac kpQ
+kpArg, lac kpN
+    sza i
+    jmp kpRnext
+    lac i kpQ
+    jda kpVal
+    dac i kpQ
+    idx kpQ
+    lac kpN
+    sub [1]
+    dac kpN
+    jmp kpArg
+kpRnext, lac kpR
+    add [RECW]
+    dac kpR
+    jmp kpRec
+#endif
+    // The block down to hpBot, the heap's marks after it.
+kpDone, lac i [hpTop:4]
+    dac kpS
+    lac kpB
+    dac kpD
+    lac kpT
+    sub kpS
+    jda kpMove
+    lac kpF
+    dac i [hpTop:4]
+    dac i [hpBot:4]
+#ifdef KEEPNOCAP
+    lac [HPLIM]
+#else
+    lac [HPLIM]
+    sub kpF
+    sar 1s
+    add kpF
+#endif
+    dac i [hpCap:4]
+    lac i [dbTop:4]
+    dac i [dbMark:4]
+    eem
+    jmp i kpRtn
+
+// Keeps a value. A point or a list in the scratch is copied, anything else
+// is left as it is.
+// Takes the value in AC. Returns the value it is now in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+kpVal, 0                    // jda puts the argument here
+    dap kpVr
+    lac kpVal
+    and [TAGS]
+    sad [TLIST]
+    jmp kpList
+#ifndef KEEPNOPT
+    sad [TPT]
+    jmp kpPt
+#endif
+    jmp kpSame
+kpPt, lac kpVal
+    jda kpScr
+    jmp kpSame
+    lac kpF
+    and [07777]
+    ior [TPT]
+    dac kpVal
+    law 3
+    jda kpTake
+    jmp kpSame
+kpList, lac kpVal
+    jda kpScr
+    jmp kpSame
+    lac kpF
+    and [07777]
+    ior [TLIST]
+    dac kpVal
+// A cell, then the next if the list goes on in the scratch.
+kpCell, lac kpT
+    add [1]
+    dac kpQ2
+    law 2
+    jda kpTake
+    lac i kpQ2
+    dac kpV2
+    and [TAGS]
+    sad [TLIST]
+    jmp .+2
+    jmp kpSame
+    lac kpV2
+    jda kpScr
+    jmp kpSame
+    lac kpF
+    and [07777]
+    ior [TLIST]
+    dac i kpQ2
+    jmp kpCell
+kpSame, lac kpVal
+kpVr, jmp 0
+
+// Skips if a handle's word is in the scratch.
+// Takes the handle in AC. Returns the word's full address in kpS.
+// AC is clobbered and IO is preserved.
+// Called via jda.
+kpScr, 0                    // jda puts the argument here
+    dap kpSr
+    lac kpScr
+    and [07777]
+    ior [HPBASE]
+    dac kpS
+    sub kpB
+    spa
+    jmp kpSr
+    idx kpSr
+kpSr, jmp 0
+
+// Copies words from kpS to kpT, and both kpT and kpF move past them.
+// Takes the count in AC. Returns no value.
+// AC is clobbered and IO is preserved.
+// Called via jda.
+kpTake, 0                   // jda puts the argument here
+    dap kpTr
+    lac kpT
+    dac kpD
+    add kpTake
+    dac kpT
+    lac kpF
+    add kpTake
+    dac kpF
+    lac kpTake
+    jda kpMove
+kpTr, jmp 0
+
+// Moves words from kpS to kpD, either way apart but lowest first.
+// Takes the count in AC. Returns kpS and kpD moved past the words.
+// AC is clobbered and IO is preserved.
+// Called via jda.
+kpMove, 0                   // jda puts the argument here
+    dap kpMr
+kpMl, lac kpMove
+    sza i
+    jmp kpMr
+    lac i kpS
+    dac i kpD
+    idx kpS
+    idx kpD
+    lac kpMove
+    sub [1]
+    dac kpMove
+    jmp kpMl
+kpMr, jmp 0
+
+kpRtn, 0                    // the full address kpMain returns to
+kpB, 0                      // hpBot as it was
+kpT, 0                      // where the next word is copied to
+kpF, 0                      // and where it will end
+kpS, 0
+kpD, 0
+kpO, 0
+kpN, 0
+kpP, 0
+kpE, 0
+kpQ, 0
+kpQ2, 0
+kpV2, 0
+kpR, 0

@@ -1,0 +1,540 @@
+// The collector, and the nodes' free list. Every value the roots reach
+// is marked in a bitmap of the heap's ranges, a bit for each two words,
+// with a stack, drained after each root word, so that it holds
+// only what one value's nesting leaves (34 of its 64 at the deepest in the
+// dialogue). Past the stack's end the marked cells would be passed over
+// again until nothing new is marked (gcAgain), a path the dialogue never
+// takes. Each range is then swept onto its free list. A free cell's CAR is
+// FREEW and its CDR the next's address. A free node's first word is FREEW and
+// its second the next's.
+// The roots are the variables, the stacks, the constants, the property lists,
+// the feature cache, the sentence's meanings and theorems (none left when
+// the drop has run), the few values the two halves hold, and the Planner
+// engine's stack and registers (planner.ac). The constant cells are not
+// roots, since none holds a heap pointer (CONSTCHECK checks it).
+// Bank 6 with the hot half, which calls it when CONS finds no cell; eem
+// on. Needs shrdlu.ah, semantics.ac, pgm.ac and pgsys.ac.
+
+// The collector's bitmap, a bit for each two words of the heap's ranges,
+// sixteen to a word, a piece a range, and its stack (tables.ac).
+#define GCMAP0 (((HEAP3E-HEAP3)>>5)+1)
+#define GCMAP1 (((HEAP2E-HEAP2)>>5)+1)
+#define GCMAP6 ((HEAP1E-NODES0)>>5)
+#define GCMAP7 (((HEAP4E-HEAP4)>>5)+1)
+#define GCMAPN (GCMAP0+GCMAP1+GCMAP6+GCMAP7)
+#define GCSTKN 0100
+// The collector. Marks every value the roots reach and sweeps the rest
+// onto the free lists. psGC does the same from another bank.
+// Takes the return address in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jsp (psGC1), via jsp from bank 012 (psGC).
+psGC, dac gcR
+    jsp psGC1
+    jmp i gcR
+psGC1,
+    local zpiece, zloop, roots, rloop, sweep, rtn, p, k, z
+    dap rtn
+#ifndef NODROPEVERY
+    XJSP(psDrop, 011)       // the drop before every collection
+#endif
+    lac [gcZap:3]
+    dac z
+zpiece, lac i z
+    sza i
+    jmp roots
+    dac p
+    idx z
+    lac i z
+    cma
+    dac k                   // less the piece's length
+    idx z
+zloop, dzm i p
+    idx p
+    isp k
+    jmp zloop
+    jmp zpiece
+roots, lac [gcStk:4]
+    dac gcSp
+    dzm gcOver
+    // The roots.
+    law NVARS
+    dac gcN
+    lac [vTab:3]
+    jda gcRange
+    lac i [pgSp:6]
+    sub [PVSTK]
+    dac gcN
+    lac [PVSTK]
+    jda gcRange
+    lac i [pgBp:6]
+    sub [PBSTK]
+    dac gcN
+    lac [PBSTK]
+    jda gcRange
+    law NCONST
+    dac gcN
+    lac [gConst:013]
+    jda gcRange
+    // The constant cells are not roots, since no word of them is a heap pointer,
+    // so scanning them marks nothing. CONSTCHECK keeps the scan and faults
+    // on the first heap pointer it finds there.
+#ifdef CONSTCHECK
+    XJSP(psCchk, 011)       // the check (drop.ac), bank 6 having no room
+    law CONSTEND-CONSTCELLS
+    dac gcN
+    lac [CONSTCELLS]
+    jda gcRange
+#endif
+    law 2*PLN
+    dac gcN
+    lac [gPl:3]
+    jda gcRange
+    law 2*PFCN
+    dac gcN
+    lac [PFC]
+    jda gcRange
+    // The meanings and theorems made. The drop above has let every one go,
+    // so only a build without it holds any.
+#ifdef NODROPEVERY
+    law NMEAN+NTHM
+    dac gcN
+    lac [psMVal:017]
+    jda gcRange
+#endif
+    law 3+NSM
+    dac gcN
+    lac [psNilPl:012]         // and psH1, psH2 and psSm
+    jda gcRange
+    law 3
+    dac gcN
+    lac [pgConsA:6]         // and pgConsD and pgLbH, which follow it (pgm.ac)
+    jda gcRange
+    law 2
+    dac gcN
+    lac [pgPx:6]            // and pgPv
+    jda gcRange
+    lac i [eTop:015]        // the Planner engine's stack
+    dac gcN
+    lac [ESTK]
+    jda gcRange
+    law NROOT
+    dac gcN
+    lac [eRegs:015]         // and its registers
+    jda gcRange
+    // A stack that overflowed has the marked cells passed over again.
+rloop, lac gcOver
+    sza i
+    jmp sweep
+    dzm gcOver
+    jsp gcAgain
+    jmp rloop
+sweep, jsp gcSweep
+rtn, jmp 0
+p, 0
+k, 0
+z, 0
+    endloc
+
+// Marks the words of a range, the last first, draining the stack after
+// each. The range is some of the roots, or the words of a marked cell or node
+// for gcAgain. Drained word by word, the roots never fill the stack.
+// Takes the first word's full address in AC and their number in gcN, which is
+// counted down to 0. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+gcRange,
+    local loop, rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+loop, law i 1
+    add gcN                 // a sum of minus zero is plus zero
+    spa
+    jmp rtn
+    dac gcN
+    add gcRange
+    dac p
+    lac i p
+    jda gcMark
+    jsp gcDrain
+    jmp loop
+rtn, jmp 0
+p, 0
+    endloc
+
+// Marks one value. A cell or node of the heap not yet marked has its
+// bit set and is pushed, for its words to be marked. Past the stack's
+// end it is noted for gcAgain instead. gcBit's lookup is in place here,
+// this being most of its calls.
+// Takes the value in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+gcMark,
+    local heap, full, rtn, r, s
+    0                       // jda puts the argument here
+    dap rtn
+    lac gcMark
+    and [KMASK]
+    sad [KCONS]
+    jmp heap
+    sas [KNODE]
+    jmp rtn
+heap, lac gcMark
+    rar 9s
+    rar 3s
+    and [7]                 // the bank, less 010
+    ral 1s
+    add [gcRng:.]
+    dac r
+    lac i r                 // the range's first address, 0 for none
+    sza i
+    jmp rtn                 // not the heap's
+    dac s
+    lac gcMark
+    and [077777]
+    ior [PCELLS]
+    sub s
+    spa
+    jmp rtn                 // below the range, a constant cell
+    rar 1s
+    and [03777]             // the pair
+    dac s
+    and [017]
+    add [gcBits:.]
+    dac gcBM
+    lac i gcBM
+    dac gcBM
+    idx r
+    lac s
+    rar 4s
+    and [0377]
+    add i r
+    dac gcBA
+    lac i gcBA
+    and gcBM
+    sza
+    jmp rtn                 // marked already
+    lac gcBM
+    ior i gcBA
+    dac i gcBA
+    lac gcSp
+    sad [gcStk:4+GCSTKN]
+    jmp full
+    lac gcMark
+    dac i gcSp
+    idx gcSp
+    jmp rtn
+full, law 1
+    dac gcOver
+rtn, jmp 0
+r, 0
+s, 0
+    endloc
+
+// Finds a heap word's bit. Puts its bitmap word in gcBA and its bit in gcBM.
+// Takes the full address of a cell's or node's first word in AC.
+// Returns 0 in AC if it is not in the heap, else nonzero.
+// AC is the result and IO is clobbered.
+// Called via jda.
+gcBit,
+    local none, rtn, r, s
+    0                       // jda puts the argument here
+    dap rtn
+    lac gcBit
+    rar 9s
+    rar 3s
+    and [7]                 // the bank, less 010
+    ral 1s
+    add [gcRng:.]
+    dac r
+    lac i r                 // the range's first address, 0 for none
+    sza i
+    jmp rtn
+    dac s
+    lac gcBit
+    sub s
+    spa
+    jmp none                // below the range, a constant cell
+    rar 1s
+    and [03777]             // the pair
+    dac s
+    and [017]
+    add [gcBits:.]
+    dac gcBM
+    lac i gcBM
+    dac gcBM
+    idx r
+    lac s
+    rar 4s
+    and [0377]
+    add i r
+    dac gcBA
+    jmp rtn
+none, cla
+rtn, jmp 0
+r, 0
+s, 0
+    endloc
+
+// Drains the stack, marking each value's words, the last first. They are a
+// cell's two or a node's first PCOUNT. A cell's CDR is pushed under its CAR, so
+// the stack holds a CDR for each level of CAR nesting, not a cell for
+// each element of a list. Marked here, not by gcRange, which calls this.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+gcDrain,
+    local loop, word, rtn, v, n, p
+    dap rtn
+loop, lac gcSp
+    sad [gcStk:4]
+    jmp rtn
+    law i 1
+    add gcSp
+    dac gcSp
+    lac i gcSp
+    dac v
+    law 2
+    dac n
+    lac v
+    and [KMASK]
+    sas [KNODE]
+    jmp word
+    law PCOUNT
+    dac n
+word, law i 1
+    add n                   // a sum of minus zero is plus zero
+    spa
+    jmp loop
+    dac n
+    add v
+    ior [PCELLS]
+    dac p
+    lac i p
+    jda gcMark
+    jmp word
+rtn, jmp 0
+v, 0
+n, 0
+p, 0
+    endloc
+
+// After an overflow, marks each marked cell's and node's words again,
+// draining the stack after each (gcRange), in a pass over the heap's ranges.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+gcAgain,
+    local rloop, loop, next, cell, rtn, a, e, r, w
+    dap rtn
+    lac [gcSpan:.]
+    dac r
+rloop, lac i r
+    sza i
+    jmp rtn
+    dac a
+    idx r
+    lac i r
+    dac e
+    idx r
+    lac i r
+    dac w                   // the step, 2 a cell and PNODEW a node
+    idx r
+loop, lac a
+    sub e
+    sma
+    jmp rloop
+    lac a
+    jda gcBit
+    lac i gcBA
+    and gcBM
+    sza i
+    jmp next
+    law 2
+    dac gcN
+    lac w
+    sad [2]
+    jmp cell
+    law PCOUNT
+    dac gcN
+cell, lac a
+    jda gcRange
+next, lac a
+    add w
+    dac a
+    jmp loop
+rtn, jmp 0
+a, 0
+e, 0
+r, 0
+w, 0
+    endloc
+
+// The sweep. Puts each unmarked cell onto the free list (its CAR FREEW, its
+// CDR the next's address) and each unmarked node onto the nodes'. In a cell
+// range gcBit finds the bitmap's word and bit once, at the range's first
+// cell, and they are carried along. The bit is shifted a place a cell, and
+// past bit 15 it becomes the next word's bit 0. A cell range's length is even,
+// so its end is met exactly.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+gcSweep,
+    local rnext, loop, next, cells, cloop, cnext, cfree, rtn, a, e, r, w
+    dap rtn
+    dzm pgFree
+    dzm pgNFree
+    dzm psNodeF
+    dzm psNNode
+    lac [gcSpan:.-1]
+    dac r
+rnext, idx r                // the next range's words
+    lac i r
+    sza i
+    jmp rtn
+    dac a
+    idx r
+    lac i r
+    dac e
+    idx r
+    lac i r
+    dac w
+    sad [2]
+    jmp cells
+loop, lac a                 // the nodes
+    sub e
+    sma
+    jmp rnext
+    lac a
+    jda gcBit
+    lac i gcBA
+    and gcBM
+    sza
+    jmp next
+    lac [FREEW]
+    dac i a
+    idx a
+    lac psNodeF
+    dac i a
+    law i 1
+    add a
+    dac a
+    dac psNodeF
+    idx psNNode
+next, lac a
+    add w
+    dac a
+    jmp loop
+cells, lac a
+    sad e
+    jmp rnext               // an empty range
+    jda gcBit
+cloop, lac i gcBA
+    and gcBM
+    sza i
+    jmp cfree
+    idx a
+cnext, idx a
+    sad e
+    jmp rnext
+    lac gcBM
+    ral 1s
+    dac gcBM
+    sas [0200000]
+    jmp cloop
+    law 1
+    dac gcBM
+    idx gcBA
+    jmp cloop
+cfree, lac [FREEW]
+    dac i a
+    idx a
+    lac pgFree
+    dac i a
+    law i 1
+    add a
+    dac pgFree
+    idx pgNFree
+    jmp cnext
+rtn, jmp 0
+a, 0
+e, 0
+r, 0
+w, 0
+    endloc
+
+// Takes a node from the free list, its registers empty. An empty list has the
+// collector run. If it is still empty, the drop runs, as for CONS (pgm.ac's
+// pgCons).
+// Takes its last word, MAKESYM's count and prefix, in AC. Returns the node in AC.
+// AC is the result and IO is clobbered.
+// Called via XJDA from bank 012.
+psNode,
+    local short, some, clr, r, p, k, n
+    0                       // XJDA puts the argument here
+    dac r
+    lac psNodeF
+    sza
+    jmp some
+    jsp psGC1
+short, lac psNodeF
+    sza
+    jmp some
+    XJSP(psShort, 011)
+    jmp short
+some, dac p
+    dac n
+    idx p
+    lac i p
+    dac psNodeF
+    law i 1
+    add psNNode
+    dac psNNode
+    lac n
+    dac p
+    law i PCOUNT
+    dac k
+clr, dzm i p
+    idx p
+    isp k
+    jmp clr
+    lac psNode
+    dac i p
+    lac n
+    and [077777]
+    ior [KNODE]
+    jmp i r
+r, 0
+p, 0
+k, 0
+n, 0
+    endloc
+
+// The collector's state.
+gcR, 0                      // the full address psGC returns to
+psNodeF, 0                  // the free nodes, through their second words
+psNNode, 0                  // and their number
+gcSp, 0                     // the collector's stack's next free word
+gcOver, 0                   // 1 if the stack overflowed
+gcN, 0                      // gcRange's length, counted down
+gcBA, 0                     // gcBit's word
+gcBM, 0                     // and bit
+// The heap's ranges by bank, less 010. Each is the first address, 0 for none,
+// and the bitmap's first word.
+gcRng, HEAP3; gcMap0:0
+    HEAP2; gcMap1:2
+    0; 0
+    0; 0
+    0; 0
+    0; 0
+    NODES0; gcMap6:017
+    HEAP4; gcMap7:4
+// The ranges the sweep and gcAgain pass over, each a first word, an end and a
+// step. A 0 ends the list.
+gcSpan, HEAP3; HEAP3E; 2
+    HEAP2; HEAP2E; 2
+    NODES0; HEAP1; PNODEW
+    HEAP1; HEAP1E; 2
+    HEAP4; HEAP4E; 2
+    0
+gcBits, 1; 2; 4; 010; 020; 040; 0100; 0200
+    0400; 01000; 02000; 04000; 010000; 020000; 040000; 0100000

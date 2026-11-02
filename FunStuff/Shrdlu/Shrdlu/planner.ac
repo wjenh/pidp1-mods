@@ -1,0 +1,3665 @@
+// Micro-Planner as the machine's engine.
+// It does what plnr.182's THVAL and its forms do, with the Planner's state
+// on a stack of words (ESTK, ELEN words, shrdlu.ah) instead of the heap.
+// The stack holds the tree's frames, the bindings, the branch records, the
+// trail and each level's saved registers.
+// A frame is its kind's symbol, its parent's link, then its words.
+// A link is KINT plus an offset into the stack.
+// A binding is the name, the value word and the next binding's link.
+// A value word that is another's is KREF plus that word's offset.
+// A trail record ends with its kind, so that it can be undone from the
+// top.
+// The Lisp reaches it through the natives ETHVAL, EEVLIS and ETHV1, and
+// the evaluator through eForm and eExpr, for a form whose head names no
+// function.
+// The engine's routines that can run Lisp are recursive.
+// Each is entered via jsp, its first word jda eIn, which pushes its return
+// on the value stack, and it ends at eOut with its value in AC.
+// A word one of them needs after a call of another is pushed there too,
+// where the collector sees it, since their words are clobbered by such a
+// call.
+// They evaluate through the evaluator (eEv) and call compiled code and
+// natives through its stub (eFun1, ePrim1), each value handed back by an
+// ETENG frame.
+// While the engine runs, the value stack's top is evlS.
+// ESYNC writes it to pgSp before a far call that may make a cell or push.
+// This is the core.
+// The forms a sentence seldom runs and the tables of the forms and the
+// frames' kinds are the cold half, plcold.ac in bank 011, reached through
+// the tables' full addresses and reaching the core through its far entries
+// (eInF and the like).
+// Bank 015 after eval.ac, eem on. Needs shrdlu.ah, semantics.ac's
+// defines, pgm.ac's far entries, eval.ac, and hooks.ac's hkAtomF and
+// hkDbF.
+
+// A frame's words after its kind and parent are THGOAL's, THPROG's
+// (THAND's and THCOND's the first two), and THFIND's.
+#define FGPAT 2
+#define FGRECS 3
+#define FGCNT 4
+#define FGCUR 5
+#define FGFILT 6
+#define FGCURS 7
+#define FGLEN 0d8
+#define FPPOS 2
+#define FPRECS 3
+#define FPTAGS 4
+#define FFMIN 2
+#define FFMAX 3
+#define FFFLAG 4
+#define FFCNT 5
+#define FFVALS 6
+#define FFPAT 7
+#define KREF 0740000
+#define CNT0 037777                 // THGOAL4's count of tries
+#define NFEXPR 0d20                 // eFxS's FEXPRs, before its EXPRs
+#define EROOMN 0d10                 // the words a routine may push unchecked
+#define NREG 0d10                   // the registers a level saves (eRegs)
+// The stack's word at the offset in AC, to AC (ERDA), or IO written there
+// (EWRA); eP its full address after.
+#define ERDA jda eRd
+#define EWRA jda eWr
+#define ESYNC lac evlS; dac i [pgSp:6]
+#define EUND [KSYM+sTHUNASSIGNED]
+#define EALIST [vTab:3+vTHALIST]
+#define EVALUE [vTab:3+vTHVALUE]
+
+// The natives.
+
+// ETHVAL is THVAL of the value stack's two top words, the form and the
+// alist, which stay there while it runs, with its value in their place.
+// Like EVAL, it runs under a calls frame (eNIn), so that the caller's
+// block is kept and slid.
+// It ends at evlBase, which puts the value in place of the top word.
+ntEthval, jsp eNIn
+    law i 2
+    jda eSk
+    dac eArgX
+    idx eP
+    lac i eP
+    dac eArgA
+    jsp eThval
+    dac evlV
+    law i 1
+    add evlS
+    dac evlS
+    jmp evlBase
+
+// EEVLIS evaluates each member of the value stack's top word by the
+// evaluator in turn, and the list is its value, as ETHVAL.
+ntEevlis, jsp eNIn
+    law i 1
+    add evlS
+    dac eP
+    lio i eP
+    jsp eEvlis
+    dac evlV
+    jmp evlBase
+
+// ETHV1 is THV1 (plnr.182:2074) of the CAR of the value stack's top word,
+// for THV and THNV called by the Lisp.
+// It gives the variable's value in the bindings THALIST names, the
+// engine's (a link) or a list's.
+// THUNBOUND or THUNASSIGNED is a Lisp error.
+// It ends at pgR1.
+ntEthv1,
+    local loop, next, got, tok, chk
+    lac i [pgSp:6]
+    sub [1]
+    dac eP
+    lac i eP
+    jda evlCar
+    dac eNm
+    lac i EALIST
+    dac eL
+    and [KMASK]
+    sad [KINT]
+    jmp tok
+loop, lac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac eL
+    jda evlCar
+    dac eU
+    and [KMASK]
+    sas [KCONS]
+    jmp next
+    lac eU
+    jda evlCar
+    sad eNm
+    jmp got
+next, lac eL
+    jda evlCdr
+    dac eL
+    jmp loop
+got, lac eU
+    jda evlCdr
+    jda evlCar
+    jmp chk
+tok, lac eNm
+    lio eL
+    jda eFind
+    spa
+    jmp i [pgErr:6]
+    jda eVal
+chk, sad EUND
+    jmp i [pgErr:6]
+    jmp i [pgR1:6]
+    endloc
+
+// A native's entry to the engine or the evaluator.
+// A calls frame is pushed with the caller's return, bindings' mark and
+// block, pgFn is then 07777 (no block), and evlS is the value stack's top.
+// AC is clobbered and IO is preserved. Called via jsp.
+eNIn,
+    local rtn
+    dap rtn
+    lac i [pgCp:6]
+    sub [PCSTK+PCLEN-PFW]
+    sma
+    jmp i [pgRoom:6]
+    lac i [pgCp:6]
+    dac eP
+    lac i [pgIp:6]
+    dac i eP
+    idx eP
+    lac i [pgBp:6]
+    dac i eP
+    idx eP
+    lac i [pgFn:6]
+    dac i eP
+    idx eP
+    dzm i eP
+    idx eP
+    dac i [pgCp:6]
+    law 07777
+    dac i [pgFn:6]
+    lac i [pgSp:6]
+    dac evlS
+rtn, jmp 0
+    endloc
+
+// Resets at the sentence's start (pgsys.ac's psClear).
+// The stack is emptied and the registers and THNOT's lists are cleared.
+// AC is clobbered and IO is preserved. Called via jsp from bank 012.
+eReset,
+    local loop
+    dac eRr
+    dzm eTop
+    lac [eRegs:015]
+    dac eQ
+    law i NROOT
+    dac eK
+loop, dzm i eQ
+    idx eQ
+    isp eK
+    jmp loop
+    jmp i eRr
+    endloc
+
+// The calls.
+
+// A routine's entry, its first word jda eIn.
+// Its return, jsp's AC, is pushed on the value stack with KINT, for eOut.
+// NO ROOM unless EROOMN words more can be pushed.
+// AC is clobbered and IO is preserved. Called via jda.
+eIn,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    EROOM(EROOMN)
+    lac eIn
+    ior [KINT]
+    jda ePsh
+rtn, jmp 0
+    endloc
+
+// A routine's return.
+// Takes the value in AC and goes to the return eIn pushed.
+// AC is the value and IO is preserved.
+eOut, dac eRv
+    jsp ePop
+    and [0177777]
+    dac eRp
+    lac eRv
+    jmp i eRp
+
+// Evaluates the form in IO by the evaluator.
+// Its value comes back in AC through the ETENG frame (evlEngR).
+// AC and IO are clobbered. Called via jsp.
+eEv, ior [KINT]
+    jda ePsh
+    lac [KINT+ETENG]
+    jda ePsh
+    dio evlX
+    jmp evlEval
+
+// ETENG's routine (evlTab) hands the value back to the routine whose
+// return is under it.
+// ETVERR's routine handles a THROW caught by a level's catch frame
+// (eThval), THERT LISPERROR - THVAL, which stops the sentence.
+evlEngR, lac evlV
+    jmp eOut
+evlVerr, jmp i [pgErr:6]
+
+// FUNCALL of the function eFn (eFun1), or the native whose operation word
+// is eNat (ePrim1), of the one argument in IO, through the stub.
+// Its value comes back in AC through the ETENG frame.
+// AC and IO are clobbered. Called via jsp.
+eFun1, ior [KINT]
+    jda ePsh
+    lac [KINT+ETENG]
+    jda ePsh
+    lac eFn
+    jda ePsh
+    lac [opFUNCALL*010000+1]
+    jmp eCall1
+ePrim1, ior [KINT]
+    jda ePsh
+    lac [KINT+ETENG]
+    jda ePsh
+    lac eNat
+eCall1, dac eOp
+    dio i evlS
+    idx evlS
+    lac eOp
+    jmp evlCall
+
+// A form whose head names no function (evlForm).
+// One of the engine's (eFxS) is an FEXPR's routine called with the
+// arguments as they are and its value handed on, or an EXPR's, its marker
+// (KINT plus its number) pushed for eExpr and its arguments evaluated by
+// evlArgs.
+// Any other is UNDEFINED FUNCTION, and one of the engine's outside THVAL
+// is a Lisp error.
+eForm,
+    local loop, got, expr
+    lac [eFxS:011]
+    dac eP
+loop, lac i eP
+    sza i
+    jmp i [pgErr:6]
+    sad evlF
+    jmp got
+    idx eP
+    jmp loop
+got, lac eLev
+    sza i
+    jmp i [pgErr:6]
+    lac eP
+    sub [eFxS:011]
+    dac eK
+    sub [NFEXPR]
+    sma
+    jmp expr
+    lac eK
+    add [eFxR:011]
+    dac eP
+    lac i eP
+    dac eJv
+    lio evlL
+    jsp i eJv
+    jmp evlRet
+expr, lac eK
+    ior [KINT]
+    jda ePsh
+    dzm evlN
+    jmp evlArgs
+    endloc
+
+// An engine EXPR's call (evlApply).
+// evlP is its marker's address, with its evlN arguments' values above,
+// where they stay while it runs.
+// Then all are dropped and its value handed on.
+// A wrong number of arguments is a Lisp error.
+eExpr,
+    local rplac, ret
+    lac evlP
+    dac eXp
+    lac i evlP
+    and [07777]
+    sub [NFEXPR]
+    sza
+    jmp rplac
+    lac evlN
+    sas [3]
+    jmp i [pgErr:6]
+    XJSP(thPutprop, 011)
+    jmp ret
+rplac, dac eK
+    lac evlN
+    sas [2]
+    jmp i [pgErr:6]
+    XJSP(thRplac, 011)
+ret, dac evlV
+    lac eXp
+    dac evlS
+    lac evlV
+    jmp evlRet
+    endloc
+
+// The stack.
+
+// The engine's stack's word at an offset is read (eRd) or written (eWr).
+// Takes the offset in AC, and the word in IO for eWr.
+// eRd returns the word in AC, and both leave eP its full address.
+// AC is the result and IO is preserved. Called via jda.
+eRd,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eRd
+    add [ESTK]
+    dac eP
+    lac i eP
+rtn, jmp 0
+    endloc
+eWr,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eWr
+    add [ESTK]
+    dac eP
+    dio i eP
+rtn, jmp 0
+    endloc
+
+// The value stack.
+// A word is pushed (ePsh), the top word popped (ePop), or the word an
+// offset under the top read (eSk), with eP its address.
+// ePsh takes the word in AC, and eSk takes minus the offset in AC, so -1
+// is the top word.
+// ePop and eSk return the word in AC.
+// AC is the result and IO is preserved. Called via jda (ePsh, eSk) or jsp
+// (ePop).
+ePsh,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac ePsh
+    dac i evlS
+    idx evlS
+rtn, jmp 0
+    endloc
+ePop,
+    local rtn
+    dap rtn
+    law i 1
+    add evlS
+    dac evlS
+    lac i evlS
+rtn, jmp 0
+    endloc
+eSk,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eSk
+    add evlS
+    dac eP
+    lac i eP
+rtn, jmp 0
+    endloc
+
+// A word pushed on the engine's stack, with NO ROOM past its end.
+// Takes the word in AC. AC is clobbered and IO is preserved.
+// Called via jda.
+ePushW,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eTop
+    sub [ELEN]
+    sma
+    jmp i [pgRoom:6]
+    lac eTop
+    add [ESTK]
+    dac eP
+    lac ePushW
+    dac i eP
+    idx eTop
+rtn, jmp 0
+    endloc
+
+// A frame of the kind in AC is pushed, its parent THTREE, and THTREE is
+// set to it.
+// The caller pushes its words after.
+// Takes the kind's symbol in AC. Returns the frame's offset in AC.
+// AC is the result and IO is preserved. Called via jda.
+eFrame,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eTop
+    dac eFo
+    lac eFrame
+    jda ePushW
+    lac eTree
+    jda ePushW
+    lac eFo
+    ior [KINT]
+    dac eTree
+    lac eFo
+rtn, jmp 0
+    endloc
+
+// THPOPT pops THTREE's top frame, and THTREE becomes its parent.
+// Returns the frame's offset in AC. AC is the result and IO is preserved.
+// Called via jsp.
+ePopt,
+    local rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eFo
+    add [ESTK+1]
+    dac eP
+    lac i eP
+    dac eTree
+    lac eFo
+rtn, jmp 0
+    endloc
+
+// THTAGT, THMESSAGET, THMUNGT and THORT pop the frame, and THVALUE is the
+// value.
+// Returns the value in AC. AC is the result and IO is preserved.
+// Called via jsp.
+ePopV,
+    local rtn
+    dap rtn
+    jsp ePopt
+    lac i EVALUE
+rtn, jmp 0
+    endloc
+
+// THTAGF, and a failure that pops its frame, pop the frame and cut the
+// stack to it.
+// Returns NIL in AC. AC is the result and IO is preserved.
+// Called via jsp.
+ePopCut,
+    local rtn
+    dap rtn
+    jsp ePopt
+    dac eTop
+    cla
+rtn, jmp 0
+    endloc
+
+// The binding of a name in the bindings a link starts.
+// Takes the name in AC and the link in IO, or 0.
+// Returns the binding's offset in AC, or minus zero if there is none.
+// AC is the result and IO is clobbered. Called via jda.
+eFind,
+    local loop, none, got, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eT2
+loop, lac eT2
+    sza i
+    jmp none
+    and [07777]
+    dac eT3
+    ERDA
+    sad eFind
+    jmp got
+    lac eT3
+    add [2]
+    ERDA
+    dac eT2
+    jmp loop
+none, lac [0777777]
+    jmp rtn
+got, lac eT3
+rtn, jmp 0
+    endloc
+
+// A binding's value word, or the one its KREF words lead to.
+// Takes the binding's offset in AC. Returns the word's offset (eSlot) or
+// the value (eVal) in AC.
+// AC is the result and IO is preserved. Called via jda.
+eSlot,
+    local loop, done, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eSlot
+    add [1]
+loop, dac eT3
+    ERDA
+    dac eT4
+    and [0770000]
+    sas [KREF]
+    jmp done
+    lac eT4
+    and [07777]
+    jmp loop
+done, lac eT3
+rtn, jmp 0
+    endloc
+eVal,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eVal
+    jda eSlot
+    ERDA
+rtn, jmp 0
+    endloc
+
+// THGAL (plnr.182:874) finds the binding of a (THV name) form's name.
+// A name not bound is a Lisp error.
+// Takes the form in AC and the bindings' link in IO. Returns the binding's
+// offset in AC.
+// AC is the result and IO is clobbered. Called via jda.
+eGal,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eT7
+    lac eGal
+    jda evlCdr
+    jda evlCar
+    lio eT7
+    jda eFind
+    spa
+    jmp i [pgErr:6]
+rtn, jmp 0
+    endloc
+
+// A binding made in THALIST, holding the name, the value and THALIST's
+// link, and THALIST becomes the new one's.
+// Takes the name in AC and the value in IO. Returns its offset in AC.
+// AC is the result and IO is clobbered. Called via jda.
+eBind,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eT6
+    lac eTop
+    dac eT5
+    lac eBind
+    jda ePushW
+    lac eT6
+    jda ePushW
+    lac i EALIST
+    jda ePushW
+    lac eT5
+    ior [KINT]
+    dac i EALIST
+    lac eT5
+rtn, jmp 0
+    endloc
+
+// A variable of the machine bound, as pgBind binds.
+// The variable and its old value go on the bindings, then the new value is
+// set.
+// Takes the variable's number in AC and the value in IO. AC is clobbered
+// and IO is preserved. Called via jda.
+eMBind,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [pgBp:6]
+    sub [PBSTK+PBLEN-2]
+    sma
+    jmp i [pgRoom:6]
+    lac i [pgBp:6]
+    dac eP
+    lac eMBind
+    dac i eP
+    idx eP
+    lac eMBind
+    add [vTab:3]
+    dac eQ2
+    lac i eQ2
+    dac i eP
+    idx eP
+    dac i [pgBp:6]
+    dio i eQ2
+rtn, jmp 0
+    endloc
+
+// The machine's bindings are undone to a mark, each variable's old value
+// put back, as pgUnbTo does.
+// Takes the mark in AC. AC and IO are clobbered. Called via jda.
+eUnbTo,
+    local loop, rtn
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac i [pgBp:6]
+    sad eUnbTo
+    jmp rtn
+    sub [2]
+    dac i [pgBp:6]
+    dac eP
+    lac i eP
+    add [vTab:3]
+    dac eQ2
+    idx eP
+    lac i eP
+    dac i eQ2
+    jmp loop
+rtn, jmp 0
+    endloc
+
+// The trail.
+
+// Begins a trail.
+// A THMUNG frame's three words are reserved at the top, and its records
+// are pushed above them as the bindings and the rest are changed.
+// Returns the frame's offset in AC. AC is the result and IO is preserved.
+// Called via jsp.
+eTrB,
+    local rtn
+    dap rtn
+    lac eTop
+    dac eTb
+    lac [KSYM+sTHMUNG]
+    jda ePushW
+    cla
+    jda ePushW
+    cla
+    jda ePushW
+    lac eTb
+rtn, jmp 0
+    endloc
+
+// Ends a trail.
+// If none was recorded, its words are given back (eTrE).
+// Otherwise, or always (eTrA), the THMUNG frame is made of them, its
+// records' words counted, and THTREE is set to it.
+// Takes the frame's offset in AC. AC and IO are clobbered.
+// Called via jda.
+eTrE,
+    local mk, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eTop
+    sub eTrE
+    sub [3]
+    sza
+    jmp mk
+    lac eTrE
+    dac eTop
+    jmp rtn
+mk, lac eTrE
+    jda eTrA
+rtn, jmp 0
+    endloc
+eTrA,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eTop
+    sub eTrA
+    sub [3]
+    ior [KINT]
+    lia
+    lac eTrA
+    add [2]
+    EWRA
+    lio eTree
+    lac eTrA
+    add [1]
+    EWRA
+    lac eTrA
+    ior [KINT]
+    dac eTree
+rtn, jmp 0
+    endloc
+
+// A trail's records are undone, the newest first, and the stack cut to its
+// frame.
+// The old value goes back for a value word, a cell's CAR or CDR, a
+// variable's value (SETQ), a derived event's fact (THASSERT), or a
+// property (PUTPROP).
+// Takes the frame's offset in AC, its records ending at the top.
+// AC and IO are clobbered. Called via jda.
+eTrU,
+    local loop, sv, ca, cd, cw, sq, as, done, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eTop
+    dac eTp
+loop, lac eTp
+    sub eTrU
+    sub [3]
+    sza i
+    jmp done
+    law i 1
+    add eTp
+    ERDA
+    sad [KSYM+sTHV]
+    jmp sv
+    sad [KSYM+sTHURPLACA]
+    jmp ca
+    sad [KSYM+sTHURPLACD]
+    jmp cd
+    sad [KSYM+sSETQ]
+    jmp sq
+    sad [KSYM+sTHASSERT]
+    jmp as
+    // PUTPROP's record holds the atom, the indicator and the old value.
+    lac eTp
+    sub [4]
+    dac eTp
+    ERDA
+    dac i [pgPx:6]
+    lac eTp
+    add [1]
+    ERDA
+    dac i [pgPi:6]
+    lac eTp
+    add [2]
+    ERDA
+    dac i [pgPv:6]
+    ESYNC
+    XJSP(fPut, 6)
+    jmp loop
+sv, jsp eTr3
+    and [07777]
+    dac eTq
+    lac eTp
+    add [1]
+    ERDA
+    lia
+    lac eTq
+    EWRA
+    jmp loop
+ca, jsp eTr3
+    ior [PCELLS]
+    jmp cw
+cd, jsp eTr3
+    ior [PCELLS]
+    add [1]
+cw, dac eTq
+    lac eTp
+    add [1]
+    ERDA
+    dac i eTq
+    jmp loop
+sq, jsp eTr3
+    dac i [fA:6]
+    XJSP(fVarOf, 6)
+    lai
+    spa
+    jmp i [pgFlt:6]
+    add [vTab:3]
+    dac eTq
+    lac eTp
+    add [1]
+    ERDA
+    dac i eTq
+    jmp loop
+as, lac eTp
+    sub [2]
+    dac eTp
+    ERDA
+    XJDA(evUnasF, 3)
+    jmp loop
+done, lac eTrU
+    dac eTop
+rtn, jmp 0
+    endloc
+
+// A three-word record's start. eTp goes three less, to its first word.
+// Returns the word in AC. AC is the result and IO is preserved.
+// Called via jsp.
+eTr3,
+    local rtn
+    dap rtn
+    lac eTp
+    sub [3]
+    dac eTp
+    ERDA
+rtn, jmp 0
+    endloc
+
+// A binding's value is set, the old one on the trail as (THV link old).
+// Takes the binding's offset in AC and the value in IO. AC and IO are
+// clobbered. Called via jda.
+eAsg,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eT6
+    lac eAsg
+    jda eSlot
+    dac eT5
+    ior [KINT]
+    jda ePushW
+    lac eT5
+    ERDA
+    jda ePushW
+    lac [KSYM+sTHV]
+    jda ePushW
+    lio eT6
+    lac eT5
+    EWRA
+rtn, jmp 0
+    endloc
+
+// THMATCH2's (THRPLACDS YPAIR (CDR XPAIR)) makes y's value word a
+// reference to x's, the old word on the trail.
+// It does nothing if they are one.
+// Takes y's binding in AC and x's in IO. AC and IO are clobbered.
+// Called via jda.
+eAlias,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eT6
+    lac eAlias
+    add [1]
+    dac eT5
+    ior [KINT]
+    jda ePushW
+    lac eT5
+    ERDA
+    jda ePushW
+    lac [KSYM+sTHV]
+    jda ePushW
+    lac eT6
+    jda eSlot
+    dac eT6
+    lac eAlias
+    jda eSlot
+    sad eT6
+    jmp rtn
+    lac eT6
+    ior [KREF]
+    lia
+    lac eT5
+    EWRA
+rtn, jmp 0
+    endloc
+
+// THMUNGF undoes the frame's records, pops the frame and cuts the stack
+// to it.
+// Returns NIL in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thMungf,
+    local rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF2
+    add [2]
+    ERDA
+    and [07777]
+    add eF2
+    add [3]
+    dac eTop
+    lac eF2
+    jda eTrU
+    jsp ePopt
+    cla
+rtn, jmp 0
+    endloc
+
+// THREMBINDT and F set THALIST to the frame's and pop the frame.
+// F also cuts the stack to the bindings' start.
+// Returns THVALUE (T) or NIL (F) in AC. AC is the result and IO is
+// clobbered. Called via jsp.
+thRembt,
+    local rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    add [2]
+    ERDA
+    dac i EALIST
+    jsp ePopt
+    lac i EVALUE
+rtn, jmp 0
+    endloc
+thRembf,
+    local rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF2
+    add [2]
+    ERDA
+    dac i EALIST
+    lac eF2
+    add [3]
+    ERDA
+    and [07777]
+    dac eT
+    jsp ePopt
+    lac eT
+    dac eTop
+    cla
+rtn, jmp 0
+    endloc
+
+// Lists.
+
+// CAR of a value, NIL for any atom.
+// Takes the value in AC. Returns its CAR in AC.
+// AC is the result and IO is preserved. Called via jda.
+eCarS,
+    local atom, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eCarS
+    and [KMASK]
+    sas [KCONS]
+    jmp atom
+    lac eCarS
+    ior [PCELLS]
+    dac eCp
+    lac i eCp
+    jmp rtn
+atom, cla
+rtn, jmp 0
+    endloc
+
+// CONS of AC and IO, with the value stack synced first, for a collection.
+// Takes the CAR in AC and the CDR in IO. Returns the cell in AC.
+// AC is the result and IO is clobbered. Called via jda.
+eCons,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eCons
+    dac i [fA:6]
+    dio i [fB:6]
+    ESYNC
+    XJSP(fCons, 6)
+    lai
+rtn, jmp 0
+    endloc
+
+// The list of the AC top values of the value stack, which are popped.
+// Takes their number in AC. Returns the list in AC.
+// AC is the result and IO is clobbered. Called via jda.
+eLst,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    ESYNC
+    lac eLst
+    dac i [fA:6]
+    XJSP(fStkL, 6)
+    lac evlS
+    sub eLst
+    dac evlS
+    lai
+rtn, jmp 0
+    endloc
+
+// A list's length, its members to the first atom.
+// Takes the list in AC. Returns the length in AC.
+// AC is the result and IO is preserved. Called via jda.
+eLen,
+    local loop, done, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dzm eLn
+loop, lac eLen
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    idx eLn
+    lac eLen
+    jda evlCdr
+    dac eLen
+    jmp loop
+done, lac eLn
+rtn, jmp 0
+    endloc
+
+// ASSQ finds the first member of a list that is a list whose CAR is the
+// key.
+// Takes the key in AC and the list in IO. Returns the member, or NIL, in
+// AC. AC is the result and IO is clobbered. Called via jda.
+eAssq,
+    local loop, none, got, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eAl
+loop, lac eAl
+    and [KMASK]
+    sas [KCONS]
+    jmp none
+    lac eAl
+    jda evlCar
+    dac eAc
+    jda eCarS
+    sad eAssq
+    jmp got
+    lac eAl
+    jda evlCdr
+    dac eAl
+    jmp loop
+none, cla
+    jmp rtn
+got, lac eAc
+rtn, jmp 0
+    endloc
+
+// EQUAL of two values is EQ, or for two lists fEqual's.
+// Takes one value in AC and the other in IO. Returns 1 in AC if they are
+// EQUAL, else 0.
+// AC is the result and IO is clobbered. Called via jda.
+eEq,
+    local yes, no, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dio eEy
+    lac eEq
+    sad eEy
+    jmp yes
+    and [KMASK]
+    sas [KCONS]
+    jmp no
+    lac eEy
+    and [KMASK]
+    sas [KCONS]
+    jmp no
+    lac eEq
+    dac i [fA:6]
+    lac eEy
+    dac i [fB:6]
+    XJSP(fEqual, 6)
+    lai
+    jmp rtn
+yes, law 1
+    jmp rtn
+no, cla
+rtn, jmp 0
+    endloc
+
+// A number's value (eNum), a value's number (eMk), and a number's value
+// plus one as a number (eAd1).
+// Take the number or value in AC. Return the value or number in AC.
+// AC is the result and IO is preserved. Called via jda.
+eNum,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eNum
+    dac i [fA:6]
+    XJSP(fNum, 6)
+    lac i [fA:6]
+rtn, jmp 0
+    endloc
+eMk,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eMk
+    dac i [fA:6]
+    XJSP(fMkint, 6)
+    lac i [fA:6]
+rtn, jmp 0
+    endloc
+eAd1,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eAd1
+    jda eNum
+    add [1]
+    jda eMk
+rtn, jmp 0
+    endloc
+
+// The first record of the database's chain from one on that is not
+// erased.
+// Takes the record, or 0, in AC. Returns the live record, or 0, in AC.
+// AC is the result and IO is preserved. Called via jda.
+eLive,
+    local loop, ok, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac eLive
+loop, sza i
+    jmp rtn
+    dac eRc
+    add [DARITY]
+    dac eCp
+    lac i eCp
+    sas [DERASED]
+    jmp ok
+    lac i eRc
+    jmp loop
+ok, lac eRc
+rtn, jmp 0
+    endloc
+
+// THVAL.
+
+// THVAL (plnr.182:2113) of the form eArgX with the bindings eArgA.
+// The bindings are the engine's (a link, KINT), a list of (name value)
+// cells, each made a binding and its value written back at the return, or
+// none.
+// It runs as a level.
+// A catch frame is made, under which a THROW is THERT LISPERROR.
+// The registers are saved on the stack and cleared, and THVALUE and
+// THALIST are bound.
+// Then the run loop (eRun) runs and the return (eTvX) cuts the stack back
+// to where the level began.
+// Returns the value in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+eThval, jda eIn
+    local sloop, zloop, cells, bind, tok
+    lac i [pgCp:6]
+    sub [PCSTK+PCLEN-PFW]
+    sma
+    jmp i [pgRoom:6]
+    lac [KINT+ETVERR]
+    jda ePsh
+    lac i [pgCp:6]
+    dac eP
+    lac [evlRsw:015]
+    dac i eP
+    idx eP
+    lac i [pgBp:6]
+    dac i eP
+    idx eP
+    law 07777
+    dac i eP
+    idx eP
+    lac evlS
+    ior [PFCATCH]
+    dac i eP
+    idx eP
+    dac i [pgCp:6]
+    // The registers are saved and cleared, with the heap bindings' count
+    // after them.
+    lac eTop
+    dac eT
+    lac [eRegs:015]
+    dac eQ
+    law i NREG
+    dac eK
+sloop, lac i eQ
+    jda ePushW
+    idx eQ
+    isp eK
+    jmp sloop
+    cla
+    jda ePushW
+    lac [eRegs:015]
+    dac eQ
+    law i NREG
+    dac eK
+zloop, dzm i eQ
+    idx eQ
+    isp eK
+    jmp zloop
+    lac eT
+    dac eBase
+    lac eArgX
+    dac eExp
+    idx eLev
+    lio [KSYM+sTHNOVAL]
+    law vTHVALUE
+    jda eMBind
+    lac eArgA
+    and [KMASK]
+    sad [KINT]
+    jmp tok
+    cla
+    lia
+    law vTHALIST
+    jda eMBind
+    lac eArgA
+    and [KMASK]
+    sas [KCONS]
+    jmp eRun
+    // A list's cells are pushed in order, then bound from the last, so that
+    // the first is THALIST's first.
+    // Each cell is kept before its binding, for the return.
+    lac evlS
+    dac eT
+    lac eArgA
+cells, dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp bind
+    EROOM(1)
+    lac eL
+    jda evlCar
+    jda ePsh
+    lac eL
+    jda evlCdr
+    jmp cells
+bind, lac evlS
+    sad eT
+    jmp eRun
+    jsp ePop
+    dac eU
+    and [KMASK]
+    sas [KCONS]
+    jmp bind
+    lac eU
+    jda evlCdr
+    dac eNm
+    and [KMASK]
+    sas [KCONS]
+    jmp bind
+    lac eU
+    jda ePushW
+    lac eNm
+    jda evlCar
+    lia
+    lac eU
+    jda evlCar
+    jda eBind
+    lac eBase
+    add [NREG]
+    ERDA
+    add [1]
+    dac i eP
+    jmp bind
+tok, lio eArgA
+    law vTHALIST
+    jda eMBind
+    endloc
+
+// THVAL's run loop, with the level's registers as its state.
+// THEXP is evaluated, and its value is THVALUE.
+// Then, unless another expression is set, the top frame's success or
+// failure routine is run by its kind (eSfK, eSfS, eSfF), its value
+// THVALUE, until THTREE is empty, or a THFAIL's message reaches the frame
+// it fails back to and its expression is evaluated.
+eRun,
+    local go1, br, mfail, fail, go2, kloop, kfound
+    lac eExp
+    dac eE
+    dzm eExp
+    lio eE
+    jsp eEv
+    dac i EVALUE
+go1, lac eMsgOn
+    sza
+    jmp mfail
+    lac eExp
+    sza
+    jmp eRun
+    lac i EVALUE
+    sza i
+    jmp fail
+    lac eBranch
+    sza
+    jmp br
+    lac eTree
+    dac eBranch
+    lac i EALIST
+    dac eAbranch
+br, lac eTree
+    sza i
+    jmp eTvV
+    lac [eSfS:011]
+    jmp go2
+mfail, lac eMsgF
+    sas eTree
+    jmp fail
+    lac eMsgV
+    dac eExp
+    dzm eMsgOn
+    dzm eMsgF
+    dzm eMsgV
+    jmp eRun
+fail, lac eTree
+    sza i
+    jmp eTvN
+    lac [eSfF:011]
+go2, dac eQ
+    lac eTree
+    and [07777]
+    ERDA
+    dac eNm
+    lac [eSfK:011]
+    dac eP2
+kloop, lac i eP2
+    sza i
+    jmp i [pgErr:6]
+    sad eNm
+    jmp kfound
+    idx eP2
+    idx eQ
+    jmp kloop
+kfound, lac i eQ
+    sza i
+    jmp i [pgErr:6]
+    dac eJv
+    dzm eExp
+    jsp i eJv
+    dac i EVALUE
+    jmp go1
+    endloc
+
+// THVAL's return, with the value THVALUE (eTvV) or NIL (eTvN).
+// The value is kept on the value stack.
+// Each heap binding's value is written to its cell where it changed.
+// The outer level's registers are put back and the stack cut to the
+// level's start.
+// The catch frame is popped and the machine's bindings since it undone.
+eTvV, lac i EVALUE
+    jmp eTvX
+eTvN, cla
+eTvX,
+    local wb, wnext, rest, rloop
+    jda ePsh
+    lac eBase
+    add [NREG]
+    ERDA
+    sza i
+    jmp rest
+    cma
+    dac eK
+    lac eBase
+    add [NREG+1]
+    dac eG
+wb, lac eG
+    ERDA
+    dac eU
+    lac eG
+    add [1]
+    jda eVal
+    dac eV
+    lac eU
+    jda evlCdr
+    ior [PCELLS]
+    dac eP
+    lac i eP
+    sad eV
+    jmp wnext
+    lac eV
+    dac i eP
+wnext, lac eG
+    add [4]
+    dac eG
+    isp eK
+    jmp wb
+rest, lac eBase
+    dac eT
+    add [ESTK]
+    dac eP2
+    lac [eRegs:015]
+    dac eQ
+    law i NREG
+    dac eK
+rloop, lac i eP2
+    dac i eQ
+    idx eP2
+    idx eQ
+    isp eK
+    jmp rloop
+    lac eT
+    dac eTop
+    law i 1
+    add eLev
+    dac eLev
+    lac i [pgCp:6]
+    sub [PFW]
+    dac i [pgCp:6]
+    add [PFBIND]
+    dac eP
+    lac i eP
+    jda eUnbTo
+    jsp ePop
+    dac eV
+    law i 1
+    add evlS
+    dac evlS
+    lac eV
+    jmp eOut
+    endloc
+
+// EVLIS evaluates each member of the list in IO in turn.
+// Returns the list in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+eEvlis, jda eIn
+    local loop, done
+    dio eL
+    lac eL
+    jda ePsh
+    lac eL
+    jda ePsh
+loop, law i 1
+    jda eSk
+    dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    lia
+    jsp eEv
+    jmp loop
+done, law i 1
+    add evlS
+    dac evlS
+    jsp ePop
+    jmp eOut
+    endloc
+
+// THVARSUBST (plnr.182:2293) of the form in IO.
+// A $E's value, or a THV's or THNV's, is put in its place.
+// Then a list's members are taken, each as eVs2 has it, and the list is
+// made of them.
+// eArgT not 0 is thy.
+// Returns the value in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+eVsub, jda eIn
+    local ev, lsp, lst, loop, fin, fin0
+    dio eX
+    lac eArgT
+    jda ePsh
+    lac eX
+    jda eCarS
+    sad [KSYM+sTHEV]
+    jmp ev
+    sad [KSYM+sTHV]
+    jmp lsp
+    sad [KSYM+sTHNV]
+    jmp lsp
+    jmp lst
+ev, lac eX
+    jda evlCdr
+    jda evlCar
+    dac eArgX
+    lac i EALIST
+    dac eArgA
+    jsp eThval
+    dac eX
+    jmp lst
+lsp, lio eX
+    jsp eEv
+    dac eX
+lst, jsp ePop
+    dac eTy
+    lac eX
+    and [KMASK]
+    sas [KCONS]
+    jmp fin0
+    // The members' values are pushed under three words.
+    // These are their number, the members still to do, and thy, on top for
+    // eVs2.
+    lac [KINT]
+    jda ePsh
+    lac eX
+    jda ePsh
+    lac eTy
+    jda ePsh
+loop, law i 2
+    jda eSk
+    dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp fin
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    dac eX
+    jsp eVs2
+    dac eV
+    jsp ePop
+    dac eTy
+    jsp ePop
+    dac eL
+    jsp ePop
+    dac eN
+    EROOM(4)
+    lac eV
+    jda ePsh
+    lac eN
+    add [1]
+    jda ePsh
+    lac eL
+    jda ePsh
+    lac eTy
+    jda ePsh
+    jmp loop
+fin, law i 3
+    add evlS
+    dac evlS
+    lac i evlS
+    and [07777]
+    jda eLst
+    jmp eOut
+fin0, lac eX
+    jmp eOut
+    endloc
+
+// THVARSUBST's member (THVARS2).
+// A $E's value is put in its place.
+// A THV's or THNV's variable's value is taken, unless unassigned.
+// A THNV's, when thy (the caller's top word) is not 0, has its variable
+// unassigned on the trail instead, and the member itself is kept.
+// Takes the member in eX. Returns its value in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+eVs2, jda eIn
+    local chk, vr, retx, retv
+    lac eX
+    and [KMASK]
+    sas [KCONS]
+    jmp retx
+    lac eX
+    jda evlCar
+    sas [KSYM+sTHEV]
+    jmp chk
+    lac eX
+    jda evlCdr
+    jda evlCar
+    dac eArgX
+    lac i EALIST
+    dac eArgA
+    jsp eThval
+    dac eX
+chk, lac eX
+    jda eCarS
+    dac eH
+    sad [KSYM+sTHV]
+    jmp vr
+    sas [KSYM+sTHNV]
+    jmp retx
+vr, lac eX
+    lio i EALIST
+    jda eGal
+    dac eB
+    jda eVal
+    dac eV
+    sad EUND
+    jmp retx
+    lac eH
+    sas [KSYM+sTHNV]
+    jmp retv
+    law i 2
+    jda eSk
+    sza i
+    jmp retv
+    jsp eTrB
+    dac eTh
+    lio EUND
+    lac eB
+    jda eAsg
+    lac eTh
+    jda eTrE
+retx, lac eX
+    jmp eOut
+retv, lac eV
+    jmp eOut
+    endloc
+
+// THGOAL.
+
+// THGOAL (plnr.182:897) takes the pattern THVARSUBST'd, thy.
+// An action's, with a THUSE or THTBF, is done by the engine (ACTION), and
+// its value is the pattern or NIL.
+// Otherwise THTRY's checks are made in its order.
+// Then the THGOAL frame is made of the pattern, the recommendations left,
+// the count, and the first kind of try (THDBF, unless they start with
+// another THDBF or a THNODB) with its filter and cursor, which THGOALF
+// tries (eTry1).
+// With no try at all, the value is NIL and there is no frame.
+// Takes the arguments in IO. Returns NIL, or the action's value, in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thGoal, jda eIn
+    local acn, db, rec1, anum, nodb, chk, cloop, cdbf, coth, cnext, cdone
+    addlocal mk, make, nf, nil, ret
+    dio eA
+    lac eA
+    jda ePsh
+    lac eA
+    jda evlCar
+    lia
+    law 1
+    dac eArgT
+    jsp eVsub
+    dac eX
+    jda ePsh                   // the pattern, over the arguments
+    lac eX
+    dac i [hkA:6]
+    XJSP(hkActF, 6)
+    lac i [hkA:6]
+    sza i
+    jmp db
+    jsp eRecs
+    dac eR
+    lac [KSYM+sTHUSE]
+    lio eR
+    jda eAssq
+    sza
+    jmp acn
+    lac [KSYM+sTHTBF]
+    lio eR
+    jda eAssq
+    sza i
+    jmp db
+acn, law i 1
+    add evlS
+    dac eP
+    lio i eP
+    lac [opPRIM*010000+naACTION]
+    dac eNat
+    jsp ePrim1
+    sza i
+    jmp ret
+    law i 1
+    jda eSk
+    jmp ret
+db, jsp eRecs
+    dac eR
+    lac [CNT0]
+    dac eCnt
+    dzm eCur
+    lac eR
+    dac eRest
+    sza
+    jmp rec1
+    lac [KSYM+sTHDBF]
+    dac eCur
+    jmp chk
+rec1, lac eR
+    jda evlCar
+    jda eCarS
+    sad [KSYM+sTHANUM]
+    jmp anum
+    sad [KSYM+sTHNODB]
+    jmp nodb
+    sad [KSYM+sTHDBF]
+    jmp chk
+    lac [KSYM+sTHDBF]
+    dac eCur
+    jmp chk
+anum, lac eR
+    jda evlCar
+    jda evlCdr
+    jda evlCar
+    jda eNum
+    add [1]
+    dac eCnt
+    lac [KSYM+sTHDBF]
+    dac eCur
+nodb, lac eR
+    jda evlCdr
+    dac eRest
+    // THTRY's checks. A kind it has not is an error.
+chk, dzm eOth
+    dzm eDbf
+    lac eCur
+    sza
+    idx eDbf
+    lac eRest
+    dac eL
+cloop, lac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp cdone
+    lac eL
+    jda evlCar
+    dac eX
+    and [KMASK]
+    sas [KCONS]
+    jmp cnext
+    lac eX
+    jda evlCar
+    sad [KSYM+sTHTBF]
+    jmp coth
+    sad [KSYM+sTHDBF]
+    jmp cdbf
+    sad [KSYM+sTHUSE]
+    jmp coth
+    sas [KSYM+sTHNUM]
+    jmp i [pgErr:6]
+coth, idx eOth
+    jmp cnext
+cdbf, law 1
+    dac eDbf
+cnext, lac eL
+    jda evlCdr
+    dac eL
+    jmp cloop
+    // The chain's first live record, for any THDBF.
+cdone, dzm eW
+    lac eDbf
+    sza i
+    jmp mk
+    law i 1
+    jda eSk
+    jda evlCar
+    dac i [hkA:6]
+    XJSP(hkDbF, 6)
+    lac i [hkA:6]
+    dac eW
+mk, lac eOth
+    sza
+    jmp make
+    lac eW
+    sza i
+    jmp ret
+make, lac [KSYM+sTHGOAL]
+    jda eFrame
+    law i 1
+    jda eSk
+    jda ePushW
+    lac eRest
+    jda ePushW
+    lac eCnt
+    ior [KINT]
+    jda ePushW
+    lac eCur
+    jda ePushW
+    lac eCur
+    sza i
+    jmp nf
+    lac [KSYM+sTHTRUE]
+    jda ePushW
+    lac eW
+    jda ePushW
+    jmp nil
+nf, cla
+    jda ePushW
+    cla
+    jda ePushW
+nil, cla
+ret, dac eV
+    law i 2
+    add evlS
+    dac evlS
+    lac eV
+    jmp eOut
+    endloc
+
+// THGOAL's recommendations, the CDR of the arguments, the word under the
+// value stack's top.
+// Returns the list in AC. AC is the result and IO is preserved.
+// Called via jsp.
+eRecs,
+    local rtn
+    dap rtn
+    law i 2
+    jda eSk
+    jda evlCdr
+rtn, jmp 0
+    endloc
+
+// THGOALT gives THVALUE, or with THNOVAL the pattern THVARSUBST'd again,
+// and pops the frame.
+// Returns the value in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thGoalt, jda eIn
+    local pop
+    lac i EVALUE
+    sas [KSYM+sTHNOVAL]
+    jmp pop
+    lac eTree
+    and [07777]
+    add [FGPAT]
+    ERDA
+    lia
+    dzm eArgT
+    jsp eVsub
+pop, dac eV
+    jsp ePopt
+    lac eV
+    jmp eOut
+    endloc
+
+// THGOALF makes the next try (eTry1) and keeps the frame.
+// With none, or a message failing back past it, it pops the frame and
+// cuts the stack to it.
+// Returns the try's value, or NIL, in AC. AC is the result and IO is
+// clobbered. Called via jsp.
+thGoalf, jda eIn
+    local out
+    lac eMsgOn
+    sza
+    jmp out
+    lac eTree
+    and [07777]
+    add [FGLEN]
+    dac eTop
+    jsp eTry1
+    sza
+    jmp eOut
+out, jsp ePopCut
+    jmp eOut
+    endloc
+
+// THTRY1 (plnr.182:1959) on the THGOAL frame at THTREE's top, kept on the
+// value stack.
+// The count is made one less.
+// The recommendations are taken in turn.
+// A THNUM sets the count, a THDBF its filter and its cursor on the chain's
+// first live record, and a THUSE or THTBF its theorems with THTRUE.
+// Each candidate the filter passes is matched (a record, eMrec) or applied
+// (a theorem, eApply1).
+// The cursor moves on after each try, to the next record live then, or the
+// next theorem.
+// Returns the record, T for a theorem, or NIL when the count or the
+// recommendations run out, in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+eTry1, jda eIn
+    local loop, c1, num, dbf, try, thl, tno, exh, db, dbl, dno, none, ret
+    lac eTree
+    and [07777]
+    dac eF
+    ior [KINT]
+    jda ePsh
+    lac eF
+    add [FGCNT]
+    ERDA
+    sub [1]
+    dac i eP
+loop, jsp eTf
+    lac eF
+    add [FGCUR]
+    ERDA
+    dac eCur
+    sza
+    jmp c1
+    lac eF
+    add [FGRECS]
+    ERDA
+    sza i
+    jmp none
+c1, lac eF
+    add [FGCNT]
+    ERDA
+    sad [KINT]
+    jmp none
+    lac eCur
+    sza
+    jmp try
+    // The next recommendation.
+    lac eF
+    add [FGRECS]
+    ERDA
+    dac eL
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    dac eX
+    and [KMASK]
+    sas [KCONS]
+    jmp loop
+    lac eX
+    jda evlCar
+    sad [KSYM+sTHNUM]
+    jmp num
+    sad [KSYM+sTHDBF]
+    jmp dbf
+    lio [KSYM+sTHTBF]
+    lac eF
+    add [FGCUR]
+    EWRA
+    lio [KSYM+sTHTRUE]
+    lac eF
+    add [FGFILT]
+    EWRA
+    XJSP(eTbfF, 2)
+    lia
+    lac eF
+    add [FGCURS]
+    EWRA
+    jmp loop
+num, lac eX
+    jda evlCdr
+    jda evlCar
+    jda eNum
+    ior [KINT]
+    lia
+    lac eF
+    add [FGCNT]
+    EWRA
+    jmp loop
+dbf, lio [KSYM+sTHDBF]
+    lac eF
+    add [FGCUR]
+    EWRA
+    lac eX
+    jda evlCdr
+    jda evlCar
+    lia
+    lac eF
+    add [FGFILT]
+    EWRA
+    jsp eHead
+    lia
+    lac eF
+    add [FGCURS]
+    EWRA
+    jmp loop
+    // The theorems, each the THCONSE of its THEOREM property.
+try, sad [KSYM+sTHDBF]
+    jmp db
+thl, jsp eTf
+    lac eF
+    add [FGCURS]
+    ERDA
+    sza i
+    jmp exh
+    jda evlCar
+    dac eThm
+    dac i [fA:6]
+    lac [KSYM+sTHEOREM]
+    dac i [fB:6]
+    ESYNC
+    XJSP(fGet, 6)
+    dio eThw
+    lac eThw
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac eThw
+    jda evlCar
+    sas [KSYM+sTHCONSE]
+    jmp i [pgErr:6]
+    lac eThw
+    jda ePsh
+    lac eF
+    add [FGFILT]
+    ERDA
+    dac eFt
+    lio eThm
+    jsp eFilt
+    sza i
+    jmp tno
+    law i 1
+    jda eSk
+    dac eThw
+    jsp eTf2
+    lac eF
+    add [FGPAT]
+    ERDA
+    dac eX
+    jsp eApply1
+tno, dac eOk
+    law i 1
+    add evlS
+    dac evlS
+    jsp eTf
+    lac eF
+    add [FGCURS]
+    ERDA
+    jda evlCdr
+    dac i eP
+    lac eOk
+    sza i
+    jmp thl
+    lac [KSYM]
+    jmp ret
+exh, lac eF
+    add [FGCUR]
+    ERDA
+    dzm i eP
+    jmp loop
+    // The records, with THOLIST set to THALIST, each record the filter
+    // passes being matched.
+db, lac i EALIST
+    dac eOlist
+dbl, jsp eTf
+    lac eF
+    add [FGCURS]
+    ERDA
+    sza i
+    jmp exh
+    dac eW
+    jsp eCk0                    // made again for each, since a match that ran Lisp can make another goal's
+    jsp eScan                   // eW is the first record the check passes, or 0
+    lio eW
+    lac eF
+    add [FGCURS]
+    EWRA
+    lac eW
+    sza i
+    jmp exh
+    jda ePsh
+    lac eF
+    add [FGFILT]
+    ERDA
+    dac eFt
+    lio eW
+    jsp eFilt
+    sza i
+    jmp dno
+    law i 1
+    jda eSk
+    dac eW
+    jsp eTf2
+    lac eF
+    add [FGPAT]
+    ERDA
+    dac eX
+    jsp eMrec
+dno, dac eOk
+    jsp ePop
+    dac eW
+    jsp eTf
+    XJSP(rwNote, 3)
+    lac i eW
+    jda eLive
+    lia
+    lac eF
+    add [FGCURS]
+    EWRA
+    lac eOk
+    sza i
+    jmp dbl
+    lac eW
+    jmp ret
+none, cla
+ret, dac eV
+    law i 1
+    add evlS
+    dac evlS
+    lac eV
+    jmp eOut
+    endloc
+
+// eTry1's frame, from the value stack's top word (eTf) or the one under
+// it (eTf2).
+// Returns the frame's offset in eF. AC is clobbered and IO is preserved.
+// Called via jsp.
+eTf,
+    local rtn
+    dap rtn
+    law i 1
+    jda eSk
+    and [07777]
+    dac eF
+rtn, jmp 0
+    endloc
+eTf2,
+    local rtn
+    dap rtn
+    law i 2
+    jda eSk
+    and [07777]
+    dac eF
+rtn, jmp 0
+    endloc
+
+// The first live record of the chain of the pattern's predicate, in the
+// THGOAL frame eF.
+// Returns the record, or 0, in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+eHead,
+    local rtn
+    dap rtn
+    lac eF
+    add [FGPAT]
+    ERDA
+    jda evlCar
+    dac i [hkA:6]
+    XJSP(hkDbF, 6)
+    lac i [hkA:6]
+rtn, jmp 0
+    endloc
+
+// The filter eFt of a try.
+// THTRUE passes all.
+// MUMBLE of a record is done as eMumble has it, where it can.
+// Any other filter is called on the candidate.
+// Takes the candidate in IO. Returns 1 in AC if it passes, else 0.
+// AC is the result and IO is clobbered. Called via jsp.
+eFilt, jda eIn
+    local call, yes
+    dio eW2
+    lac eFt
+    sad [KSYM+sTHTRUE]
+    jmp yes
+    sas [KSYM+sMUMBLE]
+    jmp call
+    lac eW2
+    and [KMASK]
+    sza
+    jmp call
+    jsp eMumble
+    sad [2]
+    jmp call
+    jmp eOut
+call, lac eFt
+    dac eFn
+    lio eW2
+    jsp eFun1
+    sza
+yes, law 1
+    jmp eOut
+    endloc
+
+// MUMBLE (smutil.148:509) of the record eW2, the filter.
+// WHO NIL passes all, HE passes any with a WHO, and a list (min max)
+// passes a WHO from min to max.
+// A fact that a color is a color, or a shape a shape, passes.
+// Returns 1 in AC if it passes, 0 if not, and 2 where the compiled MUMBLE
+// is needed.
+// That is when WHO is unbound, there is no record, or WHO or the WHO
+// property is not as these.
+// AC is the result and IO is clobbered. Called via jsp.
+eMumble,
+    local nprop, rng, yes, no, bail, rtn
+    dap rtn
+    lac i [vTab:3+vWHO]
+    sza i
+    jmp yes
+    sad [KUNB]
+    jmp bail
+    dac eWho
+    lac eW2
+    sza i
+    jmp bail
+    add [DPRED]
+    dac eCp
+    lac i eCp
+    sas [AIS]
+    jmp nprop
+    idx eCp
+    idx eCp
+    lac i eCp
+    sad [ACOLOR]
+    jmp yes
+    sad [ASHAPE]
+    jmp yes
+nprop, lac eW2
+    add [DWHO]
+    dac eCp
+    lac i eCp
+    dac eMn
+    lac eWho
+    sas [KSYM+sHE]
+    jmp rng
+    lac eMn
+    sza
+    jmp yes
+    jmp no
+rng, lac eMn
+    sza i
+    jmp no
+    and [KMASK]
+    sas [KINT]
+    jmp bail
+    lac eWho
+    and [KMASK]
+    sas [KCONS]
+    jmp bail
+    lac eWho
+    jda evlCar
+    dac eMlo
+    and [KMASK]
+    sas [KINT]
+    jmp bail
+    lac eWho
+    jda evlCdr
+    dac eCp2
+    and [KMASK]
+    sas [KCONS]
+    jmp bail
+    lac eCp2
+    jda evlCar
+    dac eMhi
+    and [KMASK]
+    sas [KINT]
+    jmp bail
+    // The three are taken as numbers.
+    // The answer is no if n < min or n > max.
+    lac eMn
+    jda eNum
+    dac eMn
+    lac eMlo
+    jda eNum
+    dac eMlo
+    lac eMn
+    sub eMlo
+    spa
+    jmp no
+    lac eMhi
+    jda eNum
+    sub eMn
+    spa
+    jmp no
+yes, law 1
+    jmp rtn
+no, cla
+    jmp rtn
+bail, law 2
+rtn, jmp 0
+    endloc
+
+// THMATCH1 of the goal's pattern eX and the record eW's fact, member by
+// member in place, its variables in THOLIST.
+// A $E member's value is put in its place.
+// A ? matches anything.
+// An unassigned variable, or a THNV, takes the record's member as a value.
+// An assigned one, or a constant, must be EQUAL to it.
+// The changes go on a trail, undone if a member fails, else THTREE's
+// THMUNG frame.
+// A $E pattern or a THRESTRICT is an error here.
+// Returns 1 in AC if they match, else 0. AC is the result and IO is
+// clobbered. Called via jsp.
+eMrec, jda eIn
+    local loop, elt, vr, set, fail, ok, ret, ret0
+    lac eX
+    jda eCarS
+    sad [KSYM+sTHEV]
+    jmp i [pgErr:6]
+    lac eX
+    jda eLen
+    dac eN
+    lac eW
+    add [DARITY]
+    dac eCp
+    lac i eCp
+    add [1]
+    sas eN
+    jmp ret0
+    lac eX
+    jda ePsh                   // the members still to do
+    lac eW
+    add [DPRED]
+    jda ePsh                   // the record's next member's address
+    jsp eTrB
+    ior [KINT]
+    jda ePsh                   // the trail's frame
+loop, law i 3
+    jda eSk
+    dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp ok
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    dac eX
+    jda eCarS
+    sas [KSYM+sTHEV]
+    jmp elt
+    lac eX
+    jda evlCdr
+    jda evlCar
+    dac eArgX
+    lac eOlist
+    dac eArgA
+    jsp eThval
+    dac eX
+elt, law i 2
+    jda eSk
+    dac eCp
+    add [1]
+    dac i eP
+    lac i eCp
+    dac eE2
+    lac eX
+    sad [KSYM+sQUEST]
+    jmp loop
+    jda eCarS
+    dac eH
+    sad [KSYM+sTHV]
+    jmp vr
+    sad [KSYM+sTHNV]
+    jmp vr
+    sad [KSYM+sTHRESTRICT]
+    jmp i [pgErr:6]
+    jsp eAv
+    lio eX
+    jda eEq
+    sza
+    jmp loop
+    jmp fail
+vr, lac eX
+    lio eOlist
+    jda eGal
+    dac eB
+    lac eH
+    sad [KSYM+sTHNV]
+    jmp set
+    lac eB
+    jda eVal
+    sad EUND
+    jmp set
+    dac eV
+    jsp eAv
+    lio eV
+    jda eEq
+    sza
+    jmp loop
+    jmp fail
+set, jsp eAv
+    lia
+    lac eB
+    jda eAsg
+    jmp loop
+fail, jsp ePop
+    and [07777]
+    jda eTrU
+    cla
+    jmp ret
+ok, jsp ePop
+    and [07777]
+    jda eTrE
+    law 1
+ret, dac eV
+    law i 2
+    add evlS
+    dac evlS
+    lac eV
+    jmp eOut
+ret0, cla
+    jmp eOut
+    endloc
+
+// The check made before eMrec's full match.
+// The goal frame eF's pattern and filter are compiled into ckAr, the
+// number of arguments a record must have, and ckTab, a pair for each of
+// the first two arguments that is a symbol (not ?).
+// A pair holds the offset of the record's word, and the symbol.
+// A record the check passes over is one eMrec would reject on the same
+// word, after an eFilt that is pure for THTRUE and MUMBLE, the only
+// filters compiled.
+// There is no check for a pattern with a $E or a THRESTRICT, which eMrec
+// reaches in order.
+// eTry1 makes it before each scan, about 100 instructions, since a match
+// that ran Lisp can have made another goal's.
+// Returns ckOn = 1 if the check applies, else 0. AC is clobbered and IO is
+// preserved. Called via jsp.
+// Its words eT2 to eT5 hold the pattern's members left, the member's
+// position (0 the predicate), the member, and the table's next word.
+eCk0,
+    local loop, nsym, next, fok, done, rtn
+    dap rtn
+    dzm ckOn
+    lac eF
+    add [FGFILT]
+    ERDA
+    sad [KSYM+sTHTRUE]
+    jmp fok
+    sas [KSYM+sMUMBLE]
+    jmp rtn
+fok, lac eF
+    add [FGPAT]
+    ERDA
+    dac eT2
+    dzm eT3
+    lac [ckTab:015]
+    dac eT5
+loop, lac eT2
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    lac eT2
+    jda evlCar
+    dac eT4
+    lac eT2
+    jda evlCdr
+    dac eT2
+    lac eT4
+    and [KMASK]
+    sas [KSYM]
+    jmp nsym
+    lac eT3
+    sza i
+    jmp next                    // the predicate, a symbol
+    lac eT4
+    sad [KSYM+sQUEST]
+    jmp next
+    lac eT3
+    sub [3]
+    sma
+    jmp next                    // the third is left to eMrec
+    lac eT3
+// R2WRONG builds the check with each symbol compared against the record's next word.
+#ifdef R2WRONG
+    add [DARG]
+#else
+    add [DPRED]
+#endif
+    dac i eT5
+    idx eT5
+    lac eT4
+    dac i eT5
+    idx eT5
+    jmp next
+nsym, sas [KCONS]
+    jmp next
+    lac eT4
+    jda evlCar
+    sad [KSYM+sTHEV]
+    jmp rtn
+    sad [KSYM+sTHRESTRICT]
+    jmp rtn
+next, idx eT3
+    jmp loop
+done, lac eT3
+    sub [1]
+    dac ckAr
+    dzm i eT5
+    law 1
+    dac ckOn
+rtn, jmp 0
+    endloc
+
+// The first record from eW on, in its chain, that the check eCk0 made does
+// not pass over.
+// A record is passed over if it has another number of arguments (an erased
+// one has DERASED), or a symbol where its word is another object or
+// constant.
+// Words of another kind are not decided here.
+// Returns the record, or 0 at the chain's end, in eW, which is unchanged
+// if there is no check.
+// AC is clobbered and IO is preserved. Called via jsp.
+// Its words eT4 (the record's word) and eT5 (the table's next).
+eScan,
+    local loop, a1, a2, obj, con, cmp, next, rtn
+    dap rtn
+    lac ckOn
+    sza i
+    jmp rtn
+loop, lac eW
+    sza i
+    jmp rtn
+    add [DARITY]
+    dac eCp
+    lac i eCp
+    sas ckAr
+    jmp next
+    lac [ckTab:015]
+    dac eT5
+a1, lac i eT5
+    sza i
+    jmp rtn
+    add eW
+    dac eCp
+    idx eT5
+    lac i eCp
+    dac eT4
+    and [TAGS]
+    sad [TOBJ]
+    jmp obj
+    sad [TCON]
+    jmp con
+a2, idx eT5
+    jmp a1
+obj, lac eT4
+    and [07777]
+    add [gObjSym:5]
+    jmp cmp
+con, lac eT4
+    and [07777]
+    add [gConSym:5]
+cmp, dac eCp
+    lac i eCp
+    sad i eT5
+    jmp a2
+next, lac i eW
+    dac eW
+    jmp loop
+rtn, jmp 0
+    endloc
+
+// A record's member as a value (psAtom's), the value stack synced first.
+// Takes the member in eE2. Returns the value in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+eAv,
+    local rtn
+    dap rtn
+    lac eE2
+    dac i [hkA:6]
+    ESYNC
+    XJSP(hkAtomF, 6)
+    lac i [hkA:6]
+rtn, jmp 0
+    endloc
+
+// THAPPLY1 (plnr.182:278) of the theorem eThw, (THCONSE variables
+// pattern . body), to the goal's pattern eX.
+// Its variables are bound (eThbind) and the two patterns matched
+// (eMatch1).
+// On a match, THPROG's frame of its body is made, its first expression
+// THVAL's next.
+// Otherwise THALIST goes back to THOLIST and THTREE's top frame is popped,
+// the stack cut to the start if it was the bindings'.
+// Returns 1 in AC on a match, else 0. AC is the result and IO is
+// clobbered. Called via jsp.
+eApply1, jda eIn
+    local no, z, ret
+    lac eThw
+    jda ePsh
+    lac eX
+    jda ePsh
+    lac eTop
+    ior [KINT]
+    jda ePsh
+    lac eThw
+    jda evlCdr
+    jda evlCar
+    lia
+    jsp eThbind
+    law i 2
+    jda eSk
+    dac eX
+    law i 3
+    jda eSk
+    jda evlCdr
+    jda evlCdr
+    jda evlCar
+    dac eY
+    jsp eMatch1
+    sza i
+    jmp no
+    law i 3
+    jda eSk
+    jda evlCdr
+    jda evlCdr
+    dac eL
+    lac [KSYM+sTHPROG]
+    jda eFrame
+    lac eL
+    jda ePushW
+    cla
+    jda ePushW
+    lac eL
+    jda ePushW
+    jsp eProga
+    law 1
+    jmp ret
+no, lac eOlist
+    dac i EALIST
+    jsp ePopt
+    dac eFo2
+    ERDA
+    sas [KSYM+sTHREMBIND]
+    jmp z
+    law i 1
+    jda eSk
+    and [07777]
+    dac eT
+    lac eFo2
+    sub eT
+    spa
+    jmp z
+    lac eT
+    dac eTop
+z, cla
+ret, dac eV
+    law i 3
+    add evlS
+    dac evlS
+    lac eV
+    jmp eOut
+    endloc
+
+// THMATCH1 (plnr.182:1226) of eX, the goal's pattern, its variables in
+// THOLIST, and eY, the theorem's, its variables in THALIST.
+// A $E pattern's value is put in its place.
+// Lengths that differ are no match.
+// Then the members are matched one by one (eM2), the changes on a trail,
+// undone if a member fails, else THTREE's THMUNG frame.
+// Returns 1 in AC if they match, else 0. AC is the result and IO is
+// clobbered. Called via jsp.
+eMatch1, jda eIn
+    local m1, loop, ok, fl, nil, ret
+    lac eY
+    jda ePsh
+    lac eX
+    jda eCarS
+    sas [KSYM+sTHEV]
+    jmp m1
+    lac eX
+    jda evlCdr
+    jda evlCar
+    dac eArgX
+    lac eOlist
+    dac eArgA
+    jsp eThval
+    dac eX
+m1, lac eX
+    jda ePsh
+    lac eX
+    jda eLen
+    dac eN
+    law i 2
+    jda eSk
+    jda eLen
+    sas eN
+    jmp nil
+    jsp eTrB
+    ior [KINT]
+    jda ePsh
+loop, law i 2
+    jda eSk
+    dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp ok
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    dac eX2
+    law i 3
+    jda eSk
+    dac eL
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    dac eY2
+    jsp eM2
+    sza
+    jmp loop
+fl, jsp ePop
+    and [07777]
+    jda eTrU
+    jmp nil
+ok, jsp ePop
+    and [07777]
+    jda eTrE
+    law 1
+    jmp ret
+nil, cla
+ret, dac eV
+    law i 2
+    add evlS
+    dac evlS
+    lac eV
+    jmp eOut
+    endloc
+
+// THMATCH2 (plnr.182:1048) of eX2, the goal's member, its variables in
+// THOLIST, and eY2, the theorem's, in THALIST.
+// Its ERR is no match.
+// A $E's value is put in its place.
+// A ? matches anything.
+// Two constants must be EQUAL.
+// An unassigned variable, or a THNV, takes the other side, and of two
+// variables the theorem's becomes the goal's.
+// An assigned one must be EQUAL to the other side.
+// Returns 1 in AC if they match, else 0. AC is the result and IO is
+// clobbered. Called via jsp.
+eM2, jda eIn
+    local m1, m2, xv, xa, xb, yv, ya, yb, yc, x3, x4, x5, y4, no, yes
+    lac eY2
+    jda ePsh
+    lac eX2
+    jda eCarS
+    sas [KSYM+sTHEV]
+    jmp m1
+    lac eX2
+    jda evlCdr
+    jda evlCar
+    dac eArgX
+    lac eOlist
+    dac eArgA
+    jsp eThval
+    dac eX2
+m1, jsp ePop
+    dac eY2
+    lac eX2
+    jda ePsh
+    lac eY2
+    jda eCarS
+    sas [KSYM+sTHEV]
+    jmp m2
+    lac eY2
+    jda evlCdr
+    jda evlCar
+    dac eArgX
+    lac i EALIST
+    dac eArgA
+    jsp eThval
+    dac eY2
+m2, jsp ePop
+    dac eX2
+    sad [KSYM+sQUEST]
+    jmp yes
+    lac eY2
+    sad [KSYM+sQUEST]
+    jmp yes
+    // The variables' bindings, 0777777 for none.
+    lac eX2
+    dac eVx
+    lio eOlist
+    jsp eVp
+    dac eBx
+    lac eH
+    dac eCx
+    lac eY2
+    dac eVx
+    lio i EALIST
+    jsp eVp
+    dac eBy
+    lac eH
+    dac eCy
+    lac eBx
+    sas [0777777]
+    jmp xv
+    lac eBy
+    sas [0777777]
+    jmp xv
+    lac eX2
+    lio eY2
+    jda eEq
+    jmp eOut
+xv, lac eBx
+    sad [0777777]
+    jmp yv
+    lac eCx
+    sad [KSYM+sTHNV]
+    jmp xa
+    lac eBx
+    jda eVal
+    sas EUND
+    jmp yv
+xa, lac eBy
+    sad [0777777]
+    jmp xb
+    lac eBy
+    jda eVal
+    lia
+    lac eBx
+    jda eAsg
+    lio eBx
+    lac eBy
+    jda eAlias
+    jmp yes
+xb, lio eY2
+    lac eBx
+    jda eAsg
+    jmp yes
+yv, lac eBy
+    sad [0777777]
+    jmp x3
+    lac eCy
+    sad [KSYM+sTHNV]
+    jmp ya
+    lac eBy
+    jda eVal
+    sas EUND
+    jmp x3
+ya, lac eBx
+    sad [0777777]
+    jmp yb
+    lac eBx
+    jda eVal
+    lia
+    jmp yc
+yb, lio eX2
+yc, lac eBy
+    jda eAsg
+    jmp yes
+x3, lac eBx
+    sad [0777777]
+    jmp y4
+    lac eBy
+    sad [0777777]
+    jmp x4
+    lac eBy
+    jda eVal
+    lia
+    jmp x5
+x4, lio eY2
+x5, dio eV
+    lac eBx
+    jda eVal
+    lio eV
+    jda eEq
+    sza
+    jmp yes
+y4, lac eBy
+    sad [0777777]
+    jmp no
+    lac eBy
+    jda eVal
+    lio eX2
+    jda eEq
+    sza
+    jmp yes
+no, cla
+    jmp eOut
+yes, law 1
+    jmp eOut
+    endloc
+
+// THMATCH2's variable.
+// It is the binding of a THV's or THNV's in the bindings IO starts, or
+// none.
+// A THRESTRICT is an error.
+// Takes the member in eVx and the bindings' link in IO. Returns the
+// binding's offset, or 0777777, in AC, and the member's CAR in eH.
+// AC is the result and IO is clobbered. Called via jsp.
+eVp,
+    local vr, rtn
+    dap rtn
+    dio eVl
+    lac eVx
+    jda eCarS
+    dac eH
+    sad [KSYM+sTHV]
+    jmp vr
+    sad [KSYM+sTHNV]
+    jmp vr
+    sad [KSYM+sTHRESTRICT]
+    jmp i [pgErr:6]
+    lac [0777777]
+    jmp rtn
+vr, lac eVx
+    lio eVl
+    jda eGal
+rtn, jmp 0
+    endloc
+
+// THPROG, THAND, THOR, THCOND and THNOT.
+
+// THBIND (plnr.182:435) of the variables' list in IO.
+// THOLIST is set to THALIST.
+// Each variable is bound in THALIST, a name unassigned, a (name form) to
+// the form's value.
+// Then the THREMBIND frame of THOLIST and the bindings' start is made.
+// An empty list makes no frame.
+// A THRESTRICT is an error here.
+// AC and IO are clobbered. Called via jsp.
+eThbind, jda eIn
+    local loop, pair, fin
+    lac i EALIST
+    dac eOlist
+    dio eL
+    lac eL
+    sza i
+    jmp eOut
+    lac eTop
+    ior [KINT]
+    jda ePsh
+    lac eL
+    jda ePsh
+loop, law i 1
+    jda eSk
+    dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp fin
+    lac eL
+    jda evlCdr
+    dac i eP
+    lac eL
+    jda evlCar
+    dac eX
+    and [KMASK]
+    sad [KCONS]
+    jmp pair
+    lio EUND
+    lac eX
+    jda eBind
+    jmp loop
+pair, lac eX
+    jda evlCar
+    sad [KSYM+sTHRESTRICT]
+    jmp i [pgErr:6]
+    lac eX
+    jda ePsh
+    lac eX
+    jda evlCdr
+    jda evlCar
+    lia
+    jsp eEv
+    dac eV
+    jsp ePop
+    jda evlCar
+    lio eV
+    jda eBind
+    jmp loop
+fin, law i 1
+    add evlS
+    dac evlS
+    jsp ePop
+    and [07777]
+    dac eT
+    lac [KSYM+sTHREMBIND]
+    jda eFrame
+    lac eOlist
+    jda ePushW
+    lac eT
+    ior [KINT]
+    jda ePushW
+    jmp eOut
+    endloc
+
+// THPROG (plnr.182:1497) binds its variables, then makes its frame (the
+// body as its position and its tags), its first expression THVAL's next.
+// Takes the arguments in IO. Returns THPROGA's value in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thProg, jda eIn
+    dio eA
+    lac eA
+    jda ePsh
+    lac eA
+    jda evlCar
+    lia
+    jsp eThbind
+    jsp ePop
+    dac eA
+    lac [KSYM+sTHPROG]
+    jda eFrame
+    lac eA
+    jda ePushW
+    cla
+    jda ePushW
+    lac eA
+    jda ePushW
+    jsp eProga
+    jmp eOut
+
+// THPROGA (plnr.182:1525) on THTREE's top frame.
+// Its position is moved on and its next expression is THVAL's next, a tag
+// as (THTAG tag).
+// At the end, the frame is popped.
+// Returns THVALUE, or at the end THNOVAL, in AC. AC is the result and IO
+// is clobbered. Called via jsp.
+eProga,
+    local more, lst, rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF2
+    add [FPPOS]
+    ERDA
+    jda evlCdr
+    dac eL2
+    sza
+    jmp more
+    jsp ePopt
+    lac [KSYM+sTHNOVAL]
+    jmp rtn
+more, lac eL2
+    jda evlCar
+    dac eX3
+    and [KMASK]
+    sad [KCONS]
+    jmp lst
+    ESYNC
+    law 2
+    dac i [fA:6]
+    XJSP(fRsv, 6)
+    cla
+    lia
+    lac eX3
+    jda eCons
+    lia
+    lac [KSYM+sTHTAG]
+    jda eCons
+    dac eX3
+lst, lac eX3
+    dac eExp
+    lio eL2
+    lac eF2
+    add [FPPOS]
+    EWRA
+    lac i EVALUE
+rtn, jmp 0
+    endloc
+
+// THBRANCH (plnr.182:496), THTREE's top frame THPROG's or THAND's.
+// Unless at its end, a branch record of THBRANCH, THABRANCH, the position
+// and the frame's last record is made the frame's newest.
+// If THBRANCH is the frame itself, none is made.
+// THBRANCH is NIL after.
+// AC and IO are clobbered. Called via jsp.
+eBr,
+    local rec, rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF3
+    add [FPPOS]
+    ERDA
+    dac eL3
+    jda evlCdr
+    sza i
+    jmp rtn
+    lac eBranch
+    sas eTree
+    jmp rec
+    dzm eBranch
+    jmp rtn
+rec, lac eTop
+    dac eT8
+    lac eBranch
+    jda ePushW
+    lac eAbranch
+    jda ePushW
+    lac eL3
+    jda ePushW
+    lac eF3
+    add [FPRECS]
+    ERDA
+    jda ePushW
+    lac eT8
+    ior [KINT]
+    lia
+    lac eF3
+    add [FPRECS]
+    EWRA
+    dzm eBranch
+rtn, jmp 0
+    endloc
+
+// THBRANCHUN (plnr.182:529), and THPROGF and THANDF.
+// The frame's newest branch record is brought back, THTREE and THALIST
+// are put as they were there, and the stack is cut to it.
+// With none, the frame is popped and the stack cut to it.
+// Returns NIL in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+eBrun,
+    local pop, rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF3
+    add [FPRECS]
+    ERDA
+    sza i
+    jmp pop
+    and [07777]
+    dac eT8
+    add [2]
+    ERDA
+    lia
+    lac eF3
+    add [FPPOS]
+    EWRA
+    lac eT8
+    add [3]
+    ERDA
+    lia
+    lac eF3
+    add [FPRECS]
+    EWRA
+    lac eT8
+    add [1]
+    ERDA
+    dac i EALIST
+    lac eT8
+    ERDA
+    dac eTree
+    lac eT8
+    dac eTop
+    cla
+    jmp rtn
+pop, jsp ePopCut
+rtn, jmp 0
+    endloc
+
+// THPROGT does THBRANCH, then THPROGA.
+// Returns THPROGA's value in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thProgt,
+    local rtn
+    dap rtn
+    jsp eBr
+    jsp eProga
+rtn, jmp 0
+    endloc
+
+// THAND (plnr.182:76) gives T for no forms, else makes its frame, its
+// first form THVAL's next.
+// THANDT pops the frame at the frame's last form, else does THBRANCH and
+// takes the next.
+// THAND takes the arguments in IO.
+// THAND returns the first form in AC, and THANDT returns THVALUE.
+// AC is the result and IO is clobbered. Called via jsp.
+thAnd,
+    local mk, rtn
+    dap rtn
+    dio eA
+    lac eA
+    sza
+    jmp mk
+    lac [KSYM]
+    jmp rtn
+mk, lac [KSYM+sTHAND]
+    jda eFrame
+    lac eA
+    jda ePushW
+    cla
+    jda ePushW
+    lac eA
+    jda evlCar
+    dac eExp
+rtn, jmp 0
+    endloc
+thAndt,
+    local pop, ret, rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF2
+    add [FPPOS]
+    ERDA
+    jda evlCdr
+    sza i
+    jmp pop
+    dac eL4
+    jsp eBr
+    lac eL4
+    jda evlCar
+    dac eExp
+    lio eL4
+    lac eF2
+    add [FPPOS]
+    EWRA
+    jmp ret
+pop, jsp ePopt
+ret, lac i EVALUE
+rtn, jmp 0
+    endloc
+
+// THOR (plnr.182:1466) gives NIL for no forms, else makes its frame, its
+// first form THVAL's next.
+// THCOND (plnr.182:555) makes its frame, its first clause's test THVAL's
+// next.
+// THCONDT makes the frame the clause's THAND.
+// THOR and THCOND take the arguments in IO.
+// THOR and THCOND return the form, or NIL, in AC, and THCONDT returns
+// THVALUE.
+// AC is the result and IO is clobbered. Called via jsp.
+thOr,
+    local rtn
+    dap rtn
+    dio eA
+    lac eA
+    sza i
+    jmp rtn
+    lac [KSYM+sTHOR]
+    jda eFrame
+    lac eA
+    jda ePushW
+    lac eA
+    jda evlCar
+    dac eExp
+rtn, jmp 0
+    endloc
+thCond,
+    local rtn
+    dap rtn
+    dio eA
+    lac [KSYM+sTHCOND]
+    jda eFrame
+    lac eA
+    jda ePushW
+    cla
+    jda ePushW
+    lac eA
+    jda evlCar
+    jda evlCar
+    dac eExp
+rtn, jmp 0
+    endloc
+thCondt,
+    local rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF2
+    lio [KSYM+sTHAND]
+    EWRA
+    lac eF2
+    add [2]
+    ERDA
+    jda evlCar
+    lia
+    lac eF2
+    add [2]
+    EWRA
+    lac i EVALUE
+rtn, jmp 0
+    endloc
+
+// THOR2 (plnr.182:1476), THORF's and THCONDF's.
+// With a message failing back past it, or no clause left, the frame is
+// popped and the stack cut to it.
+// Otherwise the stack is cut to the frame's end, and the next clause's
+// form (THOR) or test (THCOND) is THVAL's next.
+// Returns the form, or NIL, in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thOrf,
+    local rtn
+    dap rtn
+    law 1
+    dac eOrP
+    jsp eOr2
+rtn, jmp 0
+    endloc
+thCondf,
+    local rtn
+    dap rtn
+    dzm eOrP
+    jsp eOr2
+rtn, jmp 0
+    endloc
+eOr2,
+    local cl, more, pop, rtn
+    dap rtn
+    lac eTree
+    and [07777]
+    dac eF2
+    lac eMsgOn
+    sza
+    jmp pop
+    lac eF2
+    add [2]
+    ERDA
+    sza i
+    jmp pop
+    jda evlCdr
+    sza i
+    jmp pop
+    dac eL2
+    lac eF2
+    add [3]
+    dac eTop
+    lac eOrP
+    sza
+    jmp cl
+    idx eTop
+cl, lio eL2
+    lac eF2
+    add [2]
+    EWRA
+    lac eL2
+    jda evlCar
+    dac eX3
+    lac eOrP
+    sza
+    jmp more
+    lac eX3
+    jda evlCar
+    dac eX3
+more, lac eX3
+    dac eExp
+    jmp rtn
+pop, jsp ePopCut
+rtn, jmp 0
+    endloc
+
+// THSUCCEED (plnr.182:1883) of a frame's kind and the rest (eK2, eR2),
+// and the forms that are it, THSUCCEED, THRETURN (THPROG) and THGO
+// (THTAG).
+// THBRANCH is set to THTREE and THABRANCH to THALIST.
+// Then frames are popped to the first of the kind, a THREMBIND's THALIST
+// being taken on the way.
+// The value is the rest's first form's or THNOVAL.
+// For THTAG, a THPROG with the tag is resumed there (THPROGT) instead.
+// THEOREM is THPROG, and none is an error.
+// Takes the arguments (the forms) in IO. Returns the value in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thSucc1,
+    local s1
+    dac eRs
+    dio eA
+    lac eA
+    sza
+    jmp s1
+    lac [KSYM]
+    jmp i eRs
+s1, lac eA
+    jda evlCar
+    dac eK2
+    lac eA
+    jda evlCdr
+    dac eR2
+    lac eRs
+    jmp eSucc
+    endloc
+thReturn, dac eRs
+    dio eR2
+    lac [KSYM+sTHPROG]
+    dac eK2
+    lac eRs
+    jmp eSucc
+thGo, dac eRs
+    dio eR2
+    lac [KSYM+sTHTAG]
+    dac eK2
+    lac eRs
+eSucc, jda eIn
+    local loop, mloop, tag, pop, rb, hit, noval
+    lac eK2
+    sad [KSYM+sTHEOREM]
+    lac [KSYM+sTHPROG]
+    dac eK2
+    lac eTree
+    dac eBranch
+    lac i EALIST
+    dac eAbranch
+loop, lac eTree
+    sza i
+    jmp i [pgErr:6]
+    and [07777]
+    dac eF2
+    ERDA
+    dac eNm
+    sad [KSYM+sTHREMBIND]
+    jmp rb
+    sad eK2
+    jmp hit
+    lac eK2
+    sas [KSYM+sTHTAG]
+    jmp pop
+    lac eNm
+    sas [KSYM+sTHPROG]
+    jmp pop
+    lac eR2
+    jda evlCar
+    dac eX
+    lac eF2
+    add [FPTAGS]
+    ERDA
+mloop, dac eL
+    and [KMASK]
+    sas [KCONS]
+    jmp pop
+    lac eL
+    jda evlCar
+    sad eX
+    jmp tag
+    lac eL
+    jda evlCdr
+    jmp mloop
+tag, lio eL
+    cla
+    jda eCons
+    lia
+    lac eF2
+    add [FPPOS]
+    EWRA
+    jsp thProgt
+    jmp eOut
+pop, jsp ePopt
+    jmp loop
+rb, lac eF2
+    add [2]
+    ERDA
+    dac i EALIST
+    jsp ePopt
+    jmp loop
+hit, jsp ePopt
+    lac eR2
+    sza i
+    jmp noval
+    jda evlCar
+    lia
+    jsp eEv
+    jmp eOut
+noval, lac [KSYM+sTHNOVAL]
+    jmp eOut
+    endloc
+
+// THFAIL (plnr.182:678) of a frame's kind.
+// The message, the frame's parent and the second argument fail back to the
+// first such frame (eRun's MFAIL).
+// THEOREM is THPROG, and none, THTAG, THINF and THMESSAGE are errors here.
+// No arguments gives NIL.
+// Takes the arguments in IO. Returns NIL in AC. AC is the result and IO is
+// clobbered. Called via jsp.
+thFail,
+    local loop, got, rtn
+    dap rtn
+    dio eA
+    lac eA
+    sza i
+    jmp rtn
+    jda evlCar
+    sad [KSYM+sTHTAG]
+    jmp i [pgErr:6]
+    sad [KSYM+sTHINF]
+    jmp i [pgErr:6]
+    sad [KSYM+sTHMESSAGE]
+    jmp i [pgErr:6]
+    sad [KSYM+sTHEOREM]
+    lac [KSYM+sTHPROG]
+    dac eK2
+    lac eTree
+loop, sza i
+    jmp i [pgErr:6]
+    and [07777]
+    dac eF2
+    ERDA
+    sad eK2
+    jmp got
+    lac eF2
+    add [1]
+    ERDA
+    jmp loop
+got, lac eF2
+    add [1]
+    ERDA
+    dac eMsgF
+    lac eA
+    jda evlCdr
+    jda evlCar
+    dac eMsgV
+    law 1
+    dac eMsgOn
+    cla
+rtn, jmp 0
+    endloc
+
+// The far entries, for the cold half (plcold.ac, bank 011).
+
+// Each calls the routine its name gives and returns to the full address
+// in AC, its value in AC, and IO as the routine leaves it.
+// Those of a routine called via jda take its argument in their first word
+// (XJDA), and the others are called via jsp (XJSP).
+// None is entered again before it returns, since each of these routines
+// runs no Lisp.
+eInF, 0
+    dac eFr
+    lac eInF
+    jda eIn
+    jmp i eFr
+eConsF, 0
+    dac eFr
+    lac eConsF
+    jda eCons
+    jmp i eFr
+eEqF, 0
+    dac eFr
+    lac eEqF
+    jda eEq
+    jmp i eFr
+eNumF, 0
+    dac eFr
+    lac eNumF
+    jda eNum
+    jmp i eFr
+eMkF, 0
+    dac eFr
+    lac eMkF
+    jda eMk
+    jmp i eFr
+eAd1F, 0
+    dac eFr
+    lac eAd1F
+    jda eAd1
+    jmp i eFr
+eCarSF, 0
+    dac eFr
+    lac eCarSF
+    jda eCarS
+    jmp i eFr
+eValF, 0
+    dac eFr
+    lac eValF
+    jda eVal
+    jmp i eFr
+eSlotF, 0
+    dac eFr
+    lac eSlotF
+    jda eSlot
+    jmp i eFr
+eGalF, 0
+    dac eFr
+    lac eGalF
+    jda eGal
+    jmp i eFr
+eFindF, 0
+    dac eFr
+    lac eFindF
+    jda eFind
+    jmp i eFr
+eFrameF, 0
+    dac eFr
+    lac eFrameF
+    jda eFrame
+    jmp i eFr
+eAsgF, 0
+    dac eFr
+    lac eAsgF
+    jda eAsg
+    jmp i eFr
+eTrAF, 0
+    dac eFr
+    lac eTrAF
+    jda eTrA
+    jmp i eFr
+ePoptF, dac eFr
+    jsp ePopt
+    jmp i eFr
+ePopCutF, dac eFr
+    jsp ePopCut
+    jmp i eFr
+eTrBF, dac eFr
+    jsp eTrB
+    jmp i eFr
+ePushWF, 0
+    dac eFr
+    lac ePushWF
+    jda ePushW
+    jmp i eFr
+eProgaF, dac eFr
+    jsp eProga
+    jmp i eFr
+
+// The engine's words.
+
+// The registers.
+// NREG are saved by each level, then the level's depth and THNOT's lists.
+// They are the collector's roots, NROOT words.
+eRegs,
+eTree, 0                    // THTREE, the top frame's link, or 0
+eBranch, 0                  // THBRANCH
+eAbranch, 0                 // THABRANCH
+eOlist, 0                   // THOLIST
+eExp, 0                     // THEXP, the next expression, or 0
+eE, 0                       // THE, the one being evaluated
+eMsgF, 0                    // THMESSAGE's link it fails back to
+eMsgV, 0                    // and its expression
+eBase, 0                    // the level's start on the stack
+eMsgOn, 0                   // 1 while there is a message
+eLev, 0                     // the levels under way
+eKfa, 0                     // THNOT's (THFAIL THAND)
+eKsu, 0                     // and ((THSUCCEED))
+eTop, 0                     // the stack's next free word, an offset
+eArgX, 0                    // THVAL's form
+eArgA, 0                    // and its bindings
+eArgT, 0                    // THVARSUBST's thy
+eFn, 0                      // eFun1's function
+eNat, 0                     // ePrim1's operation word
+eOp, 0                      // the stub's operation, scratch
+eRv, 0                      // eOut's value
+eRp, 0                      // and return
+eRr, 0                      // eReset's return
+eRs, 0                      // a form's return, scratch
+eXp, 0                      // an EXPR's marker's address
+eFt, 0                      // a try's filter
+eP, 0                       // pointers and values, scratch
+eP2, 0
+eQ, 0
+eQ2, 0
+eK, 0
+eK2, 0
+eR2, 0
+eT, 0
+eT2, 0
+eT3, 0
+eT4, 0
+eT5, 0
+eT6, 0
+eT7, 0
+eT8, 0
+eTb, 0
+eTp, 0
+eTq, 0
+eTh, 0
+eFo, 0
+eFo2, 0
+eF, 0
+eF2, 0
+eF3, 0
+eL, 0
+eL2, 0
+eL3, 0
+eL4, 0
+eU, 0
+eV, 0
+eN, 0
+eNm, 0
+eX, 0
+eX2, 0
+eX3, 0
+eY, 0
+eY2, 0
+eTy, 0
+eH, 0
+eB, 0
+eBx, 0
+eBy, 0
+eCx, 0
+eCy, 0
+eVx, 0
+eVl, 0
+eA, 0
+eC, 0
+eC1, 0
+eR, 0
+eCnt, 0
+eCur, 0
+eRest, 0
+eOth, 0
+eDbf, 0
+eW, 0
+eW2, 0
+eE2, 0
+eThm, 0
+eThw, 0
+eOk, 0
+eOrP, 0
+eLo, 0
+eHi, 0
+eFl, 0
+eG, 0
+eWho, 0
+eMn, 0
+eMlo, 0
+eMhi, 0
+eCp, 0
+eCp2, 0
+eLn, 0
+eAl, 0
+eAc, 0
+eRc, 0
+eEy, 0
+eJv, 0                      // a form's routine, by full address (eForm, eRun)
+eFr, 0                      // a far entry's return
+ckOn, 0                     // eCk0's check, 1 if it applies
+ckAr, 0                     // the number of arguments a record must have
+ckTab, 0; 0; 0; 0; 0       // offset and symbol, up to two, ended by 0

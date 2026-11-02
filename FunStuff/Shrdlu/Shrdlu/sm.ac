@@ -1,0 +1,113 @@
+// The structures printer for /SM. Prints the last sentence's semantic structures, one a line.
+// Each line is the structure's name, a colon, and its properties as its list has them,
+// newest first. Each property is its indicator, a space and its value.
+// For PARSENODE the value printed is the node, the first of its value.
+// Properties are separated by semicolons. Names print as the replies print them,
+// without MacLisp's slashes. The native SMREC (pgsys.ac) keeps BUILD's values in psSm,
+// in the order made.
+// This is the drum overlay sm (shrdlu.am1), sharing the window cmdWin
+// with the debugging commands. goals.ac's s2Exec calls it for cmds.ac's
+// RQSM, and ends the reply. read.ac, READ's line, is in the overlay too.
+// Bank 012, eem on. Needs shrdlu.ah, semantics.ac and pgsys.ac (psSm,
+// PRIN, PUTC).
+
+    export smPrint
+
+// Prints the structures. Has no arguments or return values.
+// AC and IO are clobbered.
+// Entered via %%ovcall, with the return address in AC.
+smPrint, dac smRtn
+    lac [psSm:012]
+    dac smP
+smNext, lac i smP
+    sza i
+    jmp smDone
+    dac smV
+    PRIN
+    lac smV
+    and [KMASK]
+    sas [KNODE]
+    jmp smEol
+    law ':'
+    PUTC
+    // The node's registers past its fields hold its property list.
+    lac smV
+    and [077777]
+    ior [PCELLS]
+    add [PREGS]
+    dac smQ
+    lac i smQ
+    dac smL
+    dzm smSep
+smProp, lac smL
+    and [KMASK]
+    sas [KCONS]
+    jmp smEol
+    lac smL
+    jda smCell
+    lac i smQ
+    dac smInd
+    idx smQ
+    lac i smQ
+    jda smCell
+    lac i smQ
+    dac smV
+    idx smQ
+    lac i smQ
+    dac smL
+    lac smSep
+    sza i
+    jmp smSp
+    law ';'
+    PUTC
+smSp, law ' '
+    PUTC
+    law 1
+    dac smSep
+    lac smInd
+    PRIN
+    law ' '
+    PUTC
+    lac smInd
+    sas [KSYM+sPARSENODE]
+    jmp smVal
+    lac smV
+    and [KMASK]
+    sas [KCONS]
+    jmp smVal
+    lac smV
+    jda smCell
+    lac i smQ
+    dac smV
+smVal, lac smV
+    PRIN
+    jmp smProp
+smEol, law 012
+    PUTC
+    idx smP
+    jmp smNext
+smDone, eem
+    jmp i smRtn
+
+// Puts a cell's full address into smQ.
+// Takes the cell in AC. Returns nothing.
+// AC is clobbered and IO is preserved.
+// Called via jda.
+smCell,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac smCell
+    and [077777]
+    ior [PCELLS]
+    dac smQ
+rtn, jmp 0
+    endloc
+
+smRtn, 0                    // the full address to return to
+smP, 0                      // psSm's word for the next structure
+smV, 0                      // the structure, then a property's value
+smQ, 0                      // a register's or a cell's full address
+smL, 0                      // the properties still to print
+smInd, 0                    // a property's indicator
+smSep, 0                    // nonzero past the first property

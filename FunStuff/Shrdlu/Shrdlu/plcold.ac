@@ -1,0 +1,1057 @@
+// Micro-Planner's engine, its cold half.
+// It holds the forms a sentence seldom runs (THNOT, THFIND, THAMONG,
+// THSETQ, THVSETQ, THASVAL, THTAG, THMESSAGE, THURPLACA and D, THPUTPROP
+// and THRPLACA and D) and the tables of the forms and the frames' kinds.
+// THASSERT is in bank 3, learn.ac.
+// planner.ac has the core and the design.
+// Each form is as the core's routines are, entered via jsp from the
+// core's dispatch (eForm, eRun's kinds' table) or eExpr, and returning to
+// the full address in AC, through eOut for those that start with eInF.
+// The core's words are reached by full address.
+// Its routines are reached through its far entries (eInF, eConsF and the
+// like), but for those the forms call most, which are copied here (kCar,
+// kCdr, kPsh, kPop, kSk, kRd, kWr, kPushW).
+// Its recursive routines, which return through eOut, are called directly
+// (eThval, eEv, eVsub, eThbind).
+// The words here are the forms' and are clobbered by any such call, as the
+// core's are.
+// Bank 011 after the constant cells and the value stack, with the drop
+// (drop.ac) before it. The heap's cells in this bank follow it (HEAP2,
+// shrdlu.ah).
+// Eem on. Needs shrdlu.ah, semantics.ac's defines, pgm.ac's far entries,
+// eval.ac and planner.ac.
+
+// ESYNC from this bank.
+#define QSYNC lac i [evlS:015]; dac i [pgSp:6]
+
+// The core's small routines, copied.
+
+// CAR (kCar) and CDR (kCdr) of a list or NIL, as eval.ac's evlCar and
+// evlCdr. An atom other than NIL is a Lisp error.
+// Take the list in AC. Return its CAR or CDR in AC.
+// AC is the result and IO is preserved. Called via jda.
+kCar,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac kCar
+    sza i
+    jmp rtn
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac kCar
+    ior [PCELLS]
+    dac kCp
+    lac i kCp
+rtn, jmp 0
+    endloc
+kCdr,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac kCdr
+    sza i
+    jmp rtn
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac kCdr
+    ior [PCELLS]
+    add [1]
+    dac kCp
+    lac i kCp
+rtn, jmp 0
+    endloc
+
+// The value stack, as the core's ePsh, ePop and eSk.
+// A word is pushed (kPsh), the top word popped (kPop), or the word an
+// offset under the top read (kSk), with kP its address.
+// The offset is given as minus the offset in AC, so -1 is the top word.
+// kPsh takes the word in AC and kSk takes minus the offset in AC.
+// kPop and kSk return the word in AC.
+// AC is the result and IO is preserved. Called via jda (kPsh, kSk) or jsp
+// (kPop).
+kPsh,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [evlS:015]
+    dac kSp
+    lac kPsh
+    dac i kSp
+    idx i [evlS:015]
+rtn, jmp 0
+    endloc
+kPop,
+    local rtn
+    dap rtn
+    law i 1
+    add i [evlS:015]
+    dac i [evlS:015]
+    dac kSp
+    lac i kSp
+rtn, jmp 0
+    endloc
+kSk,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac kSk
+    add i [evlS:015]
+    dac kP
+    lac i kP
+rtn, jmp 0
+    endloc
+
+// The engine's stack, as the core's eRd, eWr and ePushW.
+// The word at an offset is read (kRd) or written (kWr), with kP its full
+// address, or a word is pushed (kPushW), giving NO ROOM past the stack's
+// end.
+// kRd and kWr take the offset in AC, kPushW the word in AC, and kWr the
+// word in IO.
+// kRd returns the word in AC.
+// AC is the result and IO is preserved. Called via jda.
+kRd,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac kRd
+    add [ESTK]
+    dac kP
+    lac i kP
+rtn, jmp 0
+    endloc
+kWr,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac kWr
+    add [ESTK]
+    dac kP
+    dio i kP
+rtn, jmp 0
+    endloc
+kPushW,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [eTop:015]
+    sub [ELEN]
+    sma
+    jmp i [pgRoom:6]
+    lac i [eTop:015]
+    add [ESTK]
+    dac kP
+    lac kPushW
+    dac i kP
+    idx i [eTop:015]
+rtn, jmp 0
+    endloc
+
+// The forms.
+
+// THNOT (plnr.182:1456) is (THCOND (form (THFAIL THAND)) ((THSUCCEED)))
+// for THVAL to run next.
+// Its two constant lists are made once a sentence (eKfa, eKsu).
+// Takes the arguments in IO. Returns the form in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thNot,
+    local k2, k3, rtn, rtv
+    dac rtv
+    dio kA
+    QSYNC
+    law 0d9
+    dac i [fA:6]
+    XJSP(fRsv, 6)
+    lac i [eKfa:015]
+    sza
+    jmp k2
+    cla
+    lia
+    lac [KSYM+sTHAND]
+    XJDA(eConsF, 015)
+    lia
+    lac [KSYM+sTHFAIL]
+    XJDA(eConsF, 015)
+    dac i [eKfa:015]
+k2, lac i [eKsu:015]
+    sza
+    jmp k3
+    cla
+    lia
+    lac [KSYM+sTHSUCCEED]
+    XJDA(eConsF, 015)
+    dac kT
+    cla
+    lia
+    lac kT
+    XJDA(eConsF, 015)
+    dac i [eKsu:015]
+k3, cla
+    lia
+    lac i [eKfa:015]
+    XJDA(eConsF, 015)
+    lia
+    lac kA
+    jda kCar
+    XJDA(eConsF, 015)
+    dac kC1
+    cla
+    lia
+    lac i [eKsu:015]
+    XJDA(eConsF, 015)
+    lia
+    lac kC1
+    XJDA(eConsF, 015)
+    lia
+    lac [KSYM+sTHCOND]
+    XJDA(eConsF, 015)
+    dac i [eExp:015]
+rtn, jmp i rtv
+rtv, 0
+    endloc
+
+// THFIND (plnr.182:790) binds its variables.
+// It then makes its frame, holding the least number of values, the number
+// that ends it (0 for none), whether the values or NIL is its value then,
+// the count and the values so far, and the pattern.
+// It then makes THPROG's frame of its body.
+// Takes the arguments in IO. Returns THPROGA's value in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thFind, XJDA(eInF, 015)
+    local all, num1, nlist, ex, am, asm, gen, gas, mk
+    dio kA
+    lac kA
+    jda kPsh
+    lac kA
+    jda kCdr
+    jda kCdr
+    jda kCar
+    lia
+    XJSP(eThbind, 015)
+    jsp kPop
+    dac kA
+    jda kCar
+    dac kC
+    sad [KSYM+sALL]
+    jmp all
+    and [KMASK]
+    sad [KINT]
+    jmp num1
+    lac kC
+    XJDA(eCarSF, 015)
+    dac kH
+    and [KMASK]
+    sad [KINT]
+    jmp nlist
+    lac kH
+    sad [KSYM+sEXACTLY]
+    jmp ex
+    sad [KSYM+sATMOST]
+    jmp am
+    sad [KSYM+sASMANYAS]
+    jmp asm
+    // The form is (kind least . rest).
+    // No rest means no end.
+    // AT-MOST n gives n plus one.
+    // Otherwise the end is the number.
+    lac kC
+    jda kCdr
+    dac kL
+    jda kCar
+    dac kLo
+    lac kL
+    jda kCdr
+    dac kL
+    sza
+    jmp gen
+    dzm kHi
+    lac [KSYM]
+    dac kFl
+    jmp mk
+gen, jda kCar
+    sas [KSYM+sATMOST]
+    jmp gas
+    lac kL
+    jda kCdr
+    jda kCar
+    XJDA(eAd1F, 015)
+    dac kHi
+    dzm kFl
+    jmp mk
+gas, lac kL
+    jda kCdr
+    jda kCar
+    dac kHi
+    lac [KSYM]
+    dac kFl
+    jmp mk
+all, lac [KINT+1]
+    dac kLo
+    dzm kHi
+    dzm kFl
+    jmp mk
+num1, lac kC
+    dac kLo
+    dac kHi
+    lac [KSYM]
+    dac kFl
+    jmp mk
+nlist, lac kH
+    dac kLo
+    lac kC
+    jda kCdr
+    dac kL
+    jda kCar
+    dac kHi
+    lac kL
+    jda kCdr
+    jda kCar
+    dac kFl
+    jmp mk
+ex, lac kC
+    jda kCdr
+    jda kCar
+    dac kLo
+    XJDA(eAd1F, 015)
+    dac kHi
+    dzm kFl
+    jmp mk
+am, lac [KINT+1]
+    dac kLo
+    lac kC
+    jda kCdr
+    jda kCar
+    XJDA(eAd1F, 015)
+    dac kHi
+    dzm kFl
+    jmp mk
+asm, lac [KINT+1]
+    dac kLo
+    lac kC
+    jda kCdr
+    jda kCar
+    dac kHi
+    lac [KSYM]
+    dac kFl
+mk, lac [KSYM+sTHFIND]
+    XJDA(eFrameF, 015)
+    lac kLo
+    jda kPushW
+    lac kHi
+    jda kPushW
+    lac kFl
+    jda kPushW
+    lac [KINT]
+    jda kPushW
+    cla
+    jda kPushW
+    lac kA
+    jda kCdr
+    jda kCar
+    jda kPushW
+    lac kA
+    jda kCdr
+    jda kCdr
+    dac kL
+    lac [KSYM+sTHPROG]
+    XJDA(eFrameF, 015)
+    lac kL
+    jda kPushW
+    cla
+    jda kPushW
+    lac kL
+    jda kPushW
+    XJSP(eProgaF, 015)
+    jmp i [eOut:015]
+    endloc
+
+// THFINDT (plnr.182:834) takes the pattern THVARSUBST'd and keeps it if
+// new.
+// At the ending number, it sets THBRANCH NIL, pops the frame and cuts the
+// stack to it, and its value is the values or NIL.
+// Otherwise it goes back into the last success's tries (THTREE THBRANCH,
+// THALIST THABRANCH) with value NIL.
+// Returns the value in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thFindt, XJDA(eInF, 015)
+    local mem, new, at, cnt, back
+    lac i [eTree:015]
+    and [07777]
+    add [FFPAT]
+    jda kRd
+    lia
+    dzm i [eArgT:015]
+    XJSP(eVsub, 015)
+    dac kX
+    jda kPsh
+    lac i [eTree:015]
+    and [07777]
+    dac kF2
+    add [FFVALS]
+    jda kRd
+mem, dac kL
+    and [KMASK]
+    sas [KCONS]
+    jmp new
+    lac kL
+    jda kCar
+    lio kX
+    XJDA(eEqF, 015)
+    sza
+    jmp back
+    lac kL
+    jda kCdr
+    jmp mem
+new, lac kF2
+    add [FFVALS]
+    jda kRd
+    lia
+    lac kX
+    XJDA(eConsF, 015)
+    dac kL
+    lia
+    lac kF2
+    add [FFVALS]
+    jda kWr
+    lac kF2
+    add [FFCNT]
+    jda kRd
+    XJDA(eNumF, 015)
+    add [1]
+    dac kN
+    and [077777]
+    ior [KINT]
+    dac kT
+    lac kF2
+    add [FFMAX]
+    jda kRd
+    sas kT
+    jmp cnt
+    dzm i [eBranch:015]
+    lac kF2
+    add [FFFLAG]
+    jda kRd
+    sza i
+    jmp at
+    lac kL
+at, dac kV
+    XJSP(ePoptF, 015)
+    dac i [eTop:015]
+    law i 1
+    add i [evlS:015]
+    dac i [evlS:015]
+    lac kV
+    jmp i [eOut:015]
+cnt, lac kN
+    XJDA(eMkF, 015)
+    lia
+    lac kF2
+    add [FFCNT]
+    jda kWr
+back, lac i [eBranch:015]
+    dac i [eTree:015]
+    lac i [eAbranch:015]
+    dac i EALIST
+    dzm i [eBranch:015]
+    law i 1
+    add i [evlS:015]
+    dac i [evlS:015]
+    cla
+    jmp i [eOut:015]
+    endloc
+
+// THFINDF sets THBRANCH NIL, pops the frame and cuts the stack to it.
+// Its value is the values, or NIL if there are fewer than the least or a
+// message fails back past it.
+// Returns the value in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thFindf,
+    local nil, rtn, rtv
+    dac rtv
+    dzm i [eBranch:015]
+    lac i [eTree:015]
+    and [07777]
+    dac kF2
+    XJSP(ePoptF, 015)
+    dac i [eTop:015]
+    lac i [eMsgOn:015]
+    sza
+    jmp nil
+    lac kF2
+    add [FFCNT]
+    jda kRd
+    XJDA(eNumF, 015)
+    dac kN
+    lac kF2
+    add [FFMIN]
+    jda kRd
+    XJDA(eNumF, 015)
+    dac kT
+    lac kN
+    sub kT
+    spa
+    jmp nil
+    lac kF2
+    add [FFVALS]
+    jda kRd
+    jmp rtn
+nil, cla
+rtn, jmp i rtv
+rtv, 0
+    endloc
+
+// THAMONG (plnr.182:203) takes the variable (a $E's value in its place)
+// and the values, THVAL'd.
+// For an unassigned variable it makes the THAMONG frame of its binding and
+// the values, which THAMONGF assigns in turn.
+// For an assigned one it gives the values from the first EQUAL to its
+// value.
+// Takes the arguments in IO. Returns NIL, or the values, in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thAmong, XJDA(eInF, 015)
+    local g, u1, u2, in, loop, nil
+    dio kA
+    lac kA
+    jda kPsh
+    lac kA
+    jda kCar
+    dac kX
+    XJDA(eCarSF, 015)
+    sas [KSYM+sTHEV]
+    jmp g
+    lac kX
+    jda kCdr
+    jda kCar
+    dac i [eArgX:015]
+    lac i EALIST
+    dac i [eArgA:015]
+    XJSP(eThval, 015)
+    dac kX
+g, lac kX
+    lio i EALIST
+    XJDA(eGalF, 015)
+    dac kB
+    ior [KINT]
+    jda kPsh
+    lac kB
+    XJDA(eValF, 015)
+    sad EUND
+    jmp u1
+    cla
+    jmp u2
+u1, law 1
+u2, ior [KINT]
+    jda kPsh
+    law i 3
+    jda kSk
+    jda kCdr
+    jda kCar
+    dac i [eArgX:015]
+    lac i EALIST
+    dac i [eArgA:015]
+    XJSP(eThval, 015)
+    dac kV
+    jsp kPop
+    and [07777]
+    dac kT
+    jsp kPop
+    and [07777]
+    dac kB
+    law i 1
+    add i [evlS:015]
+    dac i [evlS:015]
+    lac kT
+    sza i
+    jmp in
+    lac [KSYM+sTHAMONG]
+    XJDA(eFrameF, 015)
+    lac kB
+    ior [KINT]
+    jda kPushW
+    lac kV
+    jda kPushW
+    cla
+    jmp i [eOut:015]
+in, lac kB
+    XJDA(eValF, 015)
+    dac kX
+loop, lac kV
+    and [KMASK]
+    sas [KCONS]
+    jmp nil
+    lac kV
+    jda kCar
+    lio kX
+    XJDA(eEqF, 015)
+    sza i
+    jmp .+3
+    lac kV
+    jmp i [eOut:015]
+    lac kV
+    jda kCdr
+    dac kV
+    jmp loop
+nil, cla
+    jmp i [eOut:015]
+    endloc
+
+// THAMONGF handles a message failing back past it by popping the frame and
+// cutting the stack to it.
+// Otherwise it cuts the stack to the frame's end, assigns the next value,
+// sets THBRANCH and THABRANCH, pops the frame and gives T.
+// With no value left, it leaves the variable unassigned, pops the frame,
+// cuts the stack to it and gives NIL.
+// Returns T or NIL in AC. AC is the result and IO is clobbered.
+// Called via jsp.
+thAmongf,
+    local un, pop, rtn, rtv
+    dac rtv
+    lac i [eTree:015]
+    and [07777]
+    dac kF2
+    add [2]
+    jda kRd
+    and [07777]
+    dac kB
+    lac i [eMsgOn:015]
+    sza
+    jmp pop
+    lac kF2
+    add [4]
+    dac i [eTop:015]
+    lac kF2
+    add [3]
+    jda kRd
+    sza i
+    jmp un
+    dac kL2
+    lac kB
+    XJDA(eSlotF, 015)
+    dac kT
+    lac kL2
+    jda kCar
+    lia
+    lac kT
+    jda kWr
+    lac kL2
+    jda kCdr
+    lia
+    lac kF2
+    add [3]
+    jda kWr
+    lac i [eTree:015]
+    dac i [eBranch:015]
+    lac i EALIST
+    dac i [eAbranch:015]
+    XJSP(ePoptF, 015)
+    lac [KSYM]
+    jmp rtn
+un, lac kB
+    XJDA(eSlotF, 015)
+    dac kT
+    lio EUND
+    lac kT
+    jda kWr
+pop, XJSP(ePopCutF, 015)
+rtn, jmp i rtv
+rtv, 0
+    endloc
+
+// The rest of the forms.
+
+// THSETQ (plnr.182:1801) takes each pair in turn.
+// An atom is a variable of the Lisp, set to its form's value.
+// A (THV name) has its binding set to its form's THVAL.
+// Each old value goes on the trail, which ends as a THMUNG frame even with
+// none.
+// Odd pairs, an unbound variable, or a form at this level that leaves the
+// stack changed, are an error.
+// Takes the arguments in IO. Returns THVALUE, the last value, in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thSetq, XJDA(eInF, 015)
+    local loop, vr, next, fin
+    dio kA
+    XJSP(eTrBF, 015)
+    ior [KINT]
+    jda kPsh
+    lac kA
+    jda kPsh
+loop, law i 1
+    jda kSk
+    dac kL
+    sza i
+    jmp fin
+    jda kCdr
+    sza i
+    jmp i [pgErr:6]
+    lac kL
+    jda kCar
+    dac kX
+    and [KMASK]
+    sad [KCONS]
+    jmp vr
+    // A variable of the Lisp has its old value saved, then its form's set.
+    lio kX
+    XJSP(eEv, 015)
+    jda kPsh
+    lac i [eTop:015]
+    ior [KINT]
+    jda kPsh
+    law i 3
+    jda kSk
+    jda kCdr
+    jda kCar
+    lia
+    XJSP(eEv, 015)
+    dac i EVALUE
+    law i 1
+    jda kSk
+    and [07777]
+    sas i [eTop:015]
+    jmp i [pgErr:6]
+    law i 3
+    jda kSk
+    jda kCar
+    dac kX
+    jda kPushW
+    law i 2
+    jda kSk
+    jda kPushW
+    lac [KSYM+sSETQ]
+    jda kPushW
+    law i 2
+    add i [evlS:015]
+    dac i [evlS:015]
+    lac kX
+    dac i [fA:6]
+    XJSP(fVarOf, 6)
+    lai
+    spa
+    jmp i [pgFlt:6]
+    add [vTab:3]
+    dac kP
+    lac i EVALUE
+    dac i kP
+    jmp next
+vr, lac kX
+    jda kCdr
+    jda kCar
+    lio i EALIST
+    XJDA(eFindF, 015)
+    spa
+    jmp i [pgErr:6]
+    ior [KINT]
+    jda kPsh
+    law i 2
+    jda kSk
+    jda kCdr
+    jda kCar
+    dac i [eArgX:015]
+    lac i EALIST
+    dac i [eArgA:015]
+    XJSP(eThval, 015)
+    dac i EVALUE
+    lia
+    jsp kPop
+    and [07777]
+    XJDA(eAsgF, 015)
+next, law i 1
+    jda kSk
+    jda kCdr
+    jda kCdr
+    dac i kP
+    jmp loop
+fin, law i 1
+    add i [evlS:015]
+    dac i [evlS:015]
+    jsp kPop
+    and [07777]
+    XJDA(eTrAF, 015)
+    lac i EVALUE
+    jmp i [eOut:015]
+    endloc
+
+// THVSETQ sets each pair's (THV name) binding to its form's THVAL, with
+// nothing on the trail.
+// Takes the arguments in IO. Returns THVALUE, the last value, in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thVsetq, XJDA(eInF, 015)
+    local loop, fin
+    dio kA
+    lac kA
+    jda kPsh
+loop, law i 1
+    jda kSk
+    dac kL
+    sza i
+    jmp fin
+    jda kCdr
+    sza i
+    jmp i [pgErr:6]
+    lac kL
+    jda kCar
+    jda kCdr
+    jda kCar
+    lio i EALIST
+    XJDA(eFindF, 015)
+    spa
+    jmp i [pgErr:6]
+    ior [KINT]
+    jda kPsh
+    law i 2
+    jda kSk
+    jda kCdr
+    jda kCar
+    dac i [eArgX:015]
+    lac i EALIST
+    dac i [eArgA:015]
+    XJSP(eThval, 015)
+    dac i EVALUE
+    jsp kPop
+    and [07777]
+    XJDA(eSlotF, 015)
+    dac kT
+    lio i EVALUE
+    lac kT
+    jda kWr
+    law i 1
+    jda kSk
+    jda kCdr
+    jda kCdr
+    dac i kP
+    jmp loop
+fin, law i 1
+    add i [evlS:015]
+    dac i [evlS:015]
+    lac i EVALUE
+    jmp i [eOut:015]
+    endloc
+
+// THASVAL gives T if the (THV name)'s variable is assigned.
+// Takes the arguments in IO. Returns T or NIL in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thAsval,
+    local nil, rtn, rtv
+    dac rtv
+    dio kA
+    lac kA
+    jda kCar
+    lio i EALIST
+    XJDA(eGalF, 015)
+    XJDA(eValF, 015)
+    sad EUND
+    jmp nil
+    lac [KSYM]
+    jmp rtn
+nil, cla
+rtn, jmp i rtv
+rtv, 0
+    endloc
+
+// THTAG makes a tag's frame and gives T, or NIL for none.
+// THMESSAGE makes its frame of the arguments and gives THVALUE.
+// Takes the arguments in IO. Returns the value in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thTag,
+    local rtn, rtv
+    dac rtv
+    dio kA
+    lac kA
+    jda kCar
+    sza i
+    jmp rtn
+    dac kX3
+    lac [KSYM+sTHTAG]
+    XJDA(eFrameF, 015)
+    lac kX3
+    jda kPushW
+    lac [KSYM]
+rtn, jmp i rtv
+rtv, 0
+    endloc
+thMessage,
+    local rtn, rtv
+    dac rtv
+    dio kA
+    lac [KSYM+sTHMESSAGE]
+    XJDA(eFrameF, 015)
+    lac kA
+    jda kPushW
+    lac i EVALUE
+rtn, jmp i rtv
+rtv, 0
+    endloc
+
+// THURPLACA and THURPLACD do RPLACA and RPLACD of the arguments as they
+// are, with nothing on the trail. An atom is an error.
+// Takes the arguments in IO. Returns the cell in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+thUrpla, dac kRs
+    dzm i [eK:015]
+    jmp eUrp
+thUrpld, dac kRs
+    law 1
+    dac i [eK:015]
+eUrp, dio kA
+    lac kA
+    jda kCar
+    dac kX3
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac kA
+    jda kCdr
+    jda kCar
+    lia
+    lac kX3
+    ior [PCELLS]
+    add i [eK:015]
+    dac kP
+    dio i kP
+    lac kX3
+    jmp i kRs
+
+// THPUTPROP (plnr.182:1582) puts the old value on the trail, in a THMUNG
+// frame, then does PUTPROP.
+// THRPLACA and THRPLACD do the same for the cell's old CAR (eK 1) or CDR
+// (eK 2), then set the new one. An atom is an error.
+// These are eExpr's, with their arguments' values after the marker at eXp.
+// Returns PUTPROP's value, or the cell, in AC. AC is the result and IO is
+// clobbered. Called via jsp.
+thPutprop,
+    local rtn, rtv
+    dac rtv
+    lac i [eXp:015]
+    add [1]
+    dac kP
+    lac i kP
+    dac kA
+    idx kP
+    lac i kP
+    dac kV
+    idx kP
+    lac i kP
+    dac kX3
+    lac kA
+    dac i [fA:6]
+    lac kX3
+    dac i [fB:6]
+    QSYNC
+    XJSP(fGet, 6)
+    dio kU
+    XJSP(eTrBF, 015)
+    dac kTh
+    lac kA
+    jda kPushW
+    lac kX3
+    jda kPushW
+    lac kU
+    jda kPushW
+    lac [KSYM+sPUTPROP]
+    jda kPushW
+    lac kTh
+    XJDA(eTrAF, 015)
+    lac kA
+    dac i [pgPx:6]
+    lac kV
+    dac i [pgPv:6]
+    lac kX3
+    dac i [pgPi:6]
+    QSYNC
+    XJSP(fPut, 6)
+    lai
+rtn, jmp i rtv
+rtv, 0
+    endloc
+thRplac,
+    local d, t, rtn, rtv
+    dac rtv
+    lac i [eXp:015]
+    add [1]
+    dac kP
+    lac i kP
+    dac kX3
+    idx kP
+    lac i kP
+    dac kV
+    lac kX3
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    XJSP(eTrBF, 015)
+    dac kTh
+    lac kX3
+    jda kPushW
+    lac kX3
+    ior [PCELLS]
+    add i [eK:015]
+    sub [1]
+    dac kCp
+    lac i kCp
+    jda kPushW
+    lac i [eK:015]
+    sas [1]
+    jmp d
+    lac [KSYM+sTHURPLACA]
+    jmp t
+d, lac [KSYM+sTHURPLACD]
+t, jda kPushW
+    lac kTh
+    XJDA(eTrAF, 015)
+    lac kV
+    dac i kCp
+    lac kX3
+rtn, jmp i rtv
+rtv, 0
+    endloc
+
+// The tables.
+
+// The forms eForm takes, by name, the FEXPRs and then the EXPRs.
+// Then the FEXPRs' routines, by full address, as the kinds' routines are.
+eFxS, KSYM+sTHGOAL; KSYM+sTHPROG; KSYM+sTHAND; KSYM+sTHOR; KSYM+sTHCOND
+    KSYM+sTHNOT; KSYM+sTHFIND; KSYM+sTHAMONG; KSYM+sTHSETQ; KSYM+sTHVSETQ
+    KSYM+sTHASVAL; KSYM+sTHFAIL; KSYM+sTHSUCCEED; KSYM+sTHRETURN; KSYM+sTHGO
+    KSYM+sTHTAG; KSYM+sTHMESSAGE; KSYM+sTHURPLACA; KSYM+sTHURPLACD
+    KSYM+sTHASSERT; KSYM+sTHPUTPROP; KSYM+sTHRPLACA; KSYM+sTHRPLACD; 0
+eFxR, thGoal:015; thProg:015; thAnd:015; thOr:015; thCond:015; thNot:011
+    thFind:011; thAmong:011; thSetq:011; thVsetq:011; thAsval:011; thFail:015
+    thSucc1:015; thReturn:015; thGo:015; thTag:011; thMessage:011; thUrpla:011
+    thUrpld:011; thAssert:3
+
+// The frames' kinds, then each kind's success routine and its failure
+// routine (plnr.182's THxxxT and THxxxF), 0 for none.
+eSfK, KSYM+sTHTAG; KSYM+sTHGOAL; KSYM+sTHAMONG; KSYM+sTHFIND; KSYM+sTHPROG
+    KSYM+sTHAND; KSYM+sTHMUNG; KSYM+sTHOR; KSYM+sTHCOND; KSYM+sTHMESSAGE
+    KSYM+sTHREMBIND; 0
+eSfS, ePopV:015; thGoalt:015; 0; thFindt:011; thProgt:015; thAndt:015
+    ePopV:015; ePopV:015; thCondt:015; ePopV:015; thRembt:015
+eSfF, ePopCut:015; thGoalf:015; thAmongf:011; thFindf:011; eBrun:015
+    eBrun:015; thMungf:015; thOrf:015; thCondf:015; 0; thRembf:015
+
+// The cold half's words.
+
+kCp, 0
+kSp, 0
+kA, 0
+kB, 0
+kC, 0
+kC1, 0
+kF2, 0
+kFl, 0
+kH, 0
+kHi, 0
+kL, 0
+kL2, 0
+kLo, 0
+kN, 0
+kP, 0
+kRs, 0
+kT, 0
+kTh, 0
+kU, 0
+kV, 0
+kX, 0
+kX3, 0

@@ -1,0 +1,232 @@
+// ROOM and ROOM CLEAR, for sizing the arenas. They show how much of each
+// has been used, found as its highest word not 0. ROOM CLEAR, typed before a
+// run's first command, zeroes what each arena does not yet hold, so that
+// ROOM then gives the run's high-water marks. Without it, what an earlier
+// load left in core counts as used. ROOM prints a line an arena, with its
+// name, its size and the words used, in octal. Frames and choice points
+// share bank 010 from its two ends, so their line gives each one's use,
+// found from the longest run of zeros between them. The Planner engine's
+// stack (planner.ac) adds its top, an offset, so that a sentence left
+// with it above its base shows. Then come EVENTS, the events made, which
+// keep their count, and DROPS, the drops made since the load and the lists,
+// meanings and theorems they let go (drop.ac).
+// A word an arena holds as 0 at its very top is not counted, so a mark
+// may be a word or two short; the arenas are cut with a margin.
+// Part of the overlay cmds, bank 012, eem on. Needs shrdlu.ah, cmds.ac
+// (gRead, tokIs2, cmBad, cmEnd), atoms.ac's output, the arenas' tops in
+// atoms.ac, db.ac, events.ac, reader.ac and planner.ac, and drop.ac's
+// counts.
+
+// The arenas, five words each. The first is a name. The second and third are the
+// first word and the word past the last, full addresses. The fourth is the full
+// address of the word that holds the arena's top if ROOM CLEAR keeps what is below
+// it, or 0 if it clears the whole. The fifth is the kind. It is 0 for one grown up
+// from its first word, 1 for bank 010's two, and otherwise the full address of the
+// word that holds the top of one grown up whose top is printed too.
+// A name of 0 ends the table.
+#define RMREC 5
+
+rmTab,
+    nHeap:012;  HPBASE;           HPLIM;            hpTop:4;  0
+    nDb:012;    DBBASE;           DBLIM;            dbTop:4;  0
+    nFrCp:012;  FRBASE;           TRBASE;           0;        1
+    nTrail:012; TRBASE;           PLBASE;           0;        0
+    nPlan:012;  PLBASE;           PLEND;            0;        0
+    nDw:012;    DWBASE;           DWLIM+1;          dwNext:013; 0
+    nVal:012;   PVSTK;            PVSTK+PVLEN;      0;        0
+    nCall:012;  PCSTK;            PCSTK+PCLEN;      0;        0
+    nBind:012;  PBSTK;            PBSTK+PBLEN;      0;        0
+    nEng:012;   ESTK;             ESTK+ELEN;        0;        eTop:015
+    0
+
+// Handles ROOM and ROOM CLEAR. Entered from cmLine's dispatch with the
+// command's word read. Ends the reply.
+xRoom, jsp gRead
+    sza i
+    jmp xrShow
+    lac [kClear:012]
+    jda tokIs2
+    jmp cmBad
+    jsp gRead
+    sza
+    jmp cmBad
+    jsp rmClear
+    jmp cmEnd
+xrShow, jsp rmList
+    jmp cmEnd
+
+// Zeroes each arena from its top, or the whole of it, to its end.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+rmClear,
+    local rtn, loop, zero, zl, next, p, q, e
+    dap rtn
+    lac [rmTab:012]
+    dac p
+loop, lac i p
+    sza i
+    jmp rtn
+    idx p
+    lac i p
+    dac q
+    idx p
+    lac i p
+    dac e
+    idx p
+    lac i p
+    sza i
+    jmp zero
+    dac q
+    lac i q
+    dac q
+zero, lac q
+zl, sad e
+    jmp next
+    dzm i q
+    idx q
+    jmp zl
+next, idx p
+    idx p
+    jmp loop
+rtn, jmp 0
+p, 0
+q, 0
+e, 0
+    endloc
+
+// Prints each arena's line, then the events' and the drops'.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+rmList,
+    local rtn, loop, ul, none, upr, two, tl, tinc, tnz, tnx, tdone, tall, eol, p, b, e, q, run, rs, best, bs
+    dap rtn
+    lac [rmTab:012]
+    dac p
+loop, lac i p
+    sza i
+    jmp eol
+    jda wrs
+    jsp wrsp
+    idx p
+    lac i p
+    dac b
+    idx p
+    lac i p
+    dac e
+    sub b
+    jda wro
+    jsp wrsp
+    idx p
+    idx p
+    lac i p
+    sad [1]
+    jmp two
+    // One grown up has its highest word not 0.
+    lac e
+    dac q
+ul, lac q
+    sad b
+    jmp none
+    law i 1
+    add q
+    dac q
+    lac i q
+    sza i
+    jmp ul
+    lac q
+    sub b
+    add [1]
+    jmp upr
+none, cla
+upr, jda wro
+    lac i p                 // a kind not 0 is the word holding its top
+    sza i
+    jmp tdone
+    dac q
+    jsp wrsp
+    lac i q
+    jda wro
+    jmp tdone
+    // Bank 010's two are the longest run of zeros, bs the first of it and
+    // best its length; the frames end at it, the choice points after it.
+two, dzm best
+    dzm run
+    lac b
+    dac q
+    dac bs
+tl, lac i q
+    sza
+    jmp tnz
+    lac run
+    sza
+    jmp tinc
+    lac q
+    dac rs
+tinc, idx run
+    lac best
+    sub run
+    sma
+    jmp tnx
+    lac run
+    dac best
+    lac rs
+    dac bs
+    jmp tnx
+tnz, dzm run
+tnx, idx q
+    sad e
+    jmp tall
+    jmp tl
+tall, lac bs
+    sub b
+    jda wro
+    jsp wrsp
+    lac e
+    sub bs
+    sub best
+    jda wro
+tdone, jsp wrnl
+    idx p
+    jmp loop
+eol, lac [nEv:012]
+    jda wrs
+    jsp wrsp
+    lac i [evCnt:4]
+    jda wro
+    jsp wrnl
+    lac [nDrop:012]
+    jda wrs
+    jsp wrsp
+    lac i [psDrops:011]
+    jda wro
+    jsp wrsp
+    lac i [psDropN:011]
+    jda wro
+    jsp wrnl
+rtn, jmp 0
+p, 0
+b, 0
+e, 0
+q, 0
+run, 0
+rs, 0
+best, 0
+bs, 0
+    endloc
+
+kRoom, ascii "ROOM"
+kClear, ascii "CLEAR"
+nHeap, ascii "HEAP"
+nDb, ascii "DATABASE"
+nFrCp, ascii "FRAMES-CHOICES"
+nTrail, ascii "TRAIL"
+nPlan, ascii "PLAN"
+nDw, ascii "DERIVED"
+nVal, ascii "VALUES"
+nCall, ascii "CALLS"
+nBind, ascii "BINDINGS"
+nEng, ascii "ENGINE"
+nEv, ascii "EVENTS"
+nDrop, ascii "DROPS"

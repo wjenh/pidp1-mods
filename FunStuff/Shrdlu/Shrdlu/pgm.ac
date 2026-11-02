@@ -1,0 +1,2220 @@
+// The machine's hot half. It holds the loop, the operations, the calls
+// and returns, the cells, and the natives a sentence calls most. It runs
+// the semantics, the answers and the grammar as bytecode
+// (semantics.ac, which is generated).
+// Micro-Planner is the engine in planner.ac.
+// The cold half, pgsys.ac in bank 012, has
+// the sentence's start and end, the cache's misses, the drum, the
+// collector, the property lists of atoms, the printing, the engine's
+// hooks and the other natives, each reached with a far call.
+// A function's block runs where the cache holds it. gBlk gives its
+// address, with BMADE once its quoted lists are made this sentence. A
+// call that finds no address or no BMADE goes to psEnter. A frame is PFW
+// words on the calls: the return, the bindings' top, the caller's block,
+// and 0, or for a catch frame (CATCH) the value stack's top with PFCATCH.
+// A variable is a word of vTab. Binding one pushes the variable and its
+// old value on the bindings.
+// A native's arguments stay on the value stack until its value is made,
+// so the collector, which any CONS may run, finds them. Each native ends
+// by dropping them and pushing its value (pgR1 and the like).
+// A stop (an abandoned sentence, NO ROOM, a fault) jumps to pgStop from
+// wherever it is found, in either half.
+// Bank 6 above the engine's heap, eem on throughout, so every indirect
+// reference is a full address. Needs shrdlu.ah, semantics.ac and
+// pgsys.ac.
+
+// The value stack. pgSp is its next free word.
+#define PGPUSH dac i pgSp; idx pgSp
+#define PGPOP law i 1; add pgSp; dac pgSp; lac i pgSp
+#define PGDROP law i 1; add pgSp; dac pgSp
+#define PGTOP law i 1; add pgSp; dac pgT; lac i pgT
+// A native's argument i of k, the first 1, to AC.
+#define ARG(nk, ni) law i (nk-ni+1); add pgSp; dac pgT; lac i pgT
+// The value stack's room above a function's use, for the natives.
+#define PVSPARE 020
+
+// The sentence's top level, from pgSent (pgsys.ac), which has set the
+// stacks, the variables and the cache's state. Its frame returns
+// nowhere.
+pgRun, dzm pgIp
+    law 07777
+    dac pgFn
+    law fnTOP
+    jmp pgCallF
+
+// The ends of a sentence, the top level's return and a stop.
+// pgStop takes the status (pgSent's) in AC.
+pgDone, cla
+pgStop, dac pgStat
+    lac [PBSTK]
+    jda pgUnbTo
+    XJSP(psEnd, 012)
+    lac pgStat
+    jmp i pgRtn
+pgErr, law 1
+    jmp pgStop
+pgRoom, law 2
+    jmp pgStop
+pgFlt, lac pgIp
+    dac pgFltA
+    law 4
+    jmp pgStop
+
+// The machine's loop. It fetches an operation's word, puts its operand in pgA,
+// and enters its routine through pgOps, which has an entry for any six
+// bits, so nothing here checks them. A routine enters with AC the entry's
+// address and IO the operand, and reads neither. Each ends by jumping back
+// here, to pgPushL with a value to push, or to pgGo with pgJ the next word.
+pgLoop, lio i pgIp
+    idx pgIp
+    cla
+    rcl 6s                  // AC the operation, IO the operand shifted up
+    add [pgOps:.]
+    dac pgT
+    rir 6s                  // IO the operand, its top six bits clear
+    dio pgA
+    jmp i pgT
+pgPushT, lac [KSYM]         // T
+    jmp pgPushL
+pgPushN, cla                // NIL
+pgPushL, PGPUSH
+    jmp pgLoop
+
+// A native's end. Drops its k arguments and pushes its value, from
+// AC (pgRk), T (pgTk) or NIL (pgNk).
+pgR1, dac pgV
+    law i 1
+    jmp pgRn
+pgR2, dac pgV
+    law i 2
+    jmp pgRn
+pgR3, dac pgV
+    law i 3
+pgRn, add pgSp
+    dac pgSp
+    lac pgV
+    jmp pgPushL
+pgT1, lac [KSYM]
+    jmp pgR1
+pgT2, lac [KSYM]
+    jmp pgR2
+pgT3, lac [KSYM]
+    jmp pgR3
+pgN1, cla
+    jmp pgR1
+pgN2, cla
+    jmp pgR2
+pgN3, cla
+    jmp pgR3
+
+// A one-argument native's end, in place. The value, in AC (pgIV), T
+// (pgIT) or NIL (pgIN), is written over the argument's slot, which pgT still
+// holds since ARG(1, 1) and no helper the native calls touches it. The
+// stack pointer stays, where pgR1 moves it down and back up.
+pgIN, cla
+pgIV, dac i pgT
+    jmp pgLoop
+pgIT, lac [KSYM]
+    jmp pgIV
+
+// A call of function AC. The stacks are checked for room and the frame
+// pushed, then it goes on to the function's code, through psEnter if the block
+// is not in the cache or its quoted lists are not made.
+pgCallF, dac pgJ
+    lac pgSp
+    sub [PVSTK+PVLEN-MAXDEPTH-PVSPARE]
+    sma
+    jmp pgRoom
+    lac pgCp
+    sub [PCSTK+PCLEN-PFW]
+    sma
+    jmp pgRoom
+    lac pgIp
+    dac i pgCp
+    idx pgCp
+    lac pgBp
+    dac i pgCp
+    idx pgCp
+    lac pgFn
+    dac i pgCp
+    idx pgCp
+    dzm i pgCp
+    idx pgCp
+pgEnter, lac pgJ
+    dac pgFn
+    ral 2s
+    add [gBlk:5+BADDR]
+    dac pgT
+    lac i pgT
+    sma                     // skip if BMADE, the quoted lists are made
+    jmp pgMiss
+    and [0177777]
+    sza i
+    jmp pgMiss
+    add [BLKHDR]
+    dac pgIp
+    jmp pgLoop
+pgMiss, XJSP(psEnter, 012)
+    jmp pgLoop
+pgGo, lac pgJ
+    dac pgIp
+    jmp pgLoop
+
+// Puts the jump's target in pgJ. It is the jump's word's address plus the
+// operand, a 12-bit two's-complement number. There is no long jump. The
+// compiler refuses a function that needs one.
+// Takes no arguments.
+// AC is clobbered and IO is preserved.
+// Called via jsp.
+pgTgt,
+    local rtn
+    dap rtn
+    law i 1
+    add pgIp
+    add pgA
+    dac pgJ
+    lac pgA
+    and [04000]
+    sza i
+    jmp rtn
+    lac pgJ
+    sub [010000]
+    dac pgJ
+rtn, jmp 0
+    endloc
+
+// Binds variable pgA to AC. The variable and its old value are pushed on the
+// bindings, then the new value is set.
+pgBind, dac pgV
+    lac pgBp
+    sub [PBSTK+PBLEN-2]
+    sma
+    jmp pgRoom
+    lac pgA
+    dac i pgBp
+    idx pgBp
+    lac pgA
+    add [vTab:3]
+    dac pgT
+    lac i pgT
+    dac i pgBp
+    idx pgBp
+    lac pgV
+    dac i pgT
+    jmp pgLoop
+
+// Unbinds down to a mark. Each variable bound since gets its old value.
+// Takes the bindings' top to return to in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+pgUnbTo,
+    local loop, rtn, p, q
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac pgBp
+    sad pgUnbTo
+    jmp rtn
+    law i 2
+    add pgBp
+    dac pgBp
+    dac p
+    lac i p
+    add [vTab:3]
+    dac q
+    idx p
+    lac i p
+    dac i q
+    jmp loop
+rtn, jmp 0
+p, 0
+q, 0
+    endloc
+
+// The operations, each as the compiler's OPS table defines it.
+doNil, cla
+    jmp pgPushL
+doT, jmp pgPushT
+doSym, lac pgA
+    ior [KSYM]
+    jmp pgPushL
+    // A quoted list on the drum is made before its function runs.
+doConst, lac pgA
+    add [gConst:013]
+    dac pgT
+    lac i pgT
+    sza i
+    jmp pgFlt
+    jmp pgPushL
+    // A variable never set is a Lisp error.
+doVar, lac pgA
+    add [vTab:3]
+    dac pgT
+    lac i pgT
+    sas [KUNB]
+    jmp pgPushL
+    jmp pgErr
+    // VAR and PRIM CAR, VAR and PRIM CDR, each as one operation.
+doVarcar, lac pgA
+    add [vTab:3]
+    dac pgT
+    lac i pgT
+    sad [KUNB]
+    jmp pgErr
+    jda pgCar
+    jmp pgPushL
+doVarcdr, lac pgA
+    add [vTab:3]
+    dac pgT
+    lac i pgT
+    sad [KUNB]
+    jmp pgErr
+    jda pgCdr
+    jmp pgPushL
+doSetv, PGTOP
+    lia
+    lac pgA
+    add [vTab:3]
+    dac pgT
+    dio i pgT
+    jmp pgLoop
+doSetvp, PGPOP
+    lia
+    lac pgA
+    add [vTab:3]
+    dac pgT
+    dio i pgT
+    jmp pgLoop
+doDrop, PGDROP
+    jmp pgLoop
+doDropn, lac pgSp
+    sub pgA
+    dac pgSp
+    jmp pgLoop
+doDup, PGTOP
+    jmp pgPushL
+doSlide, PGPOP
+    dac pgV
+    lac pgSp
+    sub pgA
+    dac pgSp
+    lac pgV
+    jmp pgPushL
+doJmp, jsp pgTgt
+    jmp pgGo
+doJf, jsp pgTgt
+    PGPOP
+    sza i
+    jmp pgGo
+    jmp pgLoop
+doJt, jsp pgTgt
+    PGPOP
+    sza
+    jmp pgGo
+    jmp pgLoop
+doJfk, jsp pgTgt
+    PGTOP
+    sza i
+    jmp pgGo
+    PGDROP
+    jmp pgLoop
+doJtk, jsp pgTgt
+    PGTOP
+    sza
+    jmp pgGo
+    PGDROP
+    jmp pgLoop
+doCall, lac pgA
+    jmp pgCallF
+    // EVAL of the top, its leaves done here as the evaluator does them.
+    // NIL and T are themselves, a symbol whose variable is bound its
+    // value. Anything else, or a symbol with no variable bound, is the
+    // native evaluator's (eval.ac).
+doEvs,
+    local call
+    PGTOP
+    sza i
+    jmp pgLoop
+    dac pgV
+    and [KMASK]
+    sas [KSYM]
+    jmp call
+    lac pgV
+    sad [KSYM]
+    jmp pgLoop
+    jda pgVarOf
+    spa
+    jmp call
+    add [vTab:3]
+    dac pgV
+    lac i pgV
+    sad [KUNB]
+    jmp call
+    dac i pgT
+    jmp pgLoop
+call, jmp i [evlEnter:015]
+    endloc
+    // The frames popped to the call frame, catch frames a RETURN or GO
+    // left with it; its bindings undone. The top level's frame, whose
+    // return is 0, ends the sentence.
+doRet,
+    local loop
+loop, law i PFW
+    add pgCp
+    dac pgCp
+    add [PFSP]
+    dac pgT
+    lac i pgT
+    spa                     // skip unless a catch frame
+    jmp loop
+    lac pgCp
+    dac pgT
+    lac i pgT
+    dac pgJ
+    idx pgT
+    lac i pgT
+    jda pgUnbTo
+    lac pgCp
+    add [PFFN]
+    dac pgT
+    lac i pgT
+    dac pgFn
+    lac pgJ
+    sza i
+    jmp pgDone
+    jmp pgGo
+    endloc
+doArg, PGPOP
+    jmp pgBind
+doBindn, cla
+    jmp pgBind
+doUnbind, lac pgA
+    ral 1s
+    dac pgT
+    lac pgBp
+    sub pgT
+    jda pgUnbTo
+    jmp pgLoop
+    // The operand is not checked. The compiler refuses a build with
+    // a PRIM that numbers no native.
+doPrim,
+pgPrimA, lac pgA
+    add [pgNats:.]
+    dac pgT
+    jmp i pgT
+doListn, lac pgA
+    jda pgStkL
+    dac pgV
+    lac pgSp
+    sub pgA
+    dac pgSp
+    lac pgV
+    jmp pgPushL
+doCunit,
+    local loop
+    PGPOP
+    dac pgV
+    and [KMASK]
+    sas [KSYM]
+    jmp pgFlt
+    lac pgV
+    and [07777]
+    dac pgV
+    lac [gUnits:3]
+    dac pgT
+loop, lac i pgT
+    sza i
+    jmp pgFlt
+    sad pgV
+    jmp .+5
+    lac pgT
+    add [2]
+    dac pgT
+    jmp loop
+    idx pgT
+    lac i pgT
+    jmp pgCallF
+    endloc
+    // NIL evaluates to NIL; a special word's code is called.
+doEval, PGPOP
+    sza i
+    jmp pgPushL
+    dac pgV
+    and [KMASK]
+    sas [KCODE]
+    jmp pgFlt
+    lac pgV
+    and [07777]
+    add [gSpecCode:013]
+    dac pgT
+    lac i pgT
+    jmp pgCallF
+doNote, idx pgNotes
+    jmp pgLoop
+doAbort, law 1
+    jmp pgStop
+doQuit, law 3
+    jmp pgStop
+doSay, XJSP(psSay, 013)
+    jmp pgLoop
+doCount, idx pgCalls
+    sub [PBOUND+1]
+    sma
+    jmp doAbort
+    jmp pgLoop
+doCq, lac i [vTab:3+vFE]
+    lia
+    lac pgA
+    ior [KSYM]
+    jda pgMemq
+    jmp pgPushL
+doNq, lac i [vTab:3+vN]
+    jda pgCar
+    lio [KSYM+sFEATURES]
+    jda pgGet
+    lia
+    lac pgA
+    ior [KSYM]
+    jda pgMemq
+    jmp pgPushL
+doMemqs, PGPOP
+    lia
+    lac pgA
+    ior [KSYM]
+    jda pgMemq
+    jmp pgPushL
+    // The node stays on the stack while its features are got.
+doIsq, PGTOP
+    jda pgCar
+    lio [KSYM+sFEATURES]
+    jda pgGet
+    lia
+    lac pgA
+    ior [KSYM]
+    jda pgMemq
+    jmp pgR1
+doEqs, lac pgA
+    ior [KSYM]
+    dac pgV
+    PGPOP
+    sas pgV
+    jmp pgPushN
+    jmp pgPushT
+    // GETS, GET of the top and the operand's symbol, is GETRS without the CAR.
+doGets, PGTOP
+    jmp getsCommon
+doGetrs, PGTOP
+    jda pgCar
+getsCommon, dac pgV
+    lac pgA
+    ior [KSYM]
+    lia
+    lac pgV
+    jda pgGet
+    jmp pgR1
+    // The value stays on the stack while pgPut may allocate, then goes.
+    // SETR pushes nothing, and a site that wants the value DUPs it first.
+doSetrs, PGPOP
+    jda pgCar
+    dac pgPx
+    PGTOP
+    dac pgPv
+    lac pgA
+    ior [KSYM]
+    dac pgPi
+    jsp pgPut
+    jmp doDrop
+doFq, lac i [vTab:3+vFE]
+    lia
+    lac pgA
+    ior [KSYM]
+    jda pgMemq
+    sza
+    jmp pgLoop
+    lio i [vTab:3+vFE]
+    lac pgA
+    ior [KSYM]
+    jda pgCons
+    dac i [vTab:3+vFE]
+    jmp pgLoop
+doFqset, lac i [vTab:3+vC]
+    jda pgCar
+    dac pgPx
+    lac i [vTab:3+vFE]
+    dac pgPv
+    lac [KSYM+sFEATURES]
+    dac pgPi
+    jsp pgPut
+    jmp pgLoop
+doParsek, lac pgA
+    add [gConst:013]
+    dac pgT
+    lac i pgT
+    PGPUSH
+    law fnPARSE
+    jmp pgCallF
+doMsg, lac pgA
+    add [gConst:013]
+    dac pgT
+    lac i pgT
+    lio i [vTab:3+vME]
+    jda pgCons
+    dac i [vTab:3+vME]
+    jmp pgLoop
+
+    // FUNCALL n calls the value under the n arguments.
+doFunc, lac pgA
+    dac pgK
+    jmp pgFcall
+    // APPLY pushes the list's items, then goes as FUNCALL.
+doApply,
+    local loop, done, l
+    PGPOP
+    dac l
+    dzm pgK
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    lac pgSp
+    sub [PVSTK+PVLEN-PVSPARE]
+    sma
+    jmp pgRoom
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    PGPUSH
+    idx pgT
+    lac i pgT
+    dac l
+    idx pgK
+    jmp loop
+done, jmp pgFcall
+l, 0
+    endloc
+    // CATCH pushes a catch frame, its return the target.
+doCatch, jsp pgTgt
+    lac pgCp
+    sub [PCSTK+PCLEN-PFW]
+    sma
+    jmp pgRoom
+    lac pgJ
+    dac i pgCp
+    idx pgCp
+    lac pgBp
+    dac i pgCp
+    idx pgCp
+    lac pgFn
+    dac i pgCp
+    idx pgCp
+    lac pgSp
+    ior [PFCATCH]
+    dac i pgCp
+    idx pgCp
+    jmp pgLoop
+doUncat, law i PFW
+    add pgCp
+    dac pgCp
+    add [PFSP]
+    dac pgT
+    lac i pgT
+    sma                     // skip if it is the catch frame
+    jmp pgFlt
+    jmp pgLoop
+    // THROW (ERR) goes out to the newest catch frame and pushes NIL there.
+    // None but the top level's is an error.
+doThrow,
+    local loop, found
+    PGDROP
+loop, law i PFW
+    add pgCp
+    dac pgCp
+    add [PFSP]
+    dac pgT
+    lac i pgT
+    spa                     // skip unless the catch frame
+    jmp found
+    lac pgCp
+    dac pgT
+    lac i pgT
+    sza i
+    jmp pgErr               // the top level's: no ERRSET
+    jmp loop
+found, and [0177777]
+    dac pgSp
+    lac pgCp
+    dac pgT
+    lac i pgT
+    dac pgJ
+    idx pgT
+    lac i pgT
+    jda pgUnbTo
+    lac pgCp
+    add [PFFN]
+    dac pgT
+    lac i pgT
+    dac pgFn
+    cla
+    PGPUSH
+    jmp pgGo
+    endloc
+
+// FUNCALL's body. The value pgK words under the top names, by gFnOf, a
+// function or a native. The value's word is closed up, or for a LEXPR
+// made the list of the arguments.
+pgFcall,
+    local lex, fexpr, nat, call, shift, sloop, sdone, srtn, k, d
+    lac pgK
+    cma
+    add pgSp
+    sub [1]
+    dac pgT
+    lac i pgT
+    dac pgV
+    and [KMASK]
+    sas [KSYM]
+    jmp pgErr
+    lac pgV
+    and [07777]
+    jda pgFnOf
+    spa
+    jmp pgErr               // no function
+    dac d
+    and [060000]
+    sad [FNLEXPR]
+    jmp lex
+    sad [FNFEXPR]
+    jmp fexpr
+    sad [FNNAT]
+    jmp nat
+    // An EXPR takes as many arguments as parameters.
+    lac d
+    and [FNPARS]
+    rar 9s
+    sas pgK
+    jmp pgErr
+call, jsp shift
+    lac d
+    and [0777]
+    jmp pgCallF
+fexpr, lac pgK
+    sas [1]
+    jmp pgErr
+    jmp call
+nat, lac d
+    and [FNPARS]
+    rar 9s
+    sas pgK
+    jmp pgErr
+    jsp shift
+    lac d
+    and [0777]
+    dac pgA
+    jmp pgPrimA
+    // A LEXPR takes the arguments' list in the function's word.
+lex, lac pgK
+    jda pgStkL
+    dac pgV
+    lac pgSp
+    sub pgK
+    dac pgSp
+    PGDROP
+    lac pgV
+    PGPUSH
+    lac d
+    and [0777]
+    jmp pgCallF
+    // Moves the arguments down a word, over the function's at pgT.
+shift, dap srtn
+    lac pgT
+    dac k
+sloop, lac k
+    add [1]
+    sad pgSp
+    jmp sdone
+    dac pgV
+    lac i pgV
+    dac i k
+    idx k
+    jmp sloop
+sdone, PGDROP
+srtn, jmp 0
+k, 0
+d, 0
+    endloc
+
+// A symbol's variable and function by direct index. The compiler numbers the
+// symbols so that those naming a variable are the first ones past T, the
+// lexicon's features among them, and those naming a function the ones from
+// FNLO on. gVarSym and gFnOf are indexed by them.
+// pgVarOf takes the symbol (KSYM and its number) in AC. Returns the variable's
+// number, or -1 if none, in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgVarOf,
+    local none, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgVarOf
+    sub [KSYM+1]
+    spa
+    jmp none                // not a symbol, or T
+    dac pgVarOf             // its index
+    sub [NVART]
+    sma
+    jmp none                // past the variables' symbols
+    lac pgVarOf
+    add [gVarSym:3]
+    dac pgVarOf
+    lac i pgVarOf
+    jmp rtn
+none, law i 1
+rtn, jmp 0
+    endloc
+
+// pgFnOf takes the symbol's number in AC. Returns gFnOf's word, or -1 if none,
+// in AC. A number below FNLO is a feature's or none, and pgFFeat (tables.ac)
+// looks at the few features that name a function.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgFnOf,
+    local feat, none, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgFnOf
+    sub [FNLO]
+    spa
+    jmp feat
+    sub [NFNT]
+    sma
+    jmp none                // past the functions' symbols
+    lac pgFnOf
+    sub [FNLO]
+    add [gFnOf:3]
+    dac pgFnOf
+    lac i pgFnOf
+    jmp rtn
+feat, jsp i [pgFFeat:3]
+    jmp rtn
+none, law i 1
+rtn, jmp 0
+    endloc
+
+// Makes the list of the n values on top of the stack, the first pushed first,
+// from its end. The values stay on the stack while it is made.
+// Takes n in AC. Returns the list in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+pgStkL,
+    local loop, rtn, p, l
+    0                       // jda puts the argument here
+    dap rtn
+    dzm l
+    lac pgSp
+    dac p
+loop, lac pgStkL
+    sza i
+    jmp rtn-1
+    law i 1
+    add pgStkL
+    dac pgStkL
+    law i 1
+    add p
+    dac p
+    lac i p
+    lio l
+    jda pgCons
+    dac l
+    jmp loop
+    lac l
+rtn, jmp 0
+p, 0
+l, 0
+    endloc
+
+// The natives, each as the compiler's NATIVES table defines it. Those in
+// pgNats as ntCold are pgsys.ac's.
+ntCold, XJSP(psNat, 012)
+    lai
+    jmp pgPushL
+ntCar, ARG(1, 1)
+    jda pgCar
+    jmp pgIV
+ntCdr, ARG(1, 1)
+    jda pgCdr
+    jmp pgIV
+ntCons, ARG(2, 2)
+    lia
+    ARG(2, 1)
+    jda pgCons
+    jmp pgR2
+ntEq, ARG(2, 2)
+    dac pgV
+    ARG(2, 1)
+    sas pgV
+    jmp pgN2
+    jmp pgT2
+ntEqual, ARG(2, 2)
+    lia
+    ARG(2, 1)
+    jda pgEqual
+    sza i
+    jmp pgN2
+    jmp pgT2
+ntNot, ARG(1, 1)
+    sza
+    jmp pgIN
+    jmp pgIT
+ntAtom, ARG(1, 1)
+    and [KMASK]
+    sas [KCONS]
+    jmp pgIT
+    jmp pgIN
+ntListp, ARG(1, 1)
+    sza i
+    jmp pgIT
+    and [KMASK]
+    sas [KCONS]
+    jmp pgIN
+    jmp pgIT
+ntMemq, ARG(2, 2)
+    lia
+    ARG(2, 1)
+    jda pgMemq
+    jmp pgR2
+ntMember,
+    local loop, yes, l, x
+    ARG(2, 2)
+    dac l
+    ARG(2, 1)
+    dac x
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp pgN2
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lio i pgT
+    lac x
+    jda pgEqual
+    sza
+    jmp yes
+    lac l
+    jda pgCdr
+    dac l
+    jmp loop
+yes, lac l
+    jmp pgR2
+l, 0
+x, 0
+    endloc
+    // A copy of the first's cells, then the second.
+ntAppend,
+    local loop, fin, l
+    jsp pgLbNew
+    ARG(2, 1)
+    dac l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp fin
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    jda pgLbAdd
+    lac l
+    jda pgCdr
+    dac l
+    jmp loop
+fin, ARG(2, 2)
+    jda pgLbEnd
+    jmp pgR2
+l, 0
+    endloc
+ntRev,
+    local loop, done, l, r
+    ARG(1, 1)
+    dac l
+    dzm r
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    lio r
+    jda pgCons
+    dac r
+    lac l
+    jda pgCdr
+    dac l
+    jmp loop
+done, lac r
+    jmp pgR1
+l, 0
+r, 0
+    endloc
+ntLength,
+    local loop, done, l, n
+    ARG(1, 1)
+    dac l
+    dzm n
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    idx n
+    lac l
+    jda pgCdr
+    dac l
+    jmp loop
+done, lac n
+    jda pgMkint
+    jmp pgIV
+l, 0
+n, 0
+    endloc
+    // GREATERP is true when the second less the first is negative, LESSP the reverse.
+ntGreat, ARG(2, 1)
+    jda pgNum
+    dac pgV
+    ARG(2, 2)
+    jda pgNum
+    sub pgV
+    spa
+    jmp pgT2
+    jmp pgN2
+ntLess, ARG(2, 2)
+    jda pgNum
+    dac pgV
+    ARG(2, 1)
+    jda pgNum
+    sub pgV
+    spa
+    jmp pgT2
+    jmp pgN2
+    // LESSP of three, a < b < c.
+ntLess3, ARG(3, 2)
+    jda pgNum
+    dac pgK
+    dac pgV
+    ARG(3, 1)
+    jda pgNum
+    sub pgV
+    sma
+    jmp pgN3
+    ARG(3, 3)
+    jda pgNum
+    dac pgV
+    lac pgK
+    sub pgV
+    spa
+    jmp pgT3
+    jmp pgN3
+ntDiff, ARG(2, 2)
+    jda pgNum
+    dac pgV
+    ARG(2, 1)
+    jda pgNum
+    sub pgV
+    jda pgMkint
+    jmp pgR2
+ntPlus, ARG(2, 2)
+    jda pgNum
+    dac pgV
+    ARG(2, 1)
+    jda pgNum
+    add pgV
+    jda pgMkint
+    jmp pgR2
+ntAdd1, ARG(1, 1)
+    jda pgNum
+    add [1]
+    jda pgMkint
+    jmp pgIV
+ntSub1, ARG(1, 1)
+    jda pgNum
+    sub [1]
+    jda pgMkint
+    jmp pgIV
+ntNump, ARG(1, 1)
+    and [KMASK]
+    sas [KINT]
+    jmp pgIN
+    jmp pgIT
+ntZerop, ARG(1, 1)
+    jda pgNum
+    sza
+    jmp pgIN
+    jmp pgIT
+ntGet, ARG(2, 2)
+    lia
+    ARG(2, 1)
+    jda pgGet
+    jmp pgR2
+ntPut, ARG(3, 1)
+    dac pgPx
+    ARG(3, 2)
+    dac pgPv
+    ARG(3, 3)
+    dac pgPi
+    jsp pgPut
+    jmp pgR3
+ntSetr, ARG(3, 3)
+    jda pgCar
+    dac pgPx
+    ARG(3, 2)
+    dac pgPv
+    ARG(3, 1)
+    dac pgPi
+    jsp pgPut
+    jmp pgR3
+ntFe, lac [KSYM+sFEATURES]
+    jmp ntReg
+ntH, lac [KSYM+sDAUGHTERS]
+    jmp ntReg
+ntN, lac [KSYM+sWORDAFTER]
+    jmp ntReg
+ntNb, lac [KSYM+sFIRSTWORD]
+    jmp ntReg
+ntPar, lac [KSYM+sPARENT]
+    jmp ntReg
+ntSm, lac [KSYM+sSEMANTICS]
+ntReg, dac pgV
+    ARG(1, 1)
+    jda pgCar
+    lio pgV
+    jda pgGet
+    jmp pgR1
+    // MEET keeps the first's items in the second, SETDIFF those not in it.
+ntMeet, cla
+    jmp .+2
+ntSetd, law 1
+ntSet,
+    local loop, next, fin, l, b, inv
+    dac inv
+    jsp pgLbNew
+    ARG(2, 2)
+    dac b
+    ARG(2, 1)
+    dac l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp fin
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lio b
+    lac i pgT
+    jda pgMemq
+    sza                     // 1 if it is in the second, else 0
+    law 1
+    sad inv                 // MEET keeps those in it, SETDIFF the others
+    jmp next
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    jda pgLbAdd
+next, lac l
+    jda pgCdr
+    dac l
+    jmp loop
+fin, cla
+    jda pgLbEnd
+    jmp pgR2
+l, 0
+b, 0
+inv, 0
+    endloc
+    // UNION is the first's items, then the second's not among them.
+ntUnion,
+    local aloop, bstart, bloop, bnext, fin, l
+    jsp pgLbNew
+    ARG(2, 1)
+    dac l
+aloop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp bstart
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    jda pgLbAdd
+    lac l
+    jda pgCdr
+    dac l
+    jmp aloop
+bstart, ARG(2, 2)
+    dac l
+bloop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp fin
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    lio pgLbH
+    jda pgMemq
+    sza
+    jmp bnext
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    jda pgLbAdd
+bnext, lac l
+    jda pgCdr
+    dac l
+    jmp bloop
+fin, cla
+    jda pgLbEnd
+    jmp pgR2
+l, 0
+    endloc
+ntFindb,
+    local loop, found, x, y
+    ARG(2, 2)
+    dac y
+    ARG(2, 1)
+loop, sza i
+    jmp pgN2
+    dac x
+    jda pgCdr
+    sad y
+    jmp found
+    jmp loop
+found, lac x
+    jmp pgR2
+x, 0
+y, 0
+    endloc
+ntFollow, ARG(2, 1)
+    lia
+    ARG(2, 2)
+    jda pgMemq
+    jda pgCdr
+    jmp pgR2
+ntPrev,
+    local loop, found, l, x, prev
+    ARG(2, 2)
+    dac x
+    ARG(2, 1)
+    dac l
+    dzm prev
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp pgN2
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    sad x
+    jmp found
+    dac prev
+    idx pgT
+    lac i pgT
+    dac l
+    jmp loop
+found, lac prev
+    jmp pgR2
+l, 0
+x, 0
+prev, 0
+    endloc
+ntAssq,
+    local loop, next, l, x, c
+    ARG(2, 2)
+    dac l
+    ARG(2, 1)
+    dac x
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp pgN2
+    lac l
+    ior [PCELLS]
+    dac pgT
+    lac i pgT
+    dac c
+    and [KMASK]
+    sas [KCONS]
+    jmp next
+    lac c
+    ior [PCELLS]
+    dac pgV
+    lac i pgV
+    sas x
+    jmp next
+    lac c
+    jmp pgR2
+next, idx pgT
+    lac i pgT
+    dac l
+    jmp loop
+l, 0
+x, 0
+c, 0
+    endloc
+ntNconc,
+    local some
+    ARG(2, 1)
+    sza
+    jmp some
+    ARG(2, 2)
+    jmp pgR2
+some, jda pgLast
+    ior [PCELLS]
+    add [1]
+    dac pgV
+    ARG(2, 2)
+    dac i pgV
+    ARG(2, 1)
+    jmp pgR2
+    endloc
+ntRplaca, ARG(2, 1)
+    and [KMASK]
+    sas [KCONS]
+    jmp pgErr
+    ARG(2, 1)
+    ior [PCELLS]
+    dac pgV
+    ARG(2, 2)
+    dac i pgV
+    ARG(2, 1)
+    jmp pgR2
+ntRplacd, ARG(2, 1)
+    and [KMASK]
+    sas [KCONS]
+    jmp pgErr
+    ARG(2, 1)
+    ior [PCELLS]
+    add [1]
+    dac pgV
+    ARG(2, 2)
+    dac i pgV
+    ARG(2, 1)
+    jmp pgR2
+ntLast, ARG(1, 1)
+    jda pgLast
+    jmp pgIV
+
+// The tables of the operations' and natives' routines, by number. Each
+// entry is placed at its number, so the order cannot slip. A native
+// entered as pgFlt is one nothing can call, since plnr.182 is not
+// compiled. The compiler refuses a build that calls one.
+pgOps,
+pgOps+opBAD/ jmp pgFlt
+pgOps+opNIL/ jmp doNil
+pgOps+opT/ jmp doT
+pgOps+opSYM/ jmp doSym
+pgOps+opCONST/ jmp doConst
+pgOps+opVAR/ jmp doVar
+pgOps+opSETV/ jmp doSetv
+pgOps+opSETVP/ jmp doSetvp
+pgOps+opDROP/ jmp doDrop
+pgOps+opDROPN/ jmp doDropn
+pgOps+opDUP/ jmp doDup
+pgOps+opSLIDE/ jmp doSlide
+pgOps+opJMP/ jmp doJmp
+pgOps+opJF/ jmp doJf
+pgOps+opJT/ jmp doJt
+pgOps+opJFK/ jmp doJfk
+pgOps+opJTK/ jmp doJtk
+pgOps+opCALL/ jmp doCall
+pgOps+opRET/ jmp doRet
+pgOps+opARG/ jmp doArg
+pgOps+opBINDNIL/ jmp doBindn
+pgOps+opUNBIND/ jmp doUnbind
+pgOps+opPRIM/ jmp doPrim
+pgOps+opLISTN/ jmp doListn
+pgOps+opCALLUNIT/ jmp doCunit
+pgOps+opEVAL/ jmp doEval
+pgOps+opNOTE/ jmp doNote
+pgOps+opABORT/ jmp doAbort
+pgOps+opQUIT/ jmp doQuit
+pgOps+opSAY/ jmp doSay
+pgOps+opERROR/ jmp pgErr
+pgOps+opCOUNTPARSE/ jmp doCount
+pgOps+opCQ/ jmp doCq
+pgOps+opNQ/ jmp doNq
+pgOps+opMEMQS/ jmp doMemqs
+pgOps+opISQ/ jmp doIsq
+pgOps+opEQS/ jmp doEqs
+pgOps+opGETRS/ jmp doGetrs
+pgOps+opSETRS/ jmp doSetrs
+pgOps+opFQ/ jmp doFq
+pgOps+opFQSET/ jmp doFqset
+pgOps+opPARSEK/ jmp doParsek
+pgOps+opMSG/ jmp doMsg
+pgOps+opFUNCALL/ jmp doFunc
+pgOps+opAPPLYL/ jmp doApply
+pgOps+opCATCH/ jmp doCatch
+pgOps+opUNCATCH/ jmp doUncat
+pgOps+opTHROW/ jmp doThrow
+pgOps+opEVS/ jmp doEvs
+pgOps+opERESUME/ jmp i [evlRes:015]
+pgOps+opVARCAR/ jmp doVarcar
+pgOps+opVARCDR/ jmp doVarcdr
+pgOps+opGETS/ jmp doGets
+    // The six bits past the last operation. pgLoop checks none, so a bad
+    // operation faults here. The lines are counted for NOPS 065. The builds
+    // that add code to this bank (GCEVERY, CONSTCHECK) leave the padding
+    // out for its 11 words. The compiler never emits an operation past NOPS.
+#if NOPS != 065
+#error "pgOps: the padding below is counted for NOPS 065"
+#endif
+#ifdef GCEVERY
+#define NOPAD
+#endif
+#ifdef CONSTCHECK
+#define NOPAD
+#endif
+#ifndef NOPAD
+pgOps+NOPS/
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+    jmp pgFlt
+pgOps+0100/
+#endif
+pgNats,
+pgNats+naCAR/ jmp ntCar
+pgNats+naCDR/ jmp ntCdr
+pgNats+naCONS/ jmp ntCons
+pgNats+naEQ/ jmp ntEq
+pgNats+naEQUAL/ jmp ntEqual
+pgNats+naNOT/ jmp ntNot
+pgNats+naATOM/ jmp ntAtom
+pgNats+naLISTP/ jmp ntListp
+pgNats+naMEMQ/ jmp ntMemq
+pgNats+naMEMBER/ jmp ntMember
+pgNats+naAPPEND/ jmp ntAppend
+pgNats+naREVERSE/ jmp ntRev
+pgNats+naLENGTH/ jmp ntLength
+pgNats+naGREATERP/ jmp ntGreat
+pgNats+naLESSP/ jmp ntLess
+pgNats+naDIFFERENCE/ jmp ntDiff
+pgNats+naPLUS/ jmp ntPlus
+pgNats+naADD1/ jmp ntAdd1
+pgNats+naSUB1/ jmp ntSub1
+pgNats+naGET/ jmp ntGet
+pgNats+naPUTPROP/ jmp ntPut
+pgNats+naGETR/ jmp pgFlt
+pgNats+naSETR/ jmp ntSetr
+pgNats+naFE/ jmp ntFe
+pgNats+naH/ jmp ntH
+pgNats+naN/ jmp ntN
+pgNats+naNB/ jmp ntNb
+pgNats+naPARENT/ jmp ntPar
+pgNats+naSM/ jmp ntSm
+pgNats+naMEET/ jmp ntMeet
+pgNats+naSETDIF/ jmp ntSetd
+pgNats+naUNION/ jmp ntUnion
+pgNats+naFINDB/ jmp ntFindb
+pgNats+naFOLLOWING/ jmp ntFollow
+pgNats+naPREVIOUS/ jmp ntPrev
+pgNats+naMAKESYM/ jmp ntCold
+pgNats+naCOMB2/ jmp ntCold
+pgNats+naCOMB3/ jmp ntCold
+pgNats+naPSTAT/ jmp pgFlt
+pgNats+naSYMVAL/ jmp ntCold
+pgNats+naSET/ jmp ntCold
+pgNats+naFNKIND/ jmp ntCold
+pgNats+naSYMBOLP/ jmp pgFlt
+pgNats+naCODEP/ jmp pgFlt
+pgNats+naNUMBERP/ jmp ntNump
+pgNats+naZEROP/ jmp ntZerop
+pgNats+naMINUSP/ jmp pgFlt
+pgNats+naTIMES/ jmp ntCold
+pgNats+naQUOTIENT/ jmp ntCold
+pgNats+naREMAINDER/ jmp ntCold
+pgNats+naMAX/ jmp pgFlt
+pgNats+naMIN/ jmp pgFlt
+pgNats+naLESSP3/ jmp ntLess3
+pgNats+naGREATERP3/ jmp pgFlt
+pgNats+naASSQ/ jmp ntAssq
+pgNats+naNCONC/ jmp ntNconc
+pgNats+naRPLACA/ jmp ntRplaca
+pgNats+naRPLACD/ jmp ntRplacd
+pgNats+naLAST/ jmp ntLast
+pgNats+naNTH/ jmp ntCold
+pgNats+naREMPROP/ jmp ntCold
+pgNats+naMAKESYM2/ jmp ntCold
+pgNats+naCUTOFF/ jmp ntCold
+pgNats+naPRINC/ jmp ntCold
+pgNats+naPRINT3/ jmp ntCold
+pgNats+naTERPRI/ jmp ntCold
+pgNats+naZERO/ jmp pgFlt
+pgNats+naDISPLAY/ jmp ntCold
+pgNats+naDBMATCH/ jmp csDbm
+pgNats+naACTION/ jmp csAction
+pgNats+naACTIONP/ jmp csActp
+pgNats+naPRINT/ jmp ntCold
+pgNats+naATAB/ jmp csAtab
+pgNats+naPROPNAME/ jmp ntCold
+pgNats+naSMREC/ jmp ntCold
+pgNats+naNMATCH/ jmp pgFlt
+pgNats+naNTRY/ jmp pgFlt
+pgNats+naANSMARK/ jmp ntCold
+pgNats+naREAD/ jmp ntCold
+pgNats+naEVAL/ jmp i [evlEnter:015]
+pgNats+naETHVAL/ jmp i [ntEthval:015]
+pgNats+naEEVLIS/ jmp i [ntEevlis:015]
+pgNats+naETHV1/ jmp i [ntEthv1:015]
+pgNats+naEVENTS/ jmp i [csEvts:5]
+pgNats+naEVFORM/ jmp i [csEvfm:5]
+pgNats+naHISTORY/ jmp csHist
+pgNats+naDERIVE/ jmp i [csDerive:5]
+pgNats+naREADWORD/ jmp i [csRdw:5]
+pgNats+naRANDOM/ jmp i [csRand:5]
+pgNats+naALLWHO/ jmp i [csAllwho:5]
+pgNats+naSIZEAT/ jmp i [csSizeAt:1]
+pgNats+naEQDIM/ jmp i [csEqdim:1]
+pgNats+naREBUILD/ jmp i [r12Rebuild:3]
+pgNats+naBUILDNODE/ jmp i [r12Buildnode:3]
+pgNats+naPUTPROPS/ jmp i [r12Props:3]
+pgNats+NNATS/
+
+// CAR and CDR. Of a list they are its first and its rest, of NIL, NIL. CAR of an
+// engine's record is its fact (psCar), of another atom HEADER. CDR of a
+// symbol or a word is its property list (psCdr), of another atom a Lisp
+// error. A freed cell read is a fault.
+// pgCar takes the value in AC. Returns the result in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgCar,
+    local atom, hdr, rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgCar
+    and [KMASK]
+    sas [KCONS]
+    jmp atom
+    lac pgCar
+    ior [PCELLS]
+    dac p
+    lac i p
+    sad [FREEW]
+    jmp pgFlt
+    jmp rtn
+atom, sza
+    jmp hdr
+    lac pgCar
+    sza i
+    jmp rtn                 // NIL
+    // A record's fact is made.
+    dio pgCio
+    lac pgCar
+    dac pgGx
+    jsp psCar
+    lai
+    lio pgCio
+    jmp rtn
+hdr, lac [HEADER]
+rtn, jmp 0
+p, 0
+    endloc
+
+// CDR, described with pgCar above.
+// Takes the value in AC. Returns the result in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgCdr,
+    local atom, plist, rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgCdr
+    and [KMASK]
+    sas [KCONS]
+    jmp atom
+    lac pgCdr
+    ior [PCELLS]
+    dac p
+    lac i p
+    sad [FREEW]
+    jmp pgFlt
+    idx p
+    lac i p
+    jmp rtn
+atom, lac pgCdr
+    sza i
+    jmp rtn
+    and [KMASK]
+    sad [KSYM]
+    jmp plist
+    sas [KWORD]
+    jmp pgErr
+plist, dio pgCio
+    lac pgCdr
+    dac pgGx
+    XJSP(psCdr, 012)
+    lai
+    lio pgCio
+rtn, jmp 0
+p, 0
+    endloc
+
+// Finds the last cell of a list, the first whose CDR is no list.
+// Takes the list in AC. Returns the cell in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgLast,
+    local loop, rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac pgLast
+    and [KMASK]
+    sas [KCONS]
+    jmp rtn-1
+    lac pgLast
+    ior [PCELLS]
+    add [1]
+    dac p
+    lac i p
+    and [KMASK]
+    sas [KCONS]
+    jmp rtn-1
+    lac i p
+    dac pgLast
+    jmp loop
+    lac pgLast
+rtn, jmp 0
+p, 0
+    endloc
+
+// CONS, from the free list. An empty list has the collector run, the
+// two values held where it finds them. If it is still empty, the drop runs
+// (drop.ac's psShort), which is NO ROOM when it lets nothing go.
+// Takes the CAR in AC and the CDR in IO. Returns the new cell in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+pgCons,
+    local short, some, rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgCons
+    dac pgConsA
+    dio pgConsD
+#ifdef GCEVERY
+    XJSP(psGcK, 011)        // GCEVERY's collection (drop.ac)
+#endif
+    lac pgFree
+    sza
+    jmp some
+    jsp psGC1
+short, lac pgFree
+    sza
+    jmp some
+    XJSP(psShort, 011)
+    jmp short
+some, dac p
+    idx p
+    lac i p
+    dac pgFree
+    law i 1
+    add p
+    dac p
+    lac pgConsA
+    dac i p
+    idx p
+    lac pgConsD
+    dac i p
+    law i 1
+    add pgNFree
+    dac pgNFree
+    law i 1
+    add p
+    and [077777]
+    ior [KCONS]
+    dzm pgConsA
+    dzm pgConsD
+rtn, jmp 0
+p, 0
+    endloc
+
+// Makes sure n cells can be made with no collection between. The
+// collector runs now if fewer are free. If there are still too few, the drop
+// runs, as for CONS.
+// Takes n in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+pgRsv,
+    local short, rtn
+    0                       // jda puts the argument here
+    dap rtn
+#ifdef GCEVERY
+    lac pgRsv
+    dac i [psHold:011]      // no test collection while they are taken
+#endif
+    lac pgNFree
+    sub pgRsv
+    sma
+    jmp rtn
+    jsp psGC1
+short, lac pgNFree
+    sub pgRsv
+    sma
+    jmp rtn
+    XJSP(psShort, 011)
+    jmp short
+rtn, jmp 0
+    endloc
+
+// The list builder. pgLbNew empties it, pgLbAdd puts a value at its end,
+// pgLbEnd ends it with a tail and gives the list. One list is built at a
+// time. pgLbH is its first cell, which the collector marks. pgLbT is the
+// address of its last cell's CDR, 0 while it is empty. The last cell's
+// CDR is NIL until the end, so the list can be searched as it grows.
+// pgLbNew takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+pgLbNew,
+    local rtn
+    dap rtn
+    dzm pgLbH
+    dzm pgLbT
+rtn, jmp 0
+    endloc
+
+// pgLbAdd takes the value in AC and returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+pgLbAdd,
+    local first, rtn, c
+    0                       // jda puts the argument here
+    dap rtn
+    cli
+    lac pgLbAdd
+    jda pgCons
+    dac c
+    lac pgLbT
+    sza i
+    jmp first
+    lac c
+    dac i pgLbT
+    jmp .+3
+first, lac c
+    dac pgLbH
+    lac c
+    ior [PCELLS]
+    add [1]
+    dac pgLbT
+rtn, jmp 0
+c, 0
+    endloc
+
+// pgLbEnd takes the tail in AC. Returns the list in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgLbEnd,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgLbT
+    sza i
+    jmp rtn-1
+    lac pgLbEnd
+    dac i pgLbT
+    lac pgLbH
+    dzm pgLbH
+    jmp rtn
+    lac pgLbEnd
+rtn, jmp 0
+    endloc
+
+// MEMQ. Takes the value in AC and the list in IO. Returns the tail that
+// starts with the value, or NIL, in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+pgMemq,
+    local loop, no, yes, rtn, l, p
+    0                       // jda puts the argument here
+    dap rtn
+    dio l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp no
+    lac l
+    ior [PCELLS]
+    dac p
+    lac i p
+    sad pgMemq
+    jmp yes
+    idx p
+    lac i p
+    dac l
+    jmp loop
+no, cla
+    jmp rtn
+yes, lac l
+rtn, jmp 0
+l, 0
+p, 0
+    endloc
+
+// EQUAL, without recursion. The CDRs still to compare wait on the value
+// stack above its top. Takes one value in AC and the other in IO.
+// Returns 1 in AC if they are EQUAL, else 0.
+// AC is the result and IO is clobbered.
+// Called via jda.
+pgEqual,
+    local loop, pop, yes, no, rtn, a, b, base, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgEqual
+    dac a
+    dio b
+    lac pgSp
+    dac base
+loop, lac a
+    sad b
+    jmp pop
+    and [KMASK]
+    sas [KCONS]
+    jmp no
+    lac b
+    and [KMASK]
+    sas [KCONS]
+    jmp no
+    lac pgSp
+    sub [PVSTK+PVLEN-2]
+    sma
+    jmp pgRoom
+    lac a
+    ior [PCELLS]
+    dac p
+    idx p
+    lac i p
+    PGPUSH
+    lac b
+    ior [PCELLS]
+    dac p
+    idx p
+    lac i p
+    PGPUSH
+    lac a
+    ior [PCELLS]
+    dac p
+    lac i p
+    dac a
+    lac b
+    ior [PCELLS]
+    dac p
+    lac i p
+    dac b
+    jmp loop
+pop, lac pgSp
+    sad base
+    jmp yes
+    PGPOP
+    dac b
+    PGPOP
+    dac a
+    jmp loop
+yes, law 1
+    jmp rtn
+no, lac base
+    dac pgSp
+    cla
+rtn, jmp 0
+a, 0
+b, 0
+base, 0
+p, 0
+    endloc
+
+// Gives a number's value, signed. Anything else is a Lisp error.
+// Takes the value in AC. Returns the number in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgNum,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgNum
+    and [KMASK]
+    sas [KINT]
+    jmp pgErr
+    lac pgNum
+    and [077777]
+    sub [040000]
+    spa
+    jmp .+3
+    sub [040000]            // negative, less 0100000 in all
+    jmp rtn
+    add [040000]
+rtn, jmp 0
+    endloc
+
+// Makes a number a value, 15 bits two's complement. One outside -040000 to
+// 037777 is a fault.
+// Takes the number in AC. Returns the value in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgMkint,
+    local neg, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac pgMkint
+    sad [0777777]
+    cla
+    spa
+    jmp neg
+    sub [040000]
+    sma
+    jmp pgFlt
+    add [040000+KINT]
+    jmp rtn
+neg, add [040000]
+    spa
+    jmp pgFlt
+    add [040000+KINT]
+rtn, jmp 0
+    endloc
+
+// Finds a node's register. It is the field, 0 to 5, or PREGS for the list of
+// the others. Takes the register, a symbol, in AC. Returns the field in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgField,
+    local loop, found, rtn, p, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac [pgFlds:.]
+    dac p
+    dzm k
+loop, lac i p
+    sad pgField
+    jmp found
+    idx p
+    idx k
+    sas [PREGS]
+    jmp loop
+found, lac k
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// The fields' registers, in their order in a node.
+pgFlds, KSYM+sFEATURES
+    KSYM+sFIRSTWORD
+    KSYM+sWORDAFTER
+    KSYM+sDAUGHTERS
+    KSYM+sSEMANTICS
+    KSYM+sPARENT
+
+// Finds a property in a property list, which runs indicator, value, indicator
+// ... Takes the list in AC and the indicator in pgPlInd. Returns the full
+// address of the value's cell in AC, 0 if it is not there.
+// AC is the result and IO is preserved.
+// Called via jda.
+pgPlAt,
+    local loop, found, rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac pgPlAt
+    and [KMASK]
+    sas [KCONS]
+    jmp rtn-1
+    lac pgPlAt
+    ior [PCELLS]
+    dac p
+    lac i p
+    sad pgPlInd
+    jmp found
+    idx p                   // past the value's cell
+    lac i p
+    ior [PCELLS]
+    add [1]
+    dac p
+    lac i p
+    dac pgPlAt
+    jmp loop
+found, idx p
+    lac i p
+    ior [PCELLS]
+    jmp rtn
+    cla
+rtn, jmp 0
+p, 0
+    endloc
+
+// GET. Of a node it is the field or other register, of a record its WHO, of a
+// list the property after its CAR. Of anything else it is psGet's, a FEATURES
+// first from the feature cache when its list is made (psHot, hotget.ac).
+// Takes the value in AC and the indicator, a symbol, in IO. Returns the
+// property in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+pgGet,
+    local node, regs, look, rec, list, cold, rtn, gi, p, k
+    0                       // jda puts the argument here
+    dap rtn
+    dio gi
+    lac pgGet
+    and [KMASK]
+    sad [KNODE]
+    jmp node
+    sad [KCONS]
+    jmp list
+    sza
+    jmp cold
+    lac pgGet
+    sza
+    jmp rec
+cold, lac pgGet
+    dac pgGx
+    lac gi
+    dac pgGi
+    sad [KSYM+sFEATURES]
+    XJSP(psHot, 5)          // a made list returns past the next word
+    XJSP(psGet, 012)
+    lai
+    jmp rtn
+node, lac gi
+    jda pgField
+    dac k
+    lac pgGet
+    ior [PCELLS]
+    add k
+    dac p
+    lac k
+    sad [PREGS]
+    jmp regs
+    lac i p
+    jmp rtn
+regs, lac i p
+    jmp look
+list, lac pgGet
+    jda pgCdr
+look, dac p
+    lac gi
+    dac pgPlInd
+    lac p
+    jda pgPlAt
+    sza i
+    jmp rtn
+    dac p
+    lac i p
+    jmp rtn
+rec, lac gi
+    sas [KSYM+sWHO]
+    jmp pgFlt
+    lac pgGet
+    add [DWHO]
+    dac p
+    lac i p
+rtn, jmp 0
+gi, 0
+p, 0
+k, 0
+    endloc
+
+// PUTPROP. On a node it sets a field, or sets a register in the list or puts
+// it first in it. On anything else it is psPut's.
+// Takes the node in pgPx, the value in pgPv and the register in pgPi.
+// Returns the value in AC.
+// AC is the result and IO is clobbered.
+// Called via jsp.
+pgPut,
+    local node, regs, new, done, rtn, k, p
+    dap rtn
+    lac pgPx
+    and [KMASK]
+    sad [KNODE]
+    jmp node
+    XJSP(psPut, 012)
+    jmp done
+node, lac pgPi
+    jda pgField
+    dac k
+    lac pgPx
+    ior [PCELLS]
+    add k
+    dac p
+    lac k
+    sad [PREGS]
+    jmp regs
+    lac pgPv
+    dac i p
+    jmp done
+regs, lac pgPi
+    dac pgPlInd
+    lac i p
+    jda pgPlAt
+    sza i
+    jmp new
+    dac k
+    lac pgPv
+    dac i k
+    jmp done
+new, lio i p
+    lac pgPv
+    jda pgCons
+    lia
+    lac pgPi
+    jda pgCons
+    lia
+    lac pgPx
+    ior [PCELLS]
+    add [PREGS]
+    dac p
+    dio i p
+done, lac pgPv
+rtn, jmp 0
+k, 0
+p, 0
+    endloc
+
+// The far entries, for pgsys.ac. Each takes its arguments in fA and fB
+// and gives its result in IO, or in fA where it says so, and returns to
+// the full address jsp left in AC. AC is clobbered. IO is clobbered
+// where it gives nothing.
+// Called via jsp from bank 012.
+// fCons is CONS of fA and fB.
+fCons, dac fCr
+    lac fA
+    lio fB
+    jda pgCons
+    lia
+    jmp i fCr
+// fLbNew, fLbAdd and fLbEnd are the list builder. fLbAdd adds fA, fLbEnd ends
+// the list with the tail fA.
+fLbNew, dac fLr
+    jsp pgLbNew
+    jmp i fLr
+fLbAdd, dac fLr
+    lac fA
+    jda pgLbAdd
+    jmp i fLr
+fLbEnd, dac fLr
+    lac fA
+    jda pgLbEnd
+    lia
+    jmp i fLr
+// fRsv makes room for fA cells with no collection between.
+fRsv, dac fRr
+    lac fA
+    jda pgRsv
+    jmp i fRr
+// fGet is GET of fA, indicator fB.
+fGet, dac fGr
+    lac fA
+    lio fB
+    jda pgGet
+    lia
+    jmp i fGr
+// fPut is PUTPROP of pgPx, pgPv, pgPi.
+fPut, dac fPr
+    jsp pgPut
+    lia
+    jmp i fPr
+// fFnOf gives gFnOf's word for symbol number fA, -1 if none. fVarOf gives
+// gVarSym's for symbol fA, the same.
+fFnOf, dac fFr
+    lac fA
+    jda pgFnOf
+    lia
+    jmp i fFr
+fVarOf, dac fFr
+    lac fA
+    jda pgVarOf
+    lia
+    jmp i fFr
+// fEqual gives 1 if fA and fB are EQUAL, else 0.
+fEqual, dac fEr
+    lac fA
+    lio fB
+    jda pgEqual
+    lia
+    jmp i fEr
+// fNum, fMkint and fCar work on fA and put the result back in fA. IO is preserved.
+fNum, dac fNr
+    lac fA
+    jda pgNum
+    dac fA
+    jmp i fNr
+fMkint, dac fNr
+    lac fA
+    jda pgMkint
+    dac fA
+    jmp i fNr
+fCar, dac fNr
+    lac fA
+    jda pgCar
+    dac fA
+    jmp i fNr
+// fPlAt gives the value cell's full address of indicator pgPlInd in the
+// property list fA, 0 if it is not there.
+fPlAt, dac fPlr
+    lac fA
+    jda pgPlAt
+    lia
+    jmp i fPlr
+// fStkL gives the list of the fA values on top of the value stack.
+fStkL, dac fSr
+    lac fA
+    jda pgStkL
+    lia
+    jmp i fSr
+
+// The machine's state, which pgsys.ac reaches by full address.
+fA, 0                       // the far entries' arguments
+fB, 0
+fCr, 0                      // and the full addresses they return to
+fLr, 0
+fRr, 0
+fGr, 0
+fPr, 0
+fFr, 0
+fEr, 0
+fNr, 0
+fPlr, 0
+fSr, 0
+pgRtn, 0                    // the full address pgSent returns to
+pgIp, 0                     // the next code word
+pgA, 0                      // the operation's operand
+pgJ, 0                      // a jump's target, or a call's block
+pgFn, 0                     // the running function's block
+pgT, 0                      // a pointer for the moment
+pgV, 0                      // a value for the moment
+pgK, 0                      // a count for the moment
+pgSp, 0                     // the value stack's next free word
+pgCp, 0                     // the calls' next free word
+pgBp, 0                     // the bindings' next free word
+pgFree, 0                   // the free cells, a list through their CDRs
+pgNFree, 0                  // and their number
+pgConsA, 0                  // CONS's two values, while it may collect
+pgConsD, 0
+pgLbH, 0                    // the list builder's list (these three in a row, so collect.ac marks them as one range)
+pgLbT, 0                    // and its last CDR's address, 0 when empty
+pgPlInd, 0                  // pgPlAt's indicator
+pgPx, 0                     // PUTPROP's atom
+pgPv, 0                     // its value
+pgPi, 0                     // its indicator
+pgGx, 0                     // psGet's, psCar's and psCdr's atom
+pgGi, 0                     // psGet's indicator
+pgCio, 0                    // IO kept across psCar and psCdr
+pgCalls, 0                  // the sentence's calls of PARSE
+pgPst, 0                    // its calls of PARSE-STATISTICS
+pgNotes, 0                  // the breaks it proceeded from (ERT, BUG)
+pgStat, 0                   // how it ended, as pgSent returns it
+pgFltA, 0                   // a fault's code word's next

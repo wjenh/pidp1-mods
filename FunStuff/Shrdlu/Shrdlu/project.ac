@@ -1,0 +1,93 @@
+// The projection from the world to the 340's screen, the original's
+// GP-PROJECT, in integers.
+// sx = floor(0.9 (x + 0.75111 y + 3)) and sy = floor(0.9 (z + 0.43302 y + 3)).
+// Each is floor((900 a + P y + 2700 + floor(Q y / 1000)) / 1000), with 0.9
+// times the y coefficient written as P/1000 + Q/10^6 (x has P 675 and Q
+// 999, z has P 389 and Q 718). It is computed as three products each divided by 1000
+// and their remainders summed.
+// It equals the formula exactly for every coordinate from 0 to 1300 octal.
+// It is meant for coordinates 0 to 07777, where no product overflows.
+// Needs nothing but its words. Bank 0, eem on or off.
+
+// Projects (pjX, pjY, pjZ) to (pjSx, pjSy), unclamped.
+// AC and IO are clobbered. Called via jsp.
+proj,
+    local rtn
+    dap rtn
+    lac pjX
+    dac pjA
+    law 0d675
+    dac pjP
+    law 0d999
+    dac pjQ
+    jsp pjOne
+    dac pjSx
+    lac pjZ
+    dac pjA
+    law 0d389
+    dac pjP
+    law 0d718
+    dac pjQ
+    jsp pjOne
+    dac pjSy
+rtn, jmp 0
+    endloc
+
+// One coordinate of the projection, for a = pjA, y = pjY and the
+// constants pjP, pjQ.
+// Returns the coordinate in AC, or 0377777 when a product overflows.
+// AC and IO are clobbered. Called via jsp.
+// Each mul leaves its product shifted left one place in AC:IO, which is
+// the form div wants, so the two chain with no shift between.
+pjOne,
+    local rtn, w, qa, ra, ry, ovf
+    dap rtn
+    lac pjY
+    mul pjQ
+    div [0d1000]
+    jmp ovf
+    dac w
+    lac pjA
+    mul [0d900]
+    div [0d1000]
+    jmp ovf
+    dac qa
+    dio ra
+    lac pjY
+    mul pjP
+    div [0d1000]
+    jmp ovf
+    add qa
+    dac qa
+    dio ry
+    // The remainders, the constant and w, over 1000.
+    // A one-word dividend goes in IO with AC clear, then is shifted left once for div.
+    lac ra
+    add ry
+    add [0d2700]
+    add w
+    dac w
+    lio w
+    cla
+    scl 1s
+    div [0d1000]
+    jmp ovf
+    add qa
+rtn, jmp 0
+// Only a coordinate past 07777 overflows; the screen clamp catches it.
+ovf, lac [0377777]
+    jmp rtn
+w, 0
+qa, 0
+ra, 0
+ry, 0
+    endloc
+
+pjX, 0
+pjY, 0
+pjZ, 0
+pjSx, 0
+pjSy, 0
+pjA, 0
+pjP, 0
+pjQ, 0

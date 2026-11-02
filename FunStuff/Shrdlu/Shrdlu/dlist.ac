@@ -1,0 +1,1027 @@
+// The display list and the frame loop.
+//
+// A frame is seven groups, each a 340 program started with t340dla. They
+// are the red, green, blue and white objects (the box, the table), the held
+// object, the idle labels, and the hand with its arm. The first five are
+// built together into one of two buffers in bank 1 while the other is
+// shown; the new one is switched in between frames. The held object's
+// group is drawn whole, relative to one point word that follows the hand;
+// the hand's group is rewritten at each step of a move. Both are written
+// only while the 340 is stopped between groups, so nothing it is drawing
+// ever changes. Grouping by color gives each color its one intensity.
+//
+// The labels' group is the sixth of each buffer's table, but is built by
+// no rebuild. While the program is busy both tables point it at lbOff, a
+// halt alone, and when the program is idle at READY (lbIdle, called from
+// the reader's poll) the overlay lbl (labels.ac) writes the two letters of
+// each visible colored object into lbBuf and lbIdle points both tables at
+// it; the first character typed points them back (lbHide). A pointer is
+// one word, so the break routine never sees a half-switched group. The
+// routines are in labels.ac, which follows the overlay manager.
+//
+// A group has, for each run of pieces (each starting where the last
+// ended), a parameter word (scale 0, the group's intensity) and a point at
+// its start, then its vectors, each within the 340's 127-step delta, and a
+// zero vector with escape. It ends with a halt that asks for a break.
+//
+// The break routine (dpyBreak, dbreak.ac) starts each group as the last
+// one stops, so the picture holds whatever the program is doing, and
+// nothing in the program polls the display. anchorPatch, handApply and
+// handBuild are the routine's alone. The program and the routine share words,
+// never routines. The program posts a hand position (hpX, hpY, hpPaced,
+// then hpPend) or a built scene (the whole back buffer, then dpSwap), and
+// the routine takes it between groups.
+// Bank 0, eem on (the buffers are in bank 1). Needs
+// <TYPE340/type340alt.ah>, <CLOCK/clockdefs.ah>, shrdlu.ah, project.ac,
+// world.ac, hidden.ac.
+
+// Prepares the display with both buffers empty, the hand's group empty and
+// the piece cache empty, then enables the break and starts the first group.
+// The break is off until then, since a run before this one may have left
+// it on with the 340 running.
+// AC and IO are clobbered. Called via jsp.
+dpyInit,
+    local rtn, loop, p, n
+    dap rtn
+    lsm
+    lac [clsena]
+    cls
+    lac [grpTab]
+    dac p
+    law i 2*GHAND
+    dac n
+loop, lac [dlNull:1]
+    dac i p
+    idx p
+    isp n
+    jmp loop
+    lac [lbOff:1]
+    dac grpTab+GLABEL
+    dac grpTab+GHAND+GLABEL
+    dzm i [lbSt:1]
+    dzm anchor
+    dzm anchor+1
+    dzm dpFront
+    dzm dpSwap
+    dzm dpGrp
+    dzm hpPend
+    dzm dpFrames
+    dzm dpEdges
+    dzm dpClamps
+    dzm dlOver
+    dzm dpMs
+    jsp pcInit
+    lac [halt | interrupt]
+    dac i [handBuf:1]
+    cbs
+    esm
+    lio [dlNull:1]
+    t340dla
+rtn, jmp 0
+p, 0
+n, 0
+    endloc
+
+// Rebuilds the scene into the buffer not shown, and asks the break
+// routine to switch it in. What a change can touch is clipped again, and
+// the rest is drawn from the piece cache (cache.ac). dpSwap is cleared before
+// the buffer not shown is taken from dpFront, and set only once the
+// buffer is whole, since a switch can come between any two instructions.
+// Sets dpMs to the time it took.
+// AC and IO are clobbered, and so are the working copy and the vertices.
+// Called via jsp.
+dlRebuild,
+    local rtn, color, obj, onext, nheld, b, c, o, pp, t0
+    dap rtn
+    rck
+    dio t0
+    dzm dpSwap
+    jsp occBuild
+    jsp pcScan
+    jsp pcMark
+    lac dpFront
+    xor [1]
+    dac b
+    add [bufBase]
+    dac c
+    lac i c
+    dac dlWp
+    add [BUFWORDS-BUFSLACK]
+    dac dlLim
+    law 1
+    dac gClamp
+    dac cEmit
+    dzm c
+color, lac b
+    sza
+    law GHAND
+    add c
+    add [grpTab]
+    dac pp
+    lac dlWp
+    dac i pp
+    lac c
+    add [intTab]
+    dac pp
+    lac i pp
+    jda dlBegin
+    dzm o
+obj, lac o
+    jda objGet
+    lac woKind
+    sza i
+    jmp onext
+    lac o
+    sad wHeld
+    jmp onext
+#ifdef OMITB10
+    sad [7]
+    jmp onext
+#endif
+    lac woColor
+    sad c
+    jmp .+2
+    jmp onext
+    lac o
+    jda pcClean
+    jmp .+2
+    jmp onext
+    lac woX
+    dac gLx
+    lac woY
+    dac gLy
+    lac woZ
+    dac gLz
+    lac o
+    dac cOwner
+    lac woFlags
+    and [FTRANS]
+    dac cWhole
+    jsp geomBuild
+    jsp clipEdges
+    jsp pcEnd
+onext, idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp obj
+    lac c
+    sad [CWHITE]
+    jsp tabDraw
+    jsp dlEnd
+    idx c
+    sad [CWHITE+1]
+    jmp .+2
+    jmp color
+    // The held object's group.
+    lac b
+    sza
+    law GHAND
+    add [grpTab+GHELD]
+    dac pp
+    lac dlWp
+    dac i pp
+    lac b
+    add [anchor]
+    dac pp
+    dzm i pp
+    lac wHeld
+    spa
+    jmp nheld
+    jsp heldBuild
+    lac b
+    add [anchor]
+    dac pp
+    lac hbAnchor
+    dac i pp
+    lac b
+    add [offX]
+    dac pp
+    lac hbOffX
+    dac i pp
+    lac b
+    add [offY]
+    dac pp
+    lac hbOffY
+    dac i pp
+    jmp .+3
+nheld, lac [halt | interrupt]
+    jda dlRaw
+    law 1
+    dac dpSwap
+    rck
+    dio c
+    lac c
+    sub t0
+    spa
+    add [0d60000]
+    dac dpMs
+rtn, jmp 0
+b, 0
+c, 0
+o, 0
+pp, 0
+t0, 0
+    endloc
+
+// Builds the held object's group at dlWp, with every edge unclipped, at the
+// place below the hand where it hangs.
+// Returns hbAnchor, the full address of its point's y word, and hbOffX and
+// hbOffY, that point less the hand's place on the screen.
+// AC and IO are clobbered. Called via jsp.
+heldBuild,
+    local rtn, loop, p, n, w, vi, vj
+    dap rtn
+    lac wHeld
+    jda objGet
+    lac woDsx
+    sar 1s
+    cma
+    add wHx
+    dac gLx
+    lac woDsy
+    sar 1s
+    cma
+    add wHy
+    dac gLy
+    lac woDsz
+    cma
+    add wHz
+    dac gLz
+    jsp geomBuild
+    lac woColor
+    add [intTab]
+    dac p
+    lac i p
+    jda dlBegin
+    law 1
+    dac dlRel
+    lac dlWp
+    add [1]
+    dac hbAnchor
+    lac wHx
+    dac pjX
+    lac wHy
+    dac pjY
+    lac wHz
+    dac pjZ
+    jsp proj
+    // The group's first point is its first edge's start, V2 for every kind
+    // (hidden.ac's edge lists).
+    lac gsx+2
+    sub pjSx
+    dac hbOffX
+    lac gsy+2
+    sub pjSy
+    dac hbOffY
+    lac gEdges
+    dac p
+    lac i p
+    dac n
+    idx p
+    lac i p
+    add n
+    cma
+    dac n
+    idx p
+loop, lac i p
+    dac w
+    sar 6s
+    dac vi
+    lac w
+    and [077]
+    dac vj
+    lac vi
+    lio [gsx]
+    jda vget
+    dac sgX0
+    lac vi
+    lio [gsy]
+    jda vget
+    dac sgY0
+    lac vj
+    lio [gsx]
+    jda vget
+    dac sgX1
+    lac vj
+    lio [gsy]
+    jda vget
+    dac sgY1
+    jsp dlSeg
+    idx p
+    isp n
+    jmp loop
+    jsp dlEnd
+rtn, jmp 0
+p, 0
+n, 0
+w, 0
+vi, 0
+vj, 0
+    endloc
+
+hbAnchor, 0
+hbOffX, 0
+hbOffY, 0
+
+// Writes the shown buffer's held-object point at the hand's place on the
+// screen plus the group's offset. The 340 must be stopped.
+// AC and IO are clobbered. Called via jsp.
+anchorPatch,
+    local rtn, p, v
+    dap rtn
+    lac dpFront
+    add [anchor]
+    dac p
+    lac i p
+    sza i
+    jmp rtn
+    dac v
+    lac dpFront
+    add [offY]
+    dac p
+    lac i p
+    add hsy
+    jda bClamp
+    ior [0200000 | next(point)]
+    dac i v
+    idx v
+    lac dpFront
+    add [offX]
+    dac p
+    lac i p
+    add hsx
+    jda bClamp
+    ior [next(vector)]
+    dac i v
+rtn, jmp 0
+p, 0
+v, 0
+    endloc
+
+// Starts a group with no piece drawn yet, each piece to start with a point.
+// Takes the group's intensity, 0 to 7, in AC. AC and IO are clobbered.
+// Called via jda.
+dlBegin,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac dlBegin
+    ior [scale(0) | 010]
+    dac dlPar
+    dzm dlRun
+    dzm dlRel
+rtn, jmp 0
+    endloc
+
+// Adds the piece (sgX0, sgY0) to (sgX1, sgY1) to the group, starting it
+// with a point; a later piece first leaves vector mode. A point costs
+// about 55 us, against 1.5 us a step for invisible vectors, so it is the
+// shorter way to any but a nearby start, and a short frame keeps every
+// line inside each of t30dpy's 33 ms frames. A later piece that starts
+// where the beam is, the last one's end, needs neither. It carries on in
+// vector mode, which is why the edge lists run on from edge to edge. In a
+// group drawn relative to its first point (dlRel, the held object's), a
+// later piece is reached by invisible vectors instead, so the whole group
+// moves with that point.
+// A piece of no length adds nothing. AC and IO are clobbered.
+// Called via jsp.
+dlSeg,
+    local rtn, first, draw, rel, esc
+    dap rtn
+    lac sgX0
+    sad sgX1
+    jmp .+2
+    jmp .+4
+    lac sgY0
+    sad sgY1
+    jmp rtn
+    lac dlRun
+    sza i
+    jmp first
+    lac dlRel
+    sza
+    jmp rel
+    lac sgY0
+    sas dlCy
+    jmp esc
+    lac sgX0
+    sad dlCx
+    jmp draw
+esc, lac [0400000]
+    jda dlWord
+first, lac dlPar
+    ior [next(point)]
+    jda dlWord
+    lac sgY0
+    ior [0200000 | next(point)]
+    jda dlWord
+    lac sgX0
+    ior [next(vector)]
+    jda dlWord
+    lac sgX0
+    dac dlCx
+    lac sgY0
+    dac dlCy
+    law 1
+    dac dlRun
+draw, lac sgX1
+    dac mvTx
+    lac sgY1
+    dac mvTy
+    lac [0200000]
+    dac mvVis
+    jsp dlMove
+rtn, jmp 0
+rel, lac sgX0
+    dac mvTx
+    lac sgY0
+    dac mvTy
+    dzm mvVis
+    jsp dlMove
+    jmp draw
+    endloc
+
+// Ends a group with a return to parameter mode and a halt asking for a
+// break.
+// AC and IO are clobbered. Called via jsp.
+dlEnd,
+    local rtn
+    dap rtn
+    lac dlRun
+    sza i
+    jmp .+3
+    lac [0400000]
+    jda dlRaw
+    lac [halt | interrupt]
+    jda dlRaw
+rtn, jmp 0
+    endloc
+
+// Moves the beam from (dlCx, dlCy) to (mvTx, mvTy) in as few vectors as
+// the 127-step delta allows, equal parts but for rounding; mvVis is
+// 0200000 to draw, 0 to move. AC and IO are clobbered. Called via jsp.
+dlMove,
+    local rtn, loop, one, dx, dy, adx, ady, m, n, k, px, py, nx, ny
+    dap rtn
+    lac mvTx
+    sub dlCx
+    dac dx
+    spa
+    cma
+    dac adx
+    lac mvTy
+    sub dlCy
+    dac dy
+    spa
+    cma
+    dac ady
+    sub adx
+    spa
+    jmp .+3
+    lac ady
+    jmp .+2
+    lac adx
+    dac m
+    sza i
+    jmp rtn
+    // n = ceiling(m / 127) parts.
+    add [0d126]
+    dac n
+    lio n
+    cla
+    scl 1s
+    div [0d127]
+    jmp rtn
+    dac n
+    sad [1]
+    jmp one
+    lac dlCx
+    dac px
+    lac dlCy
+    dac py
+    law 1
+    dac k
+loop, lac adx
+    mul k
+    div n
+    jmp rtn
+    dac nx
+    lac dx
+    sma
+    jmp .+4
+    cla
+    sub nx
+    dac nx
+    lac nx
+    add dlCx
+    dac nx
+    lac ady
+    mul k
+    div n
+    jmp rtn
+    dac ny
+    lac dy
+    sma
+    jmp .+4
+    cla
+    sub ny
+    dac ny
+    lac ny
+    add dlCy
+    dac ny
+    lac nx
+    sub px
+    dac vcX
+    lac ny
+    sub py
+    dac vcY
+    jsp dlVec
+    lac nx
+    dac px
+    lac ny
+    dac py
+    idx k
+    sub n
+    sma sza
+    jmp .+2
+    jmp loop
+    jmp .+6
+one, lac dx
+    dac vcX
+    lac dy
+    dac vcY
+    jsp dlVec
+    lac mvTx
+    dac dlCx
+    lac mvTy
+    dac dlCy
+rtn, jmp 0
+dx, 0
+dy, 0
+adx, 0
+ady, 0
+m, 0
+n, 0
+k, 0
+px, 0
+py, 0
+nx, 0
+ny, 0
+    endloc
+
+// One vector word of (vcX, vcY), each within 127, visible if mvVis.
+// AC and IO are clobbered. Called via jsp.
+dlVec,
+    local rtn, w
+    dap rtn
+    lac mvVis
+    dac w
+    lac vcY
+    sma
+    jmp .+6
+    cma
+    ral 8s
+    ior [down]
+    ior w
+    jmp .+3
+    ral 8s
+    ior w
+    dac w
+    lac vcX
+    sma
+    jmp .+5
+    cma
+    ior [left]
+    ior w
+    jmp .+2
+    ior w
+    jda dlWord
+rtn, jmp 0
+w, 0
+    endloc
+
+// Stores one word at dlWp, unless the buffer is full to its slack, which
+// is counted in dlOver.
+// Takes the word in AC. AC and IO are clobbered. Called via jda.
+dlWord,
+    local rtn, w
+    0                       // jda puts the argument here
+    dap rtn
+    lac dlWord
+    dac w
+    lac dlWp
+    sub dlLim
+    spa
+    jmp .+3
+    idx dlOver
+    jmp rtn
+    lac w
+    dac i dlWp
+    idx dlWp
+rtn, jmp 0
+w, 0
+    endloc
+
+// Stores one word at dlWp even in the slack, for a group's last two words.
+// Takes the word in AC. AC and IO are clobbered. Called via jda.
+dlRaw,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac dlRaw
+    dac i dlWp
+    idx dlWp
+rtn, jmp 0
+    endloc
+
+// Applies a posted hand position (hpX, hpY) once the clock has reached
+// hpDue. A paced one (hpPaced) sets the next due time PERIOD after this
+// one's, so steps that land on whole frames keep PERIOD as their mean;
+// if that time has passed already (a move begun after a pause, or frames
+// running long), PERIOD after now instead, so steps never burst to catch
+// up. The clock counts milliseconds and wraps at 60000: a due time less
+// than half a minute ahead is still to come. The 340 must be stopped.
+// AC and IO are clobbered. Called via jsp.
+handApply,
+    local rtn, now
+    dap rtn
+    lac hpPend
+    sza i
+    jmp rtn
+    rck
+    dio now
+    lac now
+    sub hpDue
+    spa
+    add [0d60000]
+    sub [0d30000]
+    spa i
+    jmp rtn
+    lac hpX
+    dac hsx
+    lac hpY
+    dac hsy
+    jsp handBuild
+    jsp anchorPatch
+    dzm hpPend
+    lac hpPaced
+    sza i
+    jmp rtn
+    lac hpDue
+    add [PERIOD]
+    sub [0d60000]
+    spa
+    add [0d60000]
+    dac hpDue
+    lac now
+    sub hpDue
+    spa
+    add [0d60000]
+    sub [0d30000]
+    sma
+    jmp rtn
+    lac now
+    add [PERIOD]
+    sub [0d60000]
+    spa
+    add [0d60000]
+    dac hpDue
+rtn, jmp 0
+now, 0
+    endloc
+
+// Writes the hand's group, with its point at (hsx, hsy), clamped, the arm up
+// from it to ARMTOP, and the crossbars of the original's film, a short
+// one at the arm's top and a longer one at the hand's point, where the
+// held object hangs. A bar's ends are clamped to the screen uncounted,
+// since a bar meeting the edge is no fault. The 340 must be stopped.
+// AC and IO are clobbered. Called via jsp.
+handBuild,
+    local rtn, loop, step, done, ends, endr, p, hx, hy, rem, s, bl, bw
+    dap rtn
+    lac [handBuf:1]
+    dac p
+    lac hsx
+    jda bClamp
+    dac hx
+    lac hsy
+    jda bClamp
+    dac hy
+    lac [scale(0) | intensity(IWHITE) | next(point)]
+    dac i p
+    idx p
+    lac hy
+    ior [0200000 | next(point)]
+    dac i p
+    idx p
+    lac hx
+    ior [show | next(vector)]
+    dac i p
+    idx p
+    lac [ARMTOP]
+    sub hy
+    dac rem
+    // Up in pieces of at most 127, while any length is left.
+loop, lac rem
+    sma sza
+    jmp step
+    jmp done
+step, sub [0d127]
+    spa
+    jmp .+3
+    lac [0d127]
+    jmp .+2
+    lac rem
+    dac s
+    ral 8s
+    ior [visible]
+    dac i p
+    idx p
+    lac rem
+    sub s
+    dac rem
+    jmp loop
+    // The top bar, back half its width, then across.
+done, law HBARTOP>>1
+    jda ends
+    lac hx
+    sub bl
+    ior [left]
+    dac i p
+    idx p
+    lac bw
+    ior [visible]
+    dac i p
+    idx p
+    // The bottom bar, out of vector mode, a point at its left end, then
+    // across, ending the group's vectors.
+    law HBARBOT>>1
+    jda ends
+    lac [end]
+    dac i p
+    idx p
+    lac [scale(0) | intensity(IWHITE) | next(point)]
+    dac i p
+    idx p
+    lac hy
+    ior [0200000 | next(point)]
+    dac i p
+    idx p
+    lac bl
+    ior [next(vector)]
+    dac i p
+    idx p
+    lac bw
+    ior [visible | end]
+    dac i p
+    idx p
+    lac [halt | interrupt]
+    dac i p
+rtn, jmp 0
+    // A bar of half width AC about hx, with bl its left end and bw its width.
+ends, 0
+    dap endr
+    lac hx
+    sub ends
+    spa
+    cla
+    dac bl
+    lac hx
+    add ends
+    sub [RASTERMAX]
+    sma
+    cla
+    add [RASTERMAX]
+    sub bl
+    dac bw
+endr, jmp 0
+p, 0
+hx, 0
+hy, 0
+rem, 0
+s, 0
+bl, 0
+bw, 0
+    endloc
+
+// Posts a hand position for the break routine and waits until it is
+// shown. hpPend is written last, so the routine never takes a position
+// half written.
+// Takes the position in hpX and hpY and, in AC, 1 for a step of a move
+// (paced) or 0 for the end of one or a jump. AC and IO are clobbered.
+// Called via jda.
+handShow,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac handShow
+    dac hpPaced
+    law 1
+    dac hpPend
+    lac hpPend
+    sza
+    jmp .-2
+rtn, jmp 0
+    endloc
+
+// Makes the next posted position due now.
+// AC and IO are clobbered. Called via jsp.
+handNow,
+    local rtn
+    dap rtn
+    rck
+    dio hpDue
+rtn, jmp 0
+    endloc
+
+// A frame's end, for the break routine. The frame is counted and rck read,
+// so that clT counts the milliseconds past rck's minute, as long as the
+// display runs; NOBREAK, holding the break off, holds the count too.
+// AC and IO are clobbered. Called via jsp from the break routine only.
+frEnd,
+    local rtn, now
+    dap rtn
+    idx dpFrames
+    and [0377777]
+    dac dpFrames
+    rck
+    dio now
+    lac now
+    sub clLast
+    spa
+    add [0d60000]
+    add clT
+#ifdef SHORTCLOCK
+    and [0377777]
+#endif
+    dac clT
+    lio now
+    dio clLast
+rtn, jmp 0
+now, 0
+    endloc
+
+// The clock as a count of milliseconds, the whole word. One's complement
+// add wraps it modulo 0777777 (262 s), so a difference read as unsigned is
+// the time between two counts. SHORTCLOCK, defined, builds with the count
+// 0400000 (131 s) instead. clT and the time since the break's last look
+// are read as one instant, and the read is made again if a frame's end
+// came between.
+// Returns the count in AC. AC is the result and IO is clobbered.
+// Called via jsp from any bank.
+clRead,
+    local again, rtn, f, now
+    dac rtn
+again, lac dpFrames
+    dac f
+    rck
+    dio now
+    lac now
+    sub clLast
+    spa
+    add [0d60000]
+    add clT
+#ifdef SHORTCLOCK
+    and [0377777]
+#endif
+    dac now
+    lac dpFrames
+    sas f
+    jmp again
+    lac now
+    jmp i rtn
+rtn, 0
+f, 0
+now, 0
+    endloc
+
+// Milliseconds since a count of clRead's, under 262 s (131 s with
+// SHORTCLOCK), past rck's minute, unsigned and with -0 made 0.
+// Takes the count in AC. Returns the time in AC. AC is the result and IO
+// is clobbered. Called via XJDA from any bank.
+msLong,
+    local rtn
+    0                       // XJDA puts the argument here
+    dac rtn
+    jsp clRead
+    sub msLong
+#ifdef SHORTCLOCK
+    sma
+    jmp .+3
+    and [0377777]
+    add [1]
+#endif
+    sad [0777777]
+    cla
+    jmp i rtn
+rtn, 0
+    endloc
+
+// The display's state.
+dpFront, 0                  // the buffer shown, 0 or 1
+dpSwap, 0                   // 1: switch buffers at the frame's end
+dpGrp, 0                   // the group drawing, 0 to NGROUP-1
+dpFrames, 0                 // frames drawn
+clT, 0                      // ms counted at the frames' ends, mod 0777777
+clLast, 0                   // rck at the last frame's end
+dpEdges, 0                  // groups the 340 stopped on an edge violation
+dpClamps, 0                 // screen coordinates clamped to the raster
+dpMs, 0                     // the last rebuild, in milliseconds
+dlOver, 0                   // words that did not fit a buffer
+hsx, 0                      // the hand on the screen, as drawn
+hsy, 0
+hpPend, 0                   // a position posted, not yet shown
+hpX, 0
+hpY, 0
+hpPaced, 0
+hpDue, 0
+dlWp, 0
+dlLim, 0
+dlPar, 0
+dlRun, 0
+dlRel, 0                    // 1: later pieces reached by vectors (dlSeg)
+dlCx, 0
+dlCy, 0
+mvTx, 0
+mvTy, 0
+mvVis, 0
+vcX, 0
+vcY, 0
+sgX0, 0
+sgY0, 0
+sgX1, 0
+sgY1, 0
+
+// Each buffer's group starts, GHAND (six) words each, its held object's
+// point (0 for none) and offset from the hand.
+grpTab,
+    table 2*GHAND
+anchor, 0
+    0
+offX, 0
+    0
+offY, 0
+    0
+bufBase,
+    buf0:1
+    buf1:1
+intTab,
+    IRED
+    IGREEN
+    IBLUE
+    IWHITE
+
+bank 1
+// The empty group, which every group is until the first scene is switched
+// in. It draws nothing but takes about 5 ms, as a drawn group does, so a
+// frame of empty groups does not run the break routine back to back. It
+// is a point at (0, 0), not shown, then 26 invisible vectors of 127 steps
+// there and back, at 1.5 us a step.
+dlNull, scale(0) | next(point)
+    0200000 | next(point)
+    next(vector)
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127
+    0d127
+    left | 0d127 | end
+    halt | interrupt
+
+// The labels' group while the program is busy. It is a halt alone, which
+// the 340 takes no time over, so that the extra group adds a break to the frame
+// and nothing to its length.
+lbOff, halt | interrupt
+
+// The idle labels' list, written by lbMain (labels.ac); and the gate's state.
+lbBuf,
+    table LBWORDS
+lbSt, 0                     // 1: the labels' group is on (lbIdle, lbHide)
+lbR, 0                      // their return
+buf0,
+    table BUFWORDS
+buf1,
+    table BUFWORDS
+handBuf,
+    table HANDWORDS
+bank 0

@@ -1,0 +1,291 @@
+// The event memory (blockl.4's MEMORY and MEMOREND, STARTHISTORY), the
+// objects' histories, the planner's hand, and the plan's replay on the
+// display.
+// An event is a record of EVW words at EVBASE + n*EVW, EE being 0.
+// It holds its type (0 until it ends), start and end on the clock THTIME
+// (the end -1 until then), its parent (the WHY when it began) and the
+// assertion (type event args...) that ended it.
+// A history is a chain in the heap, newest first, of
+// (next, time, place, supporter) entries.
+// Bank 4, eem on, but for the replay, which is in bank 012 with goals.ac
+// (the printing is the overlay's, cmds.ac). The events are in bank 7.
+// Needs shrdlu.ah, atoms.ac, db.ac, blocks.ac, engine.ac, goals.ac and
+// hand.ac, whose routines return to the full address they were called
+// from.
+
+// A new event, begun now, its parent the WHY, is made and the EV is set to it.
+// AC and IO are clobbered. Called via jsp.
+// No room ends the command.
+evNew,
+    local rtn, n, p
+    dap rtn
+    lac evCnt
+    add [1]
+    dac n
+    sub [EVMAX]
+    sma
+    jmp eRoom
+    lac [evCnt:.]
+    dac tsA
+    lac n
+    jda tset
+    lac n
+    jda evAddr
+    dac p
+    dzm i p
+    idx p
+    lac thTime
+    dac i p
+    idx p
+    law i 1
+    dac i p
+    idx p
+    lac eFp
+    jda whyOf
+    dac i p
+    idx p
+    dzm i p
+    lac eFp
+    jda evOf
+    lac evAt
+    sza i
+    jmp rtn
+    dac tsA
+    lac n
+    ior [TEV]
+    jda tset
+rtn, jmp 0
+n, 0
+p, 0
+    endloc
+
+// Ends the EV's event with type dbP, now, and asserts (dbP ev dbA+1...),
+// dbN items in all with the event.
+// Skips if the assertion was made. Returns without skipping if there is
+// no event or the assertion was already there.
+// AC and IO are clobbered. Called via jsp.
+evEnd,
+    local rtn, p, r
+    dap rtn
+    lac eFp
+    jda evOf
+    dac dbA
+    and [TAGS]
+    sad [TEV]
+    jmp .+2
+    jmp rtn
+    lac dbA
+    and [07777]
+    jda evAddr
+    dac p
+    add [EEND]
+    dac tsA
+    lac thTime
+    jda tset
+    lac p
+    add [ETYPE]
+    dac tsA
+    lac dbP
+    jda tset
+    jsp dbAdd
+    jmp rtn
+    dac r
+    lac p
+    add [EREC]
+    dac tsA
+    lac r
+    jda tset
+    idx rtn
+rtn, jmp 0
+p, 0
+r, 0
+    endloc
+
+// An event's record. Takes the event's number in AC.
+// Returns the record's full address in AC. AC is the result and IO is
+// preserved. Called via jda, from any bank.
+evAddr,
+    local rtn, ra
+    0                       // jda puts the argument here
+    dac ra
+    lac evAddr
+    sal 2s
+    add evAddr
+    add [EVBASE]
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// An object's history gains (hiTime, hiLoc, hiSup), newest first.
+// Takes the object's index in AC. AC and IO are clobbered.
+// Called via jda.
+histAdd,
+    local rtn, h, e, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac histAdd
+    add [histTab:.]
+    dac h
+    law 4
+    jda halloc
+    dac e
+    dac p
+    lac i h
+    dac i p
+    idx p
+    lac hiTime
+    dac i p
+    idx p
+    lac hiLoc
+    dac i p
+    idx p
+    lac hiSup
+    dac i p
+    lac h
+    dac tsA
+    lac e
+    jda tset
+rtn, jmp 0
+h, 0
+e, 0
+p, 0
+    endloc
+
+histTab,                    // each object's history, 0 for none
+    table NOBJ
+hiTime, 0                   // the entry histAdd makes
+hiLoc, 0
+hiSup, 0
+evCnt, 0                    // the events made, EE not counted
+thTime, 0                   // THTIME, the hand moves and releases so far
+handAt, 0                   // HANDAT, where the planner's hand is
+
+// The planner's world as it starts.
+// The generator is reseeded, the heap emptied, the location table and hand
+// put at their start, the clock and the events set to 0, the histories
+// begun again, and the database built again.
+// AC and IO are clobbered. Called via jsp, from any bank.
+s2Reset,
+    local rtn, ra, loop, p, k
+    dac ra
+    lac [SEED]
+    dac rnd
+    lac [HPBOT0]
+    dac hpTop
+    dac hpBot
+    lac [HPCAP0]
+    dac hpCap
+    lac [DBBASE]
+    dac dbMark
+    lac [TRBASE]
+    dac trt
+    dzm eActive
+    jsp locReset
+    dzm evCnt
+    dzm thTime
+    lac [histTab:.]
+    dac p
+    law NOBJ
+    dac k
+loop, dzm i p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    law HANDX
+    dac px
+    law HANDY
+    dac py
+    law HANDZ
+    dac pz
+    jsp mkpt
+    dac handAt
+    jsp dbInit
+    lac [TRBASE]
+    dac trt
+rtn, jmp i ra
+ra, 0
+p, 0
+k, 0
+    endloc
+
+bank 012
+
+// Carries out the plan on the display through the hand's MOVETO, GRASP
+// and UNGRASP, at their pace, then REFRESH. rpMs gains the time taken.
+// AC and IO are clobbered. Called via jsp.
+planRun,
+    local rtn, loop, notmv, notgr, next, done, p, k, t0
+    dap rtn
+    lac [PLBASE]
+    dac p
+    lac i [planN:4]
+    dac k
+loop, lac k
+    sza i
+    jmp done
+    rck
+    dio t0
+    lac i p
+    sad [PMOVETO]
+    jmp .+2
+    jmp notmv
+    idx p
+    lac i p
+    XJDA(ptget, 4)
+    lac i [px:4]
+    dac i [mvX:0]
+    lac i [py:4]
+    dac i [mvY:0]
+    lac i [pz:4]
+    dac i [mvZ:0]
+    jsp i [cmdMoveto:0]
+    jmp next
+notmv, sad [PGRASP]
+    jmp .+2
+    jmp notgr
+    idx p
+    lac i p
+    and [07777]
+    dac i [cmdGrasp:0]
+    jsp i [cmdGrasp:0+1]
+    jmp next
+notgr, sas [PBLINK]          // BLINK draws nothing
+    jsp i [cmdUngrasp:0]
+    idx p
+next, idx p
+    lac t0
+    jda msSince
+    add rpMs
+    dac rpMs
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+done, rck
+    dio t0
+    jsp i [cmdRefresh:0]
+    lac t0
+    jda msSince
+    add rpMs
+    dac rpMs
+rtn, jmp 0
+p, 0
+k, 0
+t0, 0
+    endloc
+
+// planOut, eventsOut and histOut, which print, are the overlay's (cmds.ac).
+
+bank 5
+
+sPlMoveto, ascii "MOVETO"
+sPlGrasp, ascii "GRASP"
+sPlUngrasp, ascii "UNGRASP"
+sPlBlink, ascii "BLINK"
+sStart, ascii " START "
+sEnd, ascii " END "
+sWhy, ascii " WHY "
+bank 4

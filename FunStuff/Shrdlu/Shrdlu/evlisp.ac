@@ -1,0 +1,331 @@
+// The event memory as the compiled source reads and adds to it.
+// These are EVENTS, EVFORM and DERIVE, the natives over bank 7's records.
+// READWORD serves the plural in an event's or an object's name.
+// RANDOM is the program's generator.
+// ALLWHO is THVAL-MULT's test that its HE and range runs would repeat the
+// WHO NIL run (the notes are learn.ac's rwNote).
+// A derived event is an ordinary record.
+// DERIVE's stores are not on any trail, as the source's PUTPROPs and SETQ
+// are not.
+// Its fact is THASSERT's (learn.ac), taken back when the theorem fails,
+// and then EVFORM's value is NIL.
+// Bank 5, eem on. The natives end through pgR1 and the like, as the hot
+// half's do. Needs shrdlu.ah, semantics.ac's defines, pgm.ac, pgsys.ac's
+// FAR, hooks.ac, db.ac, events.ac and planner.ac.
+
+// A native's argument k from the top, the last being 1.
+#define NARG(k) law i k; add i [pgSp:6]; dac evnP; lac i evnP
+
+// EVENTS -- EVENTLIST, the events newest first, EE last.
+csEvts,
+    local loop, done, k
+    dzm i [fB:6]
+    dzm k
+    lac [KSYM+sEE]
+loop, dac i [fA:6]
+    FAR(fCons)
+    dio i [fB:6]
+    lac k
+    sad i [evCnt:4]
+    jmp done
+    idx k
+    add [KWORD+EV0]
+    jmp loop
+done, lac i [fB:6]
+    jmp i [pgPushL:6]
+k, 0
+    endloc
+
+// EVFORM -- the event's assertion as a list, NIL if it has none now.
+csEvfm, NARG(1)
+    jda evNum
+    XJDA(evAddr, 4)
+    add [EREC]
+    dac evnP
+    lac i evnP
+    sza i
+    jmp i [pgN1:6]
+    dac i [pgGx:6]
+    add [DARITY]
+    dac evnP
+    lac i evnP
+    sad [DERASED]
+    jmp i [pgN1:6]
+    jsp i [psCar:6]
+    lai
+    jmp i [pgR1:6]
+
+// DERIVE -- a new event of the type, the WHY and the moment, its START and
+// END.
+// A full table gives NO ROOM, since failing the theorem would answer NO of
+// what was done.
+csDerive, lac i [evCnt:4]
+    add [1]
+    sub [EVMAX]
+    sma
+    jmp i [pgRoom:6]
+    add [EVMAX]
+    dac i [evCnt:4]
+    dac evnN
+    XJDA(evAddr, 4)
+    dac evnQ
+    NARG(3)
+    dac i [hkA:6]
+    XJSP(hkEngF, 6)
+    lac i [hkA:6]
+    dac i evnQ              // ETYPE
+    idx evnQ
+    NARG(1)
+    dac evnV
+    and [KMASK]
+    sas [KINT]
+    jmp i [pgFlt:6]
+    lac evnV
+    and [037777]
+    dac evnV
+    dac i evnQ              // ESTART
+    idx evnQ
+    lac evnV
+    dac i evnQ              // EEND
+    idx evnQ
+    NARG(2)
+    jda evNum
+    ior [TEV]
+    dac i evnQ              // EWHY
+    idx evnQ
+    dzm i evnQ              // EREC
+    lac evnN
+    add [KWORD+EV0]
+    jmp i [pgR3:6]
+
+// READWORD -- the word the reader makes of a symbol's spelling, as if typed,
+// which BUILDWORD made in the source (newans.78:1193).
+// It gives the symbol itself if the reader cannot.
+csRdw,
+    local loop, one, odone, done, no, w
+#ifdef NOREADWORD
+    jmp no
+#endif
+    NARG(2)
+    lia
+    XJSP(psNmF, 013)
+    dio evnP
+    lac [rW:013]
+    dac evnQ
+    dzm evnN
+loop, lac i evnP
+    dac w
+    rar 9s
+    rar 3s
+    jda one
+    lac w
+    rar 6s
+    jda one
+    lac w
+    jda one
+    idx evnP
+    jmp loop
+one, 0
+    dap odone
+    lac one
+    and [077]
+    sza i
+    jmp done
+    dac i evnQ
+    idx evnQ
+    idx evnN
+odone, jmp 0
+done, lac evnN
+    dac i [aN:013]
+    dzm i [rNew:013]
+    XJSP(rdAnalF, 013)
+    sas [1]
+    jmp no
+    lac i [rOut1:013]
+    XJDA(psWval, 012)
+    jmp i [pgR2:6]
+no, NARG(2)
+    jmp i [pgR2:6]
+w, 0
+    endloc
+
+// An event's number from its value, EE's being 0.
+// Takes the value in AC. Returns the number in AC.
+// AC is the result and IO is preserved. Called via jda.
+evNum,
+    local ee, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac evNum
+    sad [KSYM+sEE]
+    jmp ee
+    and [KMASK]
+    sas [KWORD]
+    jmp i [pgFlt:6]
+    lac evNum
+    and [077777]
+    sub [EV0]
+    spa
+    jmp i [pgFlt:6]
+    jmp rtn
+ee, cla
+rtn, jmp 0
+    endloc
+
+// RANDOM, the program's generator.
+csRand, XJSP(rndF, 4)
+    and [037777]
+    ior [KINT]
+    jmp i [pgPushL:6]
+
+// ALLWHO, THVAL-MULT's test of what rwNote (learn.ac, bank 3) noted.
+// T clears it.
+// NIL NIL is T if the HE run would repeat the WHO NIL run, every record it
+// accepted having a WHO.
+// Two numbers give T if the range run would too, every WHO between them.
+csAllwho,
+    local clr, rng, yes, no, lo
+    NARG(2)
+    sad [KSYM]
+    jmp clr
+    sza
+    jmp rng
+    lac i [rwNone:3]
+    sza
+    jmp no
+yes, lac [KSYM]
+    jmp i [pgR2:6]
+no, cla
+    jmp i [pgR2:6]
+clr, dzm i [rwNone:3]
+    dzm i [rwLo:3]
+    dzm i [rwHi:3]
+    cla
+    jmp i [pgR2:6]
+rng, dac lo
+    lac i [rwNone:3]
+    sza
+    jmp no
+    lac i [rwLo:3]
+    sza i
+    jmp yes
+    sub lo
+    spa
+    jmp no
+    NARG(1)
+    sub i [rwHi:3]
+    spa
+    jmp no
+    jmp yes
+lo, 0
+    endloc
+
+// A value as the engine's atom.
+// Takes the value in AC. Returns the atom in AC, 0 if it has none.
+// AC is the result and IO is clobbered. Called via XJDA, from bank 3.
+lnAtom, 0
+    local con, word, wd, ee, none, rtn, ra
+    dac ra
+    lac lnAtom
+    sad [KSYM+sEE]
+    jmp ee
+    and [KMASK]
+    sad [KWORD]
+    jmp word
+    sas [KSYM]
+    jmp none
+    lac lnAtom
+    dac i [hkA:6]
+    XJSP(hkObjF, 6)
+    lac i [hkA:6]
+    spa
+    jmp con
+    ior [TOBJ]
+    jmp rtn
+con, lac lnAtom
+    dac i [hkA:6]
+    XJSP(hkEngF, 6)
+    lac i [hkA:6]
+    jmp rtn
+word, lac lnAtom
+    and [077777]
+    sub [EV0]
+    spa
+    jmp wd
+    sub [STK0-EV0]
+    sma
+    jmp wd
+    add [STK0-EV0]
+    ior [TEV]
+    jmp rtn
+wd, lac lnAtom
+    xor [TAGS]
+    jmp rtn
+ee, lac [TEV]
+    jmp rtn
+none, cla
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Out of bank 012, for the room a learned word's meaning takes there.
+
+// ELIM of a symbol, from gElims.
+// Takes the symbol in AC. Returns the property in AC, 0 for none.
+// AC is the result and IO is clobbered. Called via XJDA, from bank 012.
+psElim, 0
+    local loop, found, ra, p, t
+    dac ra
+    lac [gElims:3]
+    dac p
+    lac psElim
+    and [07777]
+    dac t
+loop, lac i p
+    sza i
+    jmp i ra
+    sad t
+    jmp found
+    lac p
+    add [2]
+    dac p
+    jmp loop
+found, idx p
+    lac i p
+    jmp i ra
+ra, 0
+p, 0
+t, 0
+    endloc
+
+// INTERPRET of a symbol, from gUnits.
+// Takes the symbol in AC. Returns the symbol in AC if it is one, else 0.
+// AC is the result and IO is clobbered. Called via XJDA, from bank 012.
+psIntp, 0
+    local loop, found, ra, p, t
+    dac ra
+    lac [gUnits:3]
+    dac p
+    lac psIntp
+    and [07777]
+    dac t
+loop, lac i p
+    sza i
+    jmp i ra
+    sad t
+    jmp found
+    lac p
+    add [2]
+    dac p
+    jmp loop
+found, lac psIntp
+    jmp i ra
+ra, 0
+p, 0
+t, 0
+    endloc
+
+evnP, 0                     // scratch
+evnQ, 0
+evnV, 0
+evnN, 0

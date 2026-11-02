@@ -1,0 +1,144 @@
+// BUILDNODE and REBUILD (progmr.57:175, :453) as natives, doing what the
+// compiled functions do on the same cells, and PUTPROPS, BUILD's property
+// loop (below). A node's first five
+// words are its fields, FEATURES, FIRSTWORD, WORDAFTER, DAUGHTERS and
+// SEMANTICS in that order (pgFlds), which PUTPROP on a node sets directly
+// (pgPut), so SETR of the five is five stores. In bank 3's spare words,
+// entered by jmp from pgNats (bank 6). Each leaves by pgPushL, with its
+// arguments dropped. Banks 3 and 6, eem on. Needs pgm.ac and pgsys.ac's FAR.
+
+#define R12ARG(k) law i k; add i [pgSp:6]; dac r12P; lac i r12P
+
+// Copies the five values from the slot r12S points at into the five words from
+// r12Q on. Has no arguments or return values.
+// AC is clobbered and IO is preserved.
+// Called via jsp.
+r12Fill, dap r12Fr
+    dzm r12K
+r12Fl, lac i r12S
+    dac i r12Q
+    idx r12S
+    idx r12Q
+    idx r12K
+    lac r12K
+#ifdef R12WRONG
+    sas [4]                 // R12WRONG: copy four values, not five
+#else
+    sas [5]
+#endif
+    jmp r12Fl
+r12Fr, jmp 0
+
+// REBUILD of six arguments. Sets the fields in the node that the last one, a list
+// of one, holds. A list that is not one, or a CAR that is no node, is a
+// fault. Returns the list via pgPushL, with the arguments dropped.
+// AC and IO are clobbered.
+r12Rebuild,
+    R12ARG(1)
+    dac r12L
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgFlt:6]
+    lac r12L
+    ior [PCELLS]
+    dac r12Q
+    lac i r12Q
+    dac r12N
+    and [KMASK]
+    sas [KNODE]
+    jmp i [pgFlt:6]
+    lac r12N
+    ior [PCELLS]
+    dac r12Q
+    law i 6
+    add i [pgSp:6]
+    dac r12S
+    jsp r12Fill
+    law i 6
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    lac r12L
+    jmp i [pgPushL:6]
+
+// BUILDNODE of five arguments. Makes a node, MAKESYM of NODE (bank 012's csMksym,
+// entered as psNat enters it), in a list of one, and sets the fields as
+// REBUILD sets them. Returns the list via pgPushL, with the arguments dropped.
+// AC and IO are clobbered.
+r12Buildnode,
+    lac i [pgSp:6]
+    dac r12P
+    lac [KSYM+sNODE]
+    dac i r12P
+    idx r12P
+    lac r12P
+    dac i [pgSp:6]
+    lac [r12Bn:3]
+    dac i [psNr:012]
+    jmp i [csMksym:012]
+r12Bn, lai
+    dac r12N
+    dac i [fA:6]
+    dzm i [fB:6]
+    FAR(fCons)
+    lai
+    dac r12L
+    lac r12N
+    ior [PCELLS]
+    dac r12Q
+    law i 5
+    add i [pgSp:6]
+    dac r12S
+    jsp r12Fill
+    law i 5
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    lac r12L
+    jmp i [pgPushL:6]
+
+// PUTPROPS, BUILD's MAPC over its keywords (smutil.148:99), of two
+// arguments. They are a node name, and the list of the indicators in the order they
+// are to be put. Each, in turn, names a variable (of %BUILD1's PROG). If its
+// value is not NIL it is PUT on the node under that indicator, as PUTPROP
+// does (pgPut, through fPut). The list is a constant of the compiler's, so
+// its end is NIL and it is not checked. An indicator that is no variable is a
+// fault. Returns NIL via pgN2, with the arguments dropped.
+// AC and IO are clobbered.
+r12Props,
+    law i 2
+    add i [pgSp:6]
+    dac r12P
+    lac i r12P
+    dac i [pgPx:6]
+    idx r12P
+    lac i r12P
+r12Pl, sza i
+    jmp i [pgN2:6]
+    ior [PCELLS]
+    dac r12Q
+    lac i r12Q
+    dac i [pgPi:6]
+    dac i [fA:6]
+    FAR(fVarOf)
+    lai
+    spa
+    jmp i [pgFlt:6]
+    add [vTab:3]
+    dac r12P
+    lac i r12P
+#ifndef R1BWRONG
+    // R1BWRONG builds without this test, so a NIL value is put too.
+    sza i
+    jmp r12Pn
+#endif
+    dac i [pgPv:6]
+    FAR(fPut)
+r12Pn, idx r12Q
+    lac i r12Q
+    jmp r12Pl
+
+r12P, 0
+r12Q, 0
+r12S, 0
+r12K, 0
+r12L, 0
+r12N, 0

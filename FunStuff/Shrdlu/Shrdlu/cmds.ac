@@ -1,0 +1,1133 @@
+// The debugging commands, typed after /, with ROOM from room.ac.
+// Each reply ends with a line holding only *. A line that is not a command
+// gets ERROR and the line.
+//     MOVETO x y z   GRASP :Bn   UNGRASP   REFRESH   SCENE   STATUS
+//     RESET          PROJ x y z (the screen point of a world point)
+//     DO goal args   TRY goal args   TRACE ON   TRACE OFF   EVENTS
+//     HISTORY x      FIND pred args  SEED n     TIMES
+//     ROOM           ROOM CLEAR     TREE ON    TREE OFF   SM
+//     PLAN ON        PLAN OFF
+// Numbers are in octal. A goal is PICKUP x, GRASP x, UNGRASP, RAISEHAND,
+// PUTON x y, PUTIN x y, STACKUP x ..., CLEARTOP x or GET-RID-OF x. An
+// argument is an atom (:B1, #RED or RED, EE, E12, a number, ? for
+// anything) or a parenthesized list of atoms.
+// The planner keeps a separate location table and hand, which the world
+// and hand follow through the replay. The MOVETO, GRASP and UNGRASP
+// commands act on the world and hand directly and are not seen by it.
+// This is the drum overlay cmds (shrdlu.am1), in the window cmdWin, which
+// the tree overlay (tree.ac) shares. It reads the line and prints what only
+// reads, and leaves what acts on the world or the planner to the root as a
+// request (RQ..., shrdlu.ah). The world and hand commands go to debug.ac's
+// execLine, and a DO or TRY and RESET's planner half go to goals.ac's
+// s2Exec. The root alone may call an overlay.
+// Its words are lost when another overlay takes the window. What lasts
+// is the root's (planMs, eTrace, mvX and the rest).
+// Bank 012, eem on; it reaches bank 4's routines with XJSP and XJDA,
+// bank 4's and bank 0's words through full addresses, and the names in
+// banks 2 and 5. Needs shrdlu.ah, atoms.ac's output, db.ac, blocks.ac,
+// engine.ac, events.ac, theorems.ac, goals.ac's root words, term.ac's
+// tLine, debug.ac's cmReq and tObj, and the words STATUS prints.
+
+    export cmLine, cmPlan
+
+// Carries out the line in tLine as far as reading and printing go.
+// Returns the request in AC, also left in cmReq, or 0 when the reply is
+// complete. IO is clobbered. Entered via %%ovcall, with the return address
+// in AC.
+cmLine, dac cmRtn
+    lac [tLine:2]
+    dac gPos
+    jsp gRead
+    sza i
+    jmp cmEnd
+    lac [cmTab:.]
+    dac cmP
+cmLook, lac i cmP
+    sza i
+    jmp cmBad
+    jda tokIs2
+    jmp cmNext
+    idx cmP
+    lac i cmP
+    dap cmGo
+cmGo, jmp 0
+cmNext, lac cmP
+    add [2]
+    dac cmP
+    jmp cmLook
+
+// The reply's end, and back to the root with no request.
+cmEnd, law '*'
+    jda wrc
+    jsp wrnl
+    cla
+// Back to the root with the request in AC.
+cmRet, dac i [cmReq:0]
+    eem
+    jmp i cmRtn
+
+// A line that is not right gets ERROR and the line.
+cmBad, lac [sErr:5]
+    jda wrs
+    lac [tLine:2]
+    dac gPos
+cmb1, lac i gPos
+    sza i
+    jmp cmb2
+    jda wrc
+    idx gPos
+    jmp cmb1
+cmb2, jsp wrnl
+    jmp cmEnd
+
+// Prints the plan after a DO or TRY that the root has planned.
+// AC and IO are clobbered. Entered via %%ovcall, with the return address
+// in AC.
+cmPlan, dac cmRtn
+    jsp planOut
+    eem
+    jmp i cmRtn
+
+cmRtn, 0                    // the full address to return to
+cmP, 0
+cmQ, 0                      // the request, while the line's end is read
+
+// The commands. Each entry is its keyword's full address and where it is read.
+cmTab,
+    kDo:5; xDo
+    kTry:5; xTry
+    kTrace:5; xTrace
+    kEvents:5; xEvents
+    kHistory:5; xHistory
+    kFind:5; xFind
+    kSeed:5; xSeed
+    kTimes:5; xTimes
+    kPlan:012; xPlanSw
+    kRoom:012; xRoom
+    kTree:012; xTree
+    kSm:012; xSmRd
+    kReset:5; c1Reset
+    kMoveto:2; c1Move
+    kGrasp:2; c1Grasp
+    kUngrasp:2; c1Ungr
+    kRefresh:2; c1Refr
+    kScene:2; c1Scene
+    kStatus:2; c1Status
+    kProj:2; c1Proj
+    0
+
+// DO and TRY. The goal goes into eCode, for the root to plan.
+xDo, dzm i [eTry:4]
+    jmp xPlRd
+xTry, law 1
+    dac i [eTry:4]
+xPlRd, jsp gRead
+    sza i
+    jmp cmBad
+    jsp goalRd
+    jmp cmBad
+    jsp gRead
+    sza
+    jmp cmBad
+    law RQPLAN
+    jmp cmRet
+
+// MOVETO x y z and PROJ x y z. The point goes into mvX, mvY, mvZ.
+c1Move, law RQMOVETO
+    jmp c1Pt
+c1Proj, law RQPROJ
+c1Pt, dac cmQ
+    jsp c1Num
+    jmp cmBad
+    dac i [mvX:0]
+    jsp c1Num
+    jmp cmBad
+    dac i [mvY:0]
+    jsp c1Num
+    jmp cmBad
+    dac i [mvZ:0]
+// The request in cmQ, if nothing but spaces is left on the line.
+c1Last, jsp gRead
+    sza
+    jmp cmBad
+    lac cmQ
+    jmp cmRet
+
+// GRASP :Bn. The object goes into tObj.
+c1Grasp, jsp gRead
+    jsp c1Name
+    jmp cmBad
+    dac i [tObj:0]
+    law RQGRASP
+    jmp c1Rq
+c1Ungr, law RQUNGRASP
+    jmp c1Rq
+c1Refr, law RQREFRESH
+    jmp c1Rq
+c1Scene, law RQSCENE
+    jmp c1Rq
+c1Reset, law RQRESET
+c1Rq, dac cmQ
+    jmp c1Last
+
+// STATUS prints the frame count, the groups stopped on an edge violation,
+// the screen coordinates clamped, the words that did not fit a buffer, and
+// the last scene rebuild in milliseconds, all octal.
+c1Status, jsp gRead
+    sza
+    jmp cmBad
+    lac [sFrames:2]
+    jda wrs
+    lac i [dpFrames:0]
+    jda wro
+    lac [sEdges:2]
+    jda wrs
+    lac i [dpEdges:0]
+    jda wro
+    lac [sClamps:2]
+    jda wrs
+    lac i [dpClamps:0]
+    jda wro
+    lac [sOver:2]
+    jda wrs
+    lac i [dlOver:0]
+    jda wro
+    lac [sMs:2]
+    jda wrs
+    lac i [dpMs:0]
+    jda wro
+    jsp wrnl
+    jmp cmEnd
+
+// Reads the next word of the line as an octal number, digits only, at
+// most seven. Skips with the number in AC. Returns without skipping if it
+// is missing or not one.
+// AC and IO are clobbered. Called via jsp.
+c1Num,
+    local rtn, v
+    dap rtn
+    jsp gRead
+    sza i
+    jmp rtn
+    sub [7]
+    sma sza
+    jmp rtn
+    cla
+    jda numAt
+    jmp rtn
+    dac v
+    idx rtn
+    lac v
+rtn, jmp 0
+v, 0
+    endloc
+
+// Skips with AC = the object's index if the word just read is a colon
+// and the name of one of the objects in objNames, as in :B10. AC and IO
+// are clobbered. Called via jsp.
+c1Name,
+    local rtn, loop, o
+    dap rtn
+    lac gTok
+    sad [':']
+    jmp .+2
+    jmp rtn
+    law 1
+    dac gOff
+    dzm o
+loop, lac o
+    sal 1s
+    add [objNames:2]
+    jda nameEq
+    jmp .+4
+    idx rtn
+    lac o
+    jmp rtn
+    idx o
+    sad [NOBJ]
+    jmp rtn
+    jmp loop
+rtn, jmp 0
+o, 0
+    endloc
+
+// TRACE ON and TRACE OFF.
+xTrace, jsp gRead
+    lac [kOn:5]
+    jda tokIs2
+    jmp xtOff
+    law 1
+    jmp xtSet
+xtOff, lac [kOff:5]
+    jda tokIs2
+    jmp cmBad
+    cla
+xtSet, dac i [eTrace:4]
+    jsp gRead
+    sza
+    jmp cmBad
+    jmp cmEnd
+
+// TREE ON and TREE OFF, beside TRACE. While on, parse.ac prints each
+// sentence's tree after its reply.
+xTree, jsp gRead
+    lac [kOn:5]
+    jda tokIs2
+    jmp xeOff
+    law 1
+    jmp xeSet
+xeOff, lac [kOff:5]
+    jda tokIs2
+    jmp cmBad
+    cla
+xeSet, dac i [psTree:013]
+    jsp gRead
+    sza
+    jmp cmBad
+    jmp cmEnd
+
+kTree, ascii "TREE"
+
+// SM. The root has the overlay sm print the last sentence's structures
+// (goals.ac), ending the reply.
+xSmRd, jsp gRead
+    sza
+    jmp cmBad
+    law RQSM
+    jmp cmRet
+
+kSm, ascii "SM"
+
+// EVENTS.
+xEvents, jsp gRead
+    sza
+    jmp cmBad
+    jsp eventsOut
+    jmp cmEnd
+
+// HISTORY x.
+xHistory, jsp gRead
+    jsp atomRd
+    jmp cmBad
+    dac xA
+    and [TAGS]
+    sad [TOBJ]
+    jmp .+2
+    jmp cmBad
+    lac xA
+    and [07777]
+    sub [NOBJ]
+    sma
+    jmp cmBad
+    jsp gRead
+    sza
+    jmp cmBad
+    lac xA
+    and [07777]
+    jda histOut
+    jmp cmEnd
+
+xA, 0
+
+// SEED n sets the generator's state, 17 bits, never 0.
+xSeed, jsp gRead
+    jsp atomRd
+    jmp cmBad
+    dac xA
+    and [TAGS]
+    sza
+    jmp cmBad
+    jsp gRead
+    sza
+    jmp cmBad
+    lac xA
+    and [0377777]
+    sza i
+    law 1
+    dac i [rnd:4]
+    jmp cmEnd
+
+// TIMES prints PLAN ms and ALL ms of the last DO or TRY, then PARSE ms and
+// ANSWER ms of the last sentence (pgsys.ac's psEnd), in octal. The
+// sentence's two are printed unsigned, since they reach 262 s (dlist.ac's
+// msLong).
+xTimes, jsp gRead
+    sza
+    jmp cmBad
+    lac [sPlan:5]
+    jda wrs
+    lac planMs
+    jda wro
+    lac [sAll:5]
+    jda wrs
+    lac allMs
+    jda wro
+    lac [sParse:012]
+    jda wrs
+    lac pgMs
+    jda wruo
+    lac [sAnswer:012]
+    jda wrs
+    lac pgAMs
+    jda wruo
+    jsp wrnl
+    jmp cmEnd
+
+// Prints a word in octal as unsigned, its top fifteen bits if any, then
+// its last digit, each by wro.
+// Takes the word in AC. AC and IO are clobbered. Called via jda.
+wruo,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac wruo
+    rar 3s
+    and [077777]
+    sza
+    jda wro
+    lac wruo
+    and [7]
+    jda wro
+rtn, jmp 0
+    endloc
+
+// PLAN ON and PLAN OFF. While on, each plan the engine makes for a command
+// typed in English is printed as it is made, a call a line, as DO prints it
+// (pgsys.ac's psPlan).
+xPlanSw, jsp gRead
+    lac [kOn:5]
+    jda tokIs2
+    jmp xpOff
+    law 1
+    jmp xpSet
+xpOff, lac [kOff:5]
+    jda tokIs2
+    jmp cmBad
+    cla
+xpSet, dac i [psShow:012]
+    jsp gRead
+    sza
+    jmp cmBad
+    jmp cmEnd
+
+kPlan, ascii "PLAN"
+
+// FIND pred args prints every assertion that matches, a line each. ?
+// matches anything, and FIND ? alone lists them all. #AT is the location
+// table.
+xFind, jsp gRead
+    jsp atomRd
+    jmp cmBad
+    dac i [dbP:4]
+    dzm i [dbN:4]
+    lac [dbA:4]
+    dac xP
+xfArg, jsp gRead
+    sza i
+    jmp xfGo
+    lac i [dbN:4]
+    sad [4]
+    jmp cmBad
+    jsp atomRd
+    jmp cmBad
+    dac i xP
+    idx xP
+    idx i [dbN:4]
+    jmp xfArg
+xfGo, lac i [dbP:4]
+    sad [ANY]
+    jmp xfAll
+    and [TAGS]
+    sad [TCON]
+    jmp .+2
+    jmp cmBad
+    lac i [dbP:4]
+    sad [AAT]
+    jmp xfAt
+    XJDA(dbHead, 4)
+    dac xP
+    lac i xP
+    lio [1]
+    jda recsOut
+    jmp cmEnd
+xfAt, jsp atOut
+    jmp cmEnd
+// Every chain, then #AT.
+xfAll, lac i [dbN:4]
+    sza
+    jmp cmBad
+    lac [TCON+1]
+    dac xA
+xfNext, lac xA
+    XJDA(dbHead, 4)
+    dac xP
+    lac i xP
+    cli
+    jda recsOut
+    idx xA
+    sas [TCON+NCON]
+    jmp xfNext
+    jsp atOut
+    jmp cmEnd
+
+xP, 0
+
+// Prints each record from one on that is still there, a line each, its
+// predicate and arguments. With a match asked for, only those matching
+// dbN arguments dbA.
+// Takes the first record's full address in AC (0 for none) and 1 in IO to
+// match or 0 for all. AC and IO are clobbered. Called via jda.
+recsOut,
+    local rtn, loop, one, args, eol, next, r, p, k, match
+    0                       // jda puts the argument here
+    dap rtn
+    dio match
+    lac recsOut
+loop, sza i
+    jmp rtn
+    dac r
+    lac match
+    sza i
+    jmp one
+    lac r
+    XJDA(dbScan, 4)
+    sza i
+    jmp rtn
+    dac r
+one, lac r
+    add [DARITY]
+    dac p
+    lac i p
+    sad [DERASED]
+    jmp next
+    dac k
+    lac r
+    add [DPRED]
+    dac p
+    lac i p
+    jda wrelem
+    lac r
+    add [DARG]
+    dac p
+args, lac k
+    sza i
+    jmp eol
+    jsp wrsp
+    lac i p
+    jda wratom
+    idx p
+    lac k
+    sub [1]
+    dac k
+    jmp args
+eol, jsp wrnl
+next, lac i r
+    jmp loop
+rtn, jmp 0
+r, 0
+p, 0
+k, 0
+match, 0
+    endloc
+
+// Prints #AT, from the location table, for each object data.6 lists, or
+// for the one dbA names. AC and IO are clobbered. Called via jsp.
+atOut,
+    local rtn, loop, one, next, o
+    dap rtn
+    dzm o
+loop, lac i [dbN:4]
+    sza i
+    jmp one
+    lac i [dbA:4]
+    sad [ANY]
+    jmp one
+    and [07777]
+    sad o
+    jmp one
+    jmp next
+one, lac [cAt:5]
+    jda wrs
+    jsp wrsp
+    lac o
+    ior [TOBJ]
+    jda wrelem
+    jsp wrsp
+    law '('
+    jda wrc
+    lac o
+    XJDA(locGet, 4)
+    jsp wrPxyz
+    law ')'
+    jda wrc
+    jsp wrnl
+next, lac o
+    XJDA(dbNextObj, 4)
+    dac o
+    sza
+    jmp loop
+rtn, jmp 0
+o, 0
+    endloc
+
+// Reads the goal and its arguments from the line into eCode as CALL thm
+// args DONE. Skips if they are right. AC and IO are clobbered. Called via
+// jsp.
+goalRd,
+    local rtn, look, miss, found, args, list, lnext, lend, done, e, k, q, a
+    dap rtn
+    lac [goalTab:5]
+    dac e
+look, lac i e
+    sza i
+    jmp rtn
+    jda tokIs2
+    jmp miss
+    jmp found
+miss, lac e
+    add [3]
+    dac e
+    jmp look
+found, lac [eCode:4]
+    dac q
+    law oCALL
+    dac i q
+    idx q
+    idx e
+    lac i e
+    dac i q
+    idx q
+    idx e
+    lac i e
+    dac k
+    spa
+    jmp list
+args, lac k
+    sza i
+    jmp done
+    jsp gRead
+    jsp atomRd
+    jmp rtn
+    dac i q
+    idx q
+    lac k
+    sub [1]
+    dac k
+    jmp args
+    // STACKUP takes the rest of the line as one list.
+list, dzm i [lsN:4]
+lnext, jsp gRead
+    sza i
+    jmp lend
+    jsp atomRd
+    jmp rtn
+    dac a
+    lac i [lsN:4]
+    sad [LSMAX]
+    jmp rtn
+    add [lsBuf:4]
+    dac e
+    lac a
+    dac i e
+    idx i [lsN:4]
+    jmp lnext
+lend, lac [NIL]
+    XJDA(lsput, 4)
+    dac i q
+    idx q
+done, law oDONE
+    dac i q
+    idx rtn
+rtn, jmp 0
+e, 0
+k, 0
+q, 0
+a, 0
+    endloc
+
+// An atom from the token just read, or a parenthesized list of atoms
+// beginning with it. Skips with AC = the atom; returns without skipping
+// if it is not one.
+// AC and IO are clobbered. Called via jsp.
+atomRd,
+    local rtn, notlist, lst, more, fin, build, got, n, a
+    dap rtn
+    lac gTok
+    sad ['(']
+    jmp lst
+    jmp notlist
+lst, dzm n
+more, jsp gRead
+    sza i
+    jmp rtn
+    lac gTok
+    sad [')']
+    jmp fin
+    jsp atom1
+    jmp rtn
+    dac a
+    lac n
+    sad [0d8]
+    jmp rtn
+    add [aBuf:.]
+    dac aP
+    lac a
+    dac i aP
+    idx n
+    jmp more
+fin, lac [NIL]
+    dac a
+build, lac n
+    sza i
+    jmp got
+    sub [1]
+    dac n
+    add [aBuf:.]
+    dac aP
+    lac i aP
+    lio a
+    XJDA(cons, 4)
+    dac a
+    jmp build
+notlist, jsp atom1
+    jmp rtn
+    dac a
+got, idx rtn
+    lac a
+rtn, jmp 0
+n, 0
+a, 0
+    endloc
+
+aBuf,                       // a list's atoms as read
+    table 0d8
+aP, 0
+
+// Reads an atom that is not a list from the token. It is an object (:B1),
+// ? for anything, EE or En for an event, a number in octal, or a constant
+// (with or without its #, or NIL). Skips with AC = the atom; returns
+// without skipping if it is not one. AC and IO are clobbered. Called via
+// jsp.
+atom1,
+    local rtn, notobj, oloop, onext, notany, notee, notev, notnum, cloop, cnext, yes, n, v, p
+    dap rtn
+    lac gTok
+    sad [':']
+    jmp .+2
+    jmp notobj
+    law 1
+    dac gOff
+    dzm n
+oloop, lac n
+    add [objNameTab:5]
+    dac p
+    lac i p
+    jda nameEq
+    jmp onext
+    lac n
+    ior [TOBJ]
+    jmp yes
+onext, idx n
+    sad [NATOMOBJ]
+    jmp rtn
+    jmp oloop
+notobj, dzm gOff
+    lac gTok
+    sad ['?']
+    jmp .+2
+    jmp notany
+    lac gTok+1
+    sza
+    jmp rtn
+    lac [ANY]
+    jmp yes
+notany, lac [sEE:5]
+    jda nameEq
+    jmp notee
+    lac [TEV]
+    jmp yes
+notee, lac gTok
+    sad ['E']
+    jmp .+2
+    jmp notev
+    law 1
+    jda numAt
+    jmp notev
+    ior [TEV]
+    jmp yes
+notev, cla
+    jda numAt
+    jmp notnum
+    jmp yes
+notnum, dzm n
+cloop, lac n
+    add [conNameTab:5]
+    dac p
+    lac i p
+    jda nameEq
+    jmp cnext
+    lac n
+    ior [TCON]
+    jmp yes
+cnext, idx n
+    sad [NCON]
+    jmp rtn
+    jmp cloop
+yes, dac v
+    idx rtn
+    lac v
+rtn, jmp 0
+n, 0
+v, 0
+p, 0
+    endloc
+
+// An octal number in the token, from a character on to its end.
+// Takes the character where it begins in AC. Skips with AC = the number;
+// returns without skipping if there are no digits or a character is not one.
+// AC and IO are clobbered. Called via jda.
+numAt,
+    local rtn, loop, fin, v, p, c, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac numAt
+    add [gTok:.]
+    dac p
+    dzm v
+    dzm k
+loop, lac i p
+    sza i
+    jmp fin
+    dac c
+    sub ['0']
+    spa
+    jmp rtn
+    sub [010]
+    sma
+    jmp rtn
+    lac v
+    sal 3s
+    add c
+    sub ['0']
+    dac v
+    idx p
+    idx k
+    jmp loop
+fin, lac k
+    sza i
+    jmp rtn
+    idx rtn
+    lac v
+rtn, jmp 0
+v, 0
+p, 0
+c, 0
+k, 0
+    endloc
+
+// Skips if the token, from character gOff, is the name at a full
+// address (an ascii string, two characters a word, high half first). A
+// name's leading # may be left out of the token.
+// AC and IO are clobbered. Called via jda.
+nameEq,
+    local rtn, loop, lo, got, same, s, q, c, half
+    0                       // jda puts the argument here
+    dap rtn
+    lac nameEq
+    dac s
+    lac gOff
+    add [gTok:.]
+    dac q
+    dzm half
+    lac i s
+    sar 9s
+    and [0377]
+    sad ['#']
+    jmp .+2
+    jmp loop
+    lac i q
+    sad ['#']
+    jmp loop
+    law 1
+    dac half
+loop, lac half
+    sza
+    jmp lo
+    law 1
+    dac half
+    lac i s
+    sar 9s
+    and [0377]
+    jmp got
+lo, dzm half
+    lac i s
+    dac c
+    idx s
+    lac c
+    and [0377]
+got, dac c
+    sad i q
+    jmp .+2
+    jmp rtn
+    lac c
+    sza i
+    jmp same
+    idx q
+    jmp loop
+same, idx rtn
+rtn, jmp 0
+s, 0
+q, 0
+c, 0
+half, 0
+    endloc
+
+// Skips if the token is the keyword at a full address.
+// AC and IO are clobbered. Called via jda.
+tokIs2,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    dzm gOff
+    lac tokIs2
+    jda nameEq
+    jmp rtn
+    idx rtn
+rtn, jmp 0
+    endloc
+
+// Reads the next token of the line at gPos (tLine, a character a word,
+// upper case, ended by 0) into gTok with a 0 after. A token is a word of
+// up to GTOKMAX characters (more are dropped), or ( or ).
+// Returns its length in AC, 0 at the end of the line.
+// IO is clobbered. Called via jsp.
+gRead,
+    local rtn, skip, sp, word, one, eos, n, q, c
+    dap rtn
+    dzm n
+    lac [gTok:.]
+    dac q
+skip, lac i gPos
+    sad [' ']
+    jmp sp
+    sza i
+    jmp eos
+    sad ['(']
+    jmp one
+    sad [')']
+    jmp one
+word, lac i gPos
+    dac c
+    sza i
+    jmp eos
+    sad [' ']
+    jmp eos
+    sad ['(']
+    jmp eos
+    sad [')']
+    jmp eos
+    idx gPos
+    lac n
+    sub [GTOKMAX]
+    sma
+    jmp word
+    lac c
+    dac i q
+    idx q
+    idx n
+    jmp word
+sp, idx gPos
+    jmp skip
+one, dac i q
+    idx q
+    idx n
+    idx gPos
+eos, dzm i q
+    lac n
+rtn, jmp 0
+n, 0
+q, 0
+c, 0
+    endloc
+
+gPos, 0                     // the line's next character, a full address
+gOff, 0                     // where nameEq starts in the token
+gTok,
+    table GTOKMAX+1
+
+// Prints the plan, a call a line (MOVETO x y z, GRASP :Bn, UNGRASP,
+// BLINK :Bn).
+// AC and IO are clobbered. Called via jsp.
+planOut,
+    local rtn, loop, notmv, obj, notgr, notbl, next, p, k
+    dap rtn
+    lac [PLBASE]
+    dac p
+    lac i [planN:4]
+    dac k
+loop, lac k
+    sza i
+    jmp rtn
+    lac i p
+    sad [PMOVETO]
+    jmp .+2
+    jmp notmv
+    lac [sPlMoveto:5]
+    jda wrs
+    jsp wrsp
+    idx p
+    lac i p
+    XJDA(ptget, 4)
+    jsp wrPxyz
+    jmp next
+notmv, sad [PGRASP]
+    jmp .+2
+    jmp notgr
+    lac [sPlGrasp:5]
+obj, jda wrs
+    jsp wrsp
+    idx p
+    lac i p
+    jda wratom
+    jmp next
+notgr, sas [PBLINK]
+    jmp notbl
+    lac [sPlBlink:5]
+    jmp obj
+notbl, lac [sPlUngrasp:5]
+    jda wrs
+    idx p
+next, jsp wrnl
+    idx p
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Prints the event list, oldest first, an event a line, for example
+//     E7 #PUTON :B1 :B7 START 26 END 33 WHY E3
+// Events are numbered in octal. An event not ended has type and end ?.
+// AC and IO are clobbered. Called via jsp.
+eventsOut,
+    local rtn, loop, typed, args, argl, times, open, why, n, p, r, k
+    dap rtn
+    dzm n
+loop, lac n
+    ior [TEV]
+    jda wrelem
+    jsp wrsp
+    lac n
+    XJDA(evAddr, 4)
+    dac p
+    lac i p
+    sza
+    jmp typed
+    law '?'
+    jda wrc
+    jmp args
+typed, jda wrelem
+    // The arguments of the assertion that ended it, after the event.
+args, lac p
+    add [EREC]
+    dac r
+    lac i r
+    sza i
+    jmp times
+    dac r
+    add [DARITY]
+    dac k
+    lac i k
+    sub [1]
+    dac k
+    lac r
+    add [DARG+1]
+    dac r
+argl, lac k
+    sza i
+    jmp times
+    jsp wrsp
+    lac i r
+    jda wratom
+    idx r
+    lac k
+    sub [1]
+    dac k
+    jmp argl
+times, lac [sStart:5]
+    jda wrs
+    lac p
+    add [ESTART]
+    dac r
+    lac i r
+    jda wro
+    lac [sEnd:5]
+    jda wrs
+    lac p
+    add [EEND]
+    dac r
+    lac i r
+    spa
+    jmp open
+    jda wro
+    jmp why
+open, law '?'
+    jda wrc
+why, lac [sWhy:5]
+    jda wrs
+    lac p
+    add [EWHY]
+    dac r
+    lac i r
+    jda wratom
+    jsp wrnl
+    lac n
+    sad i [evCnt:4]
+    jmp rtn
+    idx n
+    jmp loop
+rtn, jmp 0
+n, 0
+p, 0
+r, 0
+k, 0
+    endloc
+
+// Prints an object's history, newest first, an entry a line, for example
+//     33 (437 0 200) :B3
+// Takes the object's index in AC. AC and IO are clobbered.
+// Called via jda.
+histOut,
+    local rtn, loop, e, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac histOut
+    add [histTab:4]
+    dac p
+    lac i p
+loop, sza i
+    jmp rtn
+    dac e
+    add [1]
+    dac p
+    lac i p
+    jda wro
+    jsp wrsp
+    idx p
+    lac i p
+    jda wratom
+    jsp wrsp
+    idx p
+    lac i p
+    jda wratom
+    jsp wrnl
+    lac i e
+    jmp loop
+rtn, jmp 0
+e, 0
+p, 0
+    endloc
+

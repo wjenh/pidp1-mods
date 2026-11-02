@@ -1,0 +1,520 @@
+// Shared edges are handled here. Where an edge lies along another object's
+// drawn edge in the world, as where one object rests on another, it is drawn once, by
+// the object of the higher rank, and clipped from the other's. Two pieces
+// of different intensity on the same pixels otherwise show whichever
+// t30dpy saw last, and the line blinks as the 340's frame drifts against
+// its render. The rank is the group's intensity, then the lower index.
+//
+// Such edges lie along an axis, on both objects' world boxes. Of another
+// object's box, the lines drawn are as follows. For a block and the box's
+// outside, all twelve of a wireframe and all but the three through the
+// back corner (x low, y high, z low) of a solid one. For a pyramid, only
+// its base, by the same rule. The box's inner rim is left out, since only
+// an object against a wall's inside and as tall as the box could share it.
+//
+// Where the higher-ranked edge is hidden, the same occluder hides the
+// other, the same line in the world, so nothing is lost. The piece cache
+// needs no rule, since the two objects' screen boxes touch and a change
+// to either clips the other again (cache.ac's pcMark).
+// Bank 3, eem on; the edge's words are hidden.ac's, in bank 0, the
+// intervals and the object table in bank 2, read through full addresses.
+// It calls nothing outside bank 3, whose routines return by dap.
+// Needs shrdlu.ah, hidden.ac, world.ac.
+
+// Lists, for shareClip, the objects that can draw part of an edge of
+// object cOwner. Each outranks it, is neither held nor a wall, and has a
+// world box that touches its box (gLx..gLz and the drawn size
+// woDsx..woDsz). The list is made once per object, so that each edge looks
+// only at these, most often none. It is empty unless its edges are being
+// drawn (cEmit).
+// AC and IO are clobbered. Called via jsp, from bank 0 (hidden.ac's
+// clipEdges). It returns to the full address in AC.
+shareObj,
+    local ra, copy, loop, rk, ax, nxt, o, own, held, rown, cp, cs, cn, f, t, hi
+    dac ra
+    dzm shCn
+    lac i [cEmit:0]
+    sza i
+    jmp i ra
+    lac i [cOwner:0]
+    spa
+    jmp i ra
+    dac own
+    lac i [wHeld:0]
+    dac held
+    // Its box, shBlo the low x, y and z and shBhi the high.
+    lac [gLx:0]
+    dac cp
+    lac [woDsx:0]
+    dac cs
+    lac [shBlo:3]
+    dac t
+    law i 3
+    dac cn
+copy, lac i cp
+    dac i t
+    add i cs
+    dac hi
+    lac t
+    add [3]
+    dac f
+    lac hi
+    dac i f
+    idx cp
+    idx cs
+    idx t
+    isp cn
+    jmp copy
+    // Its rank.
+    lac own
+    jda shRec
+    add [RCOLOR]
+    dac t
+    lac i t
+    add [shInt:3]
+    dac t
+    lac i t
+    dac rown
+    // Each other object, the rank first, since it turns most of them away.
+    lac [objTab:2]
+    dac shP
+    dzm o
+loop, lac shP
+    add [RCOLOR]
+    dac t
+    lac i t
+    add [shInt:3]
+    dac t
+    lac i t
+    sub rown
+    spa
+    jmp nxt                 // dimmer
+    sza
+    jmp rk                  // brighter
+    lac o
+    sub own
+    sma
+    jmp nxt                 // as bright and not a lower index, the owner too
+rk, lac o
+    sad held
+    jmp nxt
+    lac shP
+    add [RKIND]
+    dac t
+    lac i t
+    sza i
+    jmp nxt                 // a wall, which the box draws
+    // The boxes touch when, along each axis, neither starts past the other's end.
+    dzm f
+ax, lac f
+    jda shSpan
+    lac f
+    add [shBhi:3]
+    dac t
+    lac shOlo
+    sub i t
+    sma sza
+    jmp nxt
+    lac f
+    add [shBlo:3]
+    dac t
+    lac i t
+    sub shOhi
+    sma sza
+    jmp nxt
+    idx f
+    sad [3]
+    jmp .+2
+    jmp ax
+    lac shCn
+    add [shCand:3]
+    dac t
+    lac shP
+    dac i t
+    idx shCn
+nxt, lac shP
+    add [OREC]
+    dac shP
+    idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    jmp i ra
+ra, 0
+o, 0
+own, 0
+held, 0
+rown, 0
+cp, 0
+cs, 0
+cn, 0
+f, 0
+t, 0
+hi, 0
+    endloc
+
+// Adds to the edge's hidden intervals (intLo, intHi, nInt) the stretches
+// an object of shareObj's list draws. hidden.ac's clipOne calls it for
+// each edge of object cOwner, with eLox..eHiz its world box in order, cL
+// its steps and cDx, cDy its screen deltas. It does nothing unless the
+// edge is being drawn (cEmit), and leaves the table's edges alone.
+// AC and IO are clobbered. Called via jsp, from bank 0. It returns to the
+// full address in AC.
+shareClip,
+    local ra, copy, ax, axn, loop, sd, sdn, nxt, done, \
+        k, cp, cn, f, t, hi
+    dac ra
+    lac i [cEmit:0]
+    sza i
+    jmp i ra
+    lac i [cOwner:0]
+    spa
+    jmp i ra
+    lac shCn
+    sza i
+    jmp i ra
+    lac i [cL:0]
+    dac shL
+    lac i [nInt:0]
+    dac shNi
+    // The edge's world box, eLox..eHiz, into shLo..shHi.
+    lac [eLox:0]
+    dac cp
+    lac [shLo:3]
+    dac t
+    law i 6
+    dac cn
+copy, lac i cp
+    dac i t
+    idx cp
+    idx t
+    isp cn
+    jmp copy
+    // Its axis, the one along which it has length, if only one has.
+    law i 1
+    dac shAx
+    dzm f
+ax, lac f
+    add [shHi:3]
+    dac t
+    lac i t
+    dac hi
+    lac f
+    add [shLo:3]
+    dac t
+    lac hi
+    sub i t
+    sza i
+    jmp axn
+    dac shN
+    lac shAx
+    sma
+    jmp done                // along two axes, a pyramid's slant
+    lac f
+    dac shAx
+axn, idx f
+    sad [3]
+    jmp .+2
+    jmp ax
+    lac shAx
+    spa
+    jmp done
+    // Each object of shareObj's list.
+    lac shCn
+    cma
+    dac k
+    idx k
+    lac [shCand:3]
+    dac cp
+loop, lac i cp
+    dac shP
+    add [RKIND]
+    dac t
+    lac i t
+    dac shKind
+    // Each fixed coordinate must be one of its box's sides.
+    dzm shBack
+    dzm shZhi
+    dzm f
+sd, lac f
+    sad shAx
+    jmp sdn
+    jda shSide
+    jmp nxt
+sdn, idx f
+    sad [3]
+    jmp .+2
+    jmp sd
+    // A pyramid has edges at its base only, none up the z axis.
+    lac shKind
+    sad [KPYRAMID]
+    jmp .+2
+    jmp .+7
+    lac shAx
+    sad [2]
+    jmp nxt
+    lac shZhi
+    sza
+    jmp nxt
+    // An edge through the back corner is drawn only by a wireframe.
+    lac shBack
+    sad [2]
+    jmp .+2
+    jmp .+010
+    lac shP
+    add [RFLAGS]
+    dac t
+    lac i t
+    and [FTRANS]
+    sza i
+    jmp nxt
+    // The overlap along the axis, as steps of the edge.
+    lac shAx
+    jda shSpan
+    jda shOver
+nxt, idx cp
+    isp k
+    jmp loop
+done, lac shNi
+    dac i [nInt:0]
+    jmp i ra
+ra, 0
+k, 0
+cp, 0
+cn, 0
+f, 0
+t, 0
+hi, 0
+    endloc
+
+// The full address of an object's record.
+// Takes the object's index in AC. Returns the address in AC.
+// AC is the result and IO is preserved. Called via jda.
+shRec,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac shRec
+    sal 2s
+    dac t
+    sal 1s
+    add t
+    add [objTab:2]
+rtn, jmp 0
+t, 0
+    endloc
+
+// Skips if the edge's fixed coordinate on axis AC is one of the sides of
+// the box of the object at shP, counting in shBack a side on the back
+// (x low, y high, z low) and setting shZhi for z high.
+// AC and IO are clobbered. Called via jda.
+shSide,
+    local rtn, lo, hi, yes, t, f, c
+    0                       // jda puts the argument here
+    dap rtn
+    lac shSide
+    dac f
+    jda shSpan
+    lac f
+    add [shLo:3]
+    dac t
+    lac i t
+    dac c
+    sad shOlo
+    jmp lo
+    sad shOhi
+    jmp hi
+    jmp rtn
+lo, lac f
+    sad [1]
+    jmp yes
+    idx shBack
+    jmp yes
+hi, lac f
+    sad [2]
+    idx shZhi
+    lac f
+    sad [1]
+    idx shBack
+yes, idx rtn
+rtn, jmp 0
+t, 0
+f, 0
+c, 0
+    endloc
+
+// Finds the box of the object at shP along axis AC. Returns it in shOlo
+// and shOhi. AC and IO are clobbered. Called via jda.
+shSpan,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac shSpan
+    add shP
+    dac t
+    lac i t
+    dac shOlo
+    law RDSX
+    add t
+    dac t
+    lac i t
+    add shOlo
+    dac shOhi
+rtn, jmp 0
+t, 0
+    endloc
+
+// Adds the stretch of the edge inside shOlo..shOhi along its axis, if it
+// has length, to the hidden intervals, as steps from e0: from the low end
+// when e0 is the low one (on the screen x grows with x and with y, y with
+// z), else from the high end.
+// AC and IO are clobbered. Called via jda (the argument is not used).
+shOver,
+    local rtn, lo, hi, kl, kh, t, fwd
+    0                       // jda puts the argument here
+    dap rtn
+    lac shAx
+    add [shLo:3]
+    dac t
+    lac i t
+    dac lo
+    sub shOlo
+    sma
+    jmp .+3
+    lac shOlo
+    dac lo
+    lac shAx
+    add [shHi:3]
+    dac t
+    lac i t
+    dac hi
+    sub shOhi
+    spa
+    jmp .+3
+    lac shOhi
+    dac hi
+    lac hi
+    sub lo
+    spa
+    jmp rtn
+    sza i
+    jmp rtn                 // a single point, a corner and not an edge
+    // Steps from the low end.
+    lac shAx
+    add [shLo:3]
+    dac t
+    lac lo
+    sub i t
+    jda shStep
+    dac kl
+    lac hi
+    sub i t
+    jda shStep
+    dac kh
+    lac shAx
+    sad [2]
+    jmp .+3
+    lac i [cDx:0]
+    jmp .+2
+    lac i [cDy:0]
+    sma
+    jmp fwd
+    // e0 is the high end.
+    lac shL
+    sub kh
+    dac t
+    lac shL
+    sub kl
+    dac kh
+    lac t
+    dac kl
+fwd, lac kh
+    sub kl
+    spa
+    jmp rtn
+    sza i
+    jmp rtn
+    lac shNi
+    add [intLo:2]
+    dac t
+    lac kl
+    dac i t
+    lac shNi
+    add [intHi:2]
+    dac t
+    lac kh
+    dac i t
+    idx shNi
+rtn, jmp 0
+lo, 0
+hi, 0
+kl, 0
+kh, 0
+t, 0
+    endloc
+
+// Computes round(L d / n), the step d world units along the edge from its
+// low end, with L its steps (shL) and n its length (shN).
+// Takes d in AC, 0 <= d <= n. Returns the step in AC.
+// AC is the result and IO is clobbered. Called via jda.
+shStep,
+    local rtn, q, r
+    0                       // jda puts the argument here
+    dap rtn
+    lac shL
+    mul shStep
+    div shN
+    jmp rtn                 // cannot overflow since d <= n
+    dac q
+    dio r
+    // Round up when the remainder is at least half the length.
+    lac r
+    sal 1s
+    sub shN
+    spa
+    jmp .+2
+    idx q
+    lac q
+rtn, jmp 0
+q, 0
+r, 0
+    endloc
+
+// The working words.
+shL, 0                      // the edge's steps, cL
+shN, 0                      // its length in the world
+shAx, 0                     // its axis, 0 to 2 for x to z
+shNi, 0                     // nInt, written back at the end
+shP, 0                      // the other object's record
+shKind, 0
+shBack, 0                   // its sides met on the back, 2 being the corner
+shZhi, 0                    // 1: the edge is at its top
+shOlo, 0                    // its box along one axis
+shOhi, 0
+shCn, 0                     // shareObj's list, its length, and each
+shCand,                     // object's record
+    table NOBJ
+
+// The edge's world box, in hidden.ac's order, shLo the low x, y and z and
+// shHi the high. These six words must stay together.
+shLo, 0
+    0
+    0
+shHi, 0
+    0
+    0
+
+// The owner's box, in the same order, set by shareObj.
+shBlo, 0
+    0
+    0
+shBhi, 0
+    0
+    0
+
+// Each color group's intensity, its rank (dlist.ac's intTab).
+shInt,
+    IRED
+    IGREEN
+    IBLUE
+    IWHITE

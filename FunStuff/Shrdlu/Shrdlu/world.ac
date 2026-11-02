@@ -1,0 +1,558 @@
+// The blocks world is one table of objects, used alike by the world's rules
+// and by the display, the hand, and the rules that read them (OCCUPIER,
+// SUPPORT, the size words, and the SCENE printout).
+// The routines are in bank 0 and run with eem on (shrdlu.am1); the tables
+// are in bank 2, reached through full addresses.
+// Needs shrdlu.ah and term.ac's putc, puts, putoct, putnl.
+
+// Copies wcN words from the full address wcSrc to the full address wcDst.
+// Both pointers are left one past the last word copied.
+// AC and IO are clobbered. Called via jsp.
+wcopy,
+    local rtn, loop, n
+    dap rtn
+    lac wcN
+    cma
+    dac n
+loop, lac i wcSrc
+    dac i wcDst
+    idx wcSrc
+    idx wcDst
+    isp n
+    jmp loop
+rtn, jmp 0
+n, 0
+    endloc
+
+wcSrc, 0
+wcDst, 0
+wcN, 0
+
+// The full address of an object's record.
+// Takes the object's index in AC. Returns the address in AC.
+// AC is the result and IO is preserved. Called via jda.
+objAddr,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac objAddr
+    sal 2s
+    dac t
+    sal 1s
+    add t
+    add [objTab:2]
+rtn, jmp 0
+t, 0
+    endloc
+
+// Copies an object's record into the working copy, woX to woFlags, and
+// sets woIdx.
+// Takes the object's index in AC. AC and IO are clobbered. Called via jda.
+objGet,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac objGet
+    dac woIdx
+    jda objAddr
+    dac wcSrc
+    lac [woX]
+    dac wcDst
+    law OREC
+    dac wcN
+    jsp wcopy
+rtn, jmp 0
+    endloc
+
+// Copies the working copy back into object woIdx's record.
+// AC and IO are clobbered. Called via jsp.
+objPut,
+    local rtn
+    dap rtn
+    lac woIdx
+    jda objAddr
+    dac wcDst
+    lac [woX]
+    dac wcSrc
+    law OREC
+    dac wcN
+    jsp wcopy
+rtn, jmp 0
+    endloc
+
+// Reads one word of an object's record.
+// Takes the object's index in AC and the field's offset in IO.
+// Returns the word in AC. AC is the result and IO is clobbered.
+// Called via jda.
+objField,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac objField
+    jda objAddr
+    dio t
+    add t
+    dac t
+    lac i t
+rtn, jmp 0
+t, 0
+    endloc
+
+// Puts the world back as the program starts it, with every object where
+// data.6 puts it and solid, and the hand empty at its starting point.
+// AC and IO are clobbered. Called via jsp.
+worldReset,
+    local rtn, loop, p, q, n
+    dap rtn
+    lac [objTab:2]
+    dac p
+    lac [objInit:2]
+    dac q
+    law i NOBJ
+    dac n
+loop, lac i q
+    dac i p
+    idx q
+    idx p
+    lac i q
+    dac i p
+    idx q
+    idx p
+    lac i q
+    dac i p
+    idx q
+    // p is at RZ, so step on to the flags, the record's last word.
+    lac p
+    add [RFLAGS-RZ]
+    dac p
+    dzm i p
+    idx p
+    isp n
+    jmp loop
+    law i 1
+    dac wHeld
+    law HANDX
+    dac wHx
+    law HANDY
+    dac wHy
+    law HANDZ
+    dac wHz
+rtn, jmp 0
+p, 0
+q, 0
+n, 0
+    endloc
+
+// OCCUPIER finds the first object, in table order, whose open box holds the
+// point (ocX, ocY, ocZ). ocSkip is an index to pass over, -1 for none.
+// Returns the object's index in AC, -1 for none, -2 below the table.
+// AC is the result and IO is clobbered. Called via jsp.
+occupier,
+    local rtn, loop, nxt, test, p, ix, lo, t
+    dap rtn
+    lac ocZ
+    sma
+    jmp .+3
+    law i 2
+    jmp rtn
+    lac [objTab:2]
+    dac p
+    dzm ix
+loop, lac ix
+    sad ocSkip
+    jmp nxt
+    // lo <= c < lo + size, for x, y and z in turn. test takes the
+    // coordinate in tc and the field offset in IO.
+    lac ocX
+    dac tc
+    cli
+    jsp test
+    jmp nxt
+    lac ocY
+    dac tc
+    lio [RY]
+    jsp test
+    jmp nxt
+    lac ocZ
+    dac tc
+    lio [RZ]
+    jsp test
+    jmp nxt
+    lac ix
+    jmp rtn
+nxt, lac p
+    add [OREC]
+    dac p
+    idx ix
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    law i 1
+rtn, jmp 0
+
+// Skips if lo <= tc < lo + size along the axis whose location field is
+// at offset IO in record p; the size field is three words on.
+test, dap t
+    dio lo
+    lac p
+    add lo
+    dac lo
+    lac tc
+    sub i lo
+    spa
+    jmp t
+    lac lo
+    add [RSX]
+    dac tsz
+    lac i lo
+    add i tsz
+    dac lo
+    lac tc
+    sub lo
+    sma
+    jmp t
+    idx t
+t, jmp 0
+p, 0
+ix, 0
+lo, 0
+tc, 0
+tsz, 0
+    endloc
+ocX, 0
+ocY, 0
+ocZ, 0
+ocSkip, 0
+
+// SUPPORT finds what holds an object up. It is the table at z = 0, else
+// whatever occupies the point one unit below the center of its base, and
+// nothing for the held object or for an object that would support itself.
+// Takes the object's index in AC.
+// Returns the supporter's index in AC, -1 for none, -2 for the table.
+// AC is the result and IO is clobbered. Called via jda.
+support,
+    local rtn, none, n, p, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac support
+    dac n
+    sad wHeld
+    jmp none
+    lac n
+    jda objAddr
+    dac p
+    add [RZ]
+    dac t
+    lac i t
+    sza
+    jmp .+3
+    law i 2
+    jmp rtn
+    sub [1]
+    dac ocZ
+    lac p
+    add [RSX]
+    dac t
+    lac i t
+    sar 1s
+    add i p
+    dac ocX
+    lac p
+    add [RSY]
+    dac t
+    lac i t
+    sar 1s
+    dac ocY
+    lac p
+    add [RY]
+    dac t
+    lac i t
+    add ocY
+    dac ocY
+    lac wHeld
+    dac ocSkip
+    jsp occupier
+    sad n
+    jmp none
+    jmp rtn
+none, law i 1
+rtn, jmp 0
+n, 0
+p, 0
+t, 0
+    endloc
+
+// Prints an object's name with its colon, ":B10".
+// Takes the object's index in AC. AC and IO are clobbered. Called via jda.
+putName,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac putName
+    sal 1s
+    add [objNames:2]
+    dac t
+    law ':'
+    jda putc
+    lac t
+    jda puts
+rtn, jmp 0
+t, 0
+    endloc
+
+// Prints one string from a table of string addresses.
+// Takes the index in AC and the table's full address in IO.
+// AC and IO are clobbered. Called via jda.
+putIndexed,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac putIndexed
+    dio t
+    add t
+    dac t
+    lac i t
+    jda puts
+rtn, jmp 0
+t, 0
+    endloc
+
+// SCENE prints a heading, one line an object in the CMU manual's form,
+// then the hand.
+//     :B1 --> A SMALL RED BLOCK AT (110 100 0) SUPPORTS (:B2)
+// The walls are not listed, as in the manual.
+// AC and IO are clobbered. Called via jsp.
+sceneOut,
+    local rtn, loop, nxt, large, sups, snext, space, nm, held, ix, jx, any, sum
+    dap rtn
+    lac [sCurrent:2]
+    jda puts
+    jsp putnl
+    dzm ix
+loop, lac ix
+    lio [RKIND]
+    jda objField
+    sza i
+    jmp nxt
+    lac ix
+    jda putName
+    lac [sArrow:2]
+    jda puts
+    // LARGE when the three sizes sum past 383 decimal (NAMESIZE).
+    lac ix
+    lio [RSX]
+    jda objField
+    dac sum
+    lac ix
+    lio [RSY]
+    jda objField
+    add sum
+    dac sum
+    lac ix
+    lio [RSZ]
+    jda objField
+    add sum
+    sub [0d384]
+    sma
+    jmp large
+    lac [sSmall:2]
+    jmp .+2
+large, lac [sLarge:2]
+    jda puts
+    law ' '
+    jda putc
+    lac ix
+    lio [RCOLOR]
+    jda objField
+    lio [colorWords:2]
+    jda putIndexed
+    law ' '
+    jda putc
+    lac ix
+    lio [RKIND]
+    jda objField
+    lio [kindWords:2]
+    jda putIndexed
+    lac [sAt:2]
+    jda puts
+    lac ix
+    cli
+    jda objField
+    jda putoct
+    law ' '
+    jda putc
+    lac ix
+    lio [RY]
+    jda objField
+    jda putoct
+    law ' '
+    jda putc
+    lac ix
+    lio [RZ]
+    jda objField
+    jda putoct
+    law ')'
+    jda putc
+    // The objects this one supports, in table order. The first opens
+    // the list, and a later one is spaced.
+    dzm any
+    dzm jx
+sups, lac jx
+    sad ix
+    jmp snext
+    lio [RKIND]
+    jda objField
+    sza i
+    jmp snext
+    lac jx
+    jda support
+    sad ix
+    jmp .+2
+    jmp snext
+    lac any
+    sza
+    jmp space
+    lac [sSupports:2]
+    jda puts
+    jmp nm
+space, law ' '
+    jda putc
+nm, lac jx
+    jda putName
+    law 1
+    dac any
+snext, idx jx
+    sad [NOBJ]
+    jmp .+2
+    jmp sups
+    lac any
+    sza i
+    jmp .+3
+    law ')'
+    jda putc
+    jsp putnl
+nxt, idx ix
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    lac [sHand:2]
+    jda puts
+    lac wHeld
+    spa
+    jmp held
+    jda putName
+    jmp .+3
+held, lac [sNothing:2]
+    jda puts
+    jsp putnl
+rtn, jmp 0
+ix, 0
+jx, 0
+any, 0
+sum, 0
+    endloc
+// The working copy of one object's record (objGet, objPut), in the
+// record's order. These twelve words must stay together.
+woX, 0
+woY, 0
+woZ, 0
+woSx, 0
+woSy, 0
+woSz, 0
+woDsx, 0
+woDsy, 0
+woDsz, 0
+woKind, 0
+woColor, 0
+woFlags, 0
+woIdx, 0
+
+// The hand's location, and the index of what it holds, -1 for nothing.
+wHx, 0
+wHy, 0
+wHz, 0
+wHeld, 0
+
+bank 2
+
+// The objects, data.6's location table and display shapes. Each record is
+// x y z, sx sy sz (the world's), dsx dsy dsz (as drawn), kind, color,
+// flags. Only the box is drawn at a size other than the one it occupies.
+// The locations are overwritten as objects move; worldReset restores
+// them from objInit.
+objTab,
+    0110; 0100; 0; 0100; 0100; 0100; 0100; 0100; 0100; KBLOCK; CRED; 0
+    0110; 0100; 0100; 0100; 0100; 0100; 0100; 0100; 0100; KPYRAMID; CGREEN; 0
+    0400; 0; 0; 0200; 0200; 0200; 0200; 0200; 0200; KBLOCK; CGREEN; 0
+    0640; 0640; 1; 0200; 0200; 0200; 0200; 0200; 0200; KPYRAMID; CBLUE; 0
+    0500; 0100; 0200; 0100; 0100; 0300; 0100; 0100; 0300; KPYRAMID; CRED; 0
+    0; 0300; 0; 0200; 0300; 0300; 0200; 0300; 0300; KBLOCK; CRED; 0
+    0; 0240; 0300; 0200; 0200; 0200; 0200; 0200; 0200; KBLOCK; CGREEN; 0
+    0300; 0640; 0; 0200; 0100; 0400; 0200; 0100; 0400; KBLOCK; CBLUE; 0
+    0570; 0570; 0; 010; 0400; 0300; 0; 0; 0; KWALL; CWHITE; 0
+    0570; 0570; 0; 0400; 010; 0300; 0; 0; 0; KWALL; CWHITE; 0
+    0570; 01200; 0; 0400; 010; 0300; 0; 0; 0; KWALL; CWHITE; 0
+    01200; 0570; 0; 010; 0400; 0300; 0; 0; 0; KWALL; CWHITE; 0
+    0600; 0600; 0; 0400; 0400; 1; 0376; 0376; 0300; KBOX; CWHITE; 0
+
+// The starting locations, x y z for each object in table order.
+objInit,
+    0110; 0100; 0
+    0110; 0100; 0100
+    0400; 0; 0
+    0640; 0640; 1
+    0500; 0100; 0200
+    0; 0300; 0
+    0; 0240; 0300
+    0300; 0640; 0
+    0570; 0570; 0
+    0570; 0570; 0
+    0570; 01200; 0
+    01200; 0570; 0
+    0600; 0600; 0
+
+// The names, two words each (a 2- or 3-letter ascii string with its 0).
+objNames,
+    ascii "B1"
+    ascii "B2"
+    ascii "B3"
+    ascii "B4"
+    ascii "B5"
+    ascii "B6"
+    ascii "B7"
+    ascii "B10"
+    ascii "BW1"
+    ascii "BW2"
+    ascii "BW3"
+    ascii "BW4"
+    ascii "BOX"
+
+// The words SCENE prints, and the tables indexed by color and kind.
+sCurrent, ascii "CURRENT SCENE"
+sArrow, ascii " --> A "
+sSmall, ascii "SMALL"
+sLarge, ascii "LARGE"
+sAt, ascii " AT ("
+sSupports, ascii " SUPPORTS ("
+sHand, ascii "THE HAND IS GRASPING "
+sNothing, ascii "NOTHING"
+sRed, ascii "RED"
+sGreen, ascii "GREEN"
+sBlue, ascii "BLUE"
+sWhite, ascii "WHITE"
+sWallK, ascii "WALL"
+sBlock, ascii "BLOCK"
+sPyramid, ascii "PYRAMID"
+sBox, ascii "BOX"
+colorWords,
+    sRed:2
+    sGreen:2
+    sBlue:2
+    sWhite:2
+kindWords,
+    sWallK:2
+    sBlock:2
+    sPyramid:2
+    sBox:2
+
+bank 0

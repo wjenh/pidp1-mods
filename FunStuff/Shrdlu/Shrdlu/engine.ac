@@ -1,0 +1,1278 @@
+// The reasoning engine. It is Micro-Planner's control (plnr.182) as an
+// interpreter of the theorems' bytecode (theorems.ac, shrdlu.ah's
+// operations). A theorem entered gets a frame of slots; a choice point
+// keeps where to resume and the tops of the trail, frames, heap and
+// database; every change the planner makes is a word set through the
+// trail, which failing undoes back to the choice point's mark.
+// Backtracking is chronological and goes back into theorems that have
+// returned, since a frame is taken back only by a failure.
+// The rules it keeps follow the original Planner.
+// THASSERT fails on an assertion already present.
+// THCOND commits to a clause once its first expression succeeds (KILL),
+// and can still go back into that expression.
+// An antecedent or erasing theorem runs once, its failure ignored (ALTS,
+// CUT).
+// THNOT and THFAIL THPROG use CUTFAIL.
+// THFIND drops duplicates (FINDB, FINDC, FINDE).
+// A theorem's EV is found up the callers, at the nearest that has one, and
+// its WHY the same way.
+// This is the dynamic scope those two need, made explicit.
+// Bank 4, eem on, but for the trace, which is in bank 012 with the
+// output. The theorems are in bank 5, and the frames, choice points, trail
+// and plan in bank 010.
+// Needs shrdlu.ah, atoms.ac, db.ac, blocks.ac, events.ac, natives.ac and
+// goals.ac.
+
+// Sets the word at the full address tsA to AC, putting its old value on
+// the trail. AC and IO are clobbered; tsA is preserved. Called via jda.
+// A full trail ends the command.
+tset,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac trt
+    sub [TRLIM]
+    sma
+    jmp eRoom
+    lac tsA
+    dac i trt
+    idx trt
+    lac i tsA
+    dac i trt
+    idx trt
+    lac tset
+    dac i tsA
+rtn, jmp 0
+    endloc
+
+tsA, 0
+trt, TRBASE                 // the trail's top, in entries of address and old value
+
+// Undoes the trail back to a mark, newest first.
+// Takes the mark in AC. AC and IO are clobbered. Called via jda.
+undo,
+    local rtn, loop, p, a
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac trt
+    sad undo
+    jmp rtn
+    sub [2]
+    dac trt
+    dac p
+    lac i p
+    dac a
+    idx p
+    lac i p
+    dac i a
+    jmp loop
+rtn, jmp 0
+p, 0
+a, 0
+    endloc
+
+// The next bytecode word; ePc moves past it.
+// Returns the word in AC. AC is the result and IO is preserved.
+// Called via jsp.
+fetch,
+    local rtn, w
+    dap rtn
+    lac i ePc
+    dac w
+    idx ePc
+    lac w
+rtn, jmp 0
+w, 0
+    endloc
+
+// A slot of the current frame.
+// Takes its number in AC. Returns its full address in AC.
+// AC is the result and IO is preserved. Called via jda.
+slotAddr,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac slotAddr
+    add eFp
+    add [HDR]
+rtn, jmp 0
+    endloc
+
+// Follows a cell's links to the cell that holds its value.
+// Takes the cell's full address in AC.
+// Returns the value in AC (ANY is a value), or a link to the cell if it is
+// unassigned, and the final cell's full address in dCell.
+// AC is the result and IO is preserved. Called via jda, from any bank.
+deref,
+    local rtn, ra, loop, isv, unas, v
+    0                       // jda puts the argument here
+    dac ra
+    lac deref
+loop, dac dCell
+    lac i dCell
+    dac v
+    sad [ANY]
+    jmp rtn
+    and [TAGS]
+    sad [TVAR]
+    jmp isv
+    lac v
+    jmp rtn
+isv, lac v
+    sad [UNASS]
+    jmp unas
+    and [07777]
+    ior [FRBASE]
+    jmp loop
+unas, lac dCell
+    and [07777]
+    ior [TVAR]
+rtn, jmp i ra
+ra, 0
+v, 0
+    endloc
+
+dCell, 0
+
+// An operand's value in the current frame.
+// V(n) is slot n's value, or a link to it when unassigned.
+// SV(n) is always the link.
+// Anything else is itself (ANY among them).
+// Takes the operand in AC. Returns the value in AC.
+// AC is the result and IO is preserved. Called via jda.
+eval,
+    local rtn, v, sv
+    0                       // jda puts the argument here
+    dap rtn
+    lac eval
+    and [0770000]
+    sad [TVAR]
+    jmp v
+    sad [0710000]
+    jmp sv
+    lac eval
+    jmp rtn
+v, lac eval
+    and [07777]
+    jda slotAddr
+    jda deref
+    jmp rtn
+sv, lac eval
+    and [07777]
+    jda slotAddr
+    jda deref
+    lac dCell
+    and [07777]
+    ior [TVAR]
+rtn, jmp 0
+    endloc
+
+// Skips if a value is a link (to an unassigned cell, or SV's cell); ANY
+// is not one. AC is preserved, IO clobbered. Called via jda.
+islink,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac islink
+    sad [ANY]
+    jmp rtn
+    and [TAGS]
+    sad [TVAR]
+    idx rtn
+    lac islink
+rtn, jmp 0
+    endloc
+
+// The full address of the cell a link names. AC in and out, IO
+// preserved. Called via jda.
+linkCell,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac linkCell
+    and [07777]
+    ior [FRBASE]
+rtn, jmp 0
+    endloc
+
+// A slot's value, for the natives.
+// Takes the slot in AC. Returns its value in AC, UNASS if unassigned.
+// AC is the result and IO is preserved. Called via jda.
+sget,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac sget
+    jda slotAddr
+    jda deref
+    dac sget
+    and [TAGS]
+    sad [TVAR]
+    jmp .+3
+    lac sget
+    jmp rtn
+    lac [UNASS]
+rtn, jmp 0
+    endloc
+
+// Sets a slot (the cell it links to, if it shares a caller's) through
+// the trail.
+// Takes the value in AC and the slot in IO. AC and IO are clobbered.
+// Called via jda.
+sset,
+    local rtn, n
+    0                       // jda puts the argument here
+    dap rtn
+    dio n
+    lac n
+    jda slotAddr
+    jda deref
+    lac dCell
+    dac tsA
+    lac sset
+    jda tset
+rtn, jmp 0
+n, 0
+    endloc
+
+// The nearest frame, from f up through its callers, whose theorem has
+// the flag; 0 if none.
+// Takes f in AC and the flag in IO. Returns the frame in AC.
+// AC is the result and IO is clobbered. Called via jda.
+lookUp,
+    local rtn, loop, f, fl, t
+    0                       // jda puts the argument here
+    dap rtn
+    dio fl
+    lac lookUp
+loop, dac f
+    sza i
+    jmp rtn
+    add [FTHM]
+    dac t
+    lac i t
+    add [THFLAGS]
+    dac t
+    lac i t
+    and fl
+    sza
+    jmp .+5
+    lac f
+    dac t
+    lac i t
+    jmp loop
+    lac f
+rtn, jmp 0
+f, 0
+fl, 0
+t, 0
+    endloc
+
+// The EV seen from a frame is slot 0 of the nearest frame with one.
+// Takes the frame in AC. Returns the value in AC, UNASS if none, and its
+// cell's full address in evAt (0 if none).
+// AC is the result and IO is clobbered. Called via jda.
+evOf,
+    local rtn, none
+    0                       // jda puts the argument here
+    dap rtn
+    lac evOf
+    lio [FLEV]
+    jda lookUp
+    dac evAt
+    sza i
+    jmp none
+    add [HDR]
+    dac evAt
+    lac i evAt
+    jmp rtn
+none, lac [UNASS]
+rtn, jmp 0
+    endloc
+
+evAt, 0
+
+// The WHY seen from a frame is slot 1 of the nearest frame with a WHY (a
+// WHO, TC-UNGRASP's, is passed over).
+// Takes the frame in AC. Returns the value in AC, UNASS if none.
+// AC is the result and IO is clobbered. Called via jda.
+whyOf,
+    local rtn, none, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac whyOf
+    lio [FLWHY]
+    jda lookUp
+    sza i
+    jmp none
+    add [HDR+1]
+    dac t
+    lac i t
+    jmp rtn
+none, lac [UNASS]
+rtn, jmp 0
+t, 0
+    endloc
+
+// Pushes a choice point resuming at a position, with the tops as they
+// are now.
+// Takes the position's full address in AC. AC and IO are clobbered.
+// Called via jda. No room ends the command.
+cpPush,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac eCpt
+    sub [CPW]
+    dac p
+    sub eFrt
+    spa
+    jmp eRoom
+    lac p
+    dac eCpt
+    lac cpPush
+    dac i p
+    idx p
+    lac eFp
+    dac i p
+    idx p
+    lac trt
+    dac i p
+    idx p
+    lac eFrt
+    dac i p
+    idx p
+    lac hpTop
+    dac i p
+    idx p
+    lac dbTop
+    dac i p
+    idx p
+    dzm i p
+    idx p
+    dzm i p
+rtn, jmp 0
+p, 0
+    endloc
+
+// The interpreter's loop. The next operation is dispatched by its code.
+eNext, jsp fetch
+    add [jmp eOps]
+    dac eDisp
+eDisp, 0
+
+eOps, jmp eFail
+    jmp opRet
+    jmp opCall
+    jmp opGoal
+    jmp opAssert
+    jmp opErase
+    jmp opAlt
+    jmp opAlts
+    jmp opKill
+    jmp opCut
+    jmp opCutfail
+    jmp opJmp
+    jmp opNat
+    jmp opNatj
+    jmp opFindb
+    jmp opFindc
+    jmp opFinde
+    jmp opMemory
+    jmp opMemend
+    jmp opSetv
+    jmp opTick
+    jmp opPlan
+    jmp eOk
+    jmp eNo
+
+// FAIL goes back to the newest choice point.
+// The trail is undone to its mark and the tops restored.
+// One given up (KILL) is passed over, and a database goal's resumes its
+// scan.
+eFail, lac eCpt
+    dac eCp
+    add [CTR]
+    dac eT
+    lac i eT
+    jda undo
+    lac eCp
+    add [CFP]
+    dac eT
+    lac i eT
+    dac eFp
+    lac eCp
+    add [CFR]
+    dac eT
+    lac i eT
+    dac eFrt
+    lac eCp
+    add [CHP]
+    dac eT
+    lac i eT
+    dac hpTop
+    lac eCp
+    add [CDB]
+    dac eT
+    lac i eT
+    dac dbTop
+    lac eCp
+    add [CPW]
+    dac eCpt
+    lac i eCp
+    sza i
+    jmp eFail
+    dac ePc
+    lac eTrace
+    sza
+    XJSP(trBack, 012)
+    lac eCp
+    add [CGPC]
+    dac eT
+    lac i eT
+    sza i
+    jmp eNext
+    dac eGpc
+    lac eCp
+    add [CREC]
+    dac eT
+    lac i eT
+    dac gRec
+    jmp goalRun
+
+// RET is THSUCCEED THEOREM, back to the caller.
+opRet, lac eTrace
+    sza
+    XJSP(trRet, 012)
+    lac eFp
+    add [FRET]
+    dac eT
+    lac i eT
+    dac ePc
+    lac i eFp
+    dac eFp
+    jmp eNext
+
+// CALL thm args makes a new frame for the theorem, its slots unassigned,
+// its WHY (or WHO) the caller's EV.
+// Each parameter is the argument's value or, for an unassigned variable, a
+// link that shares the caller's cell.
+opCall, jsp fetch
+    ior [050000]
+    dac cT
+    lac eFrt
+    dac cNew
+    lac i cT
+    dac cN
+    add [HDR]
+    add cNew
+    dac cTop
+    sub eCpt
+    sma
+    jmp eRoom
+    lac cNew
+    dac cP
+    lac eFp
+    dac i cP
+    idx cP
+    idx cP
+    lac cT
+    dac i cP
+    idx cP
+    lac eFp
+    add [FDEPTH]
+    dac eT
+    lac i eT
+    add [1]
+    dac i cP
+    idx cP
+    lac cN
+    dac cK
+cClr, lac cK
+    sza i
+    jmp cWhy
+    lac [UNASS]
+    dac i cP
+    idx cP
+    lac cK
+    sub [1]
+    dac cK
+    jmp cClr
+cWhy, lac cT
+    add [THFLAGS]
+    dac eT
+    lac i eT
+    and [FLEV]
+    sza i
+    jmp cArgs
+    lac eFp
+    jda evOf
+    dac cV
+    lac cNew
+    add [HDR+1]
+    dac eT
+    lac cV
+    dac i eT
+cArgs, lac cT
+    add [THNPAR]
+    dac eT
+    lac i eT
+    dac cK
+    lac cNew
+    add [HDR+2]
+    dac cP
+cArg, lac cK
+    sza i
+    jmp cGo
+    jsp fetch
+    jda eval
+    dac cV
+    jda islink
+    jmp cPut
+    jda linkCell
+    dac eT
+    lac i eT
+    sad [UNASS]
+    jmp cPut
+    dac cV
+cPut, lac cV
+    dac i cP
+    idx cP
+    lac cK
+    sub [1]
+    dac cK
+    jmp cArg
+cGo, lac cNew
+    add [FRET]
+    dac eT
+    lac ePc
+    dac i eT
+    lac cTop
+    dac eFrt
+    lac cNew
+    dac eFp
+    lac cT
+    add [THCODE]
+    dac ePc
+    lac eTrace
+    sza
+    XJSP(trCall, 012)
+    jmp eNext
+
+// GOAL pred n args finds the next record of the predicate's chain that
+// matches, from its head or a choice point's place.
+// It makes a choice point if another matches later, then binds each
+// variable item to the record's argument.
+// #AT is matched against the location table.
+opGoal, lac ePc
+    sub [1]
+    dac eGpc
+    dzm gRec
+goalRun, lac eGpc
+    add [1]
+    dac ePc
+    jsp fetch
+    dac dbP
+    jsp fetch
+    dac dbN
+    jsp gItems
+    lac dbP
+    sad [AAT]
+    jmp atGoal
+    lac gRec
+    sza
+    jmp gScan
+    lac dbP
+    jda dbHead
+    dac eT
+    lac i eT
+gScan, jda dbScan
+    sza i
+    jmp eFail
+    dac gM
+    lac i gM
+    jda dbScan
+    sza i
+    jmp gBind
+    dac gM2
+    law 1
+    jda cpPush
+    lac eCpt
+    add [CREC]
+    dac eT
+    lac gM2
+    dac i eT
+    lac eCpt
+    add [CGPC]
+    dac eT
+    lac eGpc
+    dac i eT
+gBind, lac gM
+    add [DARG]
+    dac gP
+    lac [dbA:.]
+    dac gQ
+    lac dbN
+    dac gK
+gB1, lac gK
+    sza i
+    jmp eNext
+    lac i gQ
+    jda islink
+    jmp gB2
+    jda linkCell
+    dac tsA
+    lac i gP
+    jda tset
+gB2, idx gP
+    idx gQ
+    lac gK
+    sub [1]
+    dac gK
+    jmp gB1
+
+// #AT is the object's place, a new point.
+// A variable is bound to it, and a point must be the same place.
+atGoal, lac dbA
+    and [TAGS]
+    sad [TOBJ]
+    jmp .+2
+    jmp eFail
+    lac dbA
+    and [07777]
+    sub [NOBJ]
+    sma
+    jmp eFail
+    lac dbA
+    and [07777]
+    jda locGet
+    jsp mkpt
+    dac gM
+    lac dbA+1
+    sad [ANY]
+    jmp eNext
+    jda islink
+    jmp .+6
+    jda linkCell
+    dac tsA
+    lac gM
+    jda tset
+    jmp eNext
+    lac gM
+    lio dbA+1
+    jda pteq
+    jmp eFail
+    jmp eNext
+
+// Reads dbN operands into dbA, each evaluated.
+// AC and IO are clobbered. Called via jsp.
+gItems,
+    local rtn, loop, p, k
+    dap rtn
+    lac [dbA:.]
+    dac p
+    lac dbN
+    dac k
+loop, lac k
+    sza i
+    jmp rtn
+    jsp fetch
+    jda eval
+    dac i p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Skips if none of dbA's dbN items is a variable, since an assertion's
+// arguments must all have values.
+// AC and IO are clobbered. Called via jsp.
+gValues,
+    local rtn, loop, all, p, k
+    dap rtn
+    lac [dbA:.]
+    dac p
+    lac dbN
+    dac k
+loop, lac k
+    sza i
+    jmp all
+    lac i p
+    and [TAGS]
+    sad [TVAR]
+    jmp rtn
+    idx p
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+all, idx rtn
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// ASSERT pred n args and ERASE pred n args.
+opAssert, jsp fetch
+    dac dbP
+    jsp fetch
+    dac dbN
+    jsp gItems
+    jsp gValues
+    jmp eFail
+    jsp dbAdd
+    jmp eFail
+    jmp eNext
+
+opErase, jsp fetch
+    dac dbP
+    jsp fetch
+    dac dbN
+    jsp gItems
+    jsp gValues
+    jmp eFail
+    jsp dbErase
+    jmp eFail
+    jmp eNext
+
+// ALT label makes a choice point at the label.
+// ALTS slot label does the same, its address kept in the slot for a KILL,
+// CUT or CUTFAIL.
+// The slot is set through the trail, so going back into a loop's earlier
+// pass finds that pass's choice point there.
+opAlt, jsp fetch
+    ior [050000]
+    jda cpPush
+    jmp eNext
+
+opAlts, jsp fetch
+    jda slotAddr
+    dac eS
+    jsp fetch
+    ior [050000]
+    jda cpPush
+    lac eS
+    dac tsA
+    lac eCpt
+    jda tset
+    jmp eNext
+
+// KILL slot is THCOND's commitment.
+// The clause's choice point goes, if it is the newest, and otherwise it is
+// given up where it is.
+// One already gone (a cut took it) is left alone, since its place may hold
+// a newer one.
+opKill, jsp eSlotCp
+    sub eCpt
+    spa
+    jmp eNext
+    sza
+    jmp kDead
+    lac eS
+    add [CPW]
+    dac eCpt
+    jmp eNext
+kDead, dzm i eS
+    jmp eNext
+
+// CUT slot removes that choice point and all made since.
+// CUTFAIL slot does the same, then FAIL.
+// One already gone cuts nothing.
+opCut, jsp eCutTo
+    jmp eNext
+
+opCutfail, jsp eCutTo
+    jmp eFail
+
+// Cuts back through the choice point in the slot named by the next
+// operand, if it is still there. AC and IO are clobbered. Called via jsp.
+eCutTo,
+    local rtn
+    dap rtn
+    jsp eSlotCp
+    sub eCpt
+    spa
+    jmp rtn
+    lac eS
+    add [CPW]
+    dac eCpt
+rtn, jmp 0
+    endloc
+
+// The choice point kept in the slot named by the next operand.
+// Returns its full address in AC and eS. AC is the result and IO is
+// clobbered. Called via jsp.
+eSlotCp,
+    local rtn
+    dap rtn
+    jsp fetch
+    jda slotAddr
+    dac eS
+    lac i eS
+    dac eS
+rtn, jmp 0
+    endloc
+
+opJmp, jsp fetch
+    ior [050000]
+    dac ePc
+    jmp eNext
+
+// NAT native arg and NATJ native arg label run a native expression, which
+// ends at natYes or natNo (natives.ac).
+// If it is false, NAT fails and NATJ goes to its label.
+opNat, jsp fetch
+    dac nA
+    jsp fetch
+    dac natArg
+    dzm nJ
+    jmp i nA
+
+opNatj, jsp fetch
+    dac nA
+    jsp fetch
+    dac natArg
+    jsp fetch
+    ior [050000]
+    dac nJ
+    jmp i nA
+
+natYes, jmp eNext
+
+natNo, lac nJ
+    sza i
+    jmp eFail
+    dac ePc
+    jmp eNext
+
+// FINDB slot n var label is THFIND's start.
+// n is the number wanted, 0 for ALL.
+// The variable is made unassigned, and the choice point at the label is
+// where the search ends.
+opFindb, jsp fetch
+    jda slotAddr
+    dac eS
+    jsp fetch
+    jda eval
+    dac findN
+    jsp fetch
+    jda slotAddr
+    dac tsA
+    lac [UNASS]
+    jda tset
+    jsp fetch
+    ior [050000]
+    jda cpPush
+    lac eS
+    dac tsA
+    lac eCpt
+    jda tset
+    dzm findCnt
+    jmp eNext
+
+// FINDC slot var means one is found.
+// A value found before is dropped.
+// Otherwise it is kept, and once n are kept the search ends (the FINDB's
+// choice point is failed to).
+// Otherwise FAIL for the next.
+opFindc, jsp eSlotCp
+    dac fcCp
+    jsp fetch
+    jda eval
+    dac fcV
+    dzm fcK
+fc1, lac fcK
+    sad findCnt
+    jmp fc2
+    add [findBuf:.]
+    dac eT
+    lac i eT
+    sad fcV
+    jmp eFail
+    idx fcK
+    jmp fc1
+fc2, lac findCnt
+    sad [FBMAX]
+    jmp eFail
+    add [findBuf:.]
+    dac eT
+    lac fcV
+    dac i eT
+    idx findCnt
+    lac findN
+    sza i
+    jmp eFail
+    lac findCnt
+    sub findN
+    spa
+    jmp eFail
+    lac fcCp
+    dac eCpt
+    jmp eFail
+
+// FINDE into ends the search, with all found or too few.
+// It fails if none, or fewer than n.
+// Otherwise the slot is set to the list found, in order.
+opFinde, jsp fetch
+    dac eS
+    lac findCnt
+    sza i
+    jmp eFail
+    lac findN
+    sza i
+    jmp .+5
+    lac findCnt
+    sub findN
+    spa
+    jmp eFail
+    lac [NIL]
+    dac fcV
+    lac findCnt
+    dac fcK
+fe1, lac fcK
+    sza i
+    jmp fe2
+    sub [1]
+    dac fcK
+    add [findBuf:.]
+    dac eT
+    lac i eT
+    lio fcV
+    jda cons
+    dac fcV
+    jmp fe1
+fe2, lio eS
+    lac fcV
+    jda sset
+    jmp eNext
+
+// MEMORY starts a new event now, its parent the WHY, and sets the EV to
+// it.
+// MEMEND type n args ends the EV's event now, of the type, and asserts
+// (type ev args) (blockl.4:220-228).
+opMemory, jsp evNew
+    jmp eNext
+
+opMemend, jsp fetch
+    dac dbP
+    jsp fetch
+    dac dbN
+    lac [dbA:.]
+    add [1]
+    dac eT
+    lac dbN
+    dac fcK
+me1, lac fcK
+    sza i
+    jmp me2
+    jsp fetch
+    jda eval
+    dac i eT
+    idx eT
+    lac fcK
+    sub [1]
+    dac fcK
+    jmp me1
+me2, idx dbN
+    jsp evEnd
+    jmp eFail
+    jmp eNext
+
+// SETV slot operand is THSETQ, which fails on NIL or no value.
+opSetv, jsp fetch
+    dac eS
+    jsp fetch
+    jda eval
+    dac cV
+    jda islink
+    jmp .+2
+    jmp eFail
+    lac cV
+    sad [NIL]
+    jmp eFail
+    lio eS
+    jda sset
+    jmp eNext
+
+// TICK advances THTIME, the clock of hand moves and releases, by one.
+opTick, lac [thTime:.]
+    dac tsA
+    lac thTime
+    add [1]
+    jda tset
+    jmp eNext
+
+// PLAN call operand adds the hand call to the plan.
+opPlan, lac planN
+    sad [PLMAX]
+    jmp eRoom
+    sal 1s
+    add [PLBASE]
+    dac eT
+    jsp fetch
+    dac i eT
+    idx eT
+    jsp fetch
+    jda eval
+    dac i eT
+    lac [planN:.]
+    dac tsA
+    lac planN
+    add [1]
+    jda tset
+    jmp eNext
+
+// Plans the goal in eCode (CALL thm args, DONE) under a top frame whose
+// EV is COMMAND, above a base choice point whose failure is I CAN'T.
+// With eTry set, a success is undone too, as a failure would be.
+// Returns AC = 1 if it succeeded, with the plan in PLBASE (planN calls),
+// and 0 if not.
+// The database, events and heap keep what a success made.
+// AC is the result and IO is clobbered. Called via jsp, from any bank.
+ePlan, dac eRa
+    lac [TRBASE]
+    dac trt
+    lac [CPBASE]
+    dac eCpt
+    lac [FRBASE]
+    dac eFp
+    dac eT
+    dzm planN
+    dzm i eT
+    idx eT
+    dzm i eT
+    idx eT
+    lac [topThm:5]
+    dac i eT
+    idx eT
+    dzm i eT
+    idx eT
+    lac [ACOMMAND]
+    dac i eT
+    idx eT
+    lac [UNASS]
+    dac i eT
+    lac [FRBASE+HDR+2]
+    dac eFrt
+    lac [eCantOp:.]
+    jda cpPush
+    lac eCpt
+    dac eBase
+    law 1
+    dac eActive
+    lac [eCode:.]
+    dac ePc
+    jmp eNext
+
+// DONE means the goal succeeded. A TRY fails back out of it all.
+// The plan made is kept, since it is not on the trail.
+eOk, lac eTry
+    sza i
+    jmp okKeep
+    lac planN
+    dac okN
+    jsp eUnwind
+    lac okN
+    dac planN
+    jmp okEnd
+okKeep, lac [TRBASE]
+    dac trt
+okEnd, dzm eActive
+    law 1
+eRtn, jmp i eRa
+okN, 0                      // a TRY's plan length, across eUnwind
+eRa, 0                      // the full address ePlan was called from
+
+// The base choice point's operation, I CAN'T.
+eNo, dzm eActive
+    cla
+    jmp eRtn
+
+eCantOp, oCANT
+
+// Undoes everything the command did.
+// That is the trail, and the heap's and the database's growth, as the base
+// choice point holds them.
+// AC and IO are clobbered. Called via jsp.
+eUnwind,
+    local rtn
+    dap rtn
+    lac [TRBASE]
+    jda undo
+    lac eBase
+    add [CHP]
+    dac eT
+    lac i eT
+    dac hpTop
+    lac eBase
+    add [CDB]
+    dac eT
+    lac i eT
+    dac dbTop
+rtn, jmp 0
+    endloc
+
+// Out of room in an arena.
+// The command is undone and ends with NO ROOM.
+// A sentence's goal (ePlan called from bank 6, hooks.ac) ends by the
+// machine's stop, so the sentence ends as any other out of room does.
+// Outside a command (the arenas are only used in one, but for the heap at
+// start-up), only the message is given.
+eRoom, lac eActive
+    sza i
+    jmp i [roomEnd:012]
+    jsp eUnwind
+    dzm eActive
+    lac eRa
+    and [0170000]
+    sad [060000]
+    jmp i [pgRoom:6]
+    jmp i [roomEnd:012]
+
+ePc, 0                      // the next operation's full address
+eFp, 0                      // the current frame
+eCpt, CPBASE                // the newest choice point
+eFrt, FRBASE                // the frames' top
+eBase, 0                    // the command's base choice point
+eActive, 0                  // 1 while a command is planned
+eTry, 0                     // 1 for TRY, to undo even a success
+eTrace, 0                   // 1 for TRACE ON
+eCp, 0
+eS, 0
+eT, 0
+eGpc, 0                     // a goal's position, and the record to scan
+gRec, 0                     // from (0 for the chain's head)
+gM, 0
+gM2, 0
+gP, 0
+gQ, 0
+gK, 0
+cT, 0                       // CALL's theorem, new frame, its slots,
+cNew, 0
+cN, 0
+cTop, 0
+cP, 0
+cK, 0
+cV, 0
+nA, 0                       // NAT's native, argument and label
+natArg, 0
+nJ, 0
+findN, 0                    // THFIND's count wanted, and found
+findCnt, 0
+fcCp, 0
+fcV, 0
+fcK, 0
+findBuf,
+    table FBMAX
+planN, 0                    // the plan's calls
+eCode,                      // the command, CALL thm args and DONE
+    table 0d8
+
+bank 012
+
+// Trace lines, indented by depth.
+// They show a theorem entered with its arguments, one that returns, and
+// the theorem a failure goes back into.
+// In bank 012 with the output. AC and IO are clobbered. Called via
+// jsp, from any bank (trHead from bank 012).
+trCall,
+    local rtn, ra, loop, fin, k, p
+    dac ra
+    jsp trHead
+    lac i [cT:4]
+    add [THNPAR]
+    dac p
+    lac i p
+    dac k
+    lac i [eFp:4]
+    add [HDR+2]
+    dac p
+loop, lac k
+    sza i
+    jmp fin
+    jsp wrsp
+    lac p
+    XJDA(deref, 4)
+    jda wratom
+    idx p
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+fin, jsp wrnl
+rtn, jmp i ra
+ra, 0
+k, 0
+p, 0
+    endloc
+
+trRet,
+    local rtn, ra
+    dac ra
+    jsp trHead
+    lac [sTrOk:5]
+    jda wrs
+    jsp wrnl
+rtn, jmp i ra
+ra, 0
+    endloc
+
+trBack,
+    local rtn, ra
+    dac ra
+    jsp trHead
+    lac [sTrBack:5]
+    jda wrs
+    jsp wrnl
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// The current frame's indent (two spaces a level, at most 0d40) and its
+// theorem's name. AC and IO are clobbered. Called via jsp.
+trHead,
+    local rtn, loop, k, p
+    dap rtn
+    lac i [eFp:4]
+    add [FDEPTH]
+    dac p
+    lac i p
+    sal 1s
+    sub [0d40]
+    spa
+    jmp .+2
+    cla
+    add [0d40]
+    dac k
+loop, lac k
+    sza i
+    jmp .+6
+    jsp wrsp
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+    lac i [eFp:4]
+    add [FTHM]
+    dac p
+    lac i p
+    add [THNAME]
+    dac p
+    lac i p
+    jda wrs
+rtn, jmp 0
+k, 0
+p, 0
+    endloc
+
+bank 4
+
+bank 5
+sTrOk, ascii " OK"
+sTrBack, ascii " BACK"
+bank 4

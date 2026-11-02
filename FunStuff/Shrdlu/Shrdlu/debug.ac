@@ -1,0 +1,80 @@
+// The debugging commands' root half, which acts on the world. The
+// overlay cmds (cmds.ac) reads every debugging command and prints what
+// only reads. A command that moves the hand, rebuilds the scene
+// or prints it from bank 0 comes back here as a request in cmReq, with
+// its arguments in mvX, mvY, mvZ or tObj.
+// Bank 0, eem on. Needs shrdlu.ah, world.ac, hand.ac, term.ac,
+// project.ac, and the keywords and labels below, which cmds.ac reads.
+
+// Carries out cmReq's request, then ends the reply.
+// AC and IO are clobbered. Called via jsp.
+execLine,
+    local rtn, done, notmv, notgr, notug, notrf, notsc, notrs
+    dap rtn
+    lac cmReq
+    sad [RQMOVETO]
+    jmp .+2
+    jmp notmv
+    jsp cmdMoveto
+    jmp done
+notmv, sad [RQGRASP]
+    jmp .+2
+    jmp notgr
+    lac tObj
+    jda cmdGrasp
+    jmp done
+notgr, sad [RQUNGRASP]
+    jmp .+2
+    jmp notug
+    jsp cmdUngrasp
+    jmp done
+notug, sad [RQREFRESH]
+    jmp .+2
+    jmp notrf
+    jsp cmdRefresh
+    jmp done
+notrf, sad [RQSCENE]
+    jmp .+2
+    jmp notsc
+    jsp sceneOut
+    jmp done
+notsc, sad [RQRESET]
+    jmp .+2
+    jmp notrs
+    jsp cmdReset
+    jmp done
+    // Any other request is PROJ.
+notrs, lac mvX
+    dac pjX
+    lac mvY
+    dac pjY
+    lac mvZ
+    dac pjZ
+    jsp proj
+    lac pjSx
+    jda putoct
+    jsp putsp
+    lac pjSy
+    jda putoct
+    jsp putnl
+done, jsp putStar
+rtn, jmp 0
+    endloc
+
+cmReq, 0                    // the request cmds.ac left, RQ... (shrdlu.ah)
+tObj, 0                     // GRASP's object
+
+bank 2
+kMoveto, ascii "MOVETO"
+kGrasp, ascii "GRASP"
+kUngrasp, ascii "UNGRASP"
+kRefresh, ascii "REFRESH"
+kScene, ascii "SCENE"
+kStatus, ascii "STATUS"
+kProj, ascii "PROJ"
+sFrames, ascii "FRAMES "
+sEdges, ascii " EDGES "
+sClamps, ascii " CLAMPS "
+sOver, ascii " OVER "
+sMs, ascii " MS "
+bank 0

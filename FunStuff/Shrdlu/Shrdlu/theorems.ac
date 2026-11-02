@@ -1,0 +1,495 @@
+// The action theorems of blockp.3, with the antecedent and erasing
+// theorems they set off, as the engine's bytecode (engine.ac). Each is a
+// header (shrdlu.ah: its slots, flags, parameters and name) and its
+// code. Slot 0 is its EV, slot 1 its WHY (its WHO for TC-UNGRASP), the
+// parameters follow from slot 2, then its other variables and the slots
+// its THCONDs and THNOTs keep their choice points in.
+// The constructs compile as follows.
+//   THCOND compiles to ALTS s next, the first expression, KILL s, the
+//     rest, JMP end. A last clause, or a first expression that is a test
+//     (NATJ), needs no choice point.
+//   THGOAL with a theorem compiles to ALT th, GOAL ..., JMP end, then at
+//     th the CALL ...
+//   THNOT compiles to ALTS s ok, the expression, CUTFAIL s, then the label ok.
+//   THASSERT or THERASE compiles to ASSERT or ERASE, then each antecedent
+//     or erasing theorem once with its failure ignored (ALTS s on, CALL ...,
+//     CUT s, then the label on). #AT changes the location table, not the
+//     database, so it has no ASSERT or ERASE.
+//   THFIND compiles to FINDB s n var end, the expressions, FINDC s var,
+//     then at end the FINDE.
+// The code is in bank 5, after `bank 5`. The names, which only the trace
+// reads, are in bank 1's spare words.
+// Needs shrdlu.ah and natives.ac.
+
+bank 5
+
+// The top frame's theorem, the command, whose EV is COMMAND.
+topThm, 2; FLEV; 0; sTop:1
+
+// TA-AT -- the location table gets X's new place.
+thTaAt, 4; 0; 2; sTaAt:1
+    oNAT; nTaAt:4; 0
+    oRET
+
+// TA-SUPP (X2 Y3, Z4) -- what supports X at Y, unless that is a block's
+// non-rectangular top. The supporter loses #CLEARTOP. A held object
+// has no supporter. On something manipulable X joins its stack, or the
+// two make a new one.
+thTaSupp, 7; 0; 2; sTaSupp:1
+    local c2, c3, sup, nc, new, done
+    oALTS; 5; c2
+    oNAT; nSuppZ:4; 0
+    oKILL; 5
+    oALTS; 6; sup
+    oGOAL; AMANIP; 1; V(4)
+    oKILL; 6
+    oGOAL; ASHAPE; 2; V(4); ARECT
+sup, oASSERT; ASUPPORT; 2; V(4); V(2)
+    oALTS; 6; nc
+    oGOAL; ACLEARTOP; 1; V(4)
+    oKILL; 6
+    oERASE; ACLEARTOP; 1; V(4)
+nc, oALTS; 6; done
+    oGOAL; AMANIP; 1; V(4)
+    oKILL; 6
+    oALTS; 6; new
+    oGOAL; APART; 2; V(4); SV(3)
+    oGOAL; AIS; 2; V(3); ASTACK
+    oKILL; 6
+    oASSERT; APART; 2; V(2); V(3)
+done, oRET
+new, oNAT; nNewStk:4; 0300
+    oASSERT; APART; 2; V(2); V(3)
+    oASSERT; APART; 2; V(4); V(3)
+    oASSERT; AIS; 2; V(3); ASTACK
+    oASSERT; AEXISTS; 1; V(3)
+    oRET
+c2, oALTS; 5; c3
+    oGOAL; AGRASPING; 1; V(2)
+    oKILL; 5
+    oRET
+c3, oFAIL
+    endloc
+
+// TA-CONTAIN (X2 W3, Y4 Z5) -- a manipulable object on the box, or on
+// something the box contains, is in the box.
+thTaContain, 6; 0; 2; sTaContain:1
+    local inner, put
+    oGOAL; AMANIP; 1; V(2)
+    oGOAL; ASUPPORT; 2; V(4); V(2)
+    oALT; inner
+    oGOAL; AIS; 2; V(4); ABOX
+    oNAT; nCopy:4; 0504
+    oJMP; put
+inner, oGOAL; ACONTAIN; 2; V(5); V(4)
+put, oASSERT; ACONTAIN; 2; V(5); V(2)
+    oRET
+    endloc
+
+// TE-SUPP (X2 W3, Y4 Z5) -- X moving off its supporter, unless it
+// supports something. X leaves its stack, and a stack of one is none.
+thTeSupp, 7; 0; 2; sTeSupp:1
+    local c2, one, ex, no
+    oALTS; 6; c2
+    oGOAL; ASUPPORT; 2; V(2); SV(4)
+    oKILL; 6
+    oFAIL
+c2, oGOAL; ASUPPORT; 2; SV(4); V(2)
+    oERASE; ASUPPORT; 2; V(4); V(2)
+    oALTS; 6; no
+    oGOAL; APART; 2; V(2); SV(4)
+    oKILL; 6
+    oERASE; APART; 2; V(2); V(4)
+    oNATJ; nParts:4; 0; one
+    oRET
+one, oALTS; 6; ex
+    oGOAL; APART; 2; SV(5); V(4)
+    oKILL; 6
+    oERASE; APART; 2; V(5); V(4)
+ex, oERASE; AEXISTS; 1; V(4)
+no, oRET
+    endloc
+
+// TE-CONTAIN (X2 W3, Y4) -- X leaving what contained it.
+thTeContain, 5; 0; 2; sTeContain:1
+    oGOAL; ACONTAIN; 2; SV(4); V(2)
+    oERASE; ACONTAIN; 2; V(4); V(2)
+    oRET
+
+// TC-MOVEHAND2 (Y2, LOC3) -- the hand moves to Y, within its limits. The
+// move joins the plan.
+thMoveHand2, 4; 0; 1; sMoveHand2:1
+    local c2
+    oNATJ; nHandIsY:4; 0; c2
+    oRET
+c2, oNAT; nLimits:4; 0
+    oNAT; nLocHand:4; 0
+    oNAT; nHandSet:4; 0
+    oTICK
+    oPLAN; PMOVETO; V(2)
+    oRET
+    endloc
+
+// TC-MOVEHAND (Y2, X3 W4 Z5) -- the hand, and what it holds, move to Y.
+// The held object's #AT goes from W to Z, with the theorems that keep
+// the database in step with it.
+thMoveHand, 0d8; 0; 1; sMoveHand:1
+    local c2, c3, e1, e2, a1, a2, a3
+    oNATJ; nHandIsY:4; 0; c2
+    oRET
+c2, oALTS; 6; c3
+    oGOAL; AGRASPING; 1; V(3)
+    oKILL; 6
+    oNAT; nNewLoc:4; 0
+    oGOAL; AAT; 2; V(3); SV(4)
+    oALTS; 7; e1
+    oCALL; thTeSupp; V(3); V(4)
+    oCUT; 7
+e1, oALTS; 7; e2
+    oCALL; thTeContain; V(3); V(4)
+    oCUT; 7
+e2, oALTS; 7; a1
+    oCALL; thTaAt; V(3); V(5)
+    oCUT; 7
+a1, oALTS; 7; a2
+    oCALL; thTaSupp; V(3); V(5)
+    oCUT; 7
+a2, oALTS; 7; a3
+    oCALL; thTaContain; V(3); V(5)
+    oCUT; 7
+a3, oCALL; thMoveHand2; V(2)
+    oNAT; nHist:4; 0
+    oRET
+c3, oCALL; thMoveHand2; V(2)
+    oRET
+    endloc
+
+// TC-UNGRASP (X2 OBJ3) -- lets go of what the hand holds, if it holds
+// something that is supported.
+thUngrasp, 5; FLEV; 0; sUngrasp:1
+    local done
+    oALTS; 4; done
+    oGOAL; AGRASPING; 1; SV(2)
+    oKILL; 4
+    oMEMORY
+    oGOAL; ASUPPORT; 2; ANY; V(2)
+    oERASE; AGRASPING; 1; V(2)
+    oMEMEND; AUNGRASP; 1; V(2)
+    oTICK
+    oPLAN; PUNGRASP; NIL
+done, oRET
+    endloc
+
+// TC-RAISEHAND (T2) -- the hand goes up to 1000.
+thRaiseHand, 3; FLEV FLWHY; 0; sRaiseHand:1
+    oMEMORY
+    oNAT; nRaiseT:4; 0
+    oCALL; thMoveHand; V(2)
+    oMEMEND; ARAISEHAND; 0
+    oRET
+
+// TC-GRASP (X2, Y3) -- clears X's top, lets go of (or gets rid of) what
+// the hand holds, and takes X by its top center.
+thGrasp, 5; FLEV FLWHY; 1; sGrasp:1
+    local c2, th, held, rid, go
+    oALTS; 4; c2
+    oGOAL; AGRASPING; 1; V(2)
+    oKILL; 4
+    oRET
+c2, oNAT; nIsAtom:4; 2
+    oMEMORY
+    oALT; th
+    oGOAL; ACLEARTOP; 1; V(2)
+    oJMP; held
+th, oCALL; thClearTop; V(2)
+held, oALTS; 4; go
+    oGOAL; AGRASPING; 1; SV(3)
+    oKILL; 4
+    oALT; rid
+    oCALL; thUngrasp
+    oJMP; go
+rid, oCALL; thGetRidOf; V(3)
+go, oNAT; nTopY:4; 0
+    oCALL; thMoveHand2; V(3)
+    oASSERT; AGRASPING; 1; V(2)
+    oMEMEND; AGRASP; 1; V(2)
+    oPLAN; PGRASP; V(2)
+    oRET
+    endloc
+
+// TC-PICKUP (X2) -- grasps X and raises the hand.
+thPickup, 3; FLEV FLWHY; 1; sPickup:1
+    oMEMORY
+    oCALL; thGrasp; V(2)
+    oCALL; thRaiseHand
+    oMEMEND; APICKUP; 1; V(2)
+    oRET
+
+// TC-CLEARTOP (X2, Y3) -- gets rid of each thing X supports.
+thClearTop, 5; FLEV FLWHY; 1; sClearTop:1
+    local some, mem, loop, c2
+    oNAT; nIsAtom:4; 2
+    oALTS; 4; some
+    oGOAL; ASUPPORT; 2; V(2); ANY
+    oKILL; 4
+    oJMP; mem
+some, oASSERT; ACLEARTOP; 1; V(2)
+    oRET
+mem, oMEMORY
+loop, oALTS; 4; c2
+    oGOAL; ASUPPORT; 2; V(2); SV(3)
+    oKILL; 4
+    oCALL; thGetRidOf; V(3)
+    oJMP; loop
+c2, oASSERT; ACLEARTOP; 1; V(2)
+    oMEMEND; ACLEARTOP; 1; V(2)
+    oRET
+    endloc
+
+// TC-GET-RID-OF (X2, Y3 T4) -- puts X, or each of a list, somewhere on the
+// table. A list's members are each an event. The list is none.
+thGetRidOf, 6; FLEV FLWHY; 1; sGetRidOf:1
+    local loop, c2, c3, succ
+    oSETV; 0; V(1)
+loop, oALTS; 5; c2
+    oNAT; nIsNil:4; 2
+    oKILL; 5
+    oRET
+c2, oALTS; 5; c3
+    oNAT; nIsAtom:4; 2
+    oKILL; 5
+    oMEMORY
+    oNAT; nSizeOf:4; 0402
+    oCALL; thFindSpace; OTABLE; V(4); V(2); SV(3)
+    oCALL; thPut; V(2); V(3)
+    oMEMEND; AGETRIDOF; 1; V(2)
+    oRET
+c3, oNAT; nCar:4; 0402
+    oCALL; thGetRidOf; V(4)
+    oALT; succ
+    oNAT; nCdrQ:4; 0202
+    oJMP; loop
+succ, oRET
+    endloc
+
+// TC-FINDSPACE (SURF2 SIZE3 OBJ4 SPACE5) -- a place on SURF for something
+// of SIZE, clear of all but OBJ. The place is the center of a block, packed
+// in the box (or on a block while a list is put), or anywhere.
+thFindSpace, 6; 0; 4; sFindSpace:1
+    local w2, w3
+    oALT; w2
+    oNAT; nFs1:4; 0
+    oRET
+w2, oALT; w3
+    oNAT; nFs2:4; 0
+    oRET
+w3, oNAT; nFs3:4; 0
+    oRET
+    endloc
+
+// TC-MAKESPACE (SURF2 SIZE3 OBJ4 SPACE5, X6) -- gets rid of what is on
+// SURF until there is room. It applies neither to the box nor to the table,
+// where what is got rid of lands.
+thMakeSpace, 0d8; FLEV FLWHY; 4; sMakeSpace:1
+    local ok, loop, again, fin
+    oALTS; 7; ok
+    oGOAL; AIS; 2; V(2); ABOX
+    oCUTFAIL; 7
+ok, oNAT; nNotTable:4; 0
+    oMEMORY
+loop, oGOAL; ASUPPORT; 2; V(2); SV(6)
+    oCALL; thGetRidOf; V(6)
+    oALT; again
+    oCALL; thFindSpace; V(2); V(3); V(4); V(5)
+    oJMP; fin
+again, oJMP; loop
+fin, oMEMEND; AMAKESPACE; 1; V(2)
+    oRET
+    endloc
+
+// TC-PUT (X2 Y3, Z4) -- X to the place Y, if Y is clear and supported.
+// With no place, X is got rid of.
+thPut, 5; 0; 2; sPut:1
+    local c2, place, go
+    oNATJ; nIsSet:4; 3; c2
+    oNATJ; nIsAtom:4; 3; place
+    oFAIL
+c2, oCALL; thGetRidOf; V(2)
+    oRET
+place, oNAT; nPutClear:4; 0
+    oNAT; nPutSupp:4; 0
+    oCALL; thGrasp; V(2)
+    oNAT; nTcentZ:4; 0
+    oCALL; thMoveHand; V(4)
+    oCALL; thUngrasp
+    oRET
+    endloc
+
+// TC-PUTON (X2 Y3, Z4 W5 T6) -- X, or each of a list, onto Y. A list too
+// big for Y's center is packed (#NOCLEAR), a list onto the table or a
+// block goes each in turn, and a list that will not go is packed.
+// A failure inside the list's THPROG fails it whole (THFAIL THPROG).
+thPutOn, 0d9; FLEV FLWHY; 2; sPutOn:1
+    local c2, c3, th, space, make, put, loop, throw, next, more, pfail, done, nb, th3, pack, fin
+    oNAT; nIsAtom:4; 3
+    oNAT; nFixX:4; 0
+    oNAT; nNotSelf:4; 0
+    oMEMORY
+    oNATJ; nIsAtom:4; 2; c2
+    oALT; th
+    oGOAL; ACLEARTOP; 1; V(2)
+    oJMP; space
+th, oCALL; thClearTop; V(2)
+space, oNAT; nSizeOf:4; 0602
+    oALT; make
+    oCALL; thFindSpace; V(3); V(6); V(2); SV(4)
+    oJMP; put
+make, oNAT; nNoNoclear:4; 0
+    oCALL; thMakeSpace; V(3); V(6); V(2); SV(4)
+put, oCALL; thPut; V(2); V(4)
+    oJMP; fin
+c2, oALTS; 7; c3
+    oASSERT; ANOCLEAR; 0
+    oKILL; 7
+    oNAT; nCopy:4; 0502
+    oALTS; 0d8; pfail
+loop, oNAT; nCar:4; 0605
+    oALT; throw
+    oCALL; thPutOn; V(6); V(3)
+    oJMP; next
+throw, oCUTFAIL; 0d8
+next, oNATJ; nLen1:4; 5; more
+    oJMP; done
+more, oNAT; nCdrQ:4; 0505
+    oJMP; loop
+pfail, oFAIL
+done, oERASE; ANOCLEAR; 0
+    oJMP; fin
+c3, oALTS; 0d8; nb
+    oGOAL; AIS; 2; V(3); ABOX
+    oCUTFAIL; 0d8
+nb, oALT; th3
+    oGOAL; ACLEARTOP; 1; V(3)
+    oJMP; pack
+th3, oCALL; thClearTop; V(3)
+pack, oCALL; thPack; V(2); V(3)
+fin, oMEMEND; APUTON; 2; V(2); V(3)
+    oRET
+    endloc
+
+// TC-PUTIN (X2 Y3, Z4) -- X onto Y if it will go. Otherwise, Y being the
+// box, X is packed in it.
+thPutIn, 6; FLEV FLWHY; 2; sPutIn:1
+    local c2, th, pack
+    oMEMORY
+    oALTS; 5; c2
+    oCALL; thPutOn; V(2); V(3)
+    oKILL; 5
+    oMEMEND; APUTIN; 2; V(2); V(3)
+    oRET
+c2, oGOAL; AIS; 2; V(3); ABOX
+    oNAT; nListify:4; 0402
+    oALT; th
+    oGOAL; ACLEARTOP; 1; V(3)
+    oJMP; pack
+th, oCALL; thClearTop; V(3)
+pack, oCALL; thPack; V(4); V(3)
+    oMEMEND; APUTIN; 2; V(2); V(3)
+    oRET
+    endloc
+
+// TC-PACK (OBJ2 SURF3, BLOCKS4 PYR5 X6 Y7 T8) -- the blocks, largest
+// first, each packed on SURF, with a pyramid that fits on top. Then the
+// pyramids left.
+thPack, 0d9; 0; 2; sPack:1
+    local loop, blk, pyr, skip
+    oNAT; nPackInit:4; 0
+loop, oNATJ; nIsNil:4; 4; blk
+    oNATJ; nIsNil:4; 5; pyr
+    oRET
+pyr, oNAT; nPkPyrY:4; 0
+    oNAT; nCar:4; 01005
+    oCALL; thPut; V(0d8); V(7)
+    oNAT; nCdrS:4; 0505
+    oJMP; loop
+blk, oNAT; nCar:4; 0604
+    oNAT; nPkBlkY:4; 0
+    oCALL; thPut; V(6); V(7)
+    oNAT; nCdrS:4; 0404
+    oNATJ; nPackonY:4; 0; skip
+    oCALL; thPutOn; V(7); V(6)
+    oNAT; nRemoveY:4; 0
+skip, oJMP; loop
+    endloc
+
+// TC-STACKUP (X2, Y3 BLOCKS4 PYR5 MORE6 T7 U8) -- X's blocks stacked on
+// the table, largest at the bottom, a pyramid on top. Given one, or
+// none, it finds two, or three, more blocks, clear ones first.
+thStackUp, 0d11; FLEV FLWHY; 1; sStackUp:1
+    local more, any, cl, found, fin, stack, loop, c2, c3
+    oNAT; nHigh:4; 0
+    oNATJ; nXlen2:4; 0; more
+    oJMP; stack
+more, oALT; stack
+    oNAT; nFindN:4; 0
+    oFINDB; 0d9; V(7); 3; fin
+    oALT; any
+    oGOAL; AIS; 2; V(3); ABLOCK
+    oALTS; 0d10; cl
+    oGOAL; ASUPPORT; 2; V(3); ANY
+    oCUTFAIL; 0d10
+cl, oJMP; found
+any, oGOAL; AIS; 2; V(3); ABLOCK
+found, oNAT; nFyNotX:4; 0
+    oFINDC; 0d9; V(3)
+fin, oFINDE; 6
+    oNAT; nXappend:4; 0
+stack, oNAT; nPyrOk:4; 0
+    oNAT; nBlocksInit:4; 0
+    oMEMORY
+loop, oNATJ; nLenGt1:4; 4; c2
+    oNAT; nCadr:4; 0704
+    oNAT; nCar:4; 01004
+    oCALL; thPutOn; V(7); V(0d8)
+    oNAT; nCdrS:4; 0404
+    oJMP; loop
+c2, oNATJ; nNotNil:4; 5; c3
+    oNAT; nCar:4; 0705
+    oNAT; nCar:4; 01004
+    oCALL; thPutOn; V(7); V(0d8)
+c3, oMEMEND; ASTACKUP; 1; V(2)
+    oRET
+    endloc
+
+// TC-NOTICE (X2) -- blockp.3:298, the plan's one BLINK call, with no event.
+// BLINK draws nothing.
+thNotice, 3; 0; 1; sNotice:1
+    oPLAN; PBLINK; V(2)
+    oRET
+
+// The theorems' names, for the trace.
+bank 1
+sTop, ascii "COMMAND"
+sTaAt, ascii "TA-AT"
+sTaSupp, ascii "TA-SUPP"
+sTaContain, ascii "TA-CONTAIN"
+sTeSupp, ascii "TE-SUPP"
+sTeContain, ascii "TE-CONTAIN"
+sMoveHand2, ascii "TC-MOVEHAND2"
+sMoveHand, ascii "TC-MOVEHAND"
+sUngrasp, ascii "TC-UNGRASP"
+sRaiseHand, ascii "TC-RAISEHAND"
+sGrasp, ascii "TC-GRASP"
+sPickup, ascii "TC-PICKUP"
+sClearTop, ascii "TC-CLEARTOP"
+sGetRidOf, ascii "TC-GET-RID-OF"
+sFindSpace, ascii "TC-FINDSPACE"
+sMakeSpace, ascii "TC-MAKESPACE"
+sPut, ascii "TC-PUT"
+sPutOn, ascii "TC-PUTON"
+sPutIn, ascii "TC-PUTIN"
+sPack, ascii "TC-PACK"
+sStackUp, ascii "TC-STACKUP"
+sNotice, ascii "TC-NOTICE"
+
+bank 4

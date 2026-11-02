@@ -1,0 +1,1871 @@
+// The hidden-line pass clips each object's edges against the screen
+// outlines of the opaque objects in front of them.
+//
+// geomBuild makes an object's vertices, in the world and on the screen,
+// from per-kind tables of the original's shapes (GP-BLOCK, GP-PYRAMID,
+// GP-DRBOX). occBuild lists the occluders: each opaque block and pyramid,
+// and the box as its four walls, with its world box and its convex
+// outline on the screen, counterclockwise. clipEdges clips one object's
+// edges against them and either hands the visible pieces to the display
+// list (dlSeg) or only collects which objects hid something (cMask).
+//
+// Clipping is Cyrus-Beck in the edge's step parameter k, 0 to L, where L
+// is the edge's longer screen axis. For each side of an outline, the point
+// at k is strictly inside when L F + k G > 0, F and G being cross
+// products. They are exact, in double words, a signed high part and a
+// low part 0 to 2^17-1. Each crossing is rounded to the nearest step, so
+// a gap shorter than half a step is no gap.
+//
+// An outline hides an edge only if its object is in front of the edge:
+// their world boxes are separated along an axis with the occluder on the
+// viewer's side (+x, -y or +z); boxes that overlap (no valid world has
+// them) are ordered by their centers' depth. An object never hides its
+// edges, except the box, whose walls hide its inside. The box hides
+// nothing whose center is inside its outline, as in the original's
+// picture.
+// Bank 0, eem on (the tables are in bank 2). Needs shrdlu.ah, project.ac,
+// world.ac, dlist.ac's dlSeg, and cache.ac's pcPiece.
+
+// Makes the vertices of the object in the working copy (woKind and the
+// drawn size woDsx..woDsz) at the location gLx, gLy, gLz. They go to
+// gvx/gvy/gvz in the world and gsx/gsy on the screen, from index 1.
+// With gClamp set, a screen coordinate off the raster is clamped and
+// counted in dpClamps.
+// Returns the full address of the kind's edge list in gEdges.
+// AC and IO are clobbered. Called via jsp.
+geomBuild,
+    local rtn, loop, p, k, n, spec
+    dap rtn
+    lac woKind
+    add [kindGeo:2]
+    dac p
+    lac i p
+    dac p
+    lac i p
+    cma
+    dac n
+    idx p
+    law 1
+    dac k
+loop, lac i p
+    dac spec
+    idx p
+    // spec is three octal digits, the x, y and z choices (gcoord).
+    lac spec
+    sar 6s
+    lio gLx
+    dio gcLo
+    lio woDsx
+    jda gcoord
+    dac pjX
+    lac spec
+    sar 3s
+    and [7]
+    lio gLy
+    dio gcLo
+    lio woDsy
+    jda gcoord
+    dac pjY
+    lac spec
+    and [7]
+    lio gLz
+    dio gcLo
+    lio woDsz
+    jda gcoord
+    dac pjZ
+    lac k
+    lio [gvx:2]
+    jda vput
+    lac pjX
+    dac i vpP
+    lac k
+    lio [gvy:2]
+    jda vput
+    lac pjY
+    dac i vpP
+    lac k
+    lio [gvz:2]
+    jda vput
+    lac pjZ
+    dac i vpP
+    jsp proj
+    lac gClamp
+    sza i
+    jmp .+7
+    lac pjSx
+    jda clamp
+    dac pjSx
+    lac pjSy
+    jda clamp
+    dac pjSy
+    lac k
+    lio [gsx]
+    jda vput
+    lac pjSx
+    dac i vpP
+    lac k
+    lio [gsy]
+    jda vput
+    lac pjSy
+    dac i vpP
+    idx k
+    isp n
+    jmp loop
+    lac p
+    dac gEdges
+rtn, jmp 0
+p, 0
+k, 0
+n, 0
+spec, 0
+    endloc
+
+// Computes one coordinate of a vertex. Takes the choice in AC (0 the low
+// side, 1 the high side, 2 the middle, 3 one wall in from the low side,
+// 4 one wall in from the high side), the low side in gcLo, the size in IO.
+// Returns the coordinate in AC. AC is the result and IO is clobbered.
+// Called via jda.
+gcoord,
+    local rtn, hi, mid, lowall, sz, c
+    0                       // jda puts the argument here
+    dap rtn
+    lac gcoord
+    dio sz
+    dac c
+    lac gcLo
+    lio c
+    sni
+    jmp rtn                 // choice 0: the low side
+    lio sz
+    lac c
+    sad [1]
+    jmp hi
+    sad [2]
+    jmp mid
+    sad [3]
+    jmp lowall
+    lac gcLo
+    add sz
+    sub [WALL]
+    jmp rtn
+hi, lac gcLo
+    add sz
+    jmp rtn
+mid, lac sz
+    sar 1s
+    add gcLo
+    jmp rtn
+lowall, lac gcLo
+    add [WALL]
+rtn, jmp 0
+sz, 0
+c, 0
+    endloc
+
+gcLo, 0
+
+// Clamps a screen coordinate to the raster, counting each clamp.
+// Takes the coordinate in AC. Returns it clamped in AC.
+// AC is the result and IO is preserved. Called via jda.
+clamp,
+    local rtn, v
+    0                       // jda puts the argument here
+    dap rtn
+    lac clamp
+    dac v
+    sma
+    jmp .+4
+    idx dpClamps
+    cla
+    jmp rtn
+    sub [RASTERMAX+1]
+    spa
+    jmp .+4
+    idx dpClamps
+    lac [RASTERMAX]
+    jmp rtn
+    lac v
+rtn, jmp 0
+v, 0
+    endloc
+
+// The address of element AC of the array at the full address IO, in vpP.
+// Returns the address in vpP and in AC. AC is the result and IO is
+// clobbered. Called via jda.
+vput,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac vput
+    dio vpP
+    add vpP
+    dac vpP
+rtn, jmp 0
+    endloc
+
+vpP, 0
+
+// Element AC of the array at the full address IO.
+// Returns the element in AC. AC is the result and IO is clobbered.
+// Called via jda.
+vget,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac vget
+    dio vpP
+    add vpP
+    dac vpP
+    lac i vpP
+rtn, jmp 0
+    endloc
+
+// Lists the occluders in occTab. They are every object that is drawn,
+// opaque and not held. A block or pyramid gives its outline; the box gives
+// its four walls, each as a block.
+// AC and IO are clobbered, and the working copy and the vertex arrays are
+// overwritten. Called via jsp.
+occBuild,
+    local rtn, loop, nxt, wall, o, bx, by, bz, bsx, bsy, bsz
+    dap rtn
+    dzm occN
+    dzm gClamp
+    lac [occTab:2]
+    dac occP
+    dzm o
+loop, lac o
+    jda objGet
+    lac woKind
+    sza i
+    jmp nxt
+    lac o
+    sad wHeld
+    jmp nxt
+    lac woFlags
+    and [FTRANS]
+    sza
+    jmp nxt
+    lac woX
+    dac gLx
+    lac woY
+    dac gLy
+    lac woZ
+    dac gLz
+    lac woKind
+    sad [KBOX]
+    jmp wall
+    dzm qWall
+    jsp geomBuild
+    jsp occAdd
+    jmp nxt
+    // The walls (front, back, left, right), each a block W thick.
+wall, lac woX
+    dac bx
+    lac woY
+    dac by
+    lac woZ
+    dac bz
+    lac woDsx
+    dac bsx
+    lac woDsy
+    dac bsy
+    lac woDsz
+    dac bsz
+    law 1
+    dac qWall
+    law KBLOCK
+    dac woKind
+    law WALL
+    dac woDsy
+    jsp geomBuild
+    jsp occAdd
+    lac by
+    add bsy
+    sub [WALL]
+    dac gLy
+    jsp geomBuild
+    jsp occAdd
+    lac by
+    dac gLy
+    lac bsy
+    dac woDsy
+    law WALL
+    dac woDsx
+    jsp geomBuild
+    jsp occAdd
+    lac bx
+    add bsx
+    sub [WALL]
+    dac gLx
+    jsp geomBuild
+    jsp occAdd
+nxt, idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+rtn, jmp 0
+o, 0
+bx, 0
+by, 0
+bz, 0
+bsx, 0
+bsy, 0
+bsz, 0
+    endloc
+
+// Adds one occluder from the vertices geomBuild made (a block's first six,
+// which are its outline in order; a pyramid's base corners, apex and,
+// when it shows, the back left corner), the working copy's index as the
+// owner, and qWall. Its world box is gL to gL plus the drawn size.
+// AC and IO are clobbered. Called via jsp.
+occAdd,
+    local rtn, loop, inc, bb, nb, k, n, t
+    dap rtn
+    lac woIdx
+    dac qOwner
+    lac gLx
+    dac qLox
+    add woDsx
+    dac qHix
+    lac gLy
+    dac qLoy
+    add woDsy
+    dac qHiy
+    lac gLz
+    dac qLoz
+    add woDsz
+    dac qHiz
+    law 6
+    dac qN
+    lac woKind
+    sad [KPYRAMID]
+    jmp .+2
+    jmp inc
+    // The pyramid's outline is V1, V2, V3, the apex V4, then V5 if it is
+    // outside the line from the apex to V1, that is (V1 - A) x (V5 - A) < 0.
+    law 4
+    dac qN
+    lac gsx+1
+    sub gsx+4
+    dac dmA
+    lac gsy+5
+    sub gsy+4
+    dac dmB
+    jsp dmul
+    lac dmH
+    dac dsAh
+    lac dmW
+    dac dsAw
+    lac gsy+1
+    sub gsy+4
+    dac dmA
+    lac gsx+5
+    sub gsx+4
+    dac dmB
+    jsp dmul
+    lac dmH
+    dac dsBh
+    lac dmW
+    dac dsBw
+    jsp dsub
+    lac dsH
+    sma
+    jmp inc
+    law 5
+    dac qN
+    // Copy the outline's vertices.
+    // For a pyramid with V5, V4 then V5.
+inc, lac qN
+    cma
+    dac n
+    law 1
+    dac k
+    dzm t
+loop, lac k
+    lio [gsx]
+    jda vget
+    dac nb
+    lac t
+    lio [qPx]
+    jda vput
+    lac nb
+    dac i vpP
+    lac k
+    lio [gsy]
+    jda vget
+    dac nb
+    lac t
+    lio [qPy]
+    jda vput
+    lac nb
+    dac i vpP
+    idx t
+    idx k
+    isp n
+    jmp loop
+    // The outline's screen box.
+    lac qPx
+    dac qSminx
+    dac qSmaxx
+    lac qPy
+    dac qSminy
+    dac qSmaxy
+    law 1
+    dac t
+    lac qN
+    cma
+    add [1]
+    dac n
+bb, lac t
+    lio [qPx]
+    jda vget
+    dac nb
+    sub qSminx
+    sma
+    jmp .+3
+    lac nb
+    dac qSminx
+    lac qSmaxx
+    sub nb
+    sma
+    jmp .+3
+    lac nb
+    dac qSmaxx
+    lac t
+    lio [qPy]
+    jda vget
+    dac nb
+    sub qSminy
+    sma
+    jmp .+3
+    lac nb
+    dac qSminy
+    lac qSmaxy
+    sub nb
+    sma
+    jmp .+3
+    lac nb
+    dac qSmaxy
+    idx t
+    isp n
+    jmp bb
+    // Store it.
+    lac [qSminx]
+    dac wcSrc
+    lac occP
+    dac wcDst
+    law OCC
+    dac wcN
+    jsp wcopy
+    lac wcDst
+    dac occP
+    idx occN
+rtn, jmp 0
+k, 0
+n, 0
+nb, 0
+t, 0
+    endloc
+
+// Clips the edges of the object whose vertices geomBuild made last; when
+// drawing, a stretch an object of a higher rank draws too is left to it
+// (share.ac).
+// Takes cOwner as its index (-1 for the table), cEmit as 1 to draw the
+// visible pieces (dlSeg) or 0 only to collect, and cWhole as 1 for every
+// edge (a wireframe) or 0 for the ones that can be seen. cMask gains a bit
+// (1 << index) for each object that hides a step or more of an edge.
+// AC and IO are clobbered. Called via jsp.
+clipEdges,
+    local rtn, loop, p, n, w, vi, vj
+    dap rtn
+    jsp inBox
+    jsp i [shareObj:3]
+    lac gEdges
+    dac p
+    lac i p
+    dac n
+    idx p
+    lac cWhole
+    sza i
+    jmp .+4
+    lac i p
+    add n
+    dac n
+    lac n
+    cma
+    dac n
+    idx p
+loop, lac i p
+    dac w
+    sar 6s
+    dac vi
+    lac w
+    and [077]
+    dac vj
+    lac vi
+    lio [gsx]
+    jda vget
+    dac e0x
+    lac vi
+    lio [gsy]
+    jda vget
+    dac e0y
+    lac vj
+    lio [gsx]
+    jda vget
+    dac e1x
+    lac vj
+    lio [gsy]
+    jda vget
+    dac e1y
+    // The edge's world box.
+    lac vi
+    lio [gvx:2]
+    jda vget
+    dac eLox
+    lac vj
+    lio [gvx:2]
+    jda vget
+    dac eHix
+    lac vi
+    lio [gvy:2]
+    jda vget
+    dac eLoy
+    lac vj
+    lio [gvy:2]
+    jda vget
+    dac eHiy
+    lac vi
+    lio [gvz:2]
+    jda vget
+    dac eLoz
+    lac vj
+    lio [gvz:2]
+    jda vget
+    dac eHiz
+    jsp eOrder
+    jsp clipOne
+    idx p
+    isp n
+    jmp loop
+rtn, jmp 0
+p, 0
+n, 0
+w, 0
+vi, 0
+vj, 0
+    endloc
+
+// Puts each pair eLo/eHi in order, low first.
+// AC and IO are clobbered. Called via jsp.
+eOrder,
+    local rtn, t
+    dap rtn
+    lac eHix
+    sub eLox
+    sma
+    jmp .+5
+    lac eLox
+    lio eHix
+    dac eHix
+    dio eLox
+    lac eHiy
+    sub eLoy
+    sma
+    jmp .+5
+    lac eLoy
+    lio eHiy
+    dac eHiy
+    dio eLoy
+    lac eHiz
+    sub eLoz
+    sma
+    jmp rtn
+    lac eLoz
+    lio eHiz
+    dac eHiz
+    dio eLoz
+rtn, jmp 0
+t, 0
+    endloc
+
+// Sets cInBox to 1 when the object in the working copy is not the box
+// and its center is strictly inside the box's outline, both drawn sizes.
+// AC and IO are clobbered. Called via jsp.
+inBox,
+    local rtn, c, b
+    dap rtn
+    dzm cInBox
+    lac cOwner
+    spa
+    jmp rtn
+    sad [BOXOBJ]
+    jmp rtn
+    // Twice the center against twice the box's sides, b < c < b + 2 size.
+    lac gLx
+    sal 1s
+    add woDsx
+    dac c
+    law BOXOBJ
+    cli
+    jda objField
+    sal 1s
+    dac b
+    sub c
+    sma
+    jmp rtn
+    law BOXOBJ
+    lio [RDSX]
+    jda objField
+    sal 1s
+    add b
+    dac b
+    lac c
+    sub b
+    sma
+    jmp rtn
+    lac gLy
+    sal 1s
+    add woDsy
+    dac c
+    law BOXOBJ
+    lio [RY]
+    jda objField
+    sal 1s
+    dac b
+    sub c
+    sma
+    jmp rtn
+    law BOXOBJ
+    lio [RDSY]
+    jda objField
+    sal 1s
+    add b
+    dac b
+    lac c
+    sub b
+    sma
+    jmp rtn
+    law 1
+    dac cInBox
+rtn, jmp 0
+c, 0
+b, 0
+    endloc
+
+// Clips the table's four edges, each against every occluder, since
+// everything stands on the table and so is in front of it.
+// Takes cEmit as for clipEdges. AC and IO are clobbered. Called via jsp.
+clipTable,
+    local rtn, loop, p, n
+    dap rtn
+    law i 1
+    dac cOwner
+    dzm cInBox
+    dzm eLox
+    dzm eHix
+    dzm eLoy
+    dzm eHiy
+    dzm eLoz
+    dzm eHiz
+    lac [tabCorners:2]
+    dac p
+    law i 4
+    dac n
+loop, lac i p
+    dac e0x
+    idx p
+    lac i p
+    dac e0y
+    idx p
+    lac i p
+    dac e1x
+    idx p
+    lac i p
+    dac e1y
+    idx p
+    jsp clipOne
+    isp n
+    jmp loop
+rtn, jmp 0
+p, 0
+n, 0
+    endloc
+
+// Clips one edge, (e0x, e0y) to (e1x, e1y) on the screen with the world
+// box eLo..eHi, against the occluders, for owner cOwner. The hidden
+// intervals go in intLo/intHi, the hiders into cMask, and with cEmit set
+// the visible pieces to dlSeg. A zero-length edge is nothing.
+// AC and IO are clobbered. Called via jsp.
+clipOne,
+    local rtn, loop, nextq, nohide, p, n
+    dap rtn
+    lac e1x
+    sub e0x
+    dac cDx
+    lac e1y
+    sub e0y
+    dac cDy
+    lac cDx
+    spa
+    cma
+    dac cAdx
+    lac cDy
+    spa
+    cma
+    dac cAdy
+    sub cAdx
+    spa
+    jmp .+3
+    lac cAdy
+    jmp .+2
+    lac cAdx
+    dac cL
+    sza i
+    jmp rtn
+    // The edge's screen box.
+    lac e0x
+    dac sgMinx
+    dac sgMaxx
+    lac e1x
+    sub e0x
+    spa
+    jmp .+4
+    lac e1x
+    dac sgMaxx
+    jmp .+3
+    lac e1x
+    dac sgMinx
+    lac e0y
+    dac sgMiny
+    dac sgMaxy
+    lac e1y
+    sub e0y
+    spa
+    jmp .+4
+    lac e1y
+    dac sgMaxy
+    jmp .+3
+    lac e1y
+    dac sgMiny
+    dzm nInt
+#ifndef NOHIDE
+    lac occN
+    sza i
+    jmp nohide
+    cma
+    dac n
+    lac [occTab:2]
+    dac p
+    // The screen boxes must overlap with some area between.
+loop, lac p
+    dac occQ
+    lac i occQ
+    sub sgMaxx
+    sma
+    jmp nextq
+    idx occQ
+    lac sgMinx
+    sub i occQ
+    sma
+    jmp nextq
+    idx occQ
+    lac i occQ
+    sub sgMaxy
+    sma
+    jmp nextq
+    idx occQ
+    lac sgMiny
+    sub i occQ
+    sma
+    jmp nextq
+    lac p
+    dac wcSrc
+    lac [qSminx]
+    dac wcDst
+    law OCC
+    dac wcN
+    jsp wcopy
+    // An outline hides nothing of its owner, but the box's walls hide its
+    // inside.
+    // The box hides nothing in it.
+    lac qOwner
+    sad cOwner
+    jmp .+2
+    jmp .+5
+    lac cOwner
+    sad [BOXOBJ]
+    jmp .+2
+    jmp nextq
+    lac qWall
+    sza i
+    jmp .+4
+    lac cInBox
+    sza
+    jmp nextq
+    jsp inFront
+    jmp nextq
+    jsp cyrus
+    jmp nextq
+    jsp behind
+    jmp nextq
+    // Hidden from cKlo to cKhi.
+    lac nInt
+    lio [intLo:2]
+    jda vput
+    lac cKlo
+    dac i vpP
+    lac nInt
+    lio [intHi:2]
+    jda vput
+    lac cKhi
+    dac i vpP
+    idx nInt
+    lac qOwner
+    lio [bitTab:2]
+    jda vget
+    ior cMask
+    dac cMask
+nextq, lac p
+    add [OCC]
+    dac p
+    isp n
+    jmp loop
+nohide,
+#endif
+    // Drawing, with what a brighter object draws on this line left to it
+    // (share.ac, which does nothing unless cEmit is set), then the pieces.
+    jsp i [shareClip:3]
+    lac cEmit
+    sza
+    jsp pieces
+rtn, jmp 0
+p, 0
+n, 0
+    endloc
+
+// Skips if the occluder in the working copy can hide the edge. That is so
+// if its world box is on the viewer's side of the edge's along some axis.
+// Returns without skipping if the edge's box is on the viewer's side instead;
+// boxes that overlap go by their centers' depth, 3 dx - 4 dy + 2 dz.
+// Against the box's edges, an object in it is taken WALL in from each
+// side. The original puts what is in the box in its world box, so an
+// object can overlap a wall by the wall's thickness (behind then finds
+// the part of the edge that lies in front of the object).
+// AC and IO are clobbered, and so are qLox, qHix, qLoy, qHiy. Called via jsp.
+inFront,
+    local rtn, yes, go, t
+    dap rtn
+    lac cOwner
+    sad [BOXOBJ]
+    jmp .+2
+    jmp go
+    lac qWall
+    sza
+    jmp go
+    law WALL
+    add qLox
+    dac qLox
+    law WALL
+    add qLoy
+    dac qLoy
+    lac qHix
+    sub [WALL]
+    dac qHix
+    lac qHiy
+    sub [WALL]
+    dac qHiy
+go, lac qLox
+    sub eHix
+    sma
+    jmp yes
+    lac eLoy
+    sub qHiy
+    sma
+    jmp yes
+    lac qLoz
+    sub eHiz
+    sma
+    jmp yes
+    lac eLox
+    sub qHix
+    sma
+    jmp rtn
+    lac qLoy
+    sub eHiy
+    sma
+    jmp rtn
+    lac eLoz
+    sub qHiz
+    sma
+    jmp rtn
+    lac qLox
+    add qHix
+    sub eLox
+    sub eHix
+    dac t
+    sal 1s
+    add t
+    dac t
+    lac qLoy
+    add qHiy
+    sub eLoy
+    sub eHiy
+    sal 2s
+    cma
+    add t
+    dac t
+    lac qLoz
+    add qHiz
+    sub eLoz
+    sub eHiz
+    sal 1s
+    add t
+    sma sza
+    jmp yes
+    jmp rtn
+yes, idx rtn
+rtn, jmp 0
+t, 0
+    endloc
+
+// Narrows the hidden interval cKlo..cKhi of one of the box's edges to the
+// part behind an object in the box, after inFront took the object WALL in
+// from each side. Where the object stands in a wall, part of the edge can
+// lie nearer the viewer than the object's side (x above its high
+// side, y below its low side, z above its top), and the object hides
+// nothing there. The box's edges each lie along one axis, the one whose
+// ends differ; the step at the object's side is L d / n, rounded, with d
+// its distance from the end where the hidden part starts and n the
+// edge's length. Which end is e0 follows from the screen, where sx grows
+// with x and with y, sy with z. Any other pair needs no narrowing, since
+// their world boxes are apart along an axis, so a line of sight meets the
+// occluder only on the viewer's side of the edge.
+// Skips if some of the interval is left, else returns without skipping.
+// AC and IO are clobbered. Called via jsp.
+behind,
+    local rtn, yax, zax, cut, back, chk, keep, d, n, s, r
+    dap rtn
+    lac cOwner
+    sad [BOXOBJ]
+    jmp .+2
+    jmp keep
+    lac qWall
+    sza
+    jmp keep
+    // Along x, hidden where x <= qHix, from the low end.
+    lac eHix
+    sub eLox
+    sza i
+    jmp yax
+    dac n
+    lac qHix
+    add [WALL]
+    sub eLox
+    dac d
+    lac cDx
+    jmp cut
+    // Along y, hidden where y >= qLoy, from the high end.
+yax, lac eHiy
+    sub eLoy
+    sza i
+    jmp zax
+    dac n
+    lac eHiy
+    sub qLoy
+    add [WALL]
+    dac d
+    lac cDx
+    cma
+    jmp cut
+    // Along z, hidden where z <= qHiz, which inFront leaves as it is,
+    // from the low end.
+zax, lac eHiz
+    sub eLoz
+    sza i
+    jmp keep
+    dac n
+    lac qHiz
+    sub eLoz
+    dac d
+    lac cDy
+    // s > 0 when the hidden part starts at e0.
+cut, dac s
+    lac d
+    spa
+    jmp rtn                 // none of the edge is behind the object
+    sub n
+    sma
+    jmp keep                // all of it is
+    lac cL
+    mul d
+    div n
+    jmp keep
+    dac d
+    // Round up when the remainder is at least half the length.
+    dio r
+    lac r
+    sal 1s
+    sub n
+    spa
+    jmp .+2
+    idx d
+    lac s
+    spa
+    jmp back
+    // From e0, hidden no further than step d.
+    lac d
+    sub cKhi
+    sma
+    jmp chk
+    lac d
+    dac cKhi
+    jmp chk
+    // From e1, hidden from step L - d on.
+back, lac cL
+    sub d
+    dac d
+    sub cKlo
+    spa
+    jmp chk
+    lac d
+    dac cKlo
+chk, lac cKlo
+    sub cKhi
+    sma
+    jmp rtn
+keep, idx rtn
+rtn, jmp 0
+d, 0
+n, 0
+s, 0
+r, 0
+    endloc
+
+// Cyrus-Beck, finding where the edge is strictly inside the occluder's
+// outline. An edge lying along a side, both its ends within about two
+// raster units of the side's line, is on the outline and not inside it,
+// since the ends of both were rounded separately and can stray to either
+// side of each other.
+// Skips with the interval in cKlo..cKhi (0 <= cKlo < cKhi <= cL), or
+// returns without skipping if no step of it is.
+// AC and IO are clobbered. Called via jsp.
+cyrus,
+    local rtn, loop, side, unitx, unity, cross, gnz, gneg, chk, nxt, none, j, jn, n, kk, ax, ay, ex, ey, m
+    dap rtn
+    dzm cKlo
+    lac cL
+    dac cKhi
+    dzm j
+    lac qN
+    cma
+    dac n
+    // The side from vertex j to the next, or back to the first.
+loop, lac j
+    lio [qPx]
+    jda vget
+    dac ax
+    lac j
+    lio [qPy]
+    jda vget
+    dac ay
+    lac j
+    add [1]
+    sad qN
+    cla
+    dac jn
+    lio [qPx]
+    jda vget
+    sub ax
+    dac ex
+    lac jn
+    lio [qPy]
+    jda vget
+    sub ay
+    dac ey
+    lac ex
+    sza
+    jmp side
+    lac ey
+    sza i
+    jmp nxt                // a side of no length bounds nothing
+    // A side along an axis is scaled to unit length, so F and G keep
+    // their signs and their ratio, and stay small.
+side, lac ey
+    sza
+    jmp unitx
+    lac ex
+    jda sgn
+    dac ex
+unitx, lac ex
+    sza
+    jmp unity
+    lac ey
+    jda sgn
+    dac ey
+unity,
+    // m = 2 max(|ex|, |ey|), F's measure of two units from the line.
+    lac ex
+    spa
+    cma
+    dac m
+    lac ey
+    spa
+    cma
+    sub m
+    spa
+    jmp .+3
+    add m
+    dac m
+    lac m
+    sal 1s
+    dac m
+    // F = ex (e0y - ay) - ey (e0x - ax); G = ex dy - ey dx.
+    lac ex
+    dac dmA
+    lac e0y
+    sub ay
+    dac dmB
+    jsp dmul
+    lac dmH
+    dac dsAh
+    lac dmW
+    dac dsAw
+    lac ey
+    dac dmA
+    lac e0x
+    sub ax
+    dac dmB
+    jsp dmul
+    lac dmH
+    dac dsBh
+    lac dmW
+    dac dsBw
+    jsp dsub
+    lac dsH
+    dac fH
+    lac dsW
+    dac fW
+    lac ex
+    dac dmA
+    lac cDy
+    dac dmB
+    jsp dmul
+    lac dmH
+    dac dsAh
+    lac dmW
+    dac dsAw
+    lac ey
+    dac dmA
+    lac cDx
+    dac dmB
+    jsp dmul
+    lac dmH
+    dac dsBh
+    lac dmW
+    dac dsBw
+    jsp dsub
+    lac dsH
+    dac gH
+    lac dsW
+    dac gW
+    // Along the side when |F| and |F + G|, the two ends, are both within m.
+    lac fH
+    dac daH
+    lac fW
+    dac daW
+    jsp dabs
+    lac daH
+    sza
+    jmp cross
+    lac daW
+    sub m
+    sma sza
+    jmp cross
+    lac gH
+    dac daH
+    lac gW
+    dac daW
+    jsp dneg
+    lac fH
+    dac dsAh
+    lac fW
+    dac dsAw
+    lac daH
+    dac dsBh
+    lac daW
+    dac dsBw
+    jsp dsub
+    lac dsH
+    dac daH
+    lac dsW
+    dac daW
+    jsp dabs
+    lac daH
+    sza
+    jmp cross
+    lac daW
+    sub m
+    sma sza
+    jmp cross
+    jmp none
+    // G = 0 means parallel, inside throughout if F > 0, else nowhere.
+cross, lac gH
+    sza
+    jmp gnz
+    lac gW
+    sza
+    jmp gnz
+    lac fH
+    spa
+    jmp none
+    sza
+    jmp nxt
+    lac fW
+    sza i
+    jmp none
+    jmp nxt
+gnz, jsp ratio
+    dac kk
+    lac gH
+    spa
+    jmp gneg
+    // G > 0 means inside for k past the crossing.
+    lac cKlo
+    sub kk
+    sma
+    jmp chk
+    lac kk
+    dac cKlo
+    jmp chk
+    // G < 0 means inside for k before it.
+gneg, lac kk
+    sub cKhi
+    sma
+    jmp chk
+    lac kk
+    dac cKhi
+chk, lac cKlo
+    sub cKhi
+    sma
+    jmp none
+nxt, idx j
+    isp n
+    jmp loop
+    idx rtn
+none,
+rtn, jmp 0
+j, 0
+jn, 0
+n, 0
+kk, 0
+ax, 0
+ay, 0
+ex, 0
+ey, 0
+m, 0
+    endloc
+
+// Returns the sign of AC, -1, 0 or 1, in AC. AC is the result and IO is
+// preserved. Called via jda.
+sgn,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac sgn
+    sza i
+    jmp rtn
+    spa
+    jmp .+3
+    law 1
+    jmp rtn
+    law i 1
+rtn, jmp 0
+    endloc
+
+// Computes the crossing of one side, the step k* = L (-F) / G, rounded,
+// with F = (fH, fW), G = (gH, gW), G not 0, L = cL. A crossing before the
+// edge is -1 and one at or past its end is L, and only those in between
+// are computed. After shifting both magnitudes right until G's fits a
+// word, L |F| / |G| is one mul and one div.
+// Returns k* in AC. AC is the result and IO is clobbered. Called via jsp.
+ratio,
+    local rtn, nz, neg, retl, cmp, norm, nlow, dlow, go, rdown, nh, nw, dh, dw, q, r, t
+    dap rtn
+    lac fH
+    sza
+    jmp nz
+    lac fW
+    sza
+    jmp nz
+    cla
+    jmp rtn
+    // -F / G > 0 only when F and G differ in sign.
+nz, lac fH
+    xor gH
+    sma
+    jmp neg
+    lac fH
+    dac daH
+    lac fW
+    dac daW
+    jsp dabs
+    lac daH
+    dac nh
+    lac daW
+    dac nw
+    lac gH
+    dac daH
+    lac gW
+    dac daW
+    jsp dabs
+    lac daH
+    dac dh
+    lac daW
+    dac dw
+    // |F| >= |G| means at or past the end.
+    lac nh
+    sub dh
+    sza i
+    jmp cmp
+    spa
+    jmp norm
+    jmp retl
+cmp, lac nw
+    sub dw
+    sma
+    jmp retl
+    // Halve both until |G|'s high part is 0.
+    // A high part's low bit moves to the low part's top, bit 16.
+norm, lac dh
+    sza i
+    jmp go
+    lac nw
+    sar 1s
+    dac nw
+    lac nh
+    and [1]
+    sza i
+    jmp nlow
+    lac nw
+    ior [0200000]
+    dac nw
+nlow, lac nh
+    sar 1s
+    dac nh
+    lac dw
+    sar 1s
+    dac dw
+    lac dh
+    and [1]
+    sza i
+    jmp dlow
+    lac dw
+    ior [0200000]
+    dac dw
+dlow, lac dh
+    sar 1s
+    dac dh
+    jmp norm
+go, lac cL
+    mul nw
+    div dw
+    jmp retl
+    dac q
+    dio r
+    // Round up when the remainder is at least half the divisor.
+    lac dw
+    sub r
+    dac t
+    lac r
+    sub t
+    spa
+    jmp rdown
+    lac q
+    add [1]
+    jmp rtn
+rdown, lac q
+    jmp rtn
+neg, law i 1
+    jmp rtn
+retl, lac cL
+rtn, jmp 0
+nh, 0
+nw, 0
+dh, 0
+dw, 0
+q, 0
+r, 0
+t, 0
+    endloc
+// Multiplies two signed words, |each| < 2^17, into a double word,
+// (dmH, dmW) = dmA dmB. Computed on the magnitudes, then negated.
+// AC and IO are clobbered. Called via jsp.
+dmul,
+    local rtn, s, ma, mb
+    dap rtn
+    lac dmA
+    xor dmB
+    dac s
+    lac dmA
+    spa
+    cma
+    dac ma
+    lac dmB
+    spa
+    cma
+    dac mb
+    // mul leaves the product shifted left once.
+    // AC is its high part, IO its low 17 bits over a 0.
+    lac ma
+    mul mb
+    dac daH
+    rir 1s
+    dio daW
+    lac s
+    sma
+    jmp .+2
+    jsp dneg
+    lac daH
+    dac dmH
+    lac daW
+    dac dmW
+rtn, jmp 0
+s, 0
+ma, 0
+mb, 0
+    endloc
+
+// (dsH, dsW) = (dsAh, dsAw) - (dsBh, dsBw), double words.
+// AC and IO are clobbered. Called via jsp.
+dsub,
+    local rtn, nb
+    dap rtn
+    lac dsAw
+    sub dsBw
+    sma
+    jmp nb
+    add [0377777]
+    add [1]
+    dac dsW
+    lac dsAh
+    sub dsBh
+    sub [1]
+    dac dsH
+    jmp rtn
+nb, dac dsW
+    lac dsAh
+    sub dsBh
+    dac dsH
+rtn, jmp 0
+    endloc
+
+// (daH, daW) = |(daH, daW)|. AC and IO are clobbered. Called via jsp.
+dabs,
+    local rtn
+    dap rtn
+    lac daH
+    sma
+    jmp rtn
+    jsp dneg
+rtn, jmp 0
+    endloc
+
+// (daH, daW) = -(daH, daW). Never makes -0, since each high part comes
+// from a sub with +0 on the left. AC and IO are clobbered. Called via jsp.
+dneg,
+    local rtn, wz
+    dap rtn
+    lac daW
+    sza i
+    jmp wz
+    lac [0377777]
+    sub daW
+    add [1]
+    dac daW
+    cla
+    sub daH
+    sub [1]
+    dac daH
+    jmp rtn
+wz, cla
+    sub daH
+    dac daH
+rtn, jmp 0
+    endloc
+
+// Turns the hidden intervals into visible pieces and draws them. The
+// intervals are sorted by their starts, each gap between them is a piece,
+// and so are the ends.
+// AC and IO are clobbered. Called via jsp.
+pieces,
+    local rtn, sort, inner, place, sweep, snext, tail, a, b, k, m, pos, t
+    dap rtn
+    // Insertion sort, intLo ascending, intHi alongside.
+    law 1
+    dac k
+sort, lac k
+    sub nInt
+    sma
+    jmp sweep
+    lac k
+    lio [intLo:2]
+    jda vget
+    dac a
+    lac k
+    lio [intHi:2]
+    jda vget
+    dac b
+    lac k
+    dac m
+inner, lac m
+    sza i
+    jmp place
+    sub [1]
+    lio [intLo:2]
+    jda vget
+    dac t
+    lac a
+    sub t
+    sma
+    jmp place
+    lac m
+    lio [intLo:2]
+    jda vput
+    lac t
+    dac i vpP
+    lac m
+    sub [1]
+    lio [intHi:2]
+    jda vget
+    dac t
+    lac m
+    lio [intHi:2]
+    jda vput
+    lac t
+    dac i vpP
+    lac m
+    sub [1]
+    dac m
+    jmp inner
+place, lac m
+    lio [intLo:2]
+    jda vput
+    lac a
+    dac i vpP
+    lac m
+    lio [intHi:2]
+    jda vput
+    lac b
+    dac i vpP
+    idx k
+    jmp sort
+sweep, dzm pos
+    dzm k
+snext, lac k
+    sub nInt
+    sma
+    jmp tail
+    lac k
+    lio [intLo:2]
+    jda vget
+    dac a
+    lac k
+    lio [intHi:2]
+    jda vget
+    dac b
+    lac pos
+    sub a
+    sma
+    jmp .+6
+    lac pos
+    dac pcA
+    lac a
+    dac pcB
+    jsp piece
+    lac pos
+    sub b
+    sma
+    jmp .+3
+    lac b
+    dac pos
+    idx k
+    jmp snext
+tail, lac pos
+    sub cL
+    sma
+    jmp rtn
+    lac pos
+    dac pcA
+    lac cL
+    dac pcB
+    jsp piece
+rtn, jmp 0
+a, 0
+b, 0
+k, 0
+m, 0
+pos, 0
+t, 0
+    endloc
+
+// Draws the piece of the edge from step pcA to step pcB, and keeps it in
+// the piece cache when it is recording (pcOn).
+// AC and IO are clobbered. Called via jsp.
+piece,
+    local rtn
+    dap rtn
+    lac pcA
+    jda ptAt
+    lac ptX
+    dac sgX0
+    lac ptY
+    dac sgY0
+    lac pcB
+    jda ptAt
+    lac ptX
+    dac sgX1
+    lac ptY
+    dac sgY1
+    lac pcOn
+    sza
+    jsp pcPiece
+    jsp dlSeg
+rtn, jmp 0
+    endloc
+
+pcA, 0
+pcB, 0
+
+// Computes the screen point at step AC of the edge, e0 + d k / L, each
+// axis rounded to the nearest unit.
+// Takes the step in AC. Returns the point in ptX and ptY.
+// AC and IO are clobbered. Called via jda.
+ptAt,
+    local rtn, k, ptOne, prtn, ps, pq, pr, pt
+    0                       // jda puts the argument here
+    dap rtn
+    lac ptAt
+    dac k
+    lac cAdx
+    lio cDx
+    jda ptOne
+    add e0x
+    dac ptX
+    lac cAdy
+    lio cDy
+    jda ptOne
+    add e0y
+    dac ptY
+rtn, jmp 0
+
+// Computes round(m k / L) for m = AC, given the sign of IO, one axis of
+// ptAt. Entered by jda.
+ptOne, 0
+    dap prtn
+    lac ptOne
+    dio ps
+    mul k
+    div cL
+    jmp prtn
+    dac pq
+    dio pr
+    lac cL
+    sub pr
+    dac pt
+    lac pr
+    sub pt
+    spa
+    jmp .+4
+    lac pq
+    add [1]
+    dac pq
+    lac ps
+    sma
+    jmp .+4
+    cla
+    sub pq
+    jmp prtn
+    lac pq
+prtn, jmp 0
+k, 0
+ps, 0
+pq, 0
+pr, 0
+pt, 0
+    endloc
+ptX, 0
+ptY, 0
+
+// The working words of the pass.
+gLx, 0                      // where geomBuild puts the object
+gLy, 0
+gLz, 0
+gClamp, 0                   // 1: clamp and count screen coordinates
+gEdges, 0                   // the kind's edge list (full address)
+cOwner, 0
+cEmit, 0
+cWhole, 0
+cMask, 0
+cInBox, 0
+cDx, 0
+cDy, 0
+cAdx, 0
+cAdy, 0
+cL, 0
+cKlo, 0
+cKhi, 0
+e0x, 0
+e0y, 0
+e1x, 0
+e1y, 0
+eLox, 0
+eLoy, 0
+eLoz, 0
+eHix, 0
+eHiy, 0
+eHiz, 0
+sgMinx, 0
+sgMaxx, 0
+sgMiny, 0
+sgMaxy, 0
+occN, 0
+occP, 0
+occQ, 0
+nInt, 0
+dmA, 0
+dmB, 0
+dmH, 0
+dmW, 0
+dsAh, 0
+dsAw, 0
+dsBh, 0
+dsBw, 0
+dsH, 0
+dsW, 0
+daH, 0
+daW, 0
+fH, 0
+fW, 0
+gH, 0
+gW, 0
+
+// The vertices on the screen, from index 1 (the box has 13); those in the
+// world, gvx, gvy and gvz, are in bank 2.
+gsx,
+    table 0d14
+gsy,
+    table 0d14
+
+// The occluder in work, in the order of an occTab record (shrdlu.ah,
+// QSMINX to QPY). These 25 words must stay together.
+qSminx, 0
+qSmaxx, 0
+qSminy, 0
+qSmaxy, 0
+qOwner, 0
+qWall, 0
+qLox, 0
+qLoy, 0
+qLoz, 0
+qHix, 0
+qHiy, 0
+qHiz, 0
+qN, 0
+qPx,
+    table 6
+qPy,
+    table 6
+
+bank 2
+
+// The vertices in the world, from index 1.
+gvx,
+    table 0d14
+gvy,
+    table 0d14
+gvz,
+    table 0d14
+
+// The hidden intervals of one edge, one per occluder at most, and one per
+// object that draws part of it instead (share.ac).
+intLo,
+    table MAXOCC+NOBJ
+intHi,
+    table MAXOCC+NOBJ
+
+// 1 << n for each object index n.
+bitTab,
+    1
+    2
+    4
+    010
+    020
+    040
+    0100
+    0200
+    0400
+    01000
+    02000
+    04000
+    010000
+
+occTab,
+    table MAXOCC*OCC
+
+// The table's edges on the screen, x0 y0 x1 y1 each.
+tabCorners,
+    TAB1X; TAB1Y; TAB2X; TAB2Y
+    TAB2X; TAB2Y; TAB3X; TAB3Y
+    TAB3X; TAB3Y; TAB4X; TAB4Y
+    TAB4X; TAB4Y; TAB1X; TAB1Y
+
+// Each kind's shape has the vertex count, each vertex as three octal digits
+// (x, y, z choices, gcoord), then the counts of edges that can be seen and
+// that cannot, and the edges, each two vertex numbers as octal pairs, the
+// first the end it is drawn from. Each edge starts where the last ended
+// wherever the shape allows, so the display draws them as a few
+// connected runs (dlSeg). A run must begin and end where an odd number of
+// the drawn edges meet, so a solid block takes two, a wireframe one four.
+// Every kind's first edge starts at V2, where heldBuild anchors the held
+// object's group.
+kindGeo,
+    geoBlock:2
+    geoBlock:2
+    geoPyramid:2
+    geoBox:2
+
+// V1..V8 of GP-BLOCK. V2 round the outline and on to V7, V4 to V7 to V6;
+// the hidden ones V1 to V8 to V3, then V8 to V5.
+geoBlock,
+    0d8
+    0000; 0100; 0110; 0111; 0011; 0001; 0101; 0010
+    0d9; 3
+    0201; 0106; 0605; 0504; 0403; 0302; 0207; 0407; 0706
+    0110; 01003; 01005
+
+// GP-PYRAMID has base V1, V2, V3, V5, apex V4 over the base's middle. V2 to
+// V1, the apex, V3, V2 and the apex again; the hidden ones on from the
+// apex to V5 and V1, then V5 to V3.
+geoPyramid,
+    5
+    0000; 0100; 0110; 0221; 0010
+    5; 3
+    0201; 0104; 0403; 0302; 0204
+    0405; 0501; 0503
+
+// GP-DRBOX has the block's eight, the inner rim VS1..VS4 (011 to 014), and
+// the inner back left corner on the floor (015). The block's outline run,
+// then V4 to V7 to V6, round the rim to the floor corner, and the rim's
+// last side.
+geoBox,
+    0d13
+    0000; 0100; 0110; 0111; 0011; 0001; 0101; 0010
+    0331; 0431; 0441; 0341; 0340
+    0d15; 3
+    0201; 0106; 0605; 0504; 0403; 0302; 0207
+    0407; 0706; 0611; 01112; 01213; 01314; 01415
+    01114
+    0110; 01003; 01005
+
+bank 0

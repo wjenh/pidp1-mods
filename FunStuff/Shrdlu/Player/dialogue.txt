@@ -1,0 +1,51 @@
+# The whole dialogue: the 42 sentences of the transcript and the thesis's four,
+# which stand between the 12th and 13th sentences.
+# The answer to the 20th sentence's question back is the line below it that starts with >.
+# The 34th sentence stops at the unknown word, which its trailing dots ask for.
+Pick up a big red block.
+Grasp the pyramid.
+Find a block which is taller than the one you are holding and put it into the box.
+What does the box contain?
+What is the pyramid supported by?
+How many blocks are not in the box?
+Is at least one of them narrower than the one which I told you to pick up?
+Is it supported?
+Can the table pick up blocks?
+Can a pyramid be supported by a block?
+Can a pyramid support a pyramid?
+Stack up two pyramids.
+The blue pyramid is nice.
+I like blocks which are not red, but I don't like anything which supports a pyramid.
+Do I like the box?
+Do I like anything in the box?
+Will you please stack up both of the red blocks and either a green cube or a pyramid?
+Which cube is sitting on the table?
+Is there a large block behind a pyramid?
+Put a small one onto the green cube which supports a pyramid.
+Put the littlest pyramid on top of it.
+Does the shortest thing the tallest pyramid's support supports support anything green?
+What color is it?
+How many things are on top of green cubes?
+> 2
+Had you touched any pyramid before you put the green one on the little cube?
+When did you pick it up?
+Why?
+Why did you do that?
+Why did you clear off that cube?
+Why did you do that?
+Why did you do that?
+How did you do it?
+How many objects did you touch while you were doing it?
+What did the red cube support before you started to clean it off?
+There were five blocks to the left of the box then.
+Put the blue pyramid on the block in the box.
+Is there anything which is bigger than every pyramid but is not as wide as the thing that supports it?
+Does a steeple...
+A "steeple" is a stack which contains two green cubes and a pyramid.
+Are there any steeples now?
+Build one.
+Call the biggest block "superblock."
+Have you picked up superblock since we began?
+Why did you drop it?
+Is there anything to the right of the red pyramid?
+Thank you.

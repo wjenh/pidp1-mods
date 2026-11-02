@@ -1,0 +1,680 @@
+// The engine's hooks. These are the natives that reach the engine (DBMATCH,
+// ACTIONP, ATAB, ACTION, HISTORY), the CAR of an engine's record, and the
+// engine's atoms as values.
+// Each native ends at pgR1 and the like, as the hot half's do.
+// ACTION carries out its plan through events.ac's planRun.
+// Bank 6 with the hot half, eem on. Needs shrdlu.ah, semantics.ac,
+// pgm.ac, pgsys.ac (psPlan, psH1, psH2), the engine (bank 4) and the
+// overlay table.
+
+// DBMATCH -- a cursor on the engine's records of the pattern's predicate,
+// newest first.
+// It is the first record not erased, or NIL.
+// The Planner engine (planner.ac) reads the chain on from it, a record at
+// a time, with no list made.
+// hkDbF is its far entry, with the predicate in hkA and the record
+// returned there.
+csDbm, ARG(1, 1)
+    jda pgCar
+    jda hkDb1
+    jmp pgR1
+hkDbF, dac hkR
+    lac hkA
+    jda hkDb1
+    dac hkA
+    jmp i hkR
+
+// The first record not erased of a predicate's chain. #AT is not in the
+// database, and has none.
+// Takes the predicate in AC. Returns the record, or 0, in AC.
+// AC is the result and IO is clobbered. Called via jda.
+hkDb1,
+    local loop, live, rtn, r
+    0                       // jda puts the argument here
+    dap rtn
+    lac hkDb1
+    jda psEng
+    sad [AAT]
+    cla
+    sza i
+    jmp rtn
+    XJDA(dbHead, 4)
+    dac hkP
+    lac i hkP
+loop, dac r
+    sza i
+    jmp rtn
+    add [DARITY]
+    dac hkP
+    lac i hkP
+    sas [DERASED]
+    jmp live
+    lac i r
+    jmp loop
+live, lac r
+rtn, jmp 0
+r, 0
+    endloc
+
+// ACTIONP -- a goal of the engine's, its arguments objects.
+// hkActF is the engine's far entry (thGoal), with the pattern in hkA and T
+// or NIL returned there, with no trip through the machine's loop.
+csActp, ARG(1, 1)
+    dac hkA
+    jsp hkAct1
+    jmp pgR1
+hkActF, dac hkR
+    jsp hkAct1
+    dac hkA
+    jmp i hkR
+
+// Tests whether the pattern in hkA is a goal of the engine's, its
+// arguments objects.
+// Returns T or NIL in AC. AC is the result and IO is preserved.
+// Called via jsp.
+hkAct1,
+    local find, found, loop, item, iloop, next, l, m, nil, yes, rtn
+    dap rtn
+    lac hkA
+    and [KMASK]
+    sas [KCONS]
+    jmp nil
+    lac hkA
+    ior [PCELLS]
+    dac hkP
+    lac i hkP
+    sza i
+    jmp nil
+    dac hkV
+    lac [gActSym:0]
+    dac hkQ
+    law 0d11                // ACTIONS' eleven, a symbol the image has not 0
+    dac hkK
+find, lac i hkQ
+    sad hkV
+    jmp found
+    idx hkQ
+    lac hkK
+    sub [1]
+    dac hkK
+    sza
+    jmp find
+    jmp nil
+found, idx hkP
+    lac i hkP
+    dac l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp yes
+    lac l
+    ior [PCELLS]
+    dac hkP
+    lac i hkP
+    dac m
+    and [KMASK]
+    sas [KCONS]
+    jmp item
+iloop, lac m
+    and [KMASK]
+    sas [KCONS]
+    jmp next
+    lac m
+    ior [PCELLS]
+    dac hkQ
+    lac i hkQ
+    jda psObj
+    spa
+    jmp nil
+    idx hkQ
+    lac i hkQ
+    dac m
+    jmp iloop
+item, lac m
+    jda psObj
+    spa
+    jmp nil
+next, idx hkP
+    lac i hkP
+    dac l
+    jmp loop
+nil, cla
+    jmp rtn
+yes, lac [KSYM]
+rtn, jmp 0
+l, 0
+m, 0
+    endloc
+
+// ATAB -- (x (x y z) (sx sy sz)) of an object the engine places.
+csAtab, ARG(1, 1)
+    jda psObj
+    spa
+    jmp pgN1
+    sub [NOBJ]
+    sma
+    jmp pgN1
+    add [NOBJ]
+    XJDA(locGet, 4)
+    lac [px:4]
+    jda psXyz
+    dac i [psH1:012]
+    lac [qx:4]
+    jda psXyz
+    dac i [psH2:012]
+    FAR(fLbNew)
+    ARG(1, 1)
+    dac i [fA:6]
+    FAR(fLbAdd)
+    lac i [psH1:012]
+    dac i [fA:6]
+    FAR(fLbAdd)
+    lac i [psH2:012]
+    dac i [fA:6]
+    FAR(fLbAdd)
+    dzm i [psH1:012]
+    dzm i [psH2:012]
+    dzm i [fA:6]
+    FAR(fLbEnd)
+    lai
+    jmp pgR1
+
+// HISTORY -- an object's history, newest first, each entry's list (time
+// (x y z) supporter); NIL for what the engine does not place.
+csHist,
+    local loop, done
+    ARG(1, 1)
+    jda psObj
+    spa
+    jmp pgN1
+    sub [NOBJ]
+    sma
+    jmp pgN1
+    add [NOBJ]
+    add [histTab:4]
+    dac hkQ
+    lac i hkQ
+    dac hkQ
+    FAR(fLbNew)
+loop, lac hkQ
+    sza i
+    jmp done
+    add [1]
+    dac hkP
+    lac i hkP
+    jda pgMkint
+    PGPUSH
+    idx hkP
+    lac i hkP
+    jda psAtom
+    PGPUSH
+    idx hkP
+    lac i hkP
+    jda psAtom
+    PGPUSH
+    law 3
+    dac i [fA:6]
+    FAR(fStkL)
+    law i 3
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    dio i [fA:6]
+    FAR(fLbAdd)
+    lac i hkQ
+    dac hkQ
+    jmp loop
+done, dzm i [fA:6]
+    FAR(fLbEnd)
+    lai
+    jmp pgR1
+    endloc
+
+// ACTION -- plans the goal typed for the engine, carries the plan out on
+// the display, and puts each of its calls on PLAN.
+csAction,
+    local find, found, args, list, lnext, lend, done, ploop, nmv, qobj, \
+        ngr, nbl, pnext, k, q, e, l
+    ARG(1, 1)
+    ior [PCELLS]
+    dac hkP
+    lac i hkP
+    dac hkV
+    idx hkP
+    lac i hkP
+    dac l
+    // Its goal, by the predicate's place in gGoalSym.
+    lac [gGoalSym:0]
+    dac hkQ
+    lac [goalTab:5]
+    dac e
+    law 0d10
+    dac k
+find, lac i hkQ
+    sad hkV
+    jmp found
+    idx hkQ
+    lac e
+    add [3]
+    dac e
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp find
+    jmp i [pgFlt:6]
+found, lac [eCode:4]
+    dac q
+    law oCALL
+    dac i q
+    idx q
+    idx e
+    lac i e
+    dac i q
+    idx q
+    idx e
+    lac i e
+    dac k
+    spa
+    jmp list
+args, lac k
+    sza i
+    jmp done
+    lac l
+    ior [PCELLS]
+    dac hkP
+    lac i hkP
+    jda psObj
+    spa
+    jmp i [pgFlt:6]
+    ior [TOBJ]
+    dac i q
+    idx q
+    idx hkP
+    lac i hkP
+    dac l
+    lac k
+    sub [1]
+    dac k
+    jmp args
+    // STACKUP has one argument, a list, the engine's list.
+list, lac l
+    ior [PCELLS]
+    dac hkP
+    lac i hkP
+    dac l
+    dzm i [lsN:4]
+lnext, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp lend
+    lac l
+    ior [PCELLS]
+    dac hkP
+    lac i hkP
+    jda psObj
+    spa
+    jmp i [pgFlt:6]
+    ior [TOBJ]
+    dac hkV
+    lac i [lsN:4]
+    sad [LSMAX]
+    jmp i [pgFlt:6]
+    add [lsBuf:4]
+    dac e
+    lac hkV
+    dac i e
+    idx i [lsN:4]
+    idx hkP
+    lac i hkP
+    dac l
+    jmp lnext
+lend, lac [NIL]
+    XJDA(lsput, 4)
+    dac i q
+    idx q
+done, law oDONE
+    dac i q
+    dzm i [eTry:4]
+    XJSP(ePlan, 4)
+    sza i
+    jmp pgN1
+    XJSP(psPlan, 012)
+    // PLAN gains each call, the first first, so that it ends up last.
+    lac [PLBASE]
+    dac hkQ
+    lac i [planN:4]
+    dac k
+ploop, lac k
+    sza i
+    jmp pgT1
+    FAR(fLbNew)
+    lac i hkQ
+    sad [PMOVETO]
+    jmp .+2
+    jmp nmv
+    lac [KSYM+sMOVETO]
+    dac i [fA:6]
+    FAR(fLbAdd)
+    idx hkQ
+    lac i hkQ
+    XJDA(ptget, 4)
+    lac i [px:4]
+    jda pgMkint
+    dac i [fA:6]
+    FAR(fLbAdd)
+    lac i [py:4]
+    jda pgMkint
+    dac i [fA:6]
+    FAR(fLbAdd)
+    lac i [pz:4]
+    jda pgMkint
+    dac i [fA:6]
+    FAR(fLbAdd)
+    jmp pnext
+    // GRASP's and BLINK's object is quoted, as (GRASP (QUOTE x)).
+nmv, sad [PGRASP]
+    jmp .+2
+    jmp ngr
+    lac [KSYM+sGRASP]
+qobj, dac i [fA:6]
+    FAR(fLbAdd)
+    idx hkQ
+    lac i hkQ
+    jda psAtom
+    dac i [fA:6]
+    dzm i [fB:6]
+    FAR(fCons)
+    dio i [fB:6]
+    lac [KSYM+sQUOTE]
+    dac i [fA:6]
+    FAR(fCons)
+    dio i [fA:6]
+    FAR(fLbAdd)
+    jmp pnext
+ngr, sas [PBLINK]
+    jmp nbl
+    lac [KSYM+sBLINK]
+    jmp qobj
+nbl, lac [KSYM+sUNGRASP]
+    dac i [fA:6]
+    FAR(fLbAdd)
+    idx hkQ
+pnext, dzm i [fA:6]
+    FAR(fLbEnd)
+    dio i [fA:6]
+    lac i [vTab:3+vPLAN]
+    dac i [fB:6]
+    FAR(fCons)
+    dio i [vTab:3+vPLAN]
+    idx hkQ
+    lac k
+    sub [1]
+    dac k
+    jmp ploop
+k, 0
+q, 0
+e, 0
+l, 0
+    endloc
+
+// CAR of an engine's record, its fact, the predicate and its arguments,
+// as values.
+// Takes the record in pgGx. Returns the list in IO. AC is clobbered.
+// Called via jsp from bank 6.
+psCar,
+    local loop, done, r, k
+    dac hkCr
+    lac i [pgGx:6]
+    dac r
+    add [DARITY]
+    dac hkP
+    lac i hkP
+    dac k
+    FAR(fLbNew)
+    lac r
+    add [DPRED]
+    dac r
+    lac i r
+    jda psAtom
+    dac i [fA:6]
+    FAR(fLbAdd)
+loop, lac k
+    sza i
+    jmp done
+    idx r
+    lac i r
+    jda psAtom
+    dac i [fA:6]
+    FAR(fLbAdd)
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+done, dzm i [fA:6]
+    FAR(fLbEnd)
+    jmp i hkCr
+r, 0
+k, 0
+    endloc
+
+// An engine's atom as a value.
+// The value is a number, an object's or a constant's symbol, an event, a
+// point's list of numbers, or a list of those.
+// Takes the atom in AC. Returns the value in AC.
+// AC is the result and IO is clobbered. Called via jda.
+psAtom,
+    local loop, made, one, rtn, a, n, sp
+    0                       // jda puts the argument here
+    dap rtn
+    lac psAtom
+    and [TAGS]
+    sas [TLIST]
+    jmp one
+    // A list has its atoms made values one at a time, each kept on the
+    // value stack until the list is made.
+    lac psAtom
+    XJDA(lsget, 4)
+    lac i [pgSp:6]
+    dac sp
+    lac i [lsN:4]
+    dac n
+    dac a
+    lac [lsBuf:4]
+    dac psAtom
+loop, lac n
+    sza i
+    jmp made
+    lac i psAtom
+    jda psAtom1
+    PGPUSH
+    idx psAtom
+    lac n
+    sub [1]
+    dac n
+    jmp loop
+made, lac a
+    dac i [fA:6]
+    FAR(fStkL)
+    lac sp
+    dac i [pgSp:6]
+    lai
+    jmp rtn
+one, lac psAtom
+    jda psAtom1
+rtn, jmp 0
+a, 0
+n, 0
+sp, 0
+    endloc
+
+// An engine's atom that is no list, as a value.
+// Takes the atom in AC. Returns the value in AC.
+// AC is the result and IO is clobbered. Called via jda.
+psAtom1,
+    local obj, con, ev, ee, pt, wd, rtn, a
+    0                       // jda puts the argument here
+    dap rtn
+    lac psAtom1
+    and [TAGS]
+    sad [TOBJ]
+    jmp obj
+    sad [TCON]
+    jmp con
+    sad [TEV]
+    jmp ev
+    sad [TPT]
+    jmp pt
+    sza
+    jmp wd
+    lac psAtom1
+    jda pgMkint
+    jmp rtn
+wd, lac psAtom1             // a word or a stack, TWD
+    xor [TAGS]
+    jmp rtn
+obj, lac psAtom1
+    and [07777]
+    add [gObjSym:5]
+    jmp con+3
+con, lac psAtom1
+    and [07777]
+    add [gConSym:5]
+    dac a
+    lac i a
+    jmp rtn
+ev, lac psAtom1
+    and [07777]
+    sza i
+    jmp ee
+    add [KWORD+EV0]
+    jmp rtn
+ee, lac [KSYM+sEE]
+    jmp rtn
+pt, lac psAtom1
+    XJDA(ptget, 4)
+    lac [px:4]
+    jda psXyz
+rtn, jmp 0
+a, 0
+    endloc
+
+// Three words, x, y and z, as a list of numbers.
+// Takes the first word's full address in AC. Returns the list in AC.
+// AC is the result and IO is clobbered. Called via jda.
+psXyz,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psXyz
+    dac p
+    lac i p
+    jda pgMkint
+    PGPUSH
+    idx p
+    lac i p
+    jda pgMkint
+    PGPUSH
+    idx p
+    lac i p
+    jda pgMkint
+    PGPUSH
+    law 3
+    dac i [fA:6]
+    FAR(fStkL)
+    law i 3
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    lai
+rtn, jmp 0
+p, 0
+    endloc
+
+// The engine's object a value names, as its index, -1 if none.
+// Takes the value in AC. Returns the index in AC.
+// AC is the result and IO is preserved. Called via jda.
+psObj,
+    local loop, found, none, rtn, p, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac psObj
+    sza i
+    jmp none
+    lac [gObjSym:5]
+    dac p
+    dzm k
+loop, lac i p
+    sad psObj
+    jmp found
+    idx p
+    idx k
+    sas [0d18]
+    jmp loop
+none, law i 1
+    jmp rtn
+found, lac k
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// The engine's constant a value names, TCON+n; 0 if none, NIL's
+// included.
+// Takes the value in AC. Returns the constant in AC.
+// AC is the result and IO is preserved. Called via jda.
+psEng,
+    local loop, found, none, rtn, p, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac psEng
+    sza i
+    jmp none
+    lac [gConSym:5]
+    dac p
+    dzm k
+loop, lac i p
+    sad psEng
+    jmp found
+    idx p
+    idx k
+    sas [NCON]
+    jmp loop
+none, cla
+    jmp rtn
+found, lac k
+    ior [TCON]
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// psAtom for pgsys.ac's psGet.
+// Takes the atom in hkA. Returns the value in hkA.
+// AC and IO are clobbered. Called via jsp from bank 012.
+hkAtomF, dac hkR
+    lac hkA
+    jda psAtom
+    dac hkA
+    jmp i hkR
+
+// psEng and psObj for evlisp.ac, by hkA and called as hkAtomF is, from
+// any bank.
+hkEngF, dac hkR
+    lac hkA
+    jda psEng
+    dac hkA
+    jmp i hkR
+hkObjF, dac hkR
+    lac hkA
+    jda psObj
+    dac hkA
+    jmp i hkR
+
+// The hooks' state.
+hkA, 0                      // hkAtomF's argument
+hkR, 0                      // the full addresses hkAtomF and psCar return to
+hkCr, 0
+hkP, 0                      // scratch
+hkQ, 0
+hkV, 0
+hkK, 0
+hkT, 0

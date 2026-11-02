@@ -1,0 +1,531 @@
+// The assertion database holds records of a predicate and up to four
+// arguments (shrdlu.ah, RECW), one chain for each predicate, the newest
+// first, as Micro-Planner's THADD keeps them. An erased record stays in
+// its chain with its arity set to DERASED, so a scan held by a choice point
+// still finds the records after it; undoing the erasure brings it back
+// where it was. #AT is not stored, since the location table (blocks.ac) is it.
+// The records last the whole dialogue; RESET builds the first set again
+// from the world (dbInit), in the order data.6 lists them.
+// Bank 4, eem on; the records are in bank 7. Needs shrdlu.ah, atoms.ac,
+// engine.ac's tset, blocks.ac's support and location table, and the
+// object table (world.ac, bank 2).
+
+// Finds the first record, at or after a given one, that matches dbN
+// arguments dbA. An argument whose tag is TVAR (ANY, a link, an unassigned
+// cell) matches anything, any other must be equal.
+// Takes the full address of the record to start at in AC, 0 for none.
+// Returns the matching record in AC, 0 for none.
+// AC is the result and IO is clobbered. Called via jda, from any bank.
+dbScan,
+    local rtn, ra, loop, argl, argok, hit, next, r, p, q, k
+    0                       // jda puts the argument here
+    dac ra
+loop, lac dbScan
+    sza i
+    jmp rtn
+    dac r
+    add [DARITY]
+    dac p
+    lac i p
+    sad dbN
+    jmp .+2
+    jmp next
+    lac r
+    add [DARG]
+    dac p
+    lac [dbA:.]
+    dac q
+    lac dbN
+    dac k
+argl, lac k
+    sza i
+    jmp hit
+    lac i q
+    and [TAGS]
+    sad [TVAR]
+    jmp argok
+    lac i q
+    sad i p
+    jmp argok
+    jmp next
+argok, idx p
+    idx q
+    lac k
+    sub [1]
+    dac k
+    jmp argl
+hit, lac r
+    jmp rtn
+next, lac i r
+    dac dbScan
+    jmp loop
+rtn, jmp i ra
+ra, 0
+r, 0
+p, 0
+q, 0
+k, 0
+    endloc
+
+// Finds the head of a predicate's chain, its address in dbHeads (bank 0).
+// Takes the predicate (a constant) in AC. Returns the full address in AC.
+// AC is the result and IO is preserved. Called via jda, from any bank.
+dbHead,
+    local rtn, ra
+    0                       // jda puts the argument here
+    dac ra
+    lac dbHead
+    and [07777]
+    add [dbHeads:0]
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// The first record of predicate dbP matching dbN arguments dbA.
+// Returns the record's full address in AC, 0 for none.
+// AC is the result and IO is clobbered. Called via jsp.
+dbFind,
+    local rtn
+    dap rtn
+    lac dbP
+    jda dbHead
+    dac dbT
+    lac i dbT
+    jda dbScan
+rtn, jmp 0
+    endloc
+
+// THADD asserts (dbP dbA...), dbN arguments, at the head of its chain,
+// unless it is there already. The chain's head is set through the trail,
+// and the record is new memory above dbTop, which choice points restore.
+// Skips with the record's full address in AC. Returns without skipping
+// if the assertion was already present, with its record in AC.
+// AC is the result and IO is clobbered. Called via jsp.
+// Out of room ends the command.
+dbAdd,
+    local rtn, loop, p, q, k
+    dap rtn
+    jsp dbFind
+    sza
+    jmp rtn
+    lac dbTop
+    add [RECW]
+    sub [DBLIM]
+    sma
+    jmp eRoom
+    lac dbTop
+    dac dbR
+    dac p
+    lac dbP
+    jda dbHead
+    dac dbT
+    lac i dbT
+    dac i p
+    idx p
+    lac dbN
+    dac i p
+    idx p
+    lac dbP
+    dac i p
+    idx p
+    lac [dbA:.]
+    dac q
+    law 4
+    dac k
+loop, lac i q
+    dac i p
+    idx p
+    idx q
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    dzm i p                 // WHO: no sentence yet
+    lac dbTop
+    add [RECW]
+    dac dbTop
+    lac dbT
+    dac tsA
+    lac dbR
+    jda tset
+    idx rtn
+    lac dbR
+rtn, jmp 0
+p, 0
+q, 0
+k, 0
+    endloc
+
+// dbAdd for a call from any bank (evlisp.ac). Returns the record in AC,
+// or 0 if the assertion was there. AC is the result and IO is clobbered.
+// Called via jsp.
+dbAddF, dac dbAddR
+    jsp dbAdd
+    cla
+    jmp i dbAddR
+dbAddR, 0
+
+// Erases (dbP dbA...), dbN arguments, through the trail.
+// Skips if it was there; returns without skipping if not.
+// AC and IO are clobbered. Called via jsp.
+dbErase,
+    local rtn
+    dap rtn
+    jsp dbFind
+    sza i
+    jmp rtn
+    add [DARITY]
+    dac tsA
+    law DERASED
+    jda tset
+    idx rtn
+rtn, jmp 0
+    endloc
+
+// Builds the database as data.6 has it, from the starting world. The
+// facts are each block's and pyramid's kind, MANIP, shape and color; the
+// box's and the table's; what supports each object, by the SUPPORT rule;
+// CLEARTOP for what supports nothing; CONTAIN for what is on the box's
+// floor; then the fixed facts (dbFixed). Also the event EE, the
+// dialogue's START, and each object's first history entry. The location
+// table must hold the starting world, and the trail must be empty, since
+// dbInit's assertions go through it and the caller empties it again.
+// AC and IO are clobbered. Called via jsp, from any bank.
+dbInit,
+    local rtn, ra, clr, loop, sloop, cloop, xloop, hloop, o, k, p
+    dac ra
+    lac [DBBASE]
+    dac dbTop
+    dzm stkCnt
+    lac [dbHeads:0]
+    dac p
+    law NCON
+    dac k
+clr, dzm i p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp clr
+    // Blocks and pyramids, :B1 to :B10, objects 0 to 7, with IS, MANIP,
+    // SHAPE and COLOR, each object's four together.
+    dzm o
+loop, lac o
+    ior [TOBJ]
+    dac dbA
+    lac [AIS]
+    dac dbP
+    law 2
+    dac dbN
+    lac o
+    lio [RKIND]
+    jda objFld
+    sad [KBLOCK]
+    jmp .+3
+    lac [APYRAMID]
+    jmp .+2
+    lac [ABLOCK]
+    dac dbA+1
+    jsp dbAdd
+    nop
+    lac [AMANIP]
+    dac dbP
+    law 1
+    dac dbN
+    jsp dbAdd
+    nop
+    lac dbA+1
+    sad [ABLOCK]
+    jmp .+3
+    lac [APOINTED]
+    jmp .+2
+    lac [ARECT]
+    dac dbA+1
+    lac [ASHAPE]
+    dac dbP
+    law 2
+    dac dbN
+    jsp dbAdd
+    nop
+    lac o
+    lio [RCOLOR]
+    jda objFld
+    add [colorAtoms:.]
+    dac p
+    lac i p
+    dac dbA+1
+    lac [ACOLOR]
+    dac dbP
+    jsp dbAdd
+    nop
+    idx o
+    sad [0d8]
+    jmp .+2
+    jmp loop
+    // The box and the table.
+    lac [dbFixBox:5]
+    jda dbList
+    // What supports each object, :B1 to :B10, then the box.
+    dzm o
+sloop, lac o
+    jda locGet
+    lac o
+    ior [TOBJ]
+    dac spSelf
+    jsp support
+    dac dbA
+    lac spSelf
+    dac dbA+1
+    lac [ASUPPORT]
+    dac dbP
+    law 2
+    dac dbN
+    jsp dbAdd
+    nop
+    lac o
+    jda dbNextObj
+    dac o
+    sza
+    jmp sloop
+    // CLEARTOP for each block or pyramid that supports nothing.
+    dzm o
+cloop, lac o
+    ior [TOBJ]
+    dac dbA
+    lac [ANY]
+    dac dbA+1
+    lac [ASUPPORT]
+    dac dbP
+    law 2
+    dac dbN
+    jsp dbFind
+    sza
+    jmp .+6
+    lac [ACLEARTOP]
+    dac dbP
+    law 1
+    dac dbN
+    jsp dbAdd
+    nop
+    idx o
+    sad [0d8]
+    jmp .+2
+    jmp cloop
+    // CONTAIN for each one the box supports.
+    dzm o
+xloop, lac [OBOX]
+    dac dbA
+    lac o
+    ior [TOBJ]
+    dac dbA+1
+    lac [ASUPPORT]
+    dac dbP
+    law 2
+    dac dbN
+    jsp dbFind
+    sza i
+    jmp .+4
+    lac [ACONTAIN]
+    dac dbP
+    jsp dbAdd
+    nop
+    idx o
+    sad [0d8]
+    jmp .+2
+    jmp xloop
+    // The colors, the shapes, the robot, the friend, the hand, their
+    // names, and the dialogue's START, made last.
+    lac [dbFixed:5]
+    jda dbList
+    // EE, the dialogue's start, of type START, from 0 to 0, its parent the
+    // COMMAND, its record the START just made.
+    lac [EVBASE]
+    dac p
+    lac [ASTART]
+    dac i p
+    idx p
+    dzm i p
+    idx p
+    dzm i p
+    idx p
+    lac [ACOMMAND]
+    dac i p
+    idx p
+    lac dbR
+    dac i p
+    // Each object's first history entry, with time 0, where it is, and its
+    // supporter, the hand if none.
+    dzm o
+hloop, lac o
+    jda locGet
+    jsp mkpt
+    dac hiLoc
+    lac [ASUPPORT]
+    dac dbP
+    lac [ANY]
+    dac dbA
+    lac o
+    ior [TOBJ]
+    dac dbA+1
+    law 2
+    dac dbN
+    jsp dbFind
+    sza i
+    jmp .+5
+    add [DARG]
+    dac p
+    lac i p
+    jmp .+2
+    lac [OHAND]
+    dac hiSup
+    lac o
+    add [histTab:.]
+    dac p
+    dzm i p
+    dzm hiTime
+    lac o
+    jda histAdd
+    lac o
+    jda dbNextObj
+    dac o
+    sza
+    jmp hloop
+rtn, jmp i ra
+ra, 0
+o, 0
+k, 0
+p, 0
+    endloc
+
+// Steps through the objects data.6 lists, in its order. They are 0 to 7
+// (:B1 to :B10), then the box, and the walls are not listed.
+// Takes an object's index in AC. Returns the next one's in AC, 0 after
+// the box. AC is the result and IO is preserved. Called via jda, from
+// any bank.
+dbNextObj,
+    local rtn, ra, fin
+    0                       // jda puts the argument here
+    dac ra
+    lac dbNextObj
+    sad [BOXOBJ]
+    jmp fin
+    add [1]
+    sad [0d8]
+    jmp .+2
+    jmp rtn
+    law BOXOBJ
+    jmp rtn
+fin, cla
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Asserts a list of facts. Each is its predicate, its number of arguments
+// and the arguments, and a 0 word ends the list.
+// Takes the list's full address in AC. AC and IO are clobbered.
+// Called via jda.
+dbList,
+    local rtn, loop, args, put, p, q, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac dbList
+    dac p
+loop, lac i p
+    sza i
+    jmp rtn
+    dac dbP
+    idx p
+    lac i p
+    dac dbN
+    dac k
+    idx p
+    lac [dbA:.]
+    dac q
+args, lac k
+    sza i
+    jmp put
+    lac i p
+    dac i q
+    idx p
+    idx q
+    lac k
+    sub [1]
+    dac k
+    jmp args
+put, jsp dbAdd
+    nop
+    jmp loop
+rtn, jmp 0
+p, 0
+q, 0
+k, 0
+    endloc
+
+// Reads a word of an object's record in the object table.
+// Takes the object's index in AC and the field's offset in IO.
+// Returns the word in AC. AC is the result and IO is clobbered.
+// Called via jda.
+objFld,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    dio t
+    lac objFld
+    sal 2s
+    dac objFld
+    sal 1s
+    add objFld
+    add t
+    add [objTab:2]
+    dac t
+    lac i t
+rtn, jmp 0
+t, 0
+    endloc
+
+dbP, 0                      // a goal or assertion's predicate,
+dbN, 0                      // its number of arguments,
+dbA,                        // and its arguments
+    table 4
+dbR, 0                      // the record dbAdd made
+dbT, 0
+dbTop, DBBASE
+dbMark, DBBASE              // the records below this are settled (keep.ac)
+
+// The color atom of each color.
+colorAtoms,
+    ARED
+    AGREEN
+    ABLUE
+    AWHITE
+
+bank 5
+
+// The box's and the table's facts, then the fixed facts, as dbList
+// reads them.
+dbFixBox,
+    AIS; 2; OBOX; ABOX
+    AIS; 2; OTABLE; ATABLE
+    ACOLOR; 2; OBOX; AWHITE
+    ACOLOR; 2; OTABLE; ABLACK
+    0
+dbFixed,
+    AIS; 2; ARED; ACOLOR
+    AIS; 2; ABLUE; ACOLOR
+    AIS; 2; AGREEN; ACOLOR
+    AIS; 2; AWHITE; ACOLOR
+    AIS; 2; ABLACK; ACOLOR
+    AIS; 2; ARECT; ASHAPE
+    AIS; 2; AROUND; ASHAPE
+    AIS; 2; APOINTED; ASHAPE
+    AIS; 2; OSHRDLU; AROBOT
+    AIS; 2; OFRIEND; APERSON
+    AIS; 2; OHAND; AHAND
+    ACALL; 2; OSHRDLU; ASHRDLU
+    ACALL; 2; OFRIEND; AYOU
+    ASTART; 2; TEV; ODIALOG
+    0
+
+bank 4

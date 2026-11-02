@@ -1,0 +1,480 @@
+// The machine's native evaluator, EVAL. Its cases are listed at evlEval.
+// EVS (pgm.ac's doEvs) enters it for what it does not evaluate in place,
+// and pgNats for EVAL called by name.
+// The form is the value stack's top word either way, and the evaluator
+// ends at pgLoop with the form replaced by its value.
+// It runs as a machine, so that it can call compiled code and natives
+// without being a leaf.
+// What is still to be done with a form's value is a frame on the value
+// stack, a tag word (KINT plus ETxxx) on top of the frame's words.
+// A call goes through evlStub, two code words.
+// The operation (CALL, FUNCALL, PRIM or EVAL) is written into the first,
+// then ERESUME pops the value returned and hands it to the frame on top.
+// Its entry pushes a calls frame with the caller's return, bindings' mark
+// and block, so the cache keeps the caller's block and slides its return
+// with it (pgsys.ac's psRoom and psSlide).
+// It runs as no block (pgFn 07777), so every frame its calls push returns
+// into the stub.
+// A THROW past it drops its frames with the value stack.
+// It makes no cells. A function's arguments' values go on the value
+// stack, not into a list.
+// A form's structure is taken as lists. The CAR or CDR of an atom other
+// than NIL in it is a Lisp error.
+// The value stack's next free word is kept in evlS while it runs, and
+// written back to pgSp before the machine's loop runs again; nothing it
+// calls in between makes a cell, so the collector never reads pgSp stale.
+// A form whose head names no function may be one of the Planner engine's
+// (planner.ac's eForm); the engine's routines evaluate through the
+// evaluator too, each value handed back to them by an ETENG frame.
+// Bank 015 before planner.ac, eem on. Needs shrdlu.ah, semantics.ac's
+// defines, pgm.ac's far entries and PVSPARE, and planner.ac.
+
+// The frames' tags, after KINT.
+// They are the base, a computed head's value, an argument's, SETQ's,
+// COND's, AND's, OR's and PROGN's next form.
+// The engine's are a value for one of its routines (planner.ac's evlEngR),
+// and a THROW caught by a THVAL level (evlVerr).
+#define ETBASE 0
+#define ETHEAD 1
+#define ETARG 2
+#define ETSETQ 3
+#define ETCOND 4
+#define ETAND 5
+#define ETOR 6
+#define ETPROGN 7
+#define ETENG 010
+#define ETVERR 011
+#define EPUSH dac i evlS; idx evlS
+#define EPOP law i 1; add evlS; dac evlS; lac i evlS
+// CAR and CDR of a list in v, to AC.
+#define ECAR(v) lac v; ior [PCELLS]; dac evlP; lac i evlP
+#define ECDR(v) lac v; ior [PCELLS]; add [1]; dac evlP; lac i evlP
+// NO ROOM unless n words can be pushed with PVSPARE still free above them.
+#define EROOM(n) lac evlS; sub [PVSTK+PVLEN-PVSPARE-(n)]; sma; jmp i [pgRoom:6]
+
+// The entry. The calls frame is pushed (planner.ac's eNIn), then the form
+// under the base frame.
+evlEnter, jsp eNIn
+    EROOM(1)
+    law i 1
+    add evlS
+    dac evlP
+    lac i evlP
+    dac evlX
+    lac [KINT+ETBASE]
+    EPUSH
+    jmp evlEval
+
+// ERESUME pops the value the stub's call returned and hands it on.
+evlRes, lac i [pgSp:6]
+    dac evlS
+    EPOP
+
+// A value, in AC, handed to the frame on the value stack's top.
+// The tag is popped and the frame's routine entered with the value in evlV.
+evlRet, dac evlV
+    EPOP
+    and [017]
+    add [evlTab:015]
+    dac evlP
+    jmp i evlP
+evlTab,
+    jmp evlBase
+    jmp evlHead
+    jmp evlArg
+    jmp evlSetq
+    jmp evlCond
+    jmp evlAnd
+    jmp evlOr
+    jmp evlProgn
+    jmp evlEngR
+    jmp evlVerr
+evlRetT, lac [KSYM]
+    jmp evlRet
+evlRetV, lac evlV
+    jmp evlRet
+
+// The base frame, the evaluation done.
+// The calls frame is popped, and the caller resumed with the form replaced
+// by its value.
+// The bindings are at the frame's mark already, since every call made
+// since has returned.
+evlBase, lac i [pgCp:6]
+    sub [PFW]
+    dac i [pgCp:6]
+    dac evlP
+    lac i evlP
+    dac i [pgIp:6]
+    lac evlP
+    add [PFFN]
+    dac evlP
+    lac i evlP
+    dac i [pgFn:6]
+    law i 1
+    add evlS
+    dac evlP
+    lac evlV
+    dac i evlP
+    lac evlS
+    dac i [pgSp:6]
+    jmp i [pgLoop:6]
+
+// A call through the stub.
+// Takes the operation's word in AC and its arguments on the value stack.
+// Its value comes back through ERESUME.
+evlCall, dac evlStub
+    lac evlS
+    dac i [pgSp:6]
+    lac [evlStub:015]
+    dac i [pgIp:6]
+    jmp i [pgLoop:6]
+
+// The form evlX evaluated, its value handed to the frame on top.
+// NIL is NIL, and a special word's code is run.
+// A symbol gives T, or its variable, or SYMVAL's value or error for a
+// symbol with none set or a made one.
+// Any other atom gives itself, and a list is evlForm's.
+evlEval,
+    local sym, sv
+    lac evlX
+    sza i
+    jmp evlRet
+    and [KMASK]
+    sad [KCONS]
+    jmp evlForm
+    sad [KCODE]
+    jmp evlCode
+    sad [KSYM]
+    jmp sym
+    sad [KWORD]
+    jmp sv
+    sad [KNODE]
+    jmp sv
+    lac evlX
+    jmp evlRet
+sym, lac evlX
+    sad [KSYM]
+    jmp evlRet
+    dac i [fA:6]
+    XJSP(fVarOf, 6)
+    lai
+    spa
+    jmp sv
+    add [vTab:3]
+    dac evlP
+    lac i evlP
+    sas [KUNB]
+    jmp evlRet
+sv, EROOM(1)
+    lac evlX
+    EPUSH
+    lac [opPRIM*010000+naSYMVAL]
+    jmp evlCall
+    endloc
+evlCode, EROOM(1)
+    lac evlX
+    EPUSH
+    lac [opEVAL*010000]
+    jmp evlCall
+
+// A list form.
+// A list for its head is evaluated and applied (evlHd).
+// A symbol naming a function has an FEXPR called with the arguments as
+// they are, and an EXPR or a native called with their values (FNKIND's
+// kinds).
+// A special form is run.
+// A head naming none is the engine's (eForm), which takes the Planner's
+// forms, and any other is UNDEFINED FUNCTION, a Lisp error.
+evlForm,
+    local fexpr
+    EROOM(4)
+    ECAR(evlX)
+    dac evlF
+    and [KMASK]
+    sad [KCONS]
+    jmp evlHd
+    ECDR(evlX)
+    dac evlL
+    lac evlF
+    sad [KSYM+sQUOTE]
+    jmp evlQuote
+    sad [KSYM+sFUNCTION]
+    jmp evlQuote
+    sad [KSYM+sSETQ]
+    jmp evlSetq0
+    sad [KSYM+sCOND]
+    jmp evlCond0
+    sad [KSYM+sAND]
+    jmp evlAnd0
+    sad [KSYM+sOR]
+    jmp evlOr0
+    sad [KSYM+sPROGN]
+    jmp evlProgn0
+    and [KMASK]
+    sas [KSYM]
+    jmp i [pgErr:6]
+    lac evlF
+    and [07777]
+    dac i [fA:6]
+    XJSP(fFnOf, 6)
+    lai
+    spa
+    jmp eForm
+    and [060000]
+    sad [FNFEXPR]
+    jmp fexpr
+    lac evlF
+    EPUSH
+    dzm evlN
+    jmp evlArgs
+fexpr, lac evlF
+    EPUSH
+    lac evlL
+    EPUSH
+    lac [opFUNCALL*010000+1]
+    jmp evlCall
+    endloc
+
+// A list for the head.
+// A LAMBDA is an error. Any other is evaluated, and its value is the
+// function applied (evlHead).
+evlHd, ECAR(evlF)
+    sad [KSYM+sLAMBDA]
+    jmp i [pgErr:6]
+    ECDR(evlX)
+    EPUSH
+    lac [KINT+ETHEAD]
+    EPUSH
+    lac evlF
+    dac evlX
+    jmp evlEval
+evlHead, EPOP
+    dac evlL
+    lac evlV
+    EPUSH
+    dzm evlN
+
+// The arguments. Each form of evlL is evaluated in turn and its value
+// pushed, evlN of them so far, the function under them.
+// Then FUNCALL is called, or for an engine's EXPR (its marker KINT) its
+// routine (eExpr).
+evlArgs, lac evlL
+    and [KMASK]
+    sas [KCONS]
+    jmp evlApply
+    EROOM(3)
+    ECDR(evlL)
+    EPUSH
+    lac evlN
+    add [KINT]
+    EPUSH
+    lac [KINT+ETARG]
+    EPUSH
+    ECAR(evlL)
+    dac evlX
+    jmp evlEval
+evlArg, EPOP
+    and [07777]
+    dac evlN
+    EPOP
+    dac evlL
+    lac evlV
+    EPUSH
+    idx evlN
+    jmp evlArgs
+evlApply, lac evlS
+    sub evlN
+    sub [1]
+    dac evlP
+    lac i evlP
+    and [KMASK]
+    sad [KINT]
+    jmp eExpr
+    lac evlN
+    add [opFUNCALL*010000]
+    jmp evlCall
+
+// QUOTE and FUNCTION give the argument.
+evlQuote, lac evlL
+    jda evlCar
+    jmp evlRet
+
+// SETQ sets each variable in turn to its form's value, and gives the
+// last's.
+// A variable SET cannot set is a fault, as SET's (csSet).
+evlSetq0, lac evlL
+evlSetqL, dac evlL
+    EROOM(2)
+    lac evlL
+    EPUSH
+    lac [KINT+ETSETQ]
+    EPUSH
+    lac evlL
+    jda evlCdr
+    jda evlCar
+    dac evlX
+    jmp evlEval
+evlSetq, EPOP
+    dac evlL
+    jda evlCar
+    dac i [fA:6]
+    XJSP(fVarOf, 6)
+    lai
+    spa
+    jmp i [pgFlt:6]
+    add [vTab:3]
+    dac evlP
+    lac evlV
+    dac i evlP
+    lac evlL
+    jda evlCdr
+    jda evlCdr
+    sza
+    jmp evlSetqL
+    jmp evlRetV
+
+// COND tests each clause in turn.
+// The first test not NIL gives its body's value, or with no body the
+// test's value.
+// None gives NIL.
+evlCond0, lac evlL
+evlCondL, dac evlL
+    sza i
+    jmp evlRet
+    EROOM(2)
+    lac evlL
+    EPUSH
+    lac [KINT+ETCOND]
+    EPUSH
+    lac evlL
+    jda evlCar
+    jda evlCar
+    dac evlX
+    jmp evlEval
+evlCond,
+    local next
+    EPOP
+    dac evlL
+    lac evlV
+    sza i
+    jmp next
+    lac evlL
+    jda evlCar
+    jda evlCdr
+    sza i
+    jmp evlRetV
+    dac evlL
+    jmp evlProgn0
+next, lac evlL
+    jda evlCdr
+    jmp evlCondL
+    endloc
+
+// AND gives T for no forms, and NIL at the first NIL.
+// OR gives NIL for none, and the first not NIL.
+// PROGN gives NIL for none.
+// Each otherwise gives the last form's value, the last form evaluated in
+// their place, with no frame.
+evlAnd0, lac evlL
+    sza i
+    jmp evlRetT
+    jmp evlAndN
+evlAnd, EPOP
+    dac evlL
+    lac evlV
+    sza i
+    jmp evlRet
+evlAndN, lac [KINT+ETAND]
+    jmp evlSeq
+evlOr0, lac evlL
+    sza i
+    jmp evlRet
+    jmp evlOrN
+evlOr, EPOP
+    dac evlL
+    lac evlV
+    sza
+    jmp evlRet
+evlOrN, lac [KINT+ETOR]
+    jmp evlSeq
+evlProgn0, lac evlL
+    sza i
+    jmp evlRet
+    jmp evlPrN
+evlProgn, EPOP
+    dac evlL
+evlPrN, lac [KINT+ETPROGN]
+
+// The next form of evlL, a list, for AND, OR or PROGN, with AC their tag.
+// The last form is evaluated in their place, and any other under a frame
+// of the rest.
+evlSeq,
+    local last
+    dac evlK
+    lac evlL
+    jda evlCdr
+    sza i
+    jmp last
+    dac evlT
+    EROOM(2)
+    lac evlT
+    EPUSH
+    lac evlK
+    EPUSH
+last, lac evlL
+    jda evlCar
+    dac evlX
+    jmp evlEval
+    endloc
+
+// CAR and CDR of a part of a form.
+// A list's are taken, NIL's are NIL, and any other atom is a Lisp error.
+// Takes the value in AC. Returns its CAR (evlCar) or its CDR (evlCdr) in
+// AC. AC is the result and IO is preserved. Called via jda.
+evlCar,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac evlCar
+    sza i
+    jmp rtn
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac evlCar
+    ior [PCELLS]
+    dac evlP
+    lac i evlP
+rtn, jmp 0
+    endloc
+evlCdr,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac evlCdr
+    sza i
+    jmp rtn
+    and [KMASK]
+    sas [KCONS]
+    jmp i [pgErr:6]
+    lac evlCdr
+    ior [PCELLS]
+    add [1]
+    dac evlP
+    lac i evlP
+rtn, jmp 0
+    endloc
+
+// The stub. The operation is written before each call, then ERESUME.
+evlStub, 0
+evlRsw, opERESUME*010000
+
+evlS, 0                     // the value stack's next free word, while it runs
+evlX, 0                     // the form being evaluated
+evlV, 0                     // the value handed to a frame
+evlF, 0                     // a form's head
+evlL, 0                     // a list of forms still to evaluate
+evlN, 0                     // the arguments' values pushed so far
+evlT, 0                     // a list, scratch
+evlK, 0                     // AND's, OR's or PROGN's tag
+evlP, 0                     // a pointer, scratch

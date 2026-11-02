@@ -1,0 +1,174 @@
+// The terminal is one DCS2 server channel, channel 0, in telnet mode and
+// ASCII, with no echo from DCS2, so the reader shows what is typed.
+// This file sends text out. What is typed is read by the reader (reader.ac),
+// which hands a command line to the main loop in tLine.
+// A dropped connection rebinds the channel, which listens for the next.
+// Output while no one is connected is discarded.
+// Bank 0, eem on (the string pointers are full addresses); the line,
+// tLine, is in bank 2.
+// Needs <DCS/dcs2defs.ah> and shrdlu.ah.
+
+// Opens the server channel on DCSPORT.
+// AC and IO are clobbered. Called via jsp.
+termInit,
+    local rtn
+    dap rtn
+    lio [scbrst]
+    scb
+    lio [scbset tCtl]
+    scb
+    dzm tConn
+    dzm tLen
+    dzm tReady
+rtn, jmp 0
+    endloc
+
+// Sends one character. A full transmit buffer is waited out (the display
+// keeps going on its breaks). Any other error drops the character.
+// Takes the character in AC. AC and IO are clobbered. Called via jda.
+putc,
+    local rtn, again, ch
+    0                       // jda puts the argument here
+    dap rtn
+    lac putc
+    dac ch
+    lac tConn
+    sza i
+    jmp rtn
+again, lio ch
+    tcb
+    spi i
+    jmp rtn
+    lai
+    and [dseflf]
+    sza i
+    jmp rtn
+    jmp again
+rtn, jmp 0
+ch, 0
+    endloc
+
+// Sends an ascii string (two characters a word, high half first, ended
+// by a 0 half).
+// Takes the string's full address in AC. AC and IO are clobbered.
+// Called via jda.
+puts,
+    local rtn, loop, p, w
+    0                       // jda puts the argument here
+    dap rtn
+    lac puts
+    dac p
+loop, lac i p
+    dac w
+    sar 9s
+    and [0377]
+    sza i
+    jmp rtn
+    jda putc
+    lac w
+    and [0377]
+    sza i
+    jmp rtn
+    jda putc
+    idx p
+    jmp loop
+rtn, jmp 0
+p, 0
+w, 0
+    endloc
+
+// Sends a number in octal, with no leading zeros, and a minus sign when
+// negative.
+// Takes the number in AC. AC and IO are clobbered. Called via jda.
+putoct,
+    local rtn, loop, print, skip, n, k, d, any
+    0                       // jda puts the argument here
+    dap rtn
+    lac putoct
+    dac n
+    sma
+    jmp .+5
+    law '-'
+    jda putc
+    lac n
+    cma
+    dac n
+    dzm any
+    law 6
+    dac k
+    // Each pass rotates the top three bits of n into AC. A digit is
+    // printed once one has been, or when it is not 0, or the last.
+loop, lio n
+    cla
+    rcl 3s
+    dio n
+    dac d
+    sza
+    jmp print
+    lac any
+    sza
+    jmp print
+    lac k
+    sad [1]
+    jmp print
+    jmp skip
+print, lac d
+    add ['0']
+    jda putc
+    law 1
+    dac any
+skip, lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+n, 0
+k, 0
+d, 0
+any, 0
+    endloc
+
+// Ends a line with LF, which telnet mode sends as CR LF.
+// AC and IO are clobbered. Called via jsp.
+putnl,
+    local rtn
+    dap rtn
+    law 012
+    jda putc
+rtn, jmp 0
+    endloc
+
+// Sends a space. AC and IO are clobbered. Called via jsp.
+putsp,
+    local rtn
+    dap rtn
+    law ' '
+    jda putc
+rtn, jmp 0
+    endloc
+
+// Ends a reply with a line holding only *.
+// AC and IO are clobbered. Called via jsp.
+putStar,
+    local rtn
+    dap rtn
+    law '*'
+    jda putc
+    jsp putnl
+rtn, jmp 0
+    endloc
+
+// The channel's request block. Telnet, echo, server, channel 0, then the port.
+tCtl, dcftel dcfsrv
+    DCSPORT
+
+tConn, 0                    // 1 while a client is connected
+tReady, 0                   // 1 when tLine holds a complete line
+tLen, 0
+
+bank 2
+tLine,
+    table LINEMAX+1
+sBanner, ascii "SHRDLU: TYPE A SENTENCE, OR A COMMAND AFTER /: /WORD X, /WORD X FEATURES,\n/TREE ON, /TREE OFF, /SM, /PLAN ON, /PLAN OFF, /ROOM; /DO GOAL, /TRY GOAL,\n/TRACE ON, /TRACE OFF, /EVENTS, /HISTORY X, /FIND PRED ARGS, /SEED N, /TIMES;\n/MOVETO X Y Z, /GRASP :BN, /UNGRASP, /REFRESH, /SCENE, /STATUS, /RESET"
+bank 0

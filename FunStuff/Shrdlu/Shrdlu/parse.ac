@@ -1,0 +1,226 @@
+// The top level and the tree printer. The sentence the reader has read
+// is run (pgsys.ac's pgSent). The top level parses it with the semantics
+// and answers it, printing its reply as it goes.
+// A sentence abandoned prints I DON'T UNDERSTAND. One that runs out of
+// room prints NO ROOM. A fault of the machine prints FAULT and the address
+// after its operation, in octal. When the drum's code is not this build's
+// it prints OVERLAY ERROR 2, as the overlay manager's error hook (ovFail,
+// below) does for the manager's errors.
+// With /TREE ON the parse's tree is printed after, a node a line,
+// indented two spaces a level.
+// A node with daughters prints as its features in parentheses, two spaces,
+// then the words it spans. One with none prints as the words, two spaces,
+// then its features in parentheses.
+// The daughters are in the order they were parsed.
+// A node's features are in its list's order, a word's in their numbers'.
+// The tree itself is printed by the drum overlay tree (tree.ac), through
+// the wrappers at the end of this file.
+// Bank 013 with the reader, whose output routines it uses; eem on. Needs
+// shrdlu.ah, semantics.ac, lexicon.ac's fnTab, pgm.ac, pgsys.ac,
+// tree.ac and the overlay manager (shrdlu.am1).
+
+// Runs the sentence in rSent. When NOBREAK is defined, the display's
+// break is held off through the run.
+// AC and IO are clobbered. Called via jsp.
+psParse,
+    local rtn, notu, room, flt, stamp, t
+    dap rtn
+    XJSP(hpKeep, 3)
+#ifdef NOBREAK
+    lsm
+#endif
+    XJSP(pgSent, 012)
+    dac psStat
+#ifdef NOBREAK
+    esm
+#endif
+    lac psCol
+    sza
+    jsp wrnl
+    lac psStat
+    sad [3]
+    jmp rtn                 // (IOC G), in the parse, so what it said is all
+    sad [2]
+    jmp room
+    sad [4]
+    jmp flt
+    sza
+    jmp notu
+    lac psTree
+    sza i
+    jmp rtn
+    // The tree's top node is C's first.
+    lac i [vTab:3+vC]
+    sza i
+    jmp rtn
+    ior [PCELLS]
+    dac t
+    lio i t
+    %%ovcall tree, trPrint
+    jmp rtn
+notu, lac [sNotU:013]
+    jda wrs
+    jsp wrnl
+    jmp rtn
+    // ANSNAME holds the abandoned reply's noun groups, whose nodes the next
+    // parse would run out for, and the next, until the program is loaded.
+room, dzm i [vTab:3+vANSNAME]
+    lac [sNoRoom:013]
+    jda wrs
+    jsp wrnl
+    jmp rtn
+    // The drum's code not this build's is the manager's stamp error.
+flt, lac i [psBad:012]
+    sza
+    jmp stamp
+    lac [sFault:2]
+    jda wrs
+    lac i [pgFltA:6]
+    jda prOct
+    jsp wrnl
+    jmp rtn
+stamp, law OV_ERR_STAMP
+    jda ovSay
+rtn, jmp 0
+t, 0
+    endloc
+
+// The overlay manager's error hook, ovErrHook (set by rdInit unless
+// NOOVHOOK is defined). It prints the error's line, then returns past the
+// %%ovcall that failed with AC -1, which s2Exec's call of cmds checks
+// (goals.ac). The other calls go on as if the overlay had done nothing.
+// Takes the error's number in AC and the call's return in IO, with eem on.
+// Returns with AC -1. IO is clobbered.
+ovFail, dio ovfR
+    jda ovSay
+    law i 1
+    jmp i ovfR
+ovfR, 0
+
+// OVERLAY ERROR and the error's number on a line of its own.
+// Takes the number, 1 to 4, in AC. AC and IO are clobbered. Called via jda.
+ovSay,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    jsp wrBol
+    lac [sOvErr:2]
+    jda wrs
+    lac ovSay
+    add ['0']
+    jda wrc
+    jsp wrnl
+rtn, jmp 0
+    endloc
+
+// Prints an atom's name. A feature's is from fnTab, another symbol's from
+// its names' block (print.ac's psNmF), a word's is its spelling, and
+// anything else prints #.
+// Takes the value in AC. AC and IO are clobbered. Called via jda.
+prName,
+    local sym, other, word, low, spell, rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac prName
+    and [KMASK]
+    sad [KSYM]
+    jmp sym
+    sad [KWORD]
+    jmp word
+    law '#'
+    jda wrc
+    jmp rtn
+sym, lac prName
+    and [07777]
+    dac t
+    sza i
+    jmp other
+    sub [NDFEAT+1]
+    sma
+    jmp other
+    lac t
+    add [fnTab:2]
+    dac t
+    lac i t
+    jda wrPack
+    jmp rtn
+other, lio prName
+    jsp psNmF
+    lai
+    jda wrPack
+    jmp rtn
+    // A word's entry, as pgm.ac's pgEnt has it.
+word, lac prName
+    and [077777]
+    dac t
+    sub [010000]
+    spa
+    jmp low
+    lac t
+    add [DWBASE-010000]
+    jmp spell
+low, lac t
+    add [020000]
+spell, jda wrSpell
+rtn, jmp 0
+t, 0
+    endloc
+
+// Prints a number in octal, six digits.
+// Takes the number in AC. AC and IO are clobbered. Called via jda.
+prOct,
+    local loop, rtn, w, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac prOct
+    dac w
+    law 6
+    dac k
+loop, lac w
+    ral 3s
+    dac w
+    and [7]
+    add ['0']
+    jda wrc
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+w, 0
+k, 0
+    endloc
+
+sNotU, ascii "I DON'T UNDERSTAND."
+bank 2
+sFault, ascii "FAULT "
+sOvErr, ascii "OVERLAY ERROR "
+bank 013
+
+psStat, 0                   // how the sentence ended, as pgSent returns it
+psTree, 0                   // nonzero after /TREE ON, to print the tree after the reply
+
+// The reader's output for the tree overlay (tree.ac), in bank 012, which
+// a dap return cannot come back to. Each takes its argument, if any, in
+// IO, and returns to the full address in AC. AC and IO are clobbered.
+// Called via jsp, from another bank.
+pfC, dac pfR
+    dio pfA
+    lac pfA
+    jda wrc
+    jmp i pfR
+pfName, dac pfR
+    dio pfA
+    lac pfA
+    jda prName
+    jmp i pfR
+pfSp, dac pfR
+    jsp wrsp
+    jmp i pfR
+pfNl, dac pfR
+    jsp wrnl
+    jmp i pfR
+
+pfR, 0
+pfA, 0

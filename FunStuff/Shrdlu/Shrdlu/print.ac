@@ -1,0 +1,518 @@
+// The printing of the machine's values as MacLisp's PRINC prints them
+// (an atom's name, a list's text in parentheses), and SAY.
+// It prints through the reader's wrc, keeping the column in psCol, so the
+// top level (parse.ac) knows whether a reply ended its line.
+// Bank 013 with the reader; eem on. Needs shrdlu.ah, semantics.ac,
+// pgm.ac, pgsys.ac (psEnsure, the tables psPfx and psNmBuf) and
+// reader.ac (wrc, cTab).
+
+// The value stack from this bank (prPush, prPop).
+#define PPUSH jda prPush
+#define PPOP jsp prPop
+
+// Sends a character to the terminal and keeps the column.
+// Takes the character in AC. AC and IO are clobbered. Called via jda.
+psPutc,
+    local nl, out, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac psPutc
+    sad [012]
+    jmp nl
+    idx psCol
+    jmp out
+nl, dzm psCol
+out, lac psPutc
+    jda wrc
+rtn, jmp 0
+    endloc
+
+// Prints an atom's name, or a list's text in parentheses (its items, a
+// dotted tail dropped). A list's place is kept on the value stack.
+// Takes the value in AC. AC and IO are clobbered. Called via jda.
+psPrin,
+    local go, atom, ret, close, rtn, base, v
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [pgSp:6]
+    dac base
+    lac psPrin
+    dac v
+go, lac v
+    and [KMASK]
+    sas [KCONS]
+    jmp atom
+    law '('
+    jda psPutc
+    // The rest is pushed, and the first goes on.
+    lac v
+    ior [PCELLS]
+    dac prP
+    idx prP
+    lac i prP
+    PPUSH
+    law i 1
+    add prP
+    dac prP
+    lac i prP
+    dac v
+    jmp go
+atom, lac v
+    jda psName
+ret, lac i [pgSp:6]
+    sad base
+    jmp rtn
+    PPOP
+    dac v
+    and [KMASK]
+    sas [KCONS]
+    jmp close
+    law ' '
+    jda psPutc
+    lac v
+    ior [PCELLS]
+    dac prP
+    idx prP
+    lac i prP
+    PPUSH
+    law i 1
+    add prP
+    dac prP
+    lac i prP
+    dac v
+    jmp go
+close, law ')'
+    jda psPutc
+    jmp ret
+rtn, jmp 0
+base, 0
+v, 0
+    endloc
+
+// Prints an atom's name. A symbol or a word prints its spelling, a number
+// prints in decimal and a point, an event prints E and its number, and a
+// made symbol prints its prefix's name, its count and a point.
+// Anything else prints #.
+// Takes the value in AC. AC and IO are clobbered. Called via jda.
+psName,
+    local named, num, node, nodec, other, evn, rtn, v
+    0                       // jda puts the argument here
+    dap rtn
+    lac psName
+    dac v
+    sza
+    jmp .+4
+    lac [psNil:.]
+    jda psPack
+    jmp rtn
+    jda psNmOf
+    sza
+    jmp named
+    lac v
+    and [KMASK]
+    sad [KINT]
+    jmp num
+    sad [KNODE]
+    jmp node
+    sas [KWORD]
+    jmp other
+    lac v
+    and [077777]
+    sub [STK0]
+    spa
+    jmp evn
+    dac prT
+    law 'S'                 // a stack
+    jda psPutc
+    law 'T'
+    jda psPutc
+    law 'A'
+    jda psPutc
+    law 'C'
+    jda psPutc
+    law 'K'
+    jda psPutc
+    lac prT
+    jda psDec
+    jmp rtn
+evn, law 'E'                // an event
+    jda psPutc
+    lac v
+    and [077777]
+    sub [EV0]
+    jda psDec
+    jmp rtn
+named, lac psNmP
+    jda psPack
+    jmp rtn
+num, lac v
+    dac i [fA:6]
+    FAR(fNum)
+    lac i [fA:6]
+    jda psDec
+    law '.'
+    jda psPutc
+    jmp rtn
+node, lac v
+    and [077777]
+    ior [PCELLS]
+    add [PCOUNT]
+    dac prP
+    lac i prP
+    dac v
+    and [077]
+    add [psPfx:3]
+    dac prP
+    lac i prP
+    jda psNmOf
+    sza i
+    jmp nodec
+    lac psNmP
+    jda psPack
+nodec, lac v
+    rar 6s
+    and [07777]
+    jda psDec
+    law '.'
+    jda psPutc
+    jmp rtn
+other, law '#'
+    jda psPutc
+rtn, jmp 0
+v, 0
+    endloc
+
+// Finds a symbol's or a word's name, leaving its packed spelling's full
+// address in psNmP (a symbol's is copied from its names' block to psNmBuf).
+// NIL has no name here.
+// Takes the value in AC. Returns AC 0 if it is neither a symbol nor a
+// word, else nonzero. IO is clobbered. Called via jda.
+psNmOf,
+    local word, low, went, copy, none, rtn, p, n
+    0                       // jda puts the argument here
+    dap rtn
+    lac psNmOf
+    and [KMASK]
+    sad [KWORD]
+    jmp word
+    sas [KSYM]
+    jmp none
+    // Its block, NAMESPER symbols to a block, and its offset there.
+    lac psNmOf
+    and [07777]
+    dac n
+    rar 6s
+    and [077]
+    add [NBLK0]
+    XJDA(psEnsure, 012)
+    dac p
+    lac n
+    and [NAMESPER-1]
+    add [BLKHDR]
+    add p
+    dac n
+    lac i n
+    add p
+    dac p
+    lac [psNmBuf:4]
+    dac psNmP
+    dac n
+copy, lac i p
+    dac i n
+    idx p
+    idx n
+    law i 1
+    add n
+    dac prT
+    lac i prT
+    and [077]
+    sza
+    jmp copy
+    lac psNmP
+    jmp rtn
+word, lac psNmOf
+    and [077777]
+    sub [EV0]
+    sma
+    jmp none
+    lac psNmOf               // its entry, as pgsys.ac's psEnt has it
+    and [077777]
+    dac p
+    sub [010000]
+    spa
+    jmp low
+    lac p
+    add [DWBASE-010000]
+    jmp went
+low, lac p
+    add [020000]
+went, dac p
+    add [1]
+    dac n
+    lac i n
+    rar 3s
+    and [077]
+    add [1]
+    sar 1s
+    add [3]
+    add p
+    dac psNmP
+    jmp rtn
+none, cla
+rtn, jmp 0
+p, 0
+n, 0
+    endloc
+
+// Gets a symbol's packed name, for the tree (parse.ac's prName).
+// Takes the symbol in IO. Returns the name's full address in IO. AC is
+// clobbered. Called via jsp.
+psNmF, dac prR
+    lai
+    jda psNmOf
+    lio psNmP
+    jmp i prR
+
+// Prints a packed spelling, to its 0 code.
+// Takes the spelling's full address in AC. AC and IO are clobbered.
+// Called via jda.
+psPack,
+    local loop, one, odone, close, lone, rtn, w, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psPack
+    dac p
+    // A " standing alone prints as a ", not the apostrophe its code is.
+    // So does one before a period, smspec.94:624's closing atom.
+    // Defining OLDQUOTE builds without this, so both print as the apostrophe.
+#ifndef OLDQUOTE
+    lac i p
+    sad [0450000]
+    jmp lone
+    sad [0455600]
+    jmp close
+#endif
+loop, lac i p
+    dac w
+    rar 9s
+    rar 3s
+    jda one
+    lac w
+    rar 6s
+    jda one
+    lac w
+    jda one
+    idx p
+    jmp loop
+one, 0
+    dap odone
+    lac one
+    and [077]
+    sza i
+    jmp rtn                 // the end, out of both
+    add [cTab:013]
+    dac prT
+    lac i prT
+    jda psPutc
+odone, jmp 0
+close, law 042
+    jda psPutc
+    law 056
+    jmp .+2
+lone, law 042
+    jda psPutc
+rtn, jmp 0
+w, 0
+p, 0
+    endloc
+
+// Prints a number in decimal, a minus first if it is negative.
+// Takes the number in AC. AC and IO are clobbered. Called via jda.
+psDec,
+    local pos, loop, out, rtn, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac psDec
+    sma
+    jmp pos
+    law '-'
+    jda psPutc
+    lac psDec
+    cma
+    dac psDec
+pos, dzm k
+loop, lac psDec
+    lia
+    cla
+    scl 1s
+    div [0d10]
+    jmp i [pgFlt:6]
+    dac psDec
+    lai
+    add ['0']
+    PPUSH
+    idx k
+    lac psDec
+    sza
+    jmp loop
+out, PPOP
+    jda psPutc
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp out
+rtn, jmp 0
+k, 0
+    endloc
+
+// The wrapping. A word is put after a space on the same line when it and
+// the space fit the line, else after a new line; on a new line, with no
+// space. A closing mark that follows is not counted, since OUTWIDTH leaves
+// it room (shrdlu.ah).
+
+// Sends the separator before a word, by its length.
+// Takes the word's printed length in AC. AC and IO are clobbered.
+// Called via jda.
+psFit,
+    local nl, rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac psCol
+    sza i
+    jmp rtn
+    lac psFit
+    add psCol
+    dac t
+    add t
+    sub [2*OUTWIDTH-3]      // twice the end column less the width less 1, never 0
+    sma
+    jmp nl
+    law ' '
+    jda psPutc
+    jmp rtn
+nl, law 012
+    jda psPutc
+rtn, jmp 0
+t, 0
+    endloc
+
+// Sends the separator before a value, measured by printing it with nothing
+// sent.
+// Takes the value in AC. AC and IO are clobbered. Called via jda.
+psSep,
+    local rtn, c, v
+    0                       // jda puts the argument here
+    dap rtn
+    lac psCol
+    sza i
+    jmp rtn
+    dac c
+    lac psSep
+    dac v
+    dzm wrLen
+    idx wrDry
+    lac v
+    jda psPrin
+    dzm wrDry
+    lac c
+    dac psCol               // the count moved it
+    lac wrLen
+    jda psFit
+rtn, jmp 0
+c, 0
+v, 0
+    endloc
+
+// Prints SAY's list, each item as PRINT3 prints it.
+// Takes the constant holding the list in pgA. AC and IO are clobbered.
+// Called via jsp from bank 6.
+psSay,
+    local loop, l, x
+    dac prR
+    lac i [pgA:6]
+    add [gConst:013]
+    dac prP
+    lac i prP
+    dac l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp i prR
+    lac l
+    ior [PCELLS]
+    dac prP
+    lac i prP
+    dac x
+    jda psSep
+    lac x
+    jda psPrin
+    lac l
+    ior [PCELLS]
+    add [1]
+    dac prP
+    lac i prP
+    dac l
+    jmp loop
+l, 0
+x, 0
+    endloc
+
+// The far entries, for pgsys.ac. Each takes its argument in prA and
+// returns to the full address in AC. prNmF leaves its result in prA.
+// AC and IO are clobbered. Called via jsp from bank 012.
+prPrinF, dac prR2
+    lac prA
+    jda psPrin
+    jmp i prR2
+prPutF, dac prR2
+    lac prA
+    jda psPutc
+    jmp i prR2
+prNmF, dac prR2
+    lac prA
+    jda psNmOf
+    dac prA
+    jmp i prR2
+prSepF, dac prR2
+    lac prA
+    jda psSep
+    jmp i prR2
+
+// The value stack from this bank.
+// prPush takes the value in AC and clobbers AC. prPop returns the value
+// popped in AC. IO is preserved by both.
+// prPush is called via jda, prPop via jsp.
+prPush,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [pgSp:6]
+    dac prT
+    lac prPush
+    dac i prT
+    idx i [pgSp:6]
+rtn, jmp 0
+    endloc
+prPop,
+    local rtn
+    dap rtn
+    law i 1
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    dac prT
+    lac i prT
+rtn, jmp 0
+    endloc
+
+// The printing's state.
+psCol, 0                    // the output's column
+wrDry, 0                    // wrc only counts, in wrLen
+wrLen, 0
+psNmP, 0                    // psNmOf's name
+psNil, 0161114; 0           // NIL, packed
+prA, 0                      // the far entries' argument
+prR, 0                      // the full addresses psNmF and psSay return to
+prR2, 0                     // and the far entries
+prT, 0                      // scratch
+prP, 0

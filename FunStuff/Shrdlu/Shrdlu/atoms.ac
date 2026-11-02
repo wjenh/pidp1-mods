@@ -1,0 +1,762 @@
+// Atoms and the heap, meaning points, list cells, and the names atoms
+// print as.
+// An atom is one word (shrdlu.ah); a point is three words of the heap,
+// a list cell two (its first element and the rest, NIL at the end).
+// A command's choice points take back what failed paths used; what the
+// dialogue keeps goes to the heap's bottom before the next line (keep.ac),
+// so a line's words are scratch, from hpBot; RESET empties it. The hand's
+// point is always the first three words.
+// Also the terminal output for the commands (term.ac's putc and its family
+// keep a 12-bit return, so they cannot be called from another bank).
+// Bank 4, eem on, except the output, which is in bank 012 with the
+// commands (goals.ac). The name tables are in bank 5, the heap in bank 6.
+// Needs shrdlu.ah, <DCS/dcs2defs.ah> and term.ac's tConn.
+
+// Takes words from the heap.
+// Takes the count in AC. Returns the first word's full address in AC.
+// IO is preserved. Called via jda. Out of room ends the command.
+halloc,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac hpTop
+    dac t
+    add halloc
+    dac halloc
+    sub hpCap
+    sma
+    jmp eRoom
+    lac halloc
+    dac hpTop
+    lac t
+rtn, jmp 0
+t, 0
+    endloc
+
+hpTop, HPBOT0
+hpBot, HPBOT0               // what is below this is kept
+hpCap, HPCAP0               // a line may use up to this (keep.ac)
+
+// Makes a point of (px, py, pz).
+// Returns the point in AC. IO is clobbered. Called via jsp, from any bank.
+mkpt,
+    local rtn, ra, p
+    dac ra
+    law 3
+    jda halloc
+    dac p
+    dac ptA
+    lac px
+    dac i p
+    idx p
+    lac py
+    dac i p
+    idx p
+    lac pz
+    dac i p
+    lac ptA
+    and [07777]
+    ior [TPT]
+rtn, jmp i ra
+ra, 0
+p, 0
+    endloc
+
+// Reads a point into (px, py, pz).
+// Takes the point in AC. AC and IO are clobbered.
+// Called via jda, from any bank.
+ptget,
+    local rtn, ra
+    0                       // jda puts the argument here
+    dac ra
+    lac ptget
+    and [07777]
+    ior [HPBASE]
+    dac ptA
+    lac i ptA
+    dac px
+    idx ptA
+    lac i ptA
+    dac py
+    idx ptA
+    lac i ptA
+    dac pz
+rtn, jmp i ra
+ra, 0
+    endloc
+
+px, 0
+py, 0
+pz, 0
+ptA, 0
+
+// Skips if two points are at the same place.
+// Takes one point in AC and the other in IO. AC and IO are clobbered.
+// Called via jda.
+pteq,
+    local rtn, yes, b, x, y
+    0                       // jda puts the argument here
+    dap rtn
+    dio b
+    lac pteq
+    sad b
+    jmp yes
+    and [TAGS]
+    sad [TPT]
+    jmp .+2
+    jmp rtn
+    lac b
+    and [TAGS]
+    sad [TPT]
+    jmp .+2
+    jmp rtn
+    lac pteq
+    jda ptget
+    lac px
+    dac x
+    lac py
+    dac y
+    lac pz
+    dac pteq
+    lac b
+    jda ptget
+    lac px
+    sad x
+    jmp .+2
+    jmp rtn
+    lac py
+    sad y
+    jmp .+2
+    jmp rtn
+    lac pz
+    sad pteq
+yes, idx rtn
+rtn, jmp 0
+b, 0
+x, 0
+y, 0
+    endloc
+
+// Makes a new list cell.
+// Takes the first element in AC and the rest in IO. Returns the list in AC.
+// IO is clobbered. Called via jda, from any bank.
+cons,
+    local rtn, ra, p
+    0                       // jda puts the argument here
+    dac ra
+    dio p
+    law 2
+    jda halloc
+    dac ptA
+    lac cons
+    dac i ptA
+    idx ptA
+    lac p
+    dac i ptA
+    lac ptA
+    sub [1]
+    and [07777]
+    ior [TLIST]
+rtn, jmp i ra
+ra, 0
+p, 0
+    endloc
+
+// The first element of a list, NIL for anything else.
+// Takes the list in AC. Returns the element in AC. IO is preserved.
+// Called via jda, from any bank.
+car,
+    local rtn, ra
+    0                       // jda puts the argument here
+    dac ra
+    lac car
+    and [TAGS]
+    sad [TLIST]
+    jmp .+3
+    lac [NIL]
+    jmp rtn
+    lac car
+    and [07777]
+    ior [HPBASE]
+    dac car
+    lac i car
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// The rest of a list after its first element, NIL for anything else.
+// Takes the list in AC. Returns the rest in AC. IO is preserved.
+// Called via jda, from any bank.
+cdr,
+    local rtn, ra
+    0                       // jda puts the argument here
+    dac ra
+    lac cdr
+    and [TAGS]
+    sad [TLIST]
+    jmp .+3
+    lac [NIL]
+    jmp rtn
+    lac cdr
+    and [07777]
+    add [HPBASE+1]
+    dac cdr
+    lac i cdr
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Skips if AC is a list (NIL is not).
+// AC and IO are preserved. Called via jda, from any bank.
+islist,
+    local rtn, ra
+    0                       // jda puts the argument here
+    dac ra
+    lac islist
+    and [TAGS]
+    sad [TLIST]
+    idx ra
+    lac islist
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Counts the elements of a list, 0 for NIL or any other atom.
+// Takes the list in AC. Returns the count in AC. IO is clobbered.
+// Called via jda.
+llen,
+    local rtn, loop, n
+    0                       // jda puts the argument here
+    dap rtn
+    dzm n
+loop, lac llen
+    jda islist
+    jmp .+2
+    jmp .+3
+    lac n
+    jmp rtn
+    idx n
+    lac llen
+    jda cdr
+    dac llen
+    jmp loop
+rtn, jmp 0
+n, 0
+    endloc
+
+// LISTIFY. A list stays as it is, NIL is the empty list, and any other
+// atom becomes a list of one.
+// Takes the atom in AC. Returns the list in AC. IO is clobbered.
+// Called via jda.
+listify,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac listify
+    sad [NIL]
+    jmp rtn
+    jda islist
+    jmp .+2
+    jmp rtn
+    lio [NIL]
+    jda cons
+rtn, jmp 0
+    endloc
+
+// Skips if x is an element of a list, or is the atom itself when the
+// second is not a list (the original's MEMQ on a LISTIFY).
+// Takes x in AC and the list or atom in IO. AC and IO are clobbered.
+// Called via jda.
+member,
+    local rtn, loop, single, yes, l
+    0                       // jda puts the argument here
+    dap rtn
+    dio l
+    lac l
+    jda islist
+    jmp single
+loop, lac l
+    jda islist
+    jmp rtn
+    jda car
+    sad member
+    jmp yes
+    lac l
+    jda cdr
+    dac l
+    jmp loop
+single, lac l
+    sad member
+yes, idx rtn
+rtn, jmp 0
+l, 0
+    endloc
+
+// Copies a list's elements, in order, into lsBuf, with their count in lsN.
+// At most LSMAX are copied, and any more are dropped.
+// Takes the list in AC. AC and IO are clobbered. Called via jda, from any
+// bank.
+lsget,
+    local rtn, ra, loop
+    0                       // jda puts the argument here
+    dac ra
+    dzm lsN
+loop, lac lsget
+    jda islist
+    jmp rtn
+    lac lsN
+    sad [LSMAX]
+    jmp rtn
+    add [lsBuf:.]
+    dac lsP
+    lac lsget
+    jda car
+    dac i lsP
+    idx lsN
+    lac lsget
+    jda cdr
+    dac lsget
+    jmp loop
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Makes the list of lsBuf's lsN elements, in order, ahead of the list in AC.
+// Takes the list in AC. Returns the new list in AC. IO is clobbered.
+// Called via jda, from any bank.
+lsput,
+    local rtn, ra, loop, done
+    0                       // jda puts the argument here
+    dac ra
+loop, lac lsN
+    sza i
+    jmp done
+    sub [1]
+    dac lsN
+    add [lsBuf:.]
+    dac lsP
+    lio lsput
+    lac i lsP
+    jda cons
+    dac lsput
+    jmp loop
+done, lac lsput
+rtn, jmp i ra
+ra, 0
+    endloc
+
+lsBuf,
+    table LSMAX
+lsN, 0
+lsP, 0
+
+// APPEND. Makes a list of a's elements then b's. b itself is not copied.
+// Takes a in AC and b in IO. Returns the list in AC. IO is clobbered.
+// Called via jda.
+lappend,
+    local rtn, b
+    0                       // jda puts the argument here
+    dap rtn
+    dio b
+    lac lappend
+    jda lsget
+    lac b
+    jda lsput
+rtn, jmp 0
+b, 0
+    endloc
+
+// Makes a list without any element equal to x.
+// Takes x in AC and the list in IO. Returns the new list in AC.
+// IO is clobbered. Called via jda.
+ldelete,
+    local rtn, loop, skip, done, ix, jx, p, q
+    0                       // jda puts the argument here
+    dap rtn
+    dio p
+    lac p
+    jda lsget
+    // Close up lsBuf over each element equal to x.
+    dzm ix
+    dzm jx
+loop, lac ix
+    sad lsN
+    jmp done
+    add [lsBuf:.]
+    dac p
+    lac i p
+    sad ldelete
+    jmp skip
+    dac q
+    lac jx
+    add [lsBuf:.]
+    dac p
+    lac q
+    dac i p
+    idx jx
+skip, idx ix
+    jmp loop
+done, lac jx
+    dac lsN
+    lac [NIL]
+    jda lsput
+rtn, jmp 0
+ix, 0
+jx, 0
+p, 0
+q, 0
+    endloc
+
+
+bank 012
+
+// Prints an atom. An integer prints in octal, an object as :B1, a constant
+// as #RED, an event as EE or E12, a list in parentheses, a point as
+// (x y z), and ? stands for an unassigned variable.
+// Takes the atom in AC. AC and IO are clobbered. Called via jda.
+wratom,
+    local rtn, loop, first, elem, l
+    0                       // jda puts the argument here
+    dap rtn
+    lac wratom
+    XJDA(islist, 4)
+    jmp elem
+    dac l
+    law '('
+    jda wrc
+    jmp first
+loop, jsp wrsp
+first, lac l
+    XJDA(car, 4)
+    jda wrelem
+    lac l
+    XJDA(cdr, 4)
+    dac l
+    XJDA(islist, 4)
+    jmp .+2
+    jmp loop
+    law ')'
+    jda wrc
+    jmp rtn
+elem, lac wratom
+    jda wrelem
+rtn, jmp 0
+l, 0
+    endloc
+
+// Prints an atom that is not a list (a list inside one prints as (...)).
+// Takes the atom in AC. AC and IO are clobbered. Called via jda.
+wrelem,
+    local rtn, obj, con, ev, pt, dots, a
+    0                       // jda puts the argument here
+    dap rtn
+    lac wrelem
+    and [TAGS]
+    sza
+    jmp .+4
+    lac wrelem
+    jda wro
+    jmp rtn
+    sad [TOBJ]
+    jmp obj
+    sad [TCON]
+    jmp con
+    sad [TEV]
+    jmp ev
+    sad [TPT]
+    jmp pt
+    sad [TLIST]
+    jmp dots
+    law '?'
+    jda wrc
+    jmp rtn
+dots, lac [sDots:5]
+    jda wrs
+    jmp rtn
+obj, law ':'
+    jda wrc
+    lac wrelem
+    and [07777]
+    add [objNameTab:5]
+    dac a
+    lac i a
+    jda wrs
+    jmp rtn
+con, lac wrelem
+    and [07777]
+    add [conNameTab:5]
+    dac a
+    lac i a
+    jda wrs
+    jmp rtn
+ev, lac wrelem
+    and [07777]
+    sza
+    jmp .+4
+    lac [sEE:5]
+    jda wrs
+    jmp rtn
+    law 'E'
+    jda wrc
+    lac wrelem
+    and [07777]
+    jda wro
+    jmp rtn
+pt, lac wrelem
+    XJDA(ptget, 4)
+    law '('
+    jda wrc
+    jsp wrPxyz
+    law ')'
+    jda wrc
+rtn, jmp 0
+a, 0
+    endloc
+
+// Sends one character, as term.ac's putc does. A full transmit buffer
+// is waited out, and any other error drops the character.
+// Takes the character in AC. AC and IO are clobbered. Called via jda.
+wrc,
+    local rtn, again
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [tConn:0]
+    sza i
+    jmp rtn
+again, lio wrc
+    tcb
+    spi i
+    jmp rtn
+    lai
+    and [dseflf]
+    sza i
+    jmp rtn
+    jmp again
+rtn, jmp 0
+    endloc
+
+// Sends an ascii string, two characters a word, high half first, ended
+// by a 0 half.
+// Takes the string's full address in AC. AC and IO are clobbered.
+// Called via jda.
+wrs,
+    local rtn, loop, w
+    0                       // jda puts the argument here
+    dap rtn
+loop, lac i wrs
+    dac w
+    sar 9s
+    and [0377]
+    sza i
+    jmp rtn
+    jda wrc
+    lac w
+    and [0377]
+    sza i
+    jmp rtn
+    jda wrc
+    idx wrs
+    jmp loop
+rtn, jmp 0
+w, 0
+    endloc
+
+// Sends a number in octal, a minus sign first when negative.
+// Takes the number in AC. AC and IO are clobbered. Called via jda.
+wro,
+    local rtn, loop, print, skip, k, d, any
+    0                       // jda puts the argument here
+    dap rtn
+    lac wro
+    sma
+    jmp .+5
+    law '-'
+    jda wrc
+    lac wro
+    cma
+    dac wro
+    dzm any
+    law 6
+    dac k
+    // Each pass rotates the top three bits into AC. A digit is printed
+    // once one has been, or when it is not 0, or the last.
+loop, lio wro
+    cla
+    rcl 3s
+    dio wro
+    dac d
+    sza
+    jmp print
+    lac any
+    sza
+    jmp print
+    lac k
+    sad [1]
+    jmp print
+    jmp skip
+print, lac d
+    add ['0']
+    jda wrc
+    law 1
+    dac any
+skip, lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+k, 0
+d, 0
+any, 0
+    endloc
+
+// Ends a line. AC and IO are clobbered. Called via jsp.
+wrnl,
+    local rtn
+    dap rtn
+    law 012
+    jda wrc
+rtn, jmp 0
+    endloc
+
+// Sends a space. AC and IO are clobbered. Called via jsp.
+wrsp,
+    local rtn
+    dap rtn
+    law ' '
+    jda wrc
+rtn, jmp 0
+    endloc
+
+// Prints bank 4's (px, py, pz) as x y z, in octal.
+// AC and IO are clobbered. Called via jsp.
+wrPxyz,
+    local rtn
+    dap rtn
+    lac i [px:4]
+    jda wro
+    jsp wrsp
+    lac i [py:4]
+    jda wro
+    jsp wrsp
+    lac i [pz:4]
+    jda wro
+rtn, jmp 0
+    endloc
+
+bank 5
+
+// Each object atom's name, a full address, in atom order. The first
+// thirteen are the drawn objects (objNames, bank 2), then come the five
+// that are not drawn.
+objNameTab,
+    objNames:2
+    objNames:2+2
+    objNames:2+4
+    objNames:2+6
+    objNames:2+0d8
+    objNames:2+0d10
+    objNames:2+0d12
+    objNames:2+0d14
+    objNames:2+0d16
+    objNames:2+0d18
+    objNames:2+0d20
+    objNames:2+0d22
+    objNames:2+0d24
+    nTable:5
+    nHand:5
+    nShrdlu:5
+    nFriend:5
+    nDialog:5
+nTable, ascii "TABLE"
+nHand, ascii "HAND"
+nShrdlu, ascii "SHRDLU"
+nFriend, ascii "FRIEND"
+nDialog, ascii "DIALOG"
+
+// Each constant's name, a full address, in the order of shrdlu.ah.
+conNameTab,
+    cNil:5
+    cIs:5
+    cManip:5
+    cShape:5
+    cColor:5
+    cSupport:5
+    cCleartop:5
+    cContain:5
+    cCall:5
+    cStart:5
+    cAt:5
+    cGrasping:5
+    cNoclear:5
+    cBlock:5
+    cPyramid:5
+    cBox:5
+    cTable:5
+    cRect:5
+    cPointed:5
+    cRound:5
+    cRed:5
+    cGreen:5
+    cBlue:5
+    cWhite:5
+    cBlack:5
+    cRobot:5
+    cPerson:5
+    cHand:5
+    cShrdlu:5
+    cYou:5
+    cCommand:5
+    cPuton:5
+    cPutin:5
+    cPickup:5
+    cGrasp:5
+    cUngrasp:5
+    cRaisehand:5
+    cStackup:5
+    cGetridof:5
+    cMakespace:5
+cNil, ascii "NIL"
+cIs, ascii "#IS"
+cManip, ascii "#MANIP"
+cShape, ascii "#SHAPE"
+cColor, ascii "#COLOR"
+cSupport, ascii "#SUPPORT"
+cCleartop, ascii "#CLEARTOP"
+cContain, ascii "#CONTAIN"
+cCall, ascii "#CALL"
+cStart, ascii "#START"
+cAt, ascii "#AT"
+cGrasping, ascii "#GRASPING"
+cNoclear, ascii "#NOCLEAR"
+cBlock, ascii "#BLOCK"
+cPyramid, ascii "#PYRAMID"
+cBox, ascii "#BOX"
+cTable, ascii "#TABLE"
+cRect, ascii "#RECTANGULAR"
+cPointed, ascii "#POINTED"
+cRound, ascii "#ROUND"
+cRed, ascii "#RED"
+cGreen, ascii "#GREEN"
+cBlue, ascii "#BLUE"
+cWhite, ascii "#WHITE"
+cBlack, ascii "#BLACK"
+cRobot, ascii "#ROBOT"
+cPerson, ascii "#PERSON"
+cHand, ascii "#HAND"
+cShrdlu, ascii "SHRDLU"
+cYou, ascii "YOU"
+cCommand, ascii "COMMAND"
+cPuton, ascii "#PUTON"
+cPutin, ascii "#PUTIN"
+cPickup, ascii "#PICKUP"
+cGrasp, ascii "#GRASP"
+cUngrasp, ascii "#UNGRASP"
+cRaisehand, ascii "#RAISEHAND"
+cStackup, ascii "#STACKUP"
+cGetridof, ascii "#GET-RID-OF"
+cMakespace, ascii "#MAKESPACE"
+sEE, ascii "EE"
+sDots, ascii "(...)"
+
+bank 4

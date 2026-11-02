@@ -1,0 +1,473 @@
+// The piece cache holds each object's visible pieces, and the table's, as the
+// last rebuild drew them, so that a rebuild clips again only what a change
+// can touch, as the original did (GP-PROPOGATETRANS).
+//
+// An object has changed when its location, its wireframe flag or whether
+// it is held is not what it was at the last rebuild. It can then hide or
+// uncover something only where its screen box, before or after, overlaps
+// that thing's box. So a slot is clipped again when its object has
+// changed, when its box overlaps either box of an object that has, or
+// when its pieces did not fit (PMAX); every other slot's pieces are drawn
+// from the cache. The boxes are of the clamped vertices, as the pieces
+// are, and an occluder outside the raster can hide nothing on it.
+//
+// A slot's record (PSREC words, bank 2) is worked on in the copy psLx to
+// psCnt; its pieces (bank 3) are x0 y0 x1 y1 each.
+// Bank 0, eem on. Needs shrdlu.ah, world.ac, hidden.ac, dlist.ac.
+
+// Empties the cache. No object is seen yet and no slot's pieces are good.
+// The table's slot gets the table's screen box, and every other an empty one.
+// AC and IO are clobbered. Called via jsp.
+pcInit,
+    local rtn, loop, put, s
+    dap rtn
+    dzm pcOn
+    dzm s
+loop, lac s
+    jda pcGet
+    dzm psS
+    law i 1
+    dac psCnt
+    law 07777
+    dac psLx
+    dac psLy
+    law i 07777
+    dac psHx
+    dac psHy
+    lac s
+    sad [TABSLOT]
+    jmp .+2
+    jmp put
+    dzm psLx
+    dzm psLy
+    law TAB3X
+    dac psHx
+    law TAB3Y
+    dac psHy
+put, jsp pcPut
+    idx s
+    sad [NSLOT]
+    jmp .+2
+    jmp loop
+rtn, jmp 0
+s, 0
+    endloc
+
+// Copies a slot's record into psLx to psCnt, and sets psSlot.
+// Takes the slot in AC. AC and IO are clobbered. Called via jda.
+pcGet,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac pcGet
+    dac psSlot
+    sal 4s
+    add [pcRecs:2]
+    dac wcSrc
+    lac [psLx]
+    dac wcDst
+    law PSREC
+    dac wcN
+    jsp wcopy
+rtn, jmp 0
+    endloc
+
+// Copies psLx to psCnt back into slot psSlot's record.
+// AC and IO are clobbered. Called via jsp.
+pcPut,
+    local rtn
+    dap rtn
+    lac psSlot
+    sal 4s
+    add [pcRecs:2]
+    dac wcDst
+    lac [psLx]
+    dac wcSrc
+    law PSREC
+    dac wcN
+    jsp wcopy
+rtn, jmp 0
+    endloc
+
+// Finds the objects that have changed since the last rebuild. Each gets
+// psChg, its record's new state and box, and its box before and after in
+// pcList (pcLn entries). A held object's pieces are dropped, since the
+// scene does not draw it.
+// AC and IO are clobbered, and so are the working copy and the vertices.
+// Called via jsp.
+pcScan,
+    local rtn, loop, chg, nxt, o, st, sc
+    dap rtn
+    dzm pcLn
+    lac [pcList:2]
+    dac pcLp
+    dzm o
+loop, lac o
+    jda pcGet
+    dzm psChg
+    lac o
+    jda objGet
+    lac woKind
+    sza i
+    jmp nxt
+    lac woFlags
+    and [FTRANS]
+    ior [4]
+    dac st
+    lac o
+    sad wHeld
+    jmp .+2
+    jmp .+6
+    lac st
+    ior [2]
+    dac st
+    law i 1
+    dac psCnt
+    lac st
+    sas psS
+    jmp chg
+    lac woX
+    sas psX
+    jmp chg
+    lac woY
+    sas psY
+    jmp chg
+    lac woZ
+    sas psZ
+    jmp chg
+    jmp nxt
+chg, law 1
+    dac psChg
+    lac st
+    dac psS
+    jsp pcAppend
+    lac woX
+    dac psX
+    dac gLx
+    lac woY
+    dac psY
+    dac gLy
+    lac woZ
+    dac psZ
+    dac gLz
+    // Clamped as the scene's are, but not counted twice.
+    law 1
+    dac gClamp
+    lac dpClamps
+    dac sc
+    jsp geomBuild
+    lac sc
+    dac dpClamps
+    jsp pcBox
+    jsp pcAppend
+nxt, jsp pcPut
+    idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+rtn, jmp 0
+o, 0
+st, 0
+sc, 0
+    endloc
+
+// Adds the record's box, owned by psSlot, to pcList.
+// AC and IO are clobbered. Called via jsp.
+pcAppend,
+    local rtn
+    dap rtn
+    lac psSlot
+    dac i pcLp
+    idx pcLp
+    lac psLx
+    dac i pcLp
+    idx pcLp
+    lac psHx
+    dac i pcLp
+    idx pcLp
+    lac psLy
+    dac i pcLp
+    idx pcLp
+    lac psHy
+    dac i pcLp
+    idx pcLp
+    idx pcLn
+rtn, jmp 0
+    endloc
+
+// Finds the screen box of the vertices geomBuild made last, for the kind
+// in woKind. Returns it in psLx, psHx, psLy and psHy.
+// AC and IO are clobbered. Called via jsp.
+pcBox,
+    local rtn, loop, k, n
+    dap rtn
+    lac woKind
+    add [kindGeo:2]
+    dac k
+    lac i k
+    dac k
+    lac i k
+    cma
+    dac n
+    law 07777
+    dac psLx
+    dac psLy
+    law i 07777
+    dac psHx
+    dac psHy
+    law 1
+    dac k
+loop, lac k
+    lio [gsx]
+    jda vget
+    lio [psLx]
+    jda pcWiden
+    lac k
+    lio [gsy]
+    jda vget
+    lio [psLy]
+    jda pcWiden
+    idx k
+    isp n
+    jmp loop
+rtn, jmp 0
+k, 0
+n, 0
+    endloc
+
+// Widens the bounds at IO, the low and then the high, to take in AC.
+// AC and IO are clobbered. Called via jda.
+pcWiden,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    dio p
+    lac pcWiden
+    sub i p
+    sma
+    jmp .+3
+    lac pcWiden
+    dac i p
+    idx p
+    lac pcWiden
+    sub i p
+    spa
+    jmp rtn
+    lac pcWiden
+    dac i p
+rtn, jmp 0
+p, 0
+    endloc
+
+// Marks the slots to clip again (psDirty). They are the slots of an object
+// that has changed, any slot whose pieces are not good, and any whose box
+// overlaps, edges included, a box in pcList that is not its own.
+// AC and IO are clobbered. Called via jsp.
+pcMark,
+    local rtn, loop, inner, inxt, dirty, put, s, q, t, n
+    dap rtn
+    dzm s
+loop, lac s
+    jda pcGet
+    dzm psDirty
+    lac psChg
+    sza
+    jmp dirty
+    lac psCnt
+    spa
+    jmp dirty
+#ifdef PCNOSPREAD
+    jmp put
+#endif
+    lac pcLn
+    sza i
+    jmp put
+    cma
+    dac n
+    lac [pcList:2]
+    dac q
+inner, lac q
+    dac t
+    lac i t
+    sad s
+    jmp inxt
+    idx t
+    lac i t
+    sub psHx
+    sma sza
+    jmp inxt
+    idx t
+    lac psLx
+    sub i t
+    sma sza
+    jmp inxt
+    idx t
+    lac i t
+    sub psHy
+    sma sza
+    jmp inxt
+    idx t
+    lac psLy
+    sub i t
+    sma sza
+    jmp inxt
+    jmp dirty
+inxt, lac q
+    add [5]
+    dac q
+    isp n
+    jmp inner
+    jmp put
+dirty, law 1
+    dac psDirty
+put, jsp pcPut
+    idx s
+    sad [NSLOT]
+    jmp .+2
+    jmp loop
+rtn, jmp 0
+s, 0
+q, 0
+t, 0
+n, 0
+    endloc
+
+// Draws a slot's pieces from the cache and skips, if they are good.
+// Otherwise returns without skipping, and starts recording. The clipping
+// that follows keeps its pieces in the slot (pcPiece), and pcEnd ends it.
+// Takes the slot in AC. AC and IO are clobbered. Called via jda.
+pcClean,
+    local rtn, loop, rec, done, n
+    0                       // jda puts the argument here
+    dap rtn
+    lac pcClean
+    jda pcGet
+    lac psSlot
+    sal 7s
+    add [pcSlots:3]
+    dac pcWp
+    lac psDirty
+    sza
+    jmp rec
+    lac psCnt
+    sza i
+    jmp done
+    cma
+    dac n
+loop, lac i pcWp
+    dac sgX0
+    idx pcWp
+    lac i pcWp
+    dac sgY0
+    idx pcWp
+    lac i pcWp
+    dac sgX1
+    idx pcWp
+    lac i pcWp
+    dac sgY1
+    idx pcWp
+    jsp dlSeg
+    isp n
+    jmp loop
+done, idx rtn
+    jmp rtn
+rec, dzm pcN
+    law 1
+    dac pcOn
+rtn, jmp 0
+n, 0
+    endloc
+
+// Keeps the piece sgX0, sgY0 to sgX1, sgY1 in the slot being recorded;
+// when the slot is full, stops recording and marks its pieces not good.
+// AC and IO are clobbered. Called via jsp.
+pcPiece,
+    local rtn, full
+    dap rtn
+    lac pcN
+    sad [PMAX]
+    jmp full
+    lac sgX0
+    dac i pcWp
+    idx pcWp
+    lac sgY0
+    dac i pcWp
+    idx pcWp
+    lac sgX1
+    dac i pcWp
+    idx pcWp
+    lac sgY1
+    dac i pcWp
+    idx pcWp
+    idx pcN
+    jmp rtn
+full, dzm pcOn
+    law i 1
+    dac pcN
+rtn, jmp 0
+    endloc
+
+// Ends recording. The slot's piece count is what was kept, or -1 if it
+// did not fit. AC and IO are clobbered. Called via jsp.
+pcEnd,
+    local rtn
+    dap rtn
+    lac pcN
+    dac psCnt
+    dzm pcOn
+    jsp pcPut
+rtn, jmp 0
+    endloc
+
+// Draws the table's pieces, from the cache or clipped and recorded.
+// AC and IO are clobbered. Called via jsp.
+tabDraw,
+    local rtn
+    dap rtn
+    law TABSLOT
+    jda pcClean
+    jmp .+2
+    jmp rtn
+    jsp clipTable
+    jsp pcEnd
+rtn, jmp 0
+    endloc
+
+// The record in work, in the order of a slot's record (PSREC words).
+psLx, 0                     // the screen box
+psHx, 0
+psLy, 0
+psHy, 0
+psX, 0                      // the object's location at the last rebuild
+psY, 0
+psZ, 0
+psS, 0                      // 4 once seen, 2 held, FTRANS; 0 not seen
+psChg, 0                    // 1: changed at this rebuild
+psDirty, 0                  // 1: to clip again
+psCnt, 0                    // pieces kept, -1 if they are not good
+
+psSlot, 0                   // the slot the record is from
+pcLp, 0                     // pcList's next free word
+pcLn, 0                     // pcList's entries
+pcWp, 0                     // the slot's next piece word
+pcN, 0                      // pieces recorded, -1 when full
+pcOn, 0                     // 1: recording
+
+bank 2
+
+// The slots' records, 16 words apart (pcGet shifts by 4).
+pcRecs,
+    table NSLOT*0d16
+
+// The boxes of the changed objects, before and after. Each entry is five
+// words, the slot then the box.
+pcList,
+    table NOBJ*0d10
+
+bank 3
+
+// The slots' pieces, PSLOT words each.
+pcSlots,
+    table NSLOT*PSLOT
+
+bank 0

@@ -1,0 +1,477 @@
+// The hand code has the original's four display calls, MOVETO, GRASP and UNGRASP
+// (graphf.3), with this program's REFRESH, and the motion of GP-MOVEHAND
+// and GP-DISMOTION.
+//
+// The wireframe rule. GRASP draws the object and everything that hid it
+// whole (FTRANS); a MOVETO with a load does the same to whatever would
+// hide the load where it is going; UNGRASP leaves the object a wireframe
+// where it is put; REFRESH makes every object solid again but the one
+// held. The held object is drawn whole with the hand, hiding nothing.
+//
+// A move lifts the hand to z = LIFTZ, goes along y, then along x, then
+// down. Each leg steps the hand's screen position STEPX and STEPY at a
+// time, both axes at once, each stopping when within a step of its end,
+// one step each PERIOD milliseconds. Built with FASTMOTION, the hand
+// jumps to the end at once.
+// Bank 0, eem on. Needs shrdlu.ah, world.ac, project.ac, hidden.ac,
+// dlist.ac, term.ac.
+
+// MOVETO moves the hand, with its load, to (mvX, mvY, mvZ).
+// AC and IO are clobbered. Called via jsp, from any bank. It returns to
+// the full address it was called from, as GRASP, UNGRASP and REFRESH do.
+cmdMoveto,
+    local rtn, ra, move
+    dac ra
+    lac wHeld
+    spa
+    jmp move
+    // Where the load will be, centered below the hand.
+    jda objGet
+    lac woDsx
+    sar 1s
+    cma
+    add mvX
+    dac hdLx
+    lac woDsy
+    sar 1s
+    cma
+    add mvY
+    dac hdLy
+    lac woDsz
+    cma
+    add mvZ
+    dac hdLz
+    lac wHeld
+    jda hidersOf
+    jsp setTrans
+    sza
+    jsp dlRebuild
+move, jsp moveHand
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// GRASP takes hold of an object, letting go of anything held first.
+// The hand goes to the object's top center at once.
+// Takes the object's index in AC. AC and IO are clobbered. Called via
+// jda. From another bank, its first word is set and the next jumped to.
+cmdGrasp,
+    local rtn, ra, notobj, o
+    0                       // jda puts the argument here
+    dac ra
+    lac cmdGrasp
+    dac o
+    lio [RKIND]
+    jda objField
+    sad [KBLOCK]
+    jmp .+4
+    sad [KPYRAMID]
+    jmp .+2
+    jmp notobj
+    lac wHeld
+    spa
+    jmp .+5
+    lac [sAlready:2]
+    jda puts
+    jsp putnl
+    jsp letGo
+    lac o
+    jda objGet
+    lac woDsx
+    sar 1s
+    add woX
+    dac wHx
+    lac woDsy
+    sar 1s
+    add woY
+    dac wHy
+    lac woDsz
+    add woZ
+    dac wHz
+    jsp handJump
+    lac woX
+    dac hdLx
+    lac woY
+    dac hdLy
+    lac woZ
+    dac hdLz
+    lac o
+    jda hidersOf
+    lac o
+    lio [bitTab:2]
+    jda vget
+    ior hdMask
+    dac hdMask
+    jsp setTrans
+    lac o
+    dac wHeld
+    jsp dlRebuild
+    jmp rtn
+notobj, lac [sNotObj:2]
+    jda puts
+    jsp putnl
+rtn, jmp i ra
+ra, 0
+o, 0
+    endloc
+
+// UNGRASP puts the held object down where it hangs below the hand.
+// AC and IO are clobbered. Called via jsp.
+cmdUngrasp,
+    local rtn, ra
+    dac ra
+    lac wHeld
+    sma
+    jmp .+5
+    lac [sNotGrasping:2]
+    jda puts
+    jsp putnl
+    jmp rtn
+    jsp letGo
+    jsp dlRebuild
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Lets go of the held object. Its new location is centered below the
+// hand, and it stays a wireframe. The display is not rebuilt.
+// AC and IO are clobbered. Called via jsp.
+letGo,
+    local rtn
+    dap rtn
+    lac wHeld
+    jda objGet
+    lac woDsx
+    sar 1s
+    cma
+    add wHx
+    dac woX
+    lac woDsy
+    sar 1s
+    cma
+    add wHy
+    dac woY
+    lac woDsz
+    cma
+    add wHz
+    dac woZ
+    lac woFlags
+    ior [FTRANS]
+    dac woFlags
+    jsp objPut
+    law i 1
+    dac wHeld
+rtn, jmp 0
+    endloc
+
+// REFRESH makes every object solid again but the one held.
+// AC and IO are clobbered. Called via jsp.
+cmdRefresh,
+    local rtn, ra, loop, o
+    dac ra
+    dzm o
+loop, lac o
+    jda objGet
+    dzm woFlags
+    lac o
+    sad wHeld
+    jmp .+2
+    jmp .+3
+    law FTRANS
+    dac woFlags
+    jsp objPut
+    idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    jsp dlRebuild
+rtn, jmp i ra
+ra, 0
+o, 0
+    endloc
+
+// RESET puts the world as it starts and the hand back at its start at once.
+// AC and IO are clobbered. Called via jsp.
+cmdReset,
+    local rtn
+    dap rtn
+    jsp worldReset
+    jsp handJump
+    jsp dlRebuild
+rtn, jmp 0
+    endloc
+
+// Finds the objects that hide part of an object's drawn edges at (hdLx,
+// hdLy, hdLz). Those are every edge if it is a wireframe, else those that
+// can be seen.
+// Takes the object's index in AC. Returns their bits (bitTab) in hdMask,
+// the object's bit not among them. AC and IO are clobbered. Called via jda.
+hidersOf,
+    local rtn, o
+    0                       // jda puts the argument here
+    dap rtn
+    lac hidersOf
+    dac o
+    jsp occBuild
+    lac o
+    jda objGet
+    lac hdLx
+    dac gLx
+    lac hdLy
+    dac gLy
+    lac hdLz
+    dac gLz
+    dzm gClamp
+    dzm cEmit
+    dzm cMask
+    lac o
+    dac cOwner
+    lac woFlags
+    and [FTRANS]
+    dac cWhole
+    jsp geomBuild
+    jsp clipEdges
+    lac o
+    lio [bitTab:2]
+    jda vget
+    cma
+    and cMask
+    dac hdMask
+rtn, jmp 0
+o, 0
+    endloc
+
+// Makes every object whose bit is set in hdMask a wireframe.
+// Returns 0 in AC if none of them changed, else not 0.
+// AC is the result and IO is clobbered. Called via jsp.
+setTrans,
+    local rtn, loop, nxt, o, ch
+    dap rtn
+    dzm o
+    dzm ch
+loop, lac o
+    lio [bitTab:2]
+    jda vget
+    and hdMask
+    sza i
+    jmp nxt
+    lac o
+    jda objGet
+    lac woFlags
+    and [FTRANS]
+    sza
+    jmp nxt
+    law FTRANS
+    ior woFlags
+    dac woFlags
+    jsp objPut
+    law 1
+    dac ch
+nxt, idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    lac ch
+rtn, jmp 0
+o, 0
+ch, 0
+    endloc
+
+// Puts the hand on the screen at its location (wHx, wHy, wHz) at once.
+// AC and IO are clobbered. Called via jsp.
+handJump,
+    local rtn
+    dap rtn
+    lac wHx
+    dac pjX
+    lac wHy
+    dac pjY
+    lac wHz
+    dac pjZ
+    jsp proj
+    lac pjSx
+    dac hpX
+    lac pjSy
+    dac hpY
+    jsp handNow
+    cla
+    jda handShow
+rtn, jmp 0
+    endloc
+
+// GP-MOVEHAND moves the hand from where it is to (mvX, mvY, mvZ) in four
+// legs, and does nothing if it is there already.
+// AC and IO are clobbered. Called via jsp.
+moveHand,
+    local rtn, go
+    dap rtn
+    lac mvX
+    sad wHx
+    jmp .+2
+    jmp go
+    lac mvY
+    sad wHy
+    jmp .+2
+    jmp go
+    lac mvZ
+    sad wHz
+    jmp rtn
+go,
+#ifdef FASTMOTION
+    lac mvX
+    dac wHx
+    lac mvY
+    dac wHy
+    lac mvZ
+    dac wHz
+    jsp handJump
+#else
+    jsp handNow
+    lac wHx
+    dac pjX
+    lac wHy
+    dac pjY
+    lac [LIFTZ]
+    dac pjZ
+    jsp leg
+    lac mvY
+    dac pjY
+    jsp leg
+    lac mvX
+    dac pjX
+    jsp leg
+    lac mvZ
+    dac pjZ
+    jsp leg
+    lac mvX
+    dac wHx
+    lac mvY
+    dac wHy
+    lac mvZ
+    dac wHz
+#endif
+rtn, jmp 0
+    endloc
+
+#ifndef FASTMOTION
+// One leg of a move, GP-DISMOTION to the projection of (pjX, pjY, pjZ),
+// which it leaves as it found them. Each pass shows the hand at
+// (ix, iy), then steps each axis still moving, or puts it at its end. An
+// axis stops moving when within a step of its end. The end is shown last.
+// AC and IO are clobbered. Called via jsp.
+leg,
+    local rtn, loop, ystep, steps, done, nx, ny, ix, iy, sx, sy, fx, fy, sp, sq
+    dap rtn
+    lac pjX
+    dac sp
+    lac pjY
+    dac sq
+    jsp proj
+    lac sp
+    dac pjX
+    lac sq
+    dac pjY
+    lac pjSx
+    dac nx
+    lac pjSy
+    dac ny
+    lac hsx
+    dac ix
+    lac hsy
+    dac iy
+    law STEPX
+    dac sx
+    lac nx
+    sub ix
+    sma
+    jmp .+3
+    law i STEPX
+    dac sx
+    law STEPY
+    dac sy
+    lac ny
+    sub iy
+    sma
+    jmp .+3
+    law i STEPY
+    dac sy
+    law 1
+    dac fx
+    dac fy
+loop, lac fx
+    ior fy
+    sza i
+    jmp done
+    // |n - i| < step clears the axis's flag.
+    lac nx
+    sub ix
+    spa
+    cma
+    sub [STEPX]
+    spa
+    dzm fx
+    lac ny
+    sub iy
+    spa
+    cma
+    sub [STEPY]
+    spa
+    dzm fy
+    lac ix
+    dac hpX
+    lac iy
+    dac hpY
+    law 1
+    jda handShow
+    lac fx
+    sza i
+    jmp .+5
+    lac ix
+    add sx
+    dac ix
+    jmp ystep
+    lac nx
+    dac ix
+ystep, lac fy
+    sza i
+    jmp .+5
+    lac iy
+    add sy
+    dac iy
+    jmp loop
+    lac ny
+    dac iy
+    jmp loop
+done, lac nx
+    dac hpX
+    lac ny
+    dac hpY
+    cla
+    jda handShow
+rtn, jmp 0
+nx, 0
+ny, 0
+ix, 0
+iy, 0
+sx, 0
+sy, 0
+fx, 0
+fy, 0
+sp, 0
+sq, 0
+    endloc
+#endif
+
+mvX, 0                      // a move's target
+mvY, 0
+mvZ, 0
+hdLx, 0                     // hidersOf's location
+hdLy, 0
+hdLz, 0
+hdMask, 0
+
+bank 2
+sAlready, ascii "I AM ALREADY GRASPING SOMETHING"
+sNotObj, ascii "NOT AN OBJECT"
+sNotGrasping, ascii "NOT GRASPING ANYTHING"
+bank 0

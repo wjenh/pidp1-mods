@@ -1,0 +1,621 @@
+// Constants for SHRDLU on the PDP-1: the world's units, the object record,
+// the display's intensities and pacing, and the DCS2 port.
+// Coordinates are the original program's units, octal as in its sources.
+// Every name here is a cpp define, and none of them reserves a word.
+
+#ifndef SHRDLU_AH
+#define SHRDLU_AH
+
+// The DCS2 server channel's TCP port.
+#define DCSPORT 0d2042
+
+// The objects, in the original's ATABLE order, which its OCCUPIER scans in.
+// They are :B1 to :B7, :B10, the four box walls :BW1 to :BW4, then :BOX.
+#define NOBJ 0d13
+#define BOXOBJ 0d12
+
+// An object record is OREC words.
+// It holds location and size as the world sees them, the size the display
+// draws, the kind, the color and the flags.
+#define OREC 0d12
+#define RX 0
+#define RY 1
+#define RZ 2
+#define RSX 3
+#define RSY 4
+#define RSZ 5
+#define RDSX 6
+#define RDSY 7
+#define RDSZ 0d8
+#define RKIND 0d9
+#define RCOLOR 0d10
+#define RFLAGS 0d11
+
+// Kinds. A wall is in the world only, and the box draws it.
+#define KWALL 0
+#define KBLOCK 1
+#define KPYRAMID 2
+#define KBOX 3
+
+// Colors, which are also the display groups 0 to 3, in drawing order.
+#define CRED 0
+#define CGREEN 1
+#define CBLUE 2
+#define CWHITE 3
+
+// The flag for an object drawn as a wireframe, whole, hiding nothing.
+#define FTRANS 1
+
+// The 340 intensity of each color group, 0 dimmest to 7.
+// To show every object at one intensity, make all four the same.
+#define IRED 5
+#define IGREEN 3
+#define IBLUE 1
+#define IWHITE 7
+
+// The box's wall thickness (the original's GP-DRBOX).
+#define WALL 010
+
+// The hand: where it starts, the height its moves lift it to, and the
+// screen y the arm runs up to. Every move steps the screen position by
+// STEPX and STEPY (octal) each PERIOD milliseconds.
+#define HANDX 040
+#define HANDY 0
+#define HANDZ 0
+#define LIFTZ 01300
+#define ARMTOP 01730
+#ifndef STEPX
+#define STEPX 020
+#endif
+#ifndef STEPY
+#define STEPY 014
+#endif
+// The hand's crossbars, in screen points.
+// The top one is at ARMTOP.
+// The bottom one, the larger, is at the hand's point, on the held object's top.
+#define HBARTOP 0d24
+#define HBARBOT 0d40
+// A period shorter than any frame makes the hand take one step on every frame (handApply in dlist.ac).
+// A period above a frame makes the steps fall some frames apart.
+#ifndef PERIOD
+#define PERIOD 0d1
+#endif
+
+// The 340's raster runs 0 to RASTERMAX on both axes.
+#define RASTERMAX 0d1023
+
+// The table's corners on the screen, the original's GP-SELECTSHAPE corners projected.
+// They are (0,0), P(1207,-3,0), P(1207,1207,0) and P(-3,1207,0).
+#define TAB1X 0
+#define TAB1Y 0
+#define TAB2X 0d582
+#define TAB2Y 1
+#define TAB3X 0d1022
+#define TAB3Y 0d254
+#define TAB4X 0d437
+#define TAB4Y 0d254
+
+// The display buffers in bank 1 are two for the scene (one shown while the
+// other is built), each BUFWORDS long, the hand's, and the idle labels'
+// (dlist.ac, labels.ac).
+// The scene's peak is 347 words (the wireframe scene), so the buffers give up
+// 44 words each for the labels and the code that shows them.
+#define BUFWORDS 0d1856
+#define BUFSLACK 0d16
+#define HANDWORDS 0d24
+#define LBWORDS 0d36
+
+// Each frame has NGROUP display groups.
+// They are the four colors, the held object, the labels and the hand.
+// The labels' group is in each buffer's table (grpTab), pointing at the label
+// list while the program is idle and at a bare halt otherwise.
+#define NGROUP 7
+#define GHELD 4
+#define GLABEL 5
+#define GHAND 6
+
+// The idle labels (labels.ac) are two letters at scale LBSCALE (0 to 3) and
+// intensity LBINT.
+// A build may give LBINT a value no other group has, 6, so that the labels
+// show alone in the display's stream.
+// They are drawn LBDX, LBDY raster units right of and above the middle of the
+// object's longest visible piece.
+// LBMAXX and LBMAXY keep them inside the raster, by two characters at the
+// scale and a character high.
+#define LBSCALE 1
+#ifndef LBINT
+#define LBINT 7
+#endif
+#define LBDX 4
+#define LBDY 4
+#define LBMAXX (RASTERMAX-(0d15<<LBSCALE))
+#define LBMAXY (RASTERMAX-(0d8<<LBSCALE))
+
+// An occluder record is OCC words, for at most 8 objects and the box's 4 walls.
+// The screen box comes first (the fast reject reads only those), then the rest.
+#define MAXOCC 0d12
+#define OCC 0d25
+#define QSMINX 0
+#define QSMAXX 1
+#define QSMINY 2
+#define QSMAXY 3
+#define QOWNER 4
+#define QWALL 5
+#define QLOX 6
+#define QLOY 7
+#define QLOZ 0d8
+#define QHIX 0d9
+#define QHIY 0d10
+#define QHIZ 0d11
+#define QN 0d12
+#define QPX 0d13
+#define QPY 0d19
+
+// The piece cache (cache.ac) has a slot for each object and one for the table.
+// Each slot is a record of PSREC words in bank 2 and has room for PMAX pieces
+// of four words in bank 3.
+// PSLOT, the room, is 2^7 words, and pcClean shifts by 7.
+#define NSLOT 0d14
+#define TABSLOT 0d13
+#define PSREC 0d11
+#define PMAX 0d32
+#define PSLOT 0d128
+
+// The input line's longest length, in characters.
+#define LINEMAX 0d72
+
+// The output's wrapping width (print.ac's psFit).
+// A word ends at the width less one characters at the most, so with a closing
+// quote and period after it a line is OUTWIDTH+1 characters, 79, at the most.
+#define OUTWIDTH 0d78
+
+// The planner's atoms.
+// An atom is one word, its kind in the top three bits.
+// A kind is a small integer, an object (its index in the object table, then
+// the five below), a constant (NIL is constant 0), an event (EE is event 0),
+// a list or a point (an offset in the heap, bank 6), or a variable cell.
+// TVAR alone is unassigned, and TVAR+n links to the cell at offset n of bank
+// 010, the frames.
+#define TINT 0
+#define TOBJ 0100000
+#define TCON 0200000
+#define TEV 0300000
+#define TLIST 0400000
+#define TWD 0500000
+#define TPT 0600000
+#define TVAR 0700000
+#define TAGS 0700000
+#define NIL TCON
+#define UNASS TVAR
+
+#define OTABLE TOBJ+0d13
+#define OHAND TOBJ+0d14
+#define OSHRDLU TOBJ+0d15
+#define OFRIEND TOBJ+0d16
+#define ODIALOG TOBJ+0d17
+#define OBOX TOBJ+BOXOBJ
+#define NATOMOBJ 0d18
+
+// The constants, in the order of the name table (atoms.ac).
+// A constant that names a predicate is also the index of its chain (db.ac).
+#define AIS TCON+1
+#define AMANIP TCON+2
+#define ASHAPE TCON+3
+#define ACOLOR TCON+4
+#define ASUPPORT TCON+5
+#define ACLEARTOP TCON+6
+#define ACONTAIN TCON+7
+#define ACALL TCON+0d8
+#define ASTART TCON+0d9
+#define AAT TCON+0d10
+#define AGRASPING TCON+0d11
+#define ANOCLEAR TCON+0d12
+#define ABLOCK TCON+0d13
+#define APYRAMID TCON+0d14
+#define ABOX TCON+0d15
+#define ATABLE TCON+0d16
+#define ARECT TCON+0d17
+#define APOINTED TCON+0d18
+#define AROUND TCON+0d19
+#define ARED TCON+0d20
+#define AGREEN TCON+0d21
+#define ABLUE TCON+0d22
+#define AWHITE TCON+0d23
+#define ABLACK TCON+0d24
+#define AROBOT TCON+0d25
+#define APERSON TCON+0d26
+#define AHAND TCON+0d27
+#define ASHRDLU TCON+0d28
+#define AYOU TCON+0d29
+#define ACOMMAND TCON+0d30
+#define APUTON TCON+0d31
+#define APUTIN TCON+0d32
+#define APICKUP TCON+0d33
+#define AGRASP TCON+0d34
+#define AUNGRASP TCON+0d35
+#define ARAISEHAND TCON+0d36
+#define ASTACKUP TCON+0d37
+#define AGETRIDOF TCON+0d38
+#define AMAKESPACE TCON+0d39
+#define ANAME TCON+0d40
+#define APART TCON+0d41
+#define ASTACK TCON+0d42
+#define AEXISTS TCON+0d43
+#define ALIKE TCON+0d44
+#define NCON 0d46
+
+// The arenas, as full addresses.
+// The database (records, then events) and the heap's kept words (points, list
+// cells, history entries, keep.ac) last the whole dialogue.
+// The kept words go after the hand's point, from HPBOT0.
+// A line's scratch may use half of what is left above them, HPCAP0 at the start.
+// Frames and choice points, the trail and the plan belong to a command.
+// All three are in bank 010, and the rest of the bank is the heap's (HEAP3).
+// Frames grow up from FRBASE and choice points down from CPBASE.
+// FRBASE starts the bank, since a variable cell is an offset in it.
+// The plan is two words a call.
+// The sizes are the dialogue's peaks with a margin.
+// Frames and choice points take 960 words (the dialogue peaks at 839), the
+// trail 896 (803) and the plan 96 (48).
+// Past one of them the command is NO ROOM and is undone.
+// THFIND keeps up to FBMAX found (engine.ac, in bank 4).
+#define HPBASE 060000
+#define HPLIM 061400
+#define HPBOT0 060003
+#ifdef KEEPOFF
+#define HPCAP0 HPLIM
+#else
+#define HPCAP0 060601
+#endif
+#define DBBASE 070000
+#define DBLIM 075770
+#define EVBASE 076000
+#define EVMAX 0d200
+#define FRBASE 0100000
+#define CPBASE 0101670
+#define TRBASE 0101700
+#define TRLIM 0103470
+#define PLBASE 0103500
+#define PLMAX 0d48
+#define PLEND 0103640
+
+// Build defines that make an arena too small for one DO PICKUP :B6, so that its NO ROOM can be seen.
+#ifdef SMALLFRAMES
+#undef CPBASE
+#define CPBASE (FRBASE+0170)
+#endif
+#ifdef SMALLTRAIL
+#undef TRLIM
+#define TRLIM (TRBASE+0100)
+#endif
+#ifdef SMALLPLAN
+#undef PLMAX
+#define PLMAX 4
+#endif
+// A build define that cuts the heap to 192 words, so that its guard can be reached before bank 7 fills.
+#ifdef SMALLKEEP
+#undef HPLIM
+#define HPLIM 060300
+#undef HPCAP0
+#define HPCAP0 060141
+#endif
+#define FBMAX 0d16
+
+// A database record holds the next in its chain (0 ends it), the number of
+// arguments (DERASED once erased, since #NOCLEAR has none), the predicate, up
+// to four arguments, and its sentence number for the machine's WHO (a machine
+// value, 0 for none).
+#define RECW 0d8
+#define DWHO 7
+#define DNEXT 0
+#define DARITY 1
+#define DPRED 2
+#define DARG 3
+#define DERASED 07777
+
+// An event record holds its type, start, end (-1 until it ends), parent, and
+// the record of its assertion.
+#define EVW 5
+#define ETYPE 0
+#define ESTART 1
+#define EEND 2
+#define EWHY 3
+#define EREC 4
+
+// A frame holds the caller's frame, the return position, the theorem and the
+// depth, then the slots.
+// Slot 0 is EV, slot 1 is WHY (or WHO), and the parameters start at 2.
+#define HDR 4
+#define FCALLER 0
+#define FRET 1
+#define FTHM 2
+#define FDEPTH 3
+
+// A theorem's header holds slots, flags, parameters and name.
+// The code follows.
+#define THSLOTS 0
+#define THFLAGS 1
+#define THNPAR 2
+#define THNAME 3
+#define THCODE 4
+#define FLEV 1
+#define FLWHY 2
+
+// A choice point holds the alternative's position (0 once given up), the
+// frame, the tops of the trail, frames, heap and database, and for a database
+// goal the next record and the goal's position.
+#define CPW 0d8
+#define CALT 0
+#define CFP 1
+#define CTR 2
+#define CFR 3
+#define CHP 4
+#define CDB 5
+#define CREC 6
+#define CGPC 7
+
+// The engine's operations (engine.ac's table).
+#define oFAIL 0
+#define oRET 1
+#define oCALL 2
+#define oGOAL 3
+#define oASSERT 4
+#define oERASE 5
+#define oALT 6
+#define oALTS 7
+#define oKILL 0d8
+#define oCUT 0d9
+#define oCUTFAIL 0d10
+#define oJMP 0d11
+#define oNAT 0d12
+#define oNATJ 0d13
+#define oFINDB 0d14
+#define oFINDC 0d15
+#define oFINDE 0d16
+#define oMEMORY 0d17
+#define oMEMEND 0d18
+#define oSETV 0d19
+#define oTICK 0d20
+#define oPLAN 0d21
+#define oDONE 0d22
+#define oCANT 0d23
+
+// The operands are V, slot n's value (a link to it if unassigned), SV, slot
+// n's cell, and ANY, anything.
+// Any other operand is an atom.
+#define V(n) TVAR+n
+#define SV(n) 0710000+n
+#define ANY 0720000
+
+// The plan's calls.
+#define PMOVETO 1
+#define PGRASP 2
+#define PUNGRASP 3
+#define PBLINK 4
+
+// The random-number generator's seed after RESET.
+#define SEED 1
+
+// The world helpers' buffers (atoms.ac, blocks.ac) are LSMAX for a list read
+// into words, GSLEN for GROW's sides and PKMAX for PACKO's entries.
+// FSCENTER, FSPACK and FSRANDOM are FINDSPACE's kinds of place.
+#define LSMAX 0d20
+#define GSLEN 0d16
+#define PKMAX 0d20
+#define FSCENTER 1
+#define FSPACK 2
+#define FSRANDOM 3
+
+// The longest token the debugging commands read (cmds.ac).
+#define GTOKMAX 0d16
+
+// What the overlay cmds (cmds.ac) leaves the root to do after reading a command.
+// RQNONE is nothing, the reply being complete.
+// The commands for the world and the hand are carried out by debug.ac's execLine.
+// A DO or TRY is planned by goals.ac's s2Exec, and SM is printed by the
+// overlay sm that s2Exec calls for.
+// RESET is both, since s2Exec resets the planner, then execLine the world.
+#define RQNONE 0
+#define RQMOVETO 1
+#define RQGRASP 2
+#define RQUNGRASP 3
+#define RQREFRESH 4
+#define RQSCENE 5
+#define RQPROJ 6
+#define RQRESET 7
+#define RQPLAN 010
+#define RQSM 011
+
+// The debugging commands' window in bank 012 (shrdlu.am1) is shared by the
+// overlays cmds, tree and sm.
+// It runs from CMDWIN to the bank's end, 1,344 words, the larger overlay's size with a margin.
+#define CMDWIN 05270
+
+// The reader (reader.ac) and the lexicon (lexicon.ac).
+// A word's characters are 6-bit codes.
+// The letters are 1 to 26 and the digits 033 to 044.
+// Then come the apostrophe (the source's "), - = , * : and ;.
+// The lexicon packs the dictionary's spellings with the same codes.
+#define CH_D 4
+#define CH_E 5
+#define CH_G 7
+#define CH_H 010
+#define CH_I 011
+#define CH_L 014
+#define CH_N 016
+#define CH_R 022
+#define CH_S 023
+#define CH_T 024
+#define CH_X 030
+#define CH_Y 031
+#define CH_Z 032
+#define CH_0 033
+#define CH_1 034
+#define CH_APOS 045
+#define CH_DASH 046
+#define CH_EQ 047
+#define CH_COMMA 050
+#define CH_STAR 051
+#define CH_COLON 052
+#define CH_SEMI 053
+
+// The longest word, in characters (more are dropped), and sentence, in
+// words (more make it NO ROOM).
+#define WORDMAX 0d30
+#define SENTMAX 0d64
+
+// A feature set is a mask of NFEATW words of 18 bits.
+// They hold the features numbered 1 to 179, the dictionary's and the grammar's (178 of them).
+// A word has at most FTMAX features.
+#define NFEATW 0d10
+#define FTMAX 0d40
+
+// The lexicon's chains, and the derived words' arena at the start of bank 017.
+// The arena is twice the dialogue's 203 words, rounded up to 256.
+#define LXBUCK 0100
+#define DWBASE 0170000
+#define DWLIM 0170777
+#ifdef SMALLDERIVED
+#undef DWLIM
+#define DWLIM (DWBASE+3)
+#endif
+
+// The machine (pgm.ac in bank 6, pgsys.ac in bank 012, semantics.ac generated).
+// A value is one word, its kind in the top three bits.
+// A cell's or a node's address is its payload ored with PCELLS.
+// Kind 0 is NIL, or an engine's record (its address in bank 7).
+// A node is PNODEW words: FEATURES, FIRSTWORD, WORDAFTER, DAUGHTERS,
+// SEMANTICS, PARENT, the other registers as a list, then MAKESYM's count
+// times 0100 plus its prefix's number.
+// A cell the collector freed has FREEW for its CAR.
+// HEADER is the CAR of an atom, EQ to nothing a program names.
+// An engine's event En is KWORD+EV0+n.
+// A stack, which blockp.3 names with MAKESYM, is KWORD+STK0+n.
+// In a record a word or a stack is TWD and the same 15 bits.
+#define KSYM 0100000
+#define KWORD 0200000
+#define KINT 0300000
+#define KCONS 0400000
+#define KNODE 0500000
+#define KCODE 0600000
+#define KUNB 0700000
+#define KMASK 0700000
+#define FREEW 0700001
+#define HEADER 0677777
+#define EV0 020000
+#define STK0 024000
+#define PCELLS 0100000
+#define PNODEW 0d8
+#define PREGS 6
+#define PCOUNT 7
+// BUILD's structures a sentence keeps for /SM (pgsys.ac's psSm, sm.ac).
+#define NSM 040
+
+// The cache runs from banks 014 and 015 to CACHEND.
+// The code overlays' window over bank 014 is never loaded by the manager.
+// From CACHEND come the machine's value stack (PVSTK, below), then the
+// evaluator (eval.ac) and the Planner engine's core (planner.ac) to the
+// bank's end.
+// shrdlu.am1's origin places them there and must agree.
+// The cache is cut to its 2K, then 128 words more for the engine's constant check, giving 4,656 words.
+// Sentence 3, which needs the most, holds a cut of 136 and fails from 140.
+// A block in the cache starts with its number and its trailer's length
+// (BLKHDR words), and a function's code follows.
+// A gap in it is one word, CGAP plus the gap's length.
+// The block table, gBlk, is BLKW words a block.
+// BDRUM is its drum address (the dia word).
+// BLEN is its length on the drum.
+// BADDR is its address in the cache, or 0 with the two flags.
+// BUSE is the run of its quoted lists in gConst, the first index, then the
+// count times BUSEN (0 for a block with none).
+// Codewin's overlays follow the NOVWIN windows in ovTable.
+#define CACHE0 0140000
+#define CACHEND 0151060
+#define BLKHDR 2
+#define BLKW 4
+#define BDRUM 0
+#define BLEN 1
+#define BADDR 2
+#define BUSE 3
+#define BUSEN 02000
+#define BUSEF 01777
+#define BMADE 0400000
+#define BACT 0200000
+#define CGAP 0400000
+#define NOVWIN 2
+
+// The Planner engine's stack (planner.ac) is ELEN words at the end of bank
+// 010, after its cells.
+// NROOT is the number of the engine's words the collector takes as roots (eRegs).
+#define ELEN 01000
+#define ESTK (0110000-ELEN)
+#define NROOT 0d13
+
+// The heap's nodes, then cells, are in bank 016.
+// Cells in bank 011 start at HEAP2, after the constant cells, the drop and the
+// engine's cold half (shrdlu.am1 must agree).
+// Cells in bank 010 start after the command arenas and run to the engine's stack.
+// Cells in bank 017 start after the stacks.
+#define NODES0 0160000
+#define NNODES 0d160
+#define HEAP1 (NODES0+PNODEW*NNODES)
+#define HEAP1E 0170000
+#ifdef GCEVERY
+#define HEAP2 0117016               // drop.ac's psGcK before it
+#else
+#ifdef CONSTCHECK
+#define HEAP2 0117040               // drop.ac's psCchk before it
+#else
+#define HEAP2 0116756
+#endif
+#endif
+#define HEAP2E 0120000
+#define HEAP3 PLEND
+#define HEAP3E ESTK
+#define HEAP4 0174400
+#define HEAP4E 0200000
+
+// A build define that makes the heap too small to run without the drop.
+// SMALLHEAP cells are taken from the start of bank 017's (at most 896, octal, or 0d for decimal).
+#ifdef SMALLHEAP
+#undef HEAP4
+#define HEAP4 (0174400+2*(SMALLHEAP))
+#endif
+
+// The value stack is in bank 015 at CACHEND (above).
+// Bank 017 above the derived words holds the calls, PFW words each (the
+// return, the bindings' mark, the caller's block, the value stack's top with
+// PFCATCH for a catch frame).
+// It then holds the bindings, two words each (the variable, its old value),
+// and the feature cache, two words a slot (the word, or its ROOT's key, then
+// the list).
+// Each is sized from the deepest the dialogue needs, with the native
+// evaluator's frames on the value stack (eval.ac).
+// That is 33 words, 80 calls (320 words) and 348 bindings (696), all in the
+// dialogue's third sentence.
+// A margin is added, the value stack's beyond a call's MAXDEPTH and PVSPARE.
+// Past its end a sentence is NO ROOM.
+// The machine's tables fill the gap to the feature cache, from PTABS (tables.ac).
+#define PVSTK 0151060
+#define PVLEN 0200
+#define PCSTK 0171000
+#define PCLEN 0600
+#define PBSTK 0171600
+#define PBLEN 01440
+#define PTABS 03240
+#define PFC 0174000
+#define PFCN 0200
+#define PFW 4
+#define PFRET 0
+#define PFBIND 1
+#define PFFN 2
+#define PFSP 3
+#define PFCATCH 0400000
+
+// Calls across banks, extend mode on throughout, go to routine r in bank b.
+// One is called via jsp or via jda, and returns to the full address in AC (dac, jmp i).
+// XJDA is two instructions, so never skip over it.
+#define XJSP(r, b) jsp i [r:b]
+#define XJDA(r, b) dac i [r:b]; jsp i [r:b+1]
+
+#endif

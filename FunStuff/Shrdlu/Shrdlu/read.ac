@@ -1,0 +1,96 @@
+// READ, the native (pgsys.ac's csRead), reads the number typed after a
+// clarification (newans.78:195, ANSELIMINATE's READ) from the DCS2
+// line as reader.ac's rdPoll does. Blanks before it are passed over,
+// as MacLisp's READ passes them, among them the CR the sentence's line
+// ended with, still unread when its punctuation was answered; the number
+// ends at a CR, an LF or a space. DCS2 echoes nothing (term.ac), so what is
+// typed is shown here and a new line follows the number. A line with
+// anything but digits is NIL, as is a dropped connection.
+// This is in the drum overlay sm (shrdlu.am1), beside sm.ac's smPrint.
+// Bank 012, eem on. Needs shrdlu.ah, dcs2defs.ah and pgsys.ac (psMkint,
+// PUTC).
+
+    export rnRead
+
+// Returns the number in AC, a fixnum, or NIL. AC is the result and IO is
+// clobbered.
+// Entered via %%ovcall, with the return address in AC.
+rnRead, dac rnRtn
+    dzm rnN
+    dzm rnAny
+    dzm rnBad
+rnWait, cli
+    rcs
+    lai
+    dac rnSt
+    and [dsfcls]
+    sza
+    jmp rnNil
+    lac rnSt
+    and [dsfrdy]
+    sza i
+    jmp rnWait
+    rch rchclr
+    spi
+    jmp rnWait              // negative, so no character after all
+    lai
+    and [0177]
+    dac rnC
+    sad [015]
+    jmp rnEnd
+    sad [012]
+    jmp rnEnd
+    sad [040]
+    jmp rnEnd
+    sza i
+    jmp rnWait              // the NUL after a CR
+    idx rnAny
+    // A control character or rubout shows nothing.
+    lac rnC
+    sub [040]
+    spa
+    jmp rnNo
+    lac rnC
+    sad [0177]
+    jmp rnNo
+    PUTC
+    // A digit joins the number; anything else makes it NIL.
+    lac rnC
+    sub ['0']
+    spa
+    jmp rnNo
+    sub [0d10]
+    sma
+    jmp rnNo
+    add [0d10]
+    dac rnC
+    lac rnN
+    mul [0d10]
+    scr 1s
+    lai
+    add rnC
+    dac rnN
+    jmp rnWait
+rnNo, idx rnBad
+    jmp rnWait
+rnEnd, lac rnAny
+    sza i
+    jmp rnWait              // a blank before the number
+    law 012
+    PUTC
+    lac rnBad
+    sza
+    jmp rnNil
+    lac rnN
+    jda psMkint
+    jmp rnOut
+rnNil, cla
+rnOut, eem
+    jmp i rnRtn
+
+rnRtn, 0                    // the full address to return to
+rnN, 0                      // the number so far
+rnC, 0                      // the character, then its digit
+rnSt, 0                     // the line's status
+rnAny, 0                    // nonzero past the number's first character
+rnBad, 0                    // nonzero once a character was no digit

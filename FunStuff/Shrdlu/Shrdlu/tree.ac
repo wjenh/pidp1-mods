@@ -1,0 +1,240 @@
+// The tree printer. It prints a sentence's parse tree, a node a line, as
+// parse.ac's header describes it, after the parse, called by psParse.
+// This is the drum overlay tree (shrdlu.am1), sharing the window cmdWin
+// with the debugging commands.
+// It prints through the reader's output in bank 013, by parse.ac's far
+// wrappers (pfC and the rest), so that the reader's rBol follows the tree.
+// Bank 012, eem on. Needs shrdlu.ah and parse.ac's wrappers.
+
+// The printer's stack, in words. Two words hold a node still to print.
+#define PSDEEP 0200
+
+    export trPrint
+
+// Prints the tree whose top node IO holds. AC and IO are clobbered.
+// Entered via %%ovcall, with the return address in AC.
+trPrint, dac trRtn
+    dio trTop
+    lac trTop
+    jda prTree
+    eem
+    jmp i trRtn
+
+trRtn, 0
+trTop, 0
+
+// Prints a tree from its top node. Each node is popped from psStk and
+// printed, and its daughters are pushed, the daughters' list's first first,
+// so that its last, the first parsed, is printed next.
+// A tree too deep for psStk loses what does not fit.
+// Takes the top node in AC. AC and IO are clobbered. Called via jda.
+prTree,
+    local loop, ind, ind2, leaf, dl, rtn, sp, nd, lv, h, k, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac [psStk:012]
+    dac sp
+    lac prTree
+    dac i sp
+    idx sp
+    dzm i sp
+    idx sp
+loop, lac sp
+    sad [psStk:012]
+    jmp rtn
+    law i 1
+    add sp
+    dac sp
+    lac i sp
+    dac lv
+    law i 1
+    add sp
+    dac sp
+    lac i sp
+    dac nd
+    lac lv
+    dac k
+ind, lac k
+    sza i
+    jmp ind2
+    jsp tWsp
+    jsp tWsp
+    lac k
+    sub [1]
+    dac k
+    jmp ind
+    // DAUGHTERS, the node's fourth word, holds a list, or a word's WORD.
+ind2, lac nd
+    ior [PCELLS]
+    add [3]
+    dac p
+    lac i p
+    dac h
+    and [KMASK]
+    sas [KCONS]
+    jmp leaf
+    lac nd
+    jda prFeats
+    jsp tWsp
+    jsp tWsp
+    lac nd
+    jda prWords
+    jsp tWnl
+dl, lac h
+    and [KMASK]
+    sas [KCONS]
+    jmp loop
+    lac sp
+    sub [psStk:012+PSDEEP-2]
+    sma
+    jmp loop
+    lac h
+    ior [PCELLS]
+    dac p
+    lac i p
+    dac i sp
+    idx sp
+    lac lv
+    add [1]
+    dac i sp
+    idx sp
+    idx p
+    lac i p
+    dac h
+    jmp dl
+leaf, lac nd
+    jda prWords
+    jsp tWsp
+    jsp tWsp
+    lac nd
+    jda prFeats
+    jsp tWnl
+    jmp loop
+rtn, jmp 0
+sp, 0
+nd, 0
+lv, 0
+h, 0
+k, 0
+p, 0
+    endloc
+
+// Prints a node's features, in parentheses, a space between.
+// Takes the node in AC. AC and IO are clobbered. Called via jda.
+prFeats,
+    local loop, done, rtn, l, q
+    0                       // jda puts the argument here
+    dap rtn
+    law '('
+    jda tWc
+    lac prFeats
+    ior [PCELLS]
+    dac q
+    lac i q
+    dac l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    lac l
+    ior [PCELLS]
+    dac q
+    lac i q
+    jda tName
+    idx q
+    lac i q
+    dac l
+    and [KMASK]
+    sas [KCONS]
+    jmp done
+    jsp tWsp
+    jmp loop
+done, law ')'
+    jda tWc
+rtn, jmp 0
+l, 0
+q, 0
+    endloc
+
+// Prints the words a node spans, FIRSTWORD's up to WORDAFTER, a space between.
+// Takes the node in AC. AC and IO are clobbered. Called via jda.
+prWords,
+    local loop, rtn, nb, n, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac prWords
+    ior [PCELLS]
+    add [1]
+    dac q
+    lac i q
+    dac nb
+    idx q
+    lac i q
+    dac n
+loop, lac nb
+    and [KMASK]
+    sas [KCONS]
+    jmp rtn
+    lac nb
+    sad n
+    jmp rtn
+    ior [PCELLS]
+    dac q
+    lac i q
+    jda tName
+    idx q
+    lac i q
+    dac nb
+    and [KMASK]
+    sas [KCONS]
+    jmp rtn
+    lac nb
+    sad n
+    jmp rtn
+    jsp tWsp
+    jmp loop
+rtn, jmp 0
+nb, 0
+n, 0
+q, 0
+    endloc
+
+// The reader's wrc, wrsp, wrnl and prName, from this bank, through
+// parse.ac's wrappers, which take the argument in IO and return to the
+// full address they were called from. AC and IO are clobbered.
+// tWc and tName take the character or the value in AC and are called via
+// jda. tWsp and tWnl take nothing and are called via jsp.
+tWc,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lio tWc
+    jsp i [pfC:013]
+rtn, jmp 0
+    endloc
+
+tName,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lio tName
+    jsp i [pfName:013]
+rtn, jmp 0
+    endloc
+
+tWsp,
+    local rtn
+    dap rtn
+    jsp i [pfSp:013]
+rtn, jmp 0
+    endloc
+
+tWnl,
+    local rtn
+    dap rtn
+    jsp i [pfNl:013]
+rtn, jmp 0
+    endloc
+
+psStk,                      // the printer's stack, a node then its depth, repeated
+    table PSDEEP

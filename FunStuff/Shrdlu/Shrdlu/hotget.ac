@@ -1,0 +1,54 @@
+// A word's or symbol's FEATURES from the feature cache, for pgGet.
+// The far route (psGet) searches the property lists, then the lexicon's entry
+// (for a symbol a scan of gTwins) before it finds the cache's slot.
+// This hashes the atom to its slot as psSlot does and takes the list if it is made.
+// The cache's keys are made only by psLex, after the atom's property list
+// had no FEATURES. A made list is the answer unless FEATURES has been
+// put on an atom since. psPut then sets psHotOff, and this finds nothing
+// until the sentence's end clears both (psClear).
+// A key of the negative kinds is a ROOT's (psLex complements the kind bits),
+// never an atom's.
+// Bank 5, eem on. Needs shrdlu.ah (PFC, PFCN), pgm.ac's pgGx and pgsys.ac's
+// psHotOff.
+
+// Takes the atom in pgGx.
+// Returns to the word after the call with IO = the list, if the atom's list is
+// made. Returns to the call's return address otherwise.
+// AC and IO are clobbered.
+// Called via jsp from bank 6, with the return address in AC.
+psHot,
+    local loop, found, miss, ret, p
+    dac ret
+    lac i [psHotOff:012]
+    sza
+    jmp miss
+    lac i [pgGx:6]
+    spa
+    jmp miss
+    and [PFCN-1]
+    ral 1s
+    ior [PFC]
+    dac p
+    // A slot is a key, then its list; an empty slot's key and list are 0.
+loop, lac i p
+#ifndef HOTANY
+    sad i [pgGx:6]
+    jmp found
+    sza i
+    jmp found
+#else
+    jmp found               // HOTANY: take the first slot, whatever its key
+#endif
+    law 2
+    add p
+    and [0777777-(PFCN<<1)]     // the table's end wraps to its start
+    dac p
+    jmp loop
+found, idx p
+    lio i p
+    spi
+    idx ret
+miss, jmp i ret
+ret, 0
+p, 0
+    endloc

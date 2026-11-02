@@ -1,0 +1,1518 @@
+// The world as the planner sees it, and the original's world helpers
+// (blockl.4), which are OCCUPIER, SUPPORT, CLEAR, TCENT, GROW, FINDSPACE, and the
+// packing helpers PACKO, PACKORD and PACKON; also the random-number
+// generator FINDSPACE draws from.
+// The planner's location table (locX, locY, locZ, set through the trail)
+// is separate from the world's and is kept from RESET on. Planning moves
+// nothing on the screen, and the world and hand follow it through the
+// replay. The sizes are the world's (RSX to RSZ), which never change.
+// Coordinates are octal, as in the original; DIV2 truncates toward 0, as
+// its QUOTIENT does.
+// Bank 4, eem on. Needs shrdlu.ah, atoms.ac, db.ac, engine.ac's tset,
+// world.ac's tables (bank 2).
+
+// The planner's location table from the starting locations (objInit),
+// and the sizes from the object table, for RESET.
+// AC and IO are clobbered. Called via jsp, from any bank.
+locReset,
+    local rtn, ra
+    dac ra
+    lac [objInit:2]
+    dac llSrc
+    law 3
+    dac llStep
+    jsp llCopy
+rtn, jmp i ra
+ra, 0
+    endloc
+
+// Copies each object's x, y and z from llSrc, records llStep words
+// apart, and its size from objTab. AC and IO are clobbered.
+// Called via jsp.
+llCopy,
+    local rtn, loop, three, tl, o, p, q, s, n, k
+    dap rtn
+    dzm o
+    lac [objTab:2+RSX]
+    dac q
+loop, lac o
+    add [locX:.]
+    dac p
+    lac llSrc
+    dac s
+    jsp three
+    lac q
+    dac s
+    jsp three
+    lac llSrc
+    add llStep
+    dac llSrc
+    lac q
+    add [OREC]
+    dac q
+    idx o
+    sad [NOBJ]
+    jmp rtn
+    jmp loop
+// Copies three words from s on to p, each into the next array.
+three, dap k
+    law i 3
+    dac n
+tl, lac i s
+    dac i p
+    idx s
+    lac p
+    add [NOBJ]
+    dac p
+    isp n
+    jmp tl
+k, jmp 0
+rtn, jmp 0
+o, 0
+p, 0
+q, 0
+s, 0
+n, 0
+    endloc
+
+llSrc, 0
+llStep, 0
+
+// One object's location into (px, py, pz) and its size into (qx, qy, qz).
+// Takes the object's index in AC. AC and IO are clobbered.
+// Called via jda, from any bank.
+locGet,
+    local rtn, ra, next, nr, p
+    0                       // jda puts the argument here
+    dac ra
+    lac locGet
+    add [locX:.]
+    dac p
+    lac i p
+    dac px
+    jsp next
+    dac py
+    jsp next
+    dac pz
+    jsp next
+    dac qx
+    jsp next
+    dac qy
+    jsp next
+    dac qz
+rtn, jmp i ra
+ra, 0
+// The same object's word in the next array.
+next, dap nr
+    lac p
+    add [NOBJ]
+    dac p
+    lac i p
+nr, jmp 0
+p, 0
+    endloc
+
+// Moves an object to (px, py, pz), through the trail.
+// Takes the object's index in AC. AC and IO are clobbered. Called via jda.
+locSet,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac locSet
+    add [locX:.]
+    dac tsA
+    lac px
+    jda tset
+    lac tsA
+    add [NOBJ]
+    dac tsA
+    lac py
+    jda tset
+    lac tsA
+    add [NOBJ]
+    dac tsA
+    lac pz
+    jda tset
+rtn, jmp 0
+    endloc
+
+// Six arrays of NOBJ words, in this order, which locGet and llCopy
+// rely on.
+locX,
+    table NOBJ
+locY,
+    table NOBJ
+locZ,
+    table NOBJ
+sizX,
+    table NOBJ
+sizY,
+    table NOBJ
+sizZ,
+    table NOBJ
+
+qx, 0                       // a size
+qy, 0
+qz, 0
+
+// DIV2 gives half, truncated toward 0 (never -0).
+// AC in and out, IO preserved. Called via jda.
+div2,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac div2
+    sar 1s
+    sad [0777777]
+    cla
+rtn, jmp 0
+    endloc
+
+// The larger of AC and 0. AC in and out, IO preserved. Called via jda.
+max0,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac max0
+    spa
+    cla
+rtn, jmp 0
+    endloc
+
+// The smaller of AC and 01200. AC in and out, IO preserved.
+// Called via jda.
+min1200,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac min1200
+    sub [01200]
+    sma
+    jmp .+3
+    lac min1200
+    jmp rtn
+    lac [01200]
+rtn, jmp 0
+    endloc
+
+// SIZE puts an atom's size into (qx, qy, qz). The box's and the table's
+// are fixed, an object's is its size, a point is a size already, and
+// anything else is 0. (px, py, pz) are preserved.
+// Takes the atom in AC. AC and IO are clobbered. Called via jda.
+sizeOf,
+    local rtn, obj, pt, box, set, x, y, z
+    0                       // jda puts the argument here
+    dap rtn
+    lac sizeOf
+    sad [OBOX]
+    jmp box
+    sad [OTABLE]
+    jmp .+2
+    jmp obj
+    law 01200
+    dac x
+    dac y
+    dac z
+    jmp set
+box, law 0400
+    dac x
+    dac y
+    law 0300
+    dac z
+    jmp set
+obj, and [TAGS]
+    sad [TOBJ]
+    jmp .+2
+    jmp pt
+    lac sizeOf
+    and [07777]
+    sub [NOBJ]
+    sma
+    jmp .+4
+    add [NOBJ]
+    jda locSize
+    jmp rtn
+    dzm x
+    dzm y
+    dzm z
+    jmp set
+pt, sad [TPT]
+    jmp .+5
+    dzm x
+    dzm y
+    dzm z
+    jmp set
+    lac px
+    dac x
+    lac py
+    dac y
+    lac pz
+    dac z
+    lac sizeOf
+    jda ptget
+    lac px
+    dac qx
+    lac py
+    dac qy
+    lac pz
+    dac qz
+    lac x
+    dac px
+    lac y
+    dac py
+    lac z
+    dac pz
+    jmp rtn
+set, lac x
+    dac qx
+    lac y
+    dac qy
+    lac z
+    dac qz
+rtn, jmp 0
+x, 0
+y, 0
+z, 0
+    endloc
+
+// Puts one object's size into (qx, qy, qz). Takes the object's index in
+// AC. AC and IO are clobbered. Called via jda.
+locSize,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac locSize
+    add [sizX:.]
+    dac p
+    lac i p
+    dac qx
+    lac p
+    add [NOBJ]
+    dac p
+    lac i p
+    dac qy
+    lac p
+    add [NOBJ]
+    dac p
+    lac i p
+    dac qz
+rtn, jmp 0
+p, 0
+    endloc
+
+// OCCUPIER finds the first object, in table order, whose box holds the
+// point (ocX, ocY, ocZ) (lo <= c < lo + size on each axis), the table
+// below 0.
+// Returns the object atom, :TABLE, or NIL in AC. AC is the result, and IO
+// and (px...qz) are clobbered. Called via jsp.
+occAt,
+    local rtn, loop, nxt, o
+    dap rtn
+    lac ocZ
+    sma
+    jmp .+3
+    lac [OTABLE]
+    jmp rtn
+    dzm o
+loop, lac o
+    jda locGet
+    lac ocX
+    sub px
+    spa
+    jmp nxt
+    sub qx
+    sma
+    jmp nxt
+    lac ocY
+    sub py
+    spa
+    jmp nxt
+    sub qy
+    sma
+    jmp nxt
+    lac ocZ
+    sub pz
+    spa
+    jmp nxt
+    sub qz
+    sma
+    jmp nxt
+    lac o
+    ior [TOBJ]
+    jmp rtn
+nxt, idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    lac [NIL]
+rtn, jmp 0
+o, 0
+    endloc
+
+ocX, 0
+ocY, 0
+ocZ, 0
+
+// SUPPORT finds what would hold up an object of size (qx, qy, qz) at
+// (px, py, pz). It is the table at z = 0, else the occupier of the point
+// one unit below the center of its base, and nothing when that is the
+// object itself, spSelf. Returns the atom in AC, NIL for none.
+// AC is the result, and IO and (px...qz) are clobbered. Called via jsp.
+support,
+    local rtn
+    dap rtn
+    lac pz
+    sza
+    jmp .+3
+    lac [OTABLE]
+    jmp rtn
+    sub [1]
+    dac ocZ
+    lac qx
+    jda div2
+    add px
+    dac ocX
+    lac qy
+    jda div2
+    add py
+    dac ocY
+    jsp occAt
+    sad spSelf
+    lac [NIL]
+rtn, jmp 0
+    endloc
+
+spSelf, 0
+
+// CLEAR skips if a box at (px, py, pz) of size (qx, qy, qz) lies within
+// the world's bounds (0 <= a and a + s < 01201 on each axis) and
+// overlaps no object but those of clObj (an atom or a list).
+// AC and IO are clobbered; (px...qz) are preserved. Called via jsp.
+clear,
+    local rtn, loop, nxt, out, o, x, y, z, a, b, c
+    dap rtn
+    lac px
+    dac x
+    lac py
+    dac y
+    lac pz
+    dac z
+    lac qx
+    dac a
+    lac qy
+    dac b
+    lac qz
+    dac c
+    lac x
+    spa
+    jmp out
+    add a
+    sub [01201]
+    sma
+    jmp out
+    lac y
+    spa
+    jmp out
+    add b
+    sub [01201]
+    sma
+    jmp out
+    lac z
+    spa
+    jmp out
+    add c
+    sub [01201]
+    sma
+    jmp out
+    dzm o
+    // x < x1 + x2 and x1 < x + a on every axis is an overlap.
+loop, lac o
+    ior [TOBJ]
+    lio clObj
+    jda member
+    jmp .+2
+    jmp nxt
+    lac o
+    jda locGet
+    lac px
+    add qx
+    sub x
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac x
+    add a
+    sub px
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac py
+    add qy
+    sub y
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac y
+    add b
+    sub py
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac pz
+    add qz
+    sub z
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac z
+    add c
+    sub pz
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    jmp out
+nxt, idx o
+    sad [NOBJ]
+    jmp .+2
+    jmp loop
+    idx rtn
+out, lac x
+    dac px
+    lac y
+    dac py
+    lac z
+    dac pz
+    lac a
+    dac qx
+    lac b
+    dac qy
+    lac c
+    dac qz
+rtn, jmp 0
+o, 0
+x, 0
+y, 0
+z, 0
+a, 0
+b, 0
+c, 0
+    endloc
+
+clObj, 0
+
+// TCENT puts the top center of a box at (px, py, pz) of size (qx, qy, qz)
+// into (px, py, pz). AC and IO are clobbered. Called via jsp.
+tcent,
+    local rtn
+    dap rtn
+    lac qx
+    jda div2
+    add px
+    dac px
+    lac qy
+    jda div2
+    add py
+    dac py
+    lac pz
+    add qz
+    dac pz
+rtn, jmp 0
+    endloc
+
+// The program's random numbers come from a 17-bit Galois LFSR, x^17 + x^14 + 1,
+// stepped 17 times a call, so each call gives a fresh 17-bit value. It
+// is not undone by backtracking, as MacLisp's RANDOM was not.
+// Returns the value in AC, 1 to 0377777. AC is the result and IO is
+// preserved. Called via jsp.
+random,
+    local rtn, loop, k
+    dap rtn
+    law i 0d17
+    dac k
+loop, lac rnd
+    rar 1s
+    spa
+    xor [0620000]
+    dac rnd
+    isp k
+    jmp loop
+    lac rnd
+rtn, jmp 0
+k, 0
+    endloc
+
+rnd, SEED
+
+// A random number below n.
+// Takes n in AC, above 0. Returns the number in AC. AC is the result and
+// IO is clobbered. Called via jda.
+rndBelow,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    jsp random
+    lia
+    cla
+    scl 1s
+    div rndBelow
+    cli                     // no skip, so n is 0 and the number is 0
+    lai
+rtn, jmp 0
+    endloc
+
+// GROW: the largest free rectangle around (gx, gy) at height gz, within
+// (mnX, mnY) to (mxX, mxY), passing over the objects of fsObj. Each side
+// moves out until an object or the bound stops it, the nearest side
+// first (blockl.4's GROW, step for step). The sides are numbered XL, XH,
+// YL, YH (0 to 3); an object is "across" on an axis when it spans the
+// point along it (sets XO and YO).
+// Skips with the rectangle in (g0x, g0y) to (g1x, g1y); returns without
+// skipping if the point is outside the bounds or within an object.
+// AC and IO are clobbered, and (px...qz). Called via jsp.
+grow,
+    local rtn, loop, xlo, xacr, ycase, ylo, yacr, nxt, round, gmin, gnext, side, pass, freeze, snext, done, g, n, o, xx, yy
+    dap rtn
+    // Each side's list starts with its bound and no object.
+    lac gx
+    sub mnX
+    spa
+    jmp rtn
+    dac gsDist
+    law 0
+    jda gsInit
+    lac mxX
+    sub gx
+    spa
+    jmp rtn
+    dac gsDist
+    law 1
+    jda gsInit
+    lac gy
+    sub mnY
+    spa
+    jmp rtn
+    dac gsDist
+    law 2
+    jda gsInit
+    lac mxY
+    sub gy
+    spa
+    jmp rtn
+    dac gsDist
+    law 3
+    jda gsInit
+    dzm gsXO
+    dzm gsYO
+    // Each object in the bounds and above gz, by where it lies.
+    dzm o
+loop, lac o
+    ior [TOBJ]
+    dac n
+    lio fsObj
+    jda member
+    jmp .+2
+    jmp nxt
+    lac o
+    jda locGet
+    lac px
+    sub mxX
+    sma
+    jmp nxt
+    lac py
+    sub mxY
+    sma
+    jmp nxt
+    lac px
+    add qx
+    dac xx
+    sub mnX
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac py
+    add qy
+    dac yy
+    sub mnY
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    lac pz
+    add qz
+    sub gz
+    spa
+    jmp nxt
+    sza i
+    jmp nxt
+    // Along x, beyond the point, before it, or across it.
+    lac px
+    sub gx
+    spa
+    jmp xlo
+    sza i
+    jmp xlo
+    dac gsDist
+    lac n
+    dac gsObj
+    law 1
+    jda gsInsert
+    jmp ycase
+xlo, lac gx
+    sub xx
+    spa
+    jmp xacr
+    sza i
+    jmp xacr
+    dac gsDist
+    lac n
+    dac gsObj
+    law 0
+    jda gsInsert
+    jmp ycase
+xacr, lac n
+    lio [gsXO:.]
+    jda gsSetAdd
+    // Along y. Across on both axes, it holds the point.
+ycase, lac py
+    sub gy
+    spa
+    jmp ylo
+    sza i
+    jmp ylo
+    dac gsDist
+    lac n
+    dac gsObj
+    law 3
+    jda gsInsert
+    jmp nxt
+ylo, lac gy
+    sub yy
+    spa
+    jmp yacr
+    sza i
+    jmp yacr
+    dac gsDist
+    lac n
+    dac gsObj
+    law 2
+    jda gsInsert
+    jmp nxt
+yacr, lac n
+    lio [gsXO:.]
+    jda gsSetHas
+    jmp .+2
+    jmp rtn
+    lac n
+    lio [gsYO:.]
+    jda gsSetAdd
+nxt, idx o
+    sad [NOBJ]
+    jmp round
+    jmp loop
+    // Each round, g is the nearest side's distance; done when every
+    // side has stopped. A side at g stops if it has no object (the
+    // bound) or its object is across on the other axis; else it passes
+    // the object, which is then across on this axis.
+round, law 02000
+    dac g
+    dzm gsW
+gmin, lac gsW
+    jda gsHead
+    lac i gsHd
+    sub g
+    sma
+    jmp gnext
+    lac i gsHd
+    dac g
+gnext, idx gsW
+    sad [4]
+    jmp .+2
+    jmp gmin
+    lac g
+    sad [02000]
+    jmp done
+    dzm gsW
+side, lac gsW
+    jda gsHead
+    lac i gsHd
+    sub g
+    sma sza
+    jmp snext
+    lac i gsHo
+    sza i
+    jmp freeze
+    lac gsW
+    and [2]
+    sza
+    jmp .+3
+    lio [gsYO:.]
+    jmp .+2
+    lio [gsXO:.]
+    lac i gsHo
+    jda gsSetHas
+    jmp pass
+    jmp freeze
+pass, lac gsW
+    and [2]
+    sza
+    jmp .+3
+    lio [gsXO:.]
+    jmp .+2
+    lio [gsYO:.]
+    lac i gsHo
+    jda gsSetAdd
+    lac gsW
+    jda gsPop
+    jmp snext
+freeze, lac gsW
+    jda gsFreeze
+snext, idx gsW
+    sad [4]
+    jmp round
+    jmp side
+done, lac gx
+    sub gsFz
+    dac g0x
+    lac gy
+    sub gsFz+2
+    dac g0y
+    lac gx
+    add gsFz+1
+    dac g1x
+    lac gy
+    add gsFz+3
+    dac g1y
+    idx rtn
+rtn, jmp 0
+g, 0
+n, 0
+o, 0
+xx, 0
+yy, 0
+    endloc
+
+gx, 0                       // GROW's point and height
+gy, 0
+gz, 0
+mnX, 0                      // its bounds
+mnY, 0
+mxX, 0
+mxY, 0
+g0x, 0                      // the rectangle it found
+g0y, 0
+g1x, 0
+g1y, 0
+
+// GROW's sides. Each side has GSLEN entries of a distance (gsD) and an
+// object (gsO, 0 for the bound), nearest first, then the count, the head,
+// and the distance it stopped at.
+gsD,
+    table 4*GSLEN
+gsO,
+    table 4*GSLEN
+gsC,
+    table 4
+gsH,
+    table 4
+gsFz,
+    table 4
+// The across sets, each a count then up to GSLEN objects.
+gsXO,
+    table GSLEN+1
+gsYO,
+    table GSLEN+1
+gsW, 0                      // the side in hand
+gsDist, 0                   // an entry to add, its distance and object
+gsObj, 0
+gsHd, 0                     // the head entry's distance and object
+gsHo, 0
+
+// Starts side w's list with the bound at gsDist.
+// Takes w in AC. AC and IO are clobbered. Called via jda.
+gsInit,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac gsInit
+    sal 4s
+    add [gsD:.]
+    dac t
+    lac gsDist
+    dac i t
+    lac t
+    add [4*GSLEN]
+    dac t
+    dzm i t
+    lac gsInit
+    add [gsC:.]
+    dac t
+    law 1
+    dac i t
+    lac gsInit
+    add [gsH:.]
+    dac t
+    dzm i t
+rtn, jmp 0
+t, 0
+    endloc
+
+// ORDER puts (gsDist, gsObj) into side w's list ahead of the first
+// entry no nearer. The list's head is its first entry while it is built.
+// Takes w in AC. AC and IO are clobbered. Called via jda.
+gsInsert,
+    local rtn, find, put, shift, move, store, base, cnt, k, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac gsInsert
+    sal 4s
+    add [gsD:.]
+    dac base
+    lac gsInsert
+    add [gsC:.]
+    dac cnt
+    dzm k
+find, lac k
+    sad i cnt
+    jmp put
+    add base
+    dac mvP
+    lac gsDist
+    sub i mvP
+    spa
+    jmp put
+    sza i
+    jmp put
+    idx k
+    jmp find
+    // Entries k to the end move one on, distances and objects alike.
+put, lac i cnt
+    dac q
+shift, lac q
+    sub k
+    sma sza
+    jmp move
+    jmp store
+move, lac q
+    sub [1]
+    dac q
+    add base
+    jda mvOn
+    lac q
+    add base
+    add [4*GSLEN]
+    jda mvOn
+    jmp shift
+store, lac k
+    add base
+    dac mvP
+    lac gsDist
+    dac i mvP
+    lac mvP
+    add [4*GSLEN]
+    dac mvP
+    lac gsObj
+    dac i mvP
+    lac i cnt
+    add [1]
+    dac i cnt
+rtn, jmp 0
+base, 0
+cnt, 0
+k, 0
+q, 0
+    endloc
+
+// Copies the word at the full address AC to the word after it.
+// AC and IO are clobbered. Called via jda.
+mvOn,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac mvOn
+    dac mvP
+    lac i mvP
+    dac mvT
+    idx mvP
+    lac mvT
+    dac i mvP
+rtn, jmp 0
+    endloc
+
+mvP, 0
+mvT, 0
+
+// Points gsHd and gsHo at side w's head entry.
+// Takes w in AC. AC and IO are clobbered. Called via jda.
+gsHead,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac gsHead
+    add [gsH:.]
+    dac t
+    lac gsHead
+    sal 4s
+    add i t
+    add [gsD:.]
+    dac gsHd
+    add [4*GSLEN]
+    dac gsHo
+rtn, jmp 0
+t, 0
+    endloc
+
+// Side w passes its head object. Takes w in AC. AC and IO are
+// clobbered. Called via jda.
+gsPop,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac gsPop
+    add [gsH:.]
+    dac t
+    lac i t
+    add [1]
+    dac i t
+rtn, jmp 0
+t, 0
+    endloc
+
+// Side w stops at its head's distance. Takes w in AC. AC and IO are
+// clobbered. Called via jda.
+gsFreeze,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac gsFreeze
+    jda gsHead
+    lac gsFreeze
+    add [gsFz:.]
+    dac t
+    lac i gsHd
+    dac i t
+    lac [02000]
+    dac i gsHd
+rtn, jmp 0
+t, 0
+    endloc
+
+// Adds an object to an across set. Takes the object in AC and the set's
+// full address in IO. AC and IO are clobbered. Called via jda.
+gsSetAdd,
+    local rtn, s, t
+    0                       // jda puts the argument here
+    dap rtn
+    dio s
+    lac i s
+    sad [GSLEN]
+    jmp rtn
+    add s
+    add [1]
+    dac t
+    lac gsSetAdd
+    dac i t
+    lac i s
+    add [1]
+    dac i s
+rtn, jmp 0
+s, 0
+t, 0
+    endloc
+
+// Skips if an object is in an across set. Takes the object in AC and the
+// set's full address in IO. AC and IO are clobbered. Called via jda.
+gsSetHas,
+    local rtn, loop, s, k
+    0                       // jda puts the argument here
+    dap rtn
+    dio s
+    lac i s
+    dac k
+loop, lac k
+    sza i
+    jmp rtn
+    idx s
+    lac i s
+    sad gsSetHas
+    jmp .+2
+    jmp .+3
+    idx rtn                 // found
+    jmp rtn
+    lac k
+    sub [1]
+    dac k
+    jmp loop
+rtn, jmp 0
+s, 0
+k, 0
+    endloc
+
+// FINDSPACE (blockl.4:53) finds a place on surface fsSurf for an object of
+// size (fsSx, fsSy, fsSz) that is, or holds, fsObj. CENTER gives the middle
+// of the surface's top, if clear. PACK and RANDOM try up to nine random
+// points of the surface (on a block, of the area an object centered
+// there could cover), each grown into a free rectangle, and the first big
+// enough gives its low corner (PACK) or its middle (RANDOM).
+// Skips with the place in (px, py, pz); returns without skipping if
+// none is found. AC and IO are clobbered, and (qx, qy, qz).
+// Called via jsp.
+findspace,
+    local rtn, block, box, ontab, center, tries, try, rand, pack, again, t1, t2
+    dap rtn
+    lac fsSurf
+    lio fsObj
+    jda member
+    jmp .+2
+    jmp rtn
+    lac fsSurf
+    sad [OTABLE]
+    jmp ontab
+    and [07777]
+    jda locGet
+    lac fsTyp
+    sad [FSCENTER]
+    jmp center
+    lac fsSurf
+    sad [OBOX]
+    jmp box
+    // On a block, an object centered over the area may overhang it.
+block, lac fsSx
+    jda div2
+    dac t1
+    lac fsSy
+    jda div2
+    dac t2
+    lac qx
+    add px
+    add t1
+    sub [1]
+    jda min1200
+    dac mxX
+    lac qy
+    add py
+    add t2
+    sub [1]
+    jda min1200
+    dac mxY
+    lac px
+    sub t1
+    jda max0
+    dac mnX
+    lac py
+    sub t2
+    jda max0
+    dac mnY
+    lac pz
+    add qz
+    dac gz
+    jmp tries
+box, lac px
+    dac mnX
+    add qx
+    dac mxX
+    lac py
+    dac mnY
+    add qy
+    dac mxY
+    law 1
+    dac gz
+    jmp tries
+ontab, dzm mnX
+    dzm mnY
+    law 01200
+    dac mxX
+    dac mxY
+    dzm gz
+    jmp tries
+center, lac qx
+    sub fsSx
+    jda div2
+    add px
+    jda max0
+    dac t1
+    lac qy
+    sub fsSy
+    jda div2
+    add py
+    jda max0
+    dac t2
+    lac pz
+    add qz
+    dac pz
+    lac t1
+    dac px
+    lac t2
+    dac py
+    lac fsSx
+    dac qx
+    lac fsSy
+    dac qy
+    lac fsSz
+    dac qz
+    lac fsObj
+    dac clObj
+    jsp clear
+    jmp rtn
+    idx rtn
+    jmp rtn
+tries, lac mxX
+    sub mnX
+    dac fsW
+    lac mxY
+    sub mnY
+    dac fsH
+    law i 0d9
+    dac fsK
+try, lac fsW
+    jda rndBelow
+    add mnX
+    dac gx
+    lac fsH
+    jda rndBelow
+    add mnY
+    dac gy
+    jsp grow
+    jmp again
+    lac g1x
+    sub g0x
+    sub fsSx
+    spa
+    jmp again
+    lac g1y
+    sub g0y
+    sub fsSy
+    spa
+    jmp again
+    lac fsTyp
+    sad [FSRANDOM]
+    jmp rand
+    sad [FSPACK]
+    jmp pack
+    jmp again
+rand, lac g0x
+    add g1x
+    sub fsSx
+    jda div2
+    dac px
+    lac g0y
+    add g1y
+    sub fsSy
+    jda div2
+    dac py
+    lac gz
+    dac pz
+    idx rtn
+    jmp rtn
+pack, lac g0x
+    dac px
+    lac g0y
+    dac py
+    lac gz
+    dac pz
+    idx rtn
+    jmp rtn
+again, isp fsK
+    jmp try
+rtn, jmp 0
+t1, 0
+t2, 0
+    endloc
+
+fsTyp, 0                    // FINDSPACE's kind of place,
+fsSurf, 0                   // the surface,
+fsSx, 0                     // the size,
+fsSy, 0
+fsSz, 0
+fsObj, 0                    // and the objects to pass over
+fsW, 0
+fsH, 0
+fsK, 0
+
+// PACKO makes a list of the elements of a list that are of a kind
+// (#IS x kind), the largest first (PACKORD: by x size, then y size, and of
+// two the same, in the order given).
+// Takes the list in AC and the kind in IO. Returns the new list in AC.
+// AC is the result and IO is clobbered. Called via jda.
+packo,
+    local rtn, loop, nxt, find, bigger, put, shift, move, store, done, back, fin, kind, l, x, k, q
+    0                       // jda puts the argument here
+    dap rtn
+    dio kind
+    lac packo
+    dac l
+    dzm pkN
+loop, lac l
+    jda islist
+    jmp done
+    jda car
+    dac x
+    dac dbA
+    lac kind
+    dac dbA+1
+    lac [AIS]
+    dac dbP
+    law 2
+    dac dbN
+    jsp dbFind
+    sza i
+    jmp nxt
+    lac x
+    jda sizeOf
+    // Ahead of the first entry that is not larger.
+    dzm k
+find, lac k
+    sad pkN
+    jmp put
+    add [pkS0:.]
+    dac mvP
+    lac i mvP
+    sub qx
+    spa
+    jmp put
+    sza
+    jmp bigger
+    lac mvP
+    add [PKMAX]
+    dac mvP
+    lac i mvP
+    sub qy
+    spa
+    jmp put
+bigger, idx k
+    jmp find
+put, lac pkN
+    sad [PKMAX]
+    jmp nxt
+    dac q
+shift, lac q
+    sub k
+    sma sza
+    jmp move
+    jmp store
+move, lac q
+    sub [1]
+    dac q
+    add [pkS0:.]
+    jda mvOn
+    lac q
+    add [pkS1:.]
+    jda mvOn
+    lac q
+    add [pkX:.]
+    jda mvOn
+    jmp shift
+store, lac k
+    add [pkS0:.]
+    dac mvP
+    lac qx
+    dac i mvP
+    lac k
+    add [pkS1:.]
+    dac mvP
+    lac qy
+    dac i mvP
+    lac k
+    add [pkX:.]
+    dac mvP
+    lac x
+    dac i mvP
+    idx pkN
+nxt, lac l
+    jda cdr
+    dac l
+    jmp loop
+    // The list, built from the last entry back.
+done, lac [NIL]
+    dac l
+    lac pkN
+    dac k
+back, lac k
+    sza i
+    jmp fin
+    sub [1]
+    dac k
+    add [pkX:.]
+    dac mvP
+    lac i mvP
+    lio l
+    jda cons
+    dac l
+    jmp back
+fin, lac l
+rtn, jmp 0
+kind, 0
+l, 0
+x, 0
+k, 0
+q, 0
+    endloc
+
+pkS0,                       // PACKO's entries: x sizes,
+    table PKMAX
+pkS1,                       // y sizes,
+    table PKMAX
+pkX,                        // and the objects
+    table PKMAX
+pkN, 0
+
+// PACKON finds the first object of a list that fits on a surface, no wider
+// or deeper than it, and not reaching above 0501 when on it.
+// Takes the surface (an object) in AC and the list in IO.
+// Returns the object in AC, NIL for none. AC is the result and IO is
+// clobbered. Called via jda.
+packon,
+    local rtn, loop, nxt, none, l, x, sx, sy, h
+    0                       // jda puts the argument here
+    dap rtn
+    dio l
+    lac packon
+    and [07777]
+    jda locGet
+    lac qx
+    dac sx
+    lac qy
+    dac sy
+    lac pz
+    add qz
+    dac h
+loop, lac l
+    jda islist
+    jmp none
+    jda car
+    dac x
+    jda sizeOf
+    lac sx
+    sub qx
+    spa
+    jmp nxt
+    lac sy
+    sub qy
+    spa
+    jmp nxt
+    lac qz
+    add h
+    sub [0502]
+    sma
+    jmp nxt
+    lac x
+    jmp rtn
+nxt, lac l
+    jda cdr
+    dac l
+    jmp loop
+none, lac [NIL]
+rtn, jmp 0
+l, 0
+x, 0
+sx, 0
+sy, 0
+h, 0
+    endloc
+
+// #EQDIM (dictio.73:1268) and SIZEAT, the natives that SIZE (blockl.4:287)
+// and #EQDIM use instead of ATAB's cells. They are in bank 1, where the
+// room is. The sizes are read from bank 4's tables by full address, the
+// object by hkObjF, and the natives are entered by jmp from pgNats (bank 6)
+// and leave by pgR1 or pgR2.
+// szLook takes the value in szV. For an object the engine places (not the
+// box or the table, whose sizes the Lisp's SIZE has as constants), it puts
+// the sizes into szX, szY and szZ and returns AC 0. Otherwise AC is 1 for
+// the box, and anything else (the table, the hand, an atom that is no
+// object, a list) leaves AC neither 0 nor 1.
+// IO is clobbered. Called via jsp, within this bank.
+bank 1
+szLook, dap szLr
+    lac szV
+    dac i [hkA:6]
+    XJSP(hkObjF, 6)
+    lac i [hkA:6]
+    spa
+    jmp szLr
+    sub [BOXOBJ]
+    sma
+    jmp szFar
+    add [BOXOBJ]
+    add [sizX:4]
+    dac szQ
+    lac i szQ
+    dac szX
+    lac szQ
+    add [NOBJ]
+    dac szQ
+    lac i szQ
+    dac szY
+    lac szQ
+    add [NOBJ]
+    dac szQ
+    lac i szQ
+    dac szZ
+    cla
+szLr, jmp 0
+szFar, add [1]
+    jmp szLr
+
+// #EQDIM answers T if the three sizes are equal, NIL for the box (400 400 300)
+// and for an object whose are not; T for the table (1200 each) and for an
+// atom with no size (NIL's three are EQ); a list is a fault. AC and IO are
+// clobbered.
+csEqdim, law i 1
+    add i [pgSp:6]
+    dac szQ
+    lac i szQ
+    dac szV
+    jsp szLook
+    sza
+    jmp szNone
+    lac szX
+    sas szY
+    jmp szN
+    sas szZ
+    jmp szN
+szT, lac [KSYM]
+    jmp i [pgR1:6]
+szN, cla
+    jmp i [pgR1:6]
+szNone, sad [1]
+    jmp szN
+    lac szV
+    and [KMASK]
+    sas [KCONS]
+    jmp szT
+    jmp i [pgFlt:6]
+
+// SIZEAT takes an atom and 0, 1 or 2 and gives that size's number, or NIL
+// if the atom has none, so the Lisp's SIZE makes its list of three cells
+// by three calls.
+csSizeAt, law i 2
+    add i [pgSp:6]
+    dac szQ
+    lac i szQ
+    dac szV
+    idx szQ
+    lac i szQ
+    and [077777]
+    add [szX:.]
+    dac szP
+    jsp szLook
+    sza
+    jmp szNil
+    lac i szP
+    ior [KINT]
+    jmp i [pgR2:6]
+szNil, cla
+    jmp i [pgR2:6]
+szX, 0
+szY, 0
+szZ, 0
+szQ, 0
+szV, 0
+szP, 0
+
+bank 4

@@ -1,0 +1,291 @@
+// The drop. When a collection leaves the heap short, the data the sentence
+// read from the drum are let go, to be read again when next used, and the
+// heap is collected again. Unless NODROPEVERY, this is done before every
+// collection too.
+// What goes is the meanings and theorems made (psMVal's slots zeroed, which
+// psMean and psThm read again), and the quoted lists of every function neither
+// running nor on the call stack. Their gConst entries are zeroed and their
+// BMADE cleared, so that the next entry makes them again, as psEnter does for a
+// block still in the cache. The running function and those on the stack keep
+// their lists and their BMADE, since a function still running may name a list
+// again and compare it with one it holds.
+// The lists a block names are a run of gConst, in its gBlk word BUSE. Each is
+// marked meanwhile by its kind, KCONS made KCODE, which no quoted list has.
+// The same loops clear all of it at a sentence's start (psDrpA, from pgsys.ac's
+// psClear), nothing then kept.
+// Bank 011 after the constant cells, before the Planner engine's cold half.
+// eem on throughout. Needs shrdlu.ah, semantics.ac, pgm.ac, pgsys.ac and
+// collect.ac.
+
+// Called from an allocator whose collection left it short (pgm.ac's pgCons and
+// pgRsv, collect.ac's psNode), which then looks again. Does the drop, then a
+// collection. A drop that lets nothing go is NO ROOM, so a second call
+// with nothing allocated between ends there. NODROP builds without the drop,
+// so it is NO ROOM at once.
+// Returns to the address in AC after the collection when the drop let
+// something go, and jumps to pgRoom when it did not.
+// AC and IO are clobbered.
+// Called via jsp from bank 6.
+psShort, dac drS
+#ifndef NODROP
+    jsp psDrop
+    sza i
+#endif
+    jmp i [pgRoom:6]
+    XJSP(psGC, 6)
+    jmp i drS
+
+// The drop. Keeps the running block and those on the stack, and lets the rest
+// go. DROPACTIVE builds without the keeping, so nothing is kept.
+// Takes no arguments. Returns in AC the number of lists, meanings and theorems
+// let go.
+// AC is the result and IO is clobbered.
+// Called via jsp, from bank 6 too (collect.ac's psGC1, unless NODROPEVERY).
+psDrop,
+    local wl, wd, p
+    dac drR
+    lac [BACT]
+    dac drKb
+    lac [KCODE]
+    dac drMk
+#ifndef DROPACTIVE
+    lac i [pgFn:6]
+    jda drBlk
+    lac [PCSTK+PFFN]
+    dac p
+wl, lac p
+    sub i [pgCp:6]
+    sma
+    jmp wd
+    lac i p
+    jda drBlk
+    lac p
+    add [PFW]
+    dac p
+    jmp wl
+#endif
+wd, jsp drAll
+    idx psDrops
+    lac drN
+    add psDropN
+    dac psDropN
+    lac drN
+    jmp i drR
+p, 0
+    endloc
+
+// At a sentence's start, lets go every quoted list on the drum, meaning and
+// theorem, and clears every function's BMADE, BACT and last use.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp from bank 012.
+psDrpA, dac drR
+    dzm drKb
+    law 1                   // no kind: no list is kept
+    dac drMk
+    jsp drAll
+    jmp i drR
+
+// The loops of both. Lets go each quoted list on the drum (gConst from NCONSTC
+// on) unless its kind is drMk, the mark, which is then taken off. Clears each
+// function's BMADE unless its BACT is drKb's (BACT is then cleared). Lets go
+// each meaning and theorem. drN counts the lists, meanings and theorems let go.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+drAll,
+    local cloop, czero, cnext, bloop, keep, put, mloop, mnext, rtn, p
+    dap rtn
+    dzm drN
+    lac [gConst:013+NCONSTC]
+    dac p
+cloop, lac i p
+    sza i
+    jmp cnext               // not made
+    and [KMASK]
+    sas drMk
+    jmp czero
+    lac i p                 // kept: KCONS again
+    and [0577777]
+    dac i p
+    jmp cnext
+czero, dzm i p
+    idx drN
+cnext, idx p
+    sas [gConst:013+NCONST]
+    jmp cloop
+    lac [gBlk:5+BADDR]
+    dac p
+bloop, lac i p
+    and drKb
+    sza
+    jmp keep
+    lac i p
+    and [0177777]
+    jmp put
+keep, lac i p
+    and [0577777]
+put, dac i p
+    lac p
+    add [BLKW]
+    dac p
+    sas [gBlk:5+BADDR+NFN*BLKW]
+    jmp bloop
+    lac [psMVal:017]
+    dac p
+mloop, lac i p
+    sza i
+    jmp mnext
+    dzm i p
+    idx drN
+mnext, idx p
+    sas [psMVal:017+NMEAN+NTHM]
+    jmp mloop
+rtn, jmp 0
+p, 0
+    endloc
+
+// Keeps a block. Sets its BACT, and marks each list in its run in gConst
+// (gBlk's BUSE word holds the first index, then the count times BUSEN), KCONS
+// made KCODE, if it is made. A block marked already, or no block (07777), is
+// passed over, and so is one with no lists (its word 0).
+// Takes the block in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+drBlk,
+    local loop, next, rtn, q, n
+    0                       // jda puts the argument here
+    dap rtn
+    lac drBlk
+    sad [07777]
+    jmp rtn
+    ral 2s
+    add [gBlk:5+BADDR]
+    dac q
+    lac i q
+    and [BACT]
+    sza
+    jmp rtn
+    lac i q
+    ior [BACT]
+    dac i q
+#ifdef DROPSKIP
+    jmp rtn                 // DROPSKIP: a kept function's lists are not marked
+#endif
+    idx q                   // BUSE
+    lac i q
+    sza i
+    jmp rtn
+    dac n
+    and [BUSEF]
+    add [gConst:013]
+    dac q
+    lac n
+    rar 9s
+    rar 1s
+    and [0177]
+    dac n
+loop, lac i q
+    and [KMASK]
+    sas [KCONS]
+    jmp next
+    lac i q
+    ior [KCODE-KCONS]
+    dac i q
+next, idx q
+    lac n
+    sub [1]
+    dac n
+    sza
+    jmp loop
+rtn, jmp 0
+q, 0
+n, 0
+    endloc
+
+// The drop's state.
+psDrops, 0                  // the drops made since the program was loaded
+psDropN, 0                  // and what they let go, for /ROOM
+drN, 0                      // what this one let go
+drKb, 0                     // BACT if a block may be kept, else 0
+drMk, 0                     // a kept list's kind, KCODE, or 1 for none
+drR, 0                      // the full addresses returned to
+drS, 0
+
+#ifdef CONSTCHECK
+// CONSTCHECK checks that leaving the constant cells out of the collector's
+// roots is sound. It is a fault if any of their words points anywhere but into
+// the constant cells (a node, or a cell of the heap), which a collection would
+// then free while it is in use. Here, not beside the collector, since bank 6
+// has no room. This bank's heap starts later to make it (shrdlu.ah's HEAP2).
+// Takes the return address in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jsp from bank 6 (collect.ac's psGC1).
+psCchk,
+    local loop, chk, bad
+    dac ccR
+    law CONSTEND-CONSTCELLS
+    dac ccN
+loop, law i 1
+    add ccN                 // a sum of minus zero is plus zero
+    spa
+    jmp i ccR
+    dac ccN
+    add [CONSTCELLS]
+    dac ccA
+    lac i ccA
+    dac ccV
+    and [KMASK]
+    sad [KCONS]
+    jmp chk
+    sas [KNODE]
+    jmp loop
+bad, jmp i [pgFlt:6]
+chk, lac ccV
+    and [077777]
+    ior [PCELLS]
+    sub [CONSTCELLS]
+    spa
+    jmp bad                 // below the constant cells
+    sub [CONSTEND-CONSTCELLS]
+    sma
+    jmp bad                 // past them
+    jmp loop
+    endloc
+ccR, 0                      // the full address returned to
+ccN, 0
+ccA, 0
+ccV, 0
+#endif
+
+#ifdef GCEVERY
+// GCEVERY makes a collection every GCEVERY cells made, the first at the
+// first CONS, to show a missing root early. Here, not beside CONS, since
+// bank 6 has no room. This bank's heap starts later to make it (shrdlu.ah's
+// HEAP2).
+// None while the cells a reservation (pgm.ac's pgRsv) promised are
+// being taken, since psDatum's are raw words until all are made.
+// Takes the return address in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jsp from bank 6 (pgm.ac's pgCons, its two values held).
+psGcK,
+    local held
+    dac psGkR
+    lac psHold
+    sza
+    jmp held
+    isp psGkN
+    jmp i psGkR
+    law i GCEVERY
+    dac psGkN
+    XJSP(psGC, 6)
+    jmp i psGkR
+held, law i 1
+    add psHold
+    dac psHold
+    jmp i psGkR
+    endloc
+psGkR, 0                    // the full address returned to
+psGkN, 0                    // counts up to the next collection
+psHold, 0                   // the reserved cells not yet taken
+#endif

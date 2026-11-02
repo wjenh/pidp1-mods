@@ -1,0 +1,98 @@
+// The display's break routine, and bClamp, the clamp it and its
+// routines in dlist.ac use. Both are in the words from 4 to 077 of bank 0,
+// below the code and after the break vector at 0 (shrdlu.am1), since bank 0
+// above 100 is full. The routine starts each group of the picture as the
+// last one stops (dlist.ac).
+// Bank 0; the routine turns extend mode on for bank 1, and its return
+// restores the interrupted code's. Needs <TYPE340/type340alt.ah>,
+// shrdlu.ah, and dlist.ac's words and routines.
+
+// The break routine. The 340 has stopped after a group (its halt asks
+// for the break) or on an edge.
+// It counts an edge violation, moves on to the next group (at the end of
+// a frame, counting it and the clock with frEnd and switching in a newly
+// built scene), and starts the next group.
+// A due hand position is applied only before the held object's group, the
+// one before the hand's, so the load and the hand move together and the
+// 340 is stopped for a step once a frame at most.
+// A break with the 340 not stopped is left alone.
+// The words to 077 are full.
+// What it calls, nothing in the program calls, since the program may be
+// inside any routine at the break.
+// The drum's end-of-transfer break, at each overlay load, is one of those
+// left alone.
+// NOSTOPTEST, defined, takes every break as the 340's, with no stopped
+// test.
+// Entered from location 3. AC and IO are restored from 0 and 2, and the
+// return restores the interrupted code's extend mode.
+dpyBreak,
+    local again, out, hand, p
+    eem
+#ifndef NOSTOPTEST
+    t340dss
+    jmp out
+#endif
+    t340dsv
+    jmp .+2
+    jmp .+3
+    t340dsh
+    jmp .+2
+    idx dpEdges
+    idx dpGrp
+    sas [NGROUP]
+    jmp again
+    dzm dpGrp
+    jsp frEnd
+    lac dpSwap
+    sza i
+    jmp again
+    lac dpFront
+    xor [1]
+    dac dpFront
+    dzm dpSwap
+    jsp anchorPatch
+again, lac dpGrp
+    sad [GHELD]
+    jsp handApply
+    lac dpGrp
+    sad [GHAND]
+    jmp hand
+    lac dpFront
+    sza
+    law GHAND
+    add dpGrp
+    add [grpTab]
+    dac p
+    lio i p
+    jmp .+2
+hand, lio [handBuf:1]
+    t340dla
+out, lio 2
+    lac 0
+    jmp i 1
+p, 0
+    endloc
+
+// clamp's copy for the break routine, which shares no routine with the
+// program. It clamps a screen coordinate to the raster, counting each clamp.
+// Takes the coordinate in AC. Returns it clamped in AC.
+// AC is the result and IO is preserved. Called via jda.
+bClamp,
+    local rtn, lo
+    0                       // jda puts the argument here
+    dap rtn
+    lac bClamp
+    spa
+    jmp lo
+    sub [RASTERMAX+1]
+    sma
+    jmp .+3
+    lac bClamp
+    jmp rtn
+    idx dpClamps
+    lac [RASTERMAX]
+    jmp rtn
+lo, idx dpClamps
+    cla
+rtn, jmp 0
+    endloc

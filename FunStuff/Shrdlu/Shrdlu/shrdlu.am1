@@ -1,0 +1,265 @@
+SHRDLU
+// SHRDLU, Terry Winograd's blocks-world program (MIT, 1968-70), rewritten
+// for the PDP-1D.
+//
+// The original's behavior is recreated completely.
+// The block world is displayed on the Type 340 display,
+// SHRDLU is talked to over a telnet session.
+//
+// The original was written for a PDP-10 in Maclisp and Micro-planner.
+//
+// This version uses all 16 banks of core, 12 tracks on the Type 23 Drum,
+// a DCS channel in telnet mode, the Type 340 display, and the BBN clock.
+//
+// A tiny subset of Maclisp is implemented, mostly to map the original Maclisp
+// code onto real assembly code, it's a lightweight wrapper.
+//
+// The planner is similarly a 'tiny-planner' as a very optimized bytecode engine.
+// The action theorems, the database and the event memory are handled by it.
+// It is given goals by typed commands and its plan is carried
+// out on the display through the world's 'hand', just as the original did.
+//
+// The reader takes each word as it is typed, passes them through the lexicon,
+// generated from the original's dictionary.
+// The original grammar, semantics, answers and Micro-Planner are compiled to
+// bytecode.
+//
+// The program parses each sentence into a goal via
+// the planner's rule engine, and the resulting response typed out.
+// If motion actions are part of the goal, those are reflected on the display.
+// The compiled code is on the drum, in overlays.
+// The program pages functions into a cache in banks 014 and 015.
+// The lists are a heap with a collector.
+// The am1 overlay manager is in bank 013, the overlay table at its end.
+// The drum's tracks 21-32 are used.
+//
+// The display is the Type 340.
+// The display list holds the world objects rendered in groups.
+// Each group ends in a halt that triggers an SBS break and the
+// break routine starts the next.
+//
+// The main loop reads the terminal and processes the command line.
+//
+// Bank 0 holds the code and its working data and runs with extend mode always on,
+// every indirect reference is a full all-banks address.
+// Bank 1 holds the display buffers.
+// Bank 2 holds the object table, the occluders, the shapes, the piece cache's
+// records and the lexicon.
+// Bank 3 holds the piece cache's pieces and the shared edges' clipping,
+// then the program's *var* variables.
+// Bank 4 holds the planner's code and working data and the collector's stack.
+// Bank 5 holds the theorems and the planner's names, then the block table.
+// Bank 6 holds the planner's heap, then the programs's hot half, the
+// collector and the hooks.
+// Bank 7 holds the database and the events.
+// Bank 010 holds a command's frames, choice points, trail and plan.
+// Bank 011 holds the constant cells, the drop and the Planner engine's cold half.
+// Bank 012 holds the planner's output, trace and replay, the planner's root
+// half, the programs's cold half, then the overlay window cmdWin.
+// Bank 013 holds the overlay manager, the reader, the top level and the
+// printing, with the lexicon in bank 2.
+// Banks 014 and 015 hold the code cache, then the value stack, the
+// native evaluator and the Planner engine's core.
+// Bank 016 holds the parse nodes.
+// Bank 017 holds the derived words and the other various stacks.
+// The heap's cells fill the ends of banks 010, 011, 016 and 017.
+// Other tables fill the banks' spare words.
+// A FEATURES lookup is first tried in the feature cache in bank 5.
+//
+// Build defines, not generally useful:
+// FASTMOTION makes the hand jump to its final location immediately.
+// NOHIDE leaves out hidden-line clipping.
+// OMITB10 leaves :B10 undrawn.
+// PERIOD sets the hand's step period in ms.
+// PCNOSPREAD makes the piece cache clip again, but only what changed in it.
+// SMALLFRAMES, SMALLTRAIL, SMALLPLAN and SMALLDERIVED make an arena too small
+// for one command.
+// NOSTOPTEST makes dpyBreak take every break as the 340's break.
+// NOOVHOOK makes an overlay error halt.
+// SHORTCLOCK sets the clock's count to 131 s.
+// NODROPEVERY makes the drop happen only when a collection leaves the heap
+// short, not before every collection.
+// DROPACTIVE makes the drop keep no running function's lists.
+// SMALLHEAP cuts the heap by SMALLHEAP of bank 017's cells.
+// NODROP gives NO ROOM where an drop would happen, with NODROPEVERY.
+// OLDQUOTE prints a " alone as '.
+// GCEVERY makes a collection every GCEVERY cells made, with bank 011's heap later.
+// NOREADWORD makes READWORD give the symbol, not the reader's word.
+// KEEPNOPT leaves a point where it is, KEEPNODB leaves the records' lists and
+// points where they are, and KEEPNOCAP lets scratch use all that is free.
+// KEEPOFF gives no memory back.
+// SMALLKEEP makes a heap of 192 words.
+// NOHOTOFF makes a FEATURES put on an atom not stop psHot.
+// HOTANY makes psHot take the first slot, whatever its key.
+// NOLBHIDE leaves the idle labels on.
+//
+// 2-Nov-2026 Claude/wje - first release
+
+#include <TYPE340/type340alt.ah>
+#include <DCS/dcs2defs.ah>
+#include <CLOCK/clockdefs.ah>
+#include "shrdlu.ah"
+
+%%drumreserve 0-20
+
+// The break vector.
+// Only the 340 asks for a break, so there is a single channel.
+0/
+    0                       // AC at the break
+    0                       // the return: overflow, extend mode, PC
+    0                       // IO at the break
+    jmp dpyBreak
+
+4/
+#include "dbreak.ac"
+
+100/
+begin, eem
+    XJSP(ovInit, 013)
+    jsp dpyInit
+    jsp termInit
+    jsp cmdReset
+    jsp i [s2Init:012]
+    nop
+    XJSP(rdInit, 013)
+main, XJSP(rdPoll, 013)
+    lac tReady
+    sza i
+    jmp main
+    jsp i [s2Exec:012]      // returns past execLine if it took the line
+    jsp execLine
+    dzm tLen
+    dzm tReady
+    jmp main
+
+#include "project.ac"
+#include "world.ac"
+#include "hidden.ac"
+#include "dlist.ac"
+#include "cache.ac"
+#include "hand.ac"
+#include "term.ac"
+#include "debug.ac"
+
+constants
+
+bank 4
+#include "atoms.ac"
+#include "db.ac"
+#include "blocks.ac"
+#include "natives.ac"
+#include "engine.ac"
+#include "events.ac"
+constants
+
+// The overlay manager, before the first %%ovcall (goals.ac).
+bank 013
+#include <DRUM/overlay.ac>
+
+bank 012
+#include "goals.ac"
+constants
+
+bank 2
+#include "lexicon.ac"
+constants
+
+bank 013
+#include "reader.ac"
+constants
+
+bank 5
+#include "theorems.ac"
+constants
+
+bank 3
+#include "share.ac"
+constants
+
+// The bytecode places itself.
+// Its constant cells are in bank 011, its tables in banks 013, 3 and 5, and its
+// blocks on the drum in overlays of codeWin, which come before the window
+// cmdWin's so that they are numbered first.
+#include "semantics.ac"
+
+// The machine's hot half is in bank 6 after the engine's heap, with the
+// collector and the engine's hooks after it.
+// Its cold half is in bank 012 after goals.ac, its printing in bank 013 with
+// the reader, and its variables in bank 3.
+bank 6
+01400/                      // HPLIM, the heap cut to 768 words
+#include "pgm.ac"
+constants
+
+bank 012
+#include "pgsys.ac"
+constants
+
+bank 6
+#include "collect.ac"
+#include "hooks.ac"
+constants
+
+// The evaluator, then the Planner engine's core, after the value stack
+// at the cache's end (CACHEND, PVSTK).
+bank 015
+01260/
+#include "eval.ac"
+#include "planner.ac"
+constants
+
+// After the constant cells (which end at 0114330 at most), the drop and the
+// engine's cold half, then the heap's cells from HEAP2 (shrdlu.ah).
+bank 011
+04330/
+#include "drop.ac"
+#include "plcold.ac"
+constants
+
+// The event memory as the compiled source reads it, in bank 5's spare
+// words, the code cache's neighbors being full.
+bank 5
+#include "evlisp.ac"
+#include "hotget.ac"
+constants
+
+// What learning adds, in bank 3's spare words, the engine's banks being full.
+bank 3
+vTab,
+    table NVARS
+#include "r12.ac"
+#include "learn.ac"
+constants
+
+// The window, after the root's words of bank 012, and its overlays.
+bank 012
+%%window cmdWin, CMDWIN, 07777
+%%overlay cmds, cmdWin
+#include "cmds.ac"
+#include "room.ac"
+%%endoverlay
+%%overlay tree, cmdWin
+#include "tree.ac"
+%%endoverlay
+%%overlay sm, cmdWin
+#include "sm.ac"
+#include "read.ac"
+#include "keep.ac"
+%%endoverlay
+
+// The idle labels consist of the gate's routines in bank 1 and the overlay lbl that
+// builds them.
+#include "labels.ac"
+
+bank 013
+#include "parse.ac"
+#include "print.ac"
+%%ovtable
+constants
+
+// The machine's tables in the banks' spare words.
+#include "tables.ac"
+
+bank 0
+
+start begin

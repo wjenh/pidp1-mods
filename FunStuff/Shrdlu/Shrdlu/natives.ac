@@ -1,0 +1,776 @@
+// The Lisp inside the action theorems: each native is one expression of
+// a theorem body, for the theorem whose slots it names (theorems.ac).
+// The engine's NAT and NATJ jump to a native, which ends by jumping to
+// natYes when its expression is true and natNo when it is false. A
+// native used by NATJ changes nothing when false. Slots are read with
+// sget and set through the trail with sset. natArg is the native's one
+// inline argument. It is a slot, or for the generic ones, a destination slot
+// times 0100 plus a source slot.
+// Bank 4, eem on. AC and IO are clobbered by every native. Needs
+// shrdlu.ah, atoms.ac, db.ac, blocks.ac, engine.ac, events.ac.
+
+// The generic natives' source and destination slots.
+// Take no arguments. Return the slot in AC.
+// AC is the result and IO is clobbered.
+// Called via jsp.
+natSrc,
+    local rtn
+    dap rtn
+    lac natArg
+    and [077]
+rtn, jmp 0
+    endloc
+
+natDst,
+    local rtn
+    dap rtn
+    lac natArg
+    sar 6s
+    and [077]
+rtn, jmp 0
+    endloc
+
+// Sets the destination slot to AC and succeeds. natSetq first fails on
+// NIL, as THSETQ does on a false value. Jumped to.
+natSetq,
+    sad [NIL]
+    jmp natNo
+natSet, dac natV
+    jsp natDst
+    dac natT
+    lio natT
+    lac natV
+    jda sset
+    jmp natYes
+
+natV, 0
+natT, 0
+
+// Sets slot natT to the value in natV. natT is set before the call.
+// AC and IO are clobbered.
+// Called via jsp.
+natPut,
+    local rtn, v
+    dap rtn
+    lio natT
+    lac natV
+    jda sset
+rtn, jmp 0
+    endloc
+
+// Skips if a value is an atom in Lisp's sense, not a list or point, and
+// assigned.
+// Takes the value in AC. AC is preserved and IO is clobbered.
+// Called via jda.
+isAtom,
+    local rtn, no
+    0                       // jda puts the argument here
+    dap rtn
+    lac isAtom
+    and [TAGS]
+    sad [TLIST]
+    jmp no
+    sad [TPT]
+    jmp no
+    sad [TVAR]
+    jmp no
+    idx rtn
+no, lac isAtom
+rtn, jmp 0
+    endloc
+
+// The generic tests, of natArg's slot: an atom; NIL (the original's None
+// or ()); not NIL; assigned (THASVAL); a list of one; of more than one.
+nIsAtom, lac natArg
+    jda sget
+    jda isAtom
+    jmp natNo
+    jmp natYes
+
+nIsNil, lac natArg
+    jda sget
+    sad [NIL]
+    jmp natYes
+    jmp natNo
+
+nNotNil, lac natArg
+    jda sget
+    sad [NIL]
+    jmp natNo
+    jmp natYes
+
+nIsSet, lac natArg
+    jda sget
+    sad [UNASS]
+    jmp natNo
+    jmp natYes
+
+nLen1, lac natArg
+    jda sget
+    jda llen
+    sad [1]
+    jmp natYes
+    jmp natNo
+
+nLenGt1, lac natArg
+    jda sget
+    jda llen
+    sub [2]
+    spa
+    jmp natNo
+    jmp natYes
+
+// The generic settings: (THSETQ dst (CAR src)), (CADR src) and (CDR
+// src), which fail on NIL; (SETQ dst (CDR src)) and (SETQ dst src),
+// which do not; the size of src as a point; LISTIFY.
+nCar, jsp natSrc
+    jda sget
+    jda car
+    jmp natSetq
+
+nCadr, jsp natSrc
+    jda sget
+    jda cdr
+    jda car
+    jmp natSetq
+
+nCdrQ, jsp natSrc
+    jda sget
+    jda cdr
+    jmp natSetq
+
+nCdrS, jsp natSrc
+    jda sget
+    jda cdr
+    jmp natSet
+
+nCopy, jsp natSrc
+    jda sget
+    jmp natSet
+
+nSizeOf, jsp natSrc
+    jda sget
+    jda sizeOf
+    jsp qToP
+    jsp mkpt
+    jmp natSet
+
+nListify, jsp natSrc
+    jda sget
+    jda listify
+    jmp natSet
+
+// MAKESYM STACK, for TA-SUPP's new stack: the destination slot gets it. The
+// number is not taken back when the theorem fails.
+nNewStk, idx stkCnt
+    add [TWD+STK0]
+    jmp natSet
+
+// TE-SUPP: whether the stack Y, slot 4, still has two parts.
+nParts,
+    local p
+    lac [APART]
+    dac dbP
+    lac [ANY]
+    dac dbA
+    law 4
+    jda sget
+    dac dbA+1
+    law 2
+    dac dbN
+    jsp dbFind
+    sza i
+    jmp natNo
+    dac p
+    lac i p
+    jda dbScan
+    sza i
+    jmp natNo
+    jmp natYes
+p, 0
+    endloc
+
+stkCnt, 0
+
+// The generator from any bank (learn.ac).
+// Takes no arguments. Returns the value in AC.
+// AC is the result and IO is preserved.
+// Called via jsp.
+rndF, dac rndR
+    jsp random
+    jmp i rndR
+rndR, 0
+
+// Copies (qx, qy, qz) to (px, py, pz).
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+qToP,
+    local rtn
+    dap rtn
+    lac qx
+    dac px
+    lac qy
+    dac py
+    lac qz
+    dac pz
+rtn, jmp 0
+    endloc
+
+// TA-AT (blockp.3: THRPLACA on ATABLE). Sets X, slot 2, at Y, slot 3.
+nTaAt, law 3
+    jda sget
+    jda ptget
+    law 2
+    jda sget
+    and [07777]
+    jda locSet
+    jmp natYes
+
+// TA-SUPP: (THSETQ $_Z (SUPPORT $?Y (SIZE $?X) $?X)), Z slot 4.
+nSuppZ, law 2
+    jda sget
+    dac spSelf
+    jda sizeOf
+    law 3
+    jda sget
+    jda ptget
+    jsp support
+    sad [NIL]
+    jmp natNo
+    dac natV
+    law 4
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// MOVEHAND2 and MOVEHAND: (EQUAL $?Y HANDAT), Y slot 2.
+nHandIsY, law 2
+    jda sget
+    lio handAt
+    jda pteq
+    jmp natNo
+    jmp natYes
+
+// MOVEHAND2: the hand's limits, 37 < x < 1141, -1 < y < 1141,
+// -1 < z < 1001.
+nLimits, law 2
+    jda sget
+    jda ptget
+    lac px
+    sub [040]
+    spa
+    jmp natNo
+    lac px
+    sub [01141]
+    sma
+    jmp natNo
+    lac py
+    spa
+    jmp natNo
+    sub [01141]
+    sma
+    jmp natNo
+    lac pz
+    spa
+    jmp natNo
+    sub [01001]
+    sma
+    jmp natNo
+    jmp natYes
+
+// MOVEHAND2: (THSETQ $_LOC HANDAT), LOC slot 3.
+nLocHand, lac handAt
+    dac natV
+    law 3
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// MOVEHAND2: (THSETQ HANDAT $?Y).
+nHandSet, law 2
+    jda sget
+    dac natV
+    lac [handAt:.]
+    dac tsA
+    lac natV
+    jda tset
+    jmp natYes
+
+// MOVEHAND: where the held object X (slot 3) would be with the hand at Y
+// (slot 2), centered below it, if it is clear up to 1000. The place goes to Z,
+// slot 5.
+nNewLoc, law 3
+    jda sget
+    dac clObj
+    and [07777]
+    jda locSize
+    law 2
+    jda sget
+    jda ptget
+    lac qx
+    jda div2
+    cma
+    add px
+    dac px
+    lac qy
+    jda div2
+    cma
+    add py
+    dac py
+    lac qz
+    cma
+    add pz
+    dac pz
+    cma
+    add [01000]
+    dac qz
+    jsp clear
+    jmp natNo
+    jsp mkpt
+    dac natV
+    law 5
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// MOVEHAND: the held object's history gains (THTIME Z its-supporter),
+// X slot 3, Z slot 5.
+nHist, law 5
+    jda sget
+    dac hiLoc
+    law 3
+    jda sget
+    dac dbA+1
+    lac [ANY]
+    dac dbA
+    lac [ASUPPORT]
+    dac dbP
+    law 2
+    dac dbN
+    jsp dbFind
+    sza i
+    jmp .+5
+    add [DARG]
+    dac natT
+    lac i natT
+    jmp .+2
+    lac [OHAND]
+    dac hiSup
+    lac thTime
+    dac hiTime
+    lac dbA+1
+    and [07777]
+    jda histAdd
+    jmp natYes
+
+// RAISEHAND: the point 1000 above the hand, T slot 2.
+nRaiseT, lac handAt
+    jda ptget
+    law 01000
+    dac pz
+    jsp mkpt
+    dac natV
+    law 2
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// GRASP: (THSETQ $_Y (TOPCENTER $?X)), X slot 2, Y slot 3.
+nTopY, law 2
+    jda sget
+    and [07777]
+    jda locGet
+    jsp tcent
+    jsp mkpt
+    dac natV
+    law 3
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// FINDSPACE's three ways (blockp.3's TC-FINDSPACE), SURF slot 2, SIZE 3,
+// OBJ 4, the place found to SPACE, slot 5. The first is CENTER, on a
+// block, unless a list is being put (#NOCLEAR).
+nFs1, jsp fsArgs
+    lac fsSurf
+    sad [OBOX]
+    jmp natNo
+    sad [OTABLE]
+    jmp natNo
+    jsp noclear
+    jmp natNo
+    law FSCENTER
+    jmp fsGo
+
+// The second is PACK, in the box, or on a block while a list is put.
+nFs2, jsp fsArgs
+    lac fsSurf
+    sad [OBOX]
+    jmp fs2Go
+    sad [OTABLE]
+    jmp natNo
+    jsp noclear
+    jmp fs2Go
+    jmp natNo
+fs2Go, law FSPACK
+    jmp fsGo
+
+// The third is RANDOM.
+nFs3, jsp fsArgs
+    law FSRANDOM
+fsGo, dac fsTyp
+    jsp findspace
+    jmp natNo
+    jsp mkpt
+    dac natV
+    law 5
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// MAKESPACE: SURF, slot 2, is not the table.
+nNotTable, law 2
+    jda sget
+    sad [OTABLE]
+    jmp natNo
+    jmp natYes
+
+// Reads FINDSPACE's surface, size and objects from slots 2 to 4.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+fsArgs,
+    local rtn
+    dap rtn
+    law 2
+    jda sget
+    dac fsSurf
+    law 3
+    jda sget
+    jda ptget
+    lac px
+    dac fsSx
+    lac py
+    dac fsSy
+    lac pz
+    dac fsSz
+    law 4
+    jda sget
+    dac fsObj
+rtn, jmp 0
+    endloc
+
+// Skips if there is no (#NOCLEAR).
+// Takes no arguments.
+// AC and IO are clobbered.
+// Called via jsp.
+noclear,
+    local rtn
+    dap rtn
+    lac [ANOCLEAR]
+    dac dbP
+    dzm dbN
+    jsp dbFind
+    sza i
+    idx rtn
+rtn, jmp 0
+    endloc
+
+// PUT: (CLEAR $?Y (SIZE $?X) $?X), X slot 2, Y slot 3.
+nPutClear, jsp putArgs
+    lac natV
+    dac clObj
+    jsp clear
+    jmp natNo
+    jmp natYes
+
+// PUT: (SUPPORT $?Y (SIZE $?X) $?X).
+nPutSupp, jsp putArgs
+    lac natV
+    dac spSelf
+    jsp support
+    sad [NIL]
+    jmp natNo
+    jmp natYes
+
+// PUT: (THSETQ $_Z (TCENT $?Y (SIZE $?X))), Z slot 4.
+nTcentZ, jsp putArgs
+    jsp tcent
+    jsp mkpt
+    dac natV
+    law 4
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// Gets PUT's X into natV and its size, and Y into (px, py, pz).
+// Takes no arguments.
+// AC and IO are clobbered.
+// Called via jsp.
+putArgs,
+    local rtn
+    dap rtn
+    law 2
+    jda sget
+    dac natV
+    jda sizeOf
+    law 3
+    jda sget
+    jda ptget
+rtn, jmp 0
+    endloc
+
+// PUTON: a list of one is its element, X slot 2.
+nFixX, law 2
+    jda sget
+    dac natV
+    jda llen
+    sad [1]
+    jmp .+2
+    jmp natYes
+    lac natV
+    jda car
+    dac natV
+    law 2
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// PUTON: X (slot 2) is not Y (slot 3) and does not hold it.
+nNotSelf, law 3
+    jda sget
+    dac natT
+    law 2
+    jda sget
+    dac natV
+    jda islist
+    jmp nsAtom
+    lac natT
+    lio natV
+    jda member
+    jmp natYes
+    jmp natNo
+nsAtom, lac natV
+    sad natT
+    jmp natNo
+    jmp natYes
+
+// PUTON: there is no (#NOCLEAR).
+nNoNoclear, jsp noclear
+    jmp natNo
+    jmp natYes
+
+// PACK: BLOCKS (slot 4) and PYR (slot 5), PACKO of OBJ (slot 2).
+nPackInit, law 2
+    jda sget
+    jda listify
+    dac pkL
+    lio [ABLOCK]
+    jda packo
+    dac natV
+    law 4
+    dac natT
+    jsp natPut
+    lac pkL
+    lio [APYRAMID]
+    jda packo
+    dac natV
+    law 5
+    dac natT
+    jsp natPut
+    jmp natYes
+
+pkL, 0
+
+// PACK: (THSETQ $_Y (FINDSPACE 'PACK $?SURF (SIZE (CAR PYR)) (CAR
+// PYR))), SURF slot 3, PYR 5, Y 7.
+nPkPyrY, law 5
+    jda sget
+    jda car
+    jmp pkY
+
+// PACK: the same for X, slot 6.
+nPkBlkY, law 6
+    jda sget
+pkY, dac fsObj
+    jda sizeOf
+    lac qx
+    dac fsSx
+    lac qy
+    dac fsSy
+    lac qz
+    dac fsSz
+    law 3
+    jda sget
+    dac fsSurf
+    law FSPACK
+    dac fsTyp
+    jsp findspace
+    jmp natNo
+    jsp mkpt
+    dac natV
+    law 7
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// PACK: (THSETQ $_Y (OR (PACKON $?X PYR) (PACKON $?X BLOCKS))), X slot
+// 6, Y 7.
+nPackonY, law 6
+    jda sget
+    dac pkL
+    law 5
+    jda sget
+    dac natV
+    lio natV
+    lac pkL
+    jda packon
+    sad [NIL]
+    jmp .+2
+    jmp poGot
+    law 4
+    jda sget
+    dac natV
+    lio natV
+    lac pkL
+    jda packon
+    sad [NIL]
+    jmp natNo
+poGot, dac natV
+    law 7
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// PACK: Y (slot 7) leaves PYR if it is there, else BLOCKS.
+nRemoveY, law 7
+    jda sget
+    dac pkL
+    law 5
+    dac natT
+    jda sget
+    dac natV
+    lio natV
+    lac pkL
+    jda member
+    jmp rmBlk
+    jmp rmGo
+rmBlk, law 4
+    dac natT
+    jda sget
+    dac natV
+rmGo, lio natV
+    lac pkL
+    jda ldelete
+    dac natV
+    jsp natPut
+    jmp natYes
+
+// STACKUP: the stack would be lower than 1201, X slot 2.
+nHigh, law 2
+    jda sget
+    jda listify
+    dac pkL
+    dzm natV
+hiLoop, lac pkL
+    jda islist
+    jmp hiEnd
+    jda car
+    jda sizeOf
+    lac natV
+    add qz
+    dac natV
+    lac pkL
+    jda cdr
+    dac pkL
+    jmp hiLoop
+hiEnd, lac natV
+    sub [01201]
+    sma
+    jmp natNo
+    jmp natYes
+
+// STACKUP: (LISTIFY X) has more than one element.
+nXlen2, law 2
+    jda sget
+    jda listify
+    jda llen
+    sub [2]
+    spa
+    jmp natNo
+    jmp natYes
+
+// STACKUP: THFIND's count, 3 if (LISTIFY X) is empty, else 2; into T,
+// slot 7.
+nFindN, law 2
+    jda sget
+    jda listify
+    sad [NIL]
+    jmp .+3
+    law 2
+    jmp .+2
+    law 3
+    dac natV
+    law 7
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// STACKUP's THFIND: the block found, Y slot 3, is not X, slot 2.
+nFyNotX, law 2
+    jda sget
+    dac natV
+    law 3
+    jda sget
+    sad natV
+    jmp natNo
+    jmp natYes
+
+// STACKUP: X becomes (APPEND (LISTIFY X) MORE), MORE slot 6.
+nXappend, law 6
+    jda sget
+    dac pkL
+    law 2
+    jda sget
+    jda listify
+    lio pkL
+    jda lappend
+    dac natV
+    law 2
+    dac natT
+    jsp natPut
+    jmp natYes
+
+// STACKUP: PYR (slot 5) is PACKO of X's pyramids; at most one.
+nPyrOk, law 2
+    jda sget
+    jda listify
+    lio [APYRAMID]
+    jda packo
+    dac natV
+    law 5
+    dac natT
+    jsp natPut
+    lac natV
+    jda llen
+    sub [2]
+    sma
+    jmp natNo
+    jmp natYes
+
+// STACKUP: BLOCKS (slot 4) is the table, then PACKO of X's blocks.
+nBlocksInit, law 2
+    jda sget
+    jda listify
+    lio [ABLOCK]
+    jda packo
+    dac natV
+    lio natV
+    lac [OTABLE]
+    jda cons
+    dac natV
+    law 4
+    dac natT
+    jsp natPut
+    jmp natYes

@@ -1,0 +1,165 @@
+// The planner commands' root half has the planner and the replay, for a
+// DO or TRY the overlay cmds has read (cmds.ac, which reads every
+// debugging command and prints what only reads), and RESET's planner
+// half. Each reply ends with a line holding only *.
+// Bank 012, eem on; it reaches bank 4's routines with XJSP and XJDA and
+// its words through full addresses, and the names in bank 5. Needs
+// shrdlu.ah, atoms.ac's output, engine.ac, events.ac's planRun, cmds.ac,
+// and the overlay manager (shrdlu.am1).
+
+// Called from the start (shrdlu.am1) to set the planner's world and
+// database as they start. Returns past the word that follows the call.
+// AC and IO are clobbered. Called via jsp from bank 0.
+s2Init, dac s2Rsv
+    XJSP(s2Reset, 4)
+    idx s2Rsv
+    jmp i s2Rsv
+
+// Called from the main loop (shrdlu.am1) with a line in tLine. Has the
+// overlay read it, and carries out a DO, a TRY, SM or RESET's planner
+// half.
+// Returns past the word that follows the call, execLine, when the reply
+// is complete. Otherwise returns to that word, with the request in cmReq
+// (debug.ac) for execLine. RESET does both.
+// AC and IO are clobbered. Called via jsp from bank 0.
+s2Exec, dac s2Rsv
+    XJSP(hpKeep, 3)
+    %%ovcall cmds, cmLine
+    spa                     // -1: the overlay failed, its error said
+    jmp cmdEnd
+    sza i
+    jmp s2Took
+    sad [RQPLAN]
+    jmp xPlan
+    sad [RQSM]
+    jmp xSmPr
+    sad [RQRESET]
+    jmp .+2
+    jmp i s2Rsv
+    XJSP(s2Reset, 4)
+    jmp i s2Rsv
+s2Took, idx s2Rsv
+    jmp i s2Rsv
+// SM. The overlay sm prints the last sentence's structures.
+xSmPr,
+    %%ovcall sm, smPrint
+    jmp cmdEnd
+
+// A command out of room (engine.ac's eRoom, which has undone it).
+// The heap's NO ROOM can come while the overlay reads a list, so the
+// manager is told that no overlay is running, as its error hook would be.
+// The overlay's call is abandoned, and the next %%ovcall is allowed.
+roomEnd, dzm i [ovActive:013]
+    lac [sNoRoom:5]
+    jda wrs
+    jsp wrnl
+// The reply's end, and back to the main loop past execLine.
+cmdEnd, law '*'
+    jda wrc
+    jsp wrnl
+    idx s2Rsv
+    jmp i s2Rsv
+
+s2Rsv, 0                    // the full address s2Exec was called from
+
+// DO and TRY, the goal in eCode. Plans it, has the overlay print the
+// plan, and for DO carries it out on the display.
+xPlan, rck
+    dio xT0
+    XJSP(ePlan, 4)
+    dac xOk
+    lac xT0
+    jda msSince
+    dac planMs
+    dac allMs
+    lac xOk
+    sza i
+    jmp xCant
+    %%ovcall cmds, cmPlan
+    lac i [eTry:4]
+    sza
+    jmp xSaid
+    dzm rpMs
+    jsp planRun
+    lac allMs
+    add rpMs
+    dac allMs
+xSaid, lac [sOk:5]
+    jda wrs
+    jsp wrnl
+    jmp cmdEnd
+xCant, lac [sCant:5]
+    jda wrs
+    jsp wrnl
+    jmp cmdEnd
+
+xT0, 0
+xOk, 0
+planMs, 0                   // the last command's planning time, ms
+allMs, 0                    // and its whole time, the replay's too
+rpMs, 0                     // the replay's time (planRun)
+
+// Milliseconds since a reading of rck, under a minute.
+// Takes the reading in AC. Returns the time in AC.
+// AC is the result and IO is clobbered. Called via jda.
+msSince,
+    local rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    rck
+    dio t
+    lac t
+    sub msSince
+    spa
+    add [0d60000]
+rtn, jmp 0
+t, 0
+    endloc
+
+bank 5
+
+sNoRoom, ascii "NO ROOM"
+
+// The goals, each with its name, its theorem, and its number of arguments.
+// An argument count of -1 takes the rest of the line, as one list.
+goalTab,
+    kPickup:5; thPickup:5; 1
+    kGrasp:5; thGrasp:5; 1
+    kUngrasp:5; thUngrasp:5; 0
+    kRaise:5; thRaiseHand:5; 0
+    kPutOn:5; thPutOn:5; 2
+    kPutIn:5; thPutIn:5; 2
+    kStackUp:5; thStackUp:5; -1
+    kClearTop:5; thClearTop:5; 1
+    kGetRid:5; thGetRidOf:5; 1
+    kNotice:5; thNotice:5; 1
+    0
+
+kDo, ascii "DO"
+kTry, ascii "TRY"
+kTrace, ascii "TRACE"
+kOn, ascii "ON"
+kOff, ascii "OFF"
+kEvents, ascii "EVENTS"
+kHistory, ascii "HISTORY"
+kFind, ascii "FIND"
+kSeed, ascii "SEED"
+kTimes, ascii "TIMES"
+kReset, ascii "RESET"
+kPickup, ascii "PICKUP"
+kGrasp, ascii "GRASP"
+kUngrasp, ascii "UNGRASP"
+kRaise, ascii "RAISEHAND"
+kPutOn, ascii "PUTON"
+kPutIn, ascii "PUTIN"
+kStackUp, ascii "STACKUP"
+kNotice, ascii "NOTICE"
+kClearTop, ascii "CLEARTOP"
+kGetRid, ascii "GET-RID-OF"
+sErr, ascii "ERROR "
+sOk, ascii "OK"
+sCant, ascii "I CAN'T"
+sPlan, ascii "PLAN "
+sAll, ascii " ALL "
+
+bank 012

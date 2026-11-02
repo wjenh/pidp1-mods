@@ -1,0 +1,126 @@
+// The machine's tables that the generated code does not place, each in
+// the spare words of a bank: the collector's bitmap, a piece for each of
+// the heap's ranges, and its stack (collect.ac); the database's chains'
+// heads (db.ac); MAKESYM's prefixes and a symbol's name copied for
+// printing (pgsys.ac, print.ac); the sentence's meanings and theorems as
+// made (pgsys.ac); and two routines, pgFFeat for pgFnOf and psHalve for
+// psMean and psThm. Bank 1 is the display's, but for the theorems' names
+// (theorems.ac). Needs shrdlu.ah, semantics.ac and collect.ac.
+
+bank 0
+gcMap0,
+    table GCMAP0
+dbHeads,
+    table NCON
+
+bank 2
+gcMap1,
+    table GCMAP1
+
+bank 3
+psPfx,
+    table 040              // 32 prefixes (the dialogue makes 9)
+// The bitmap's pieces, to be cleared. Each is a first word and a length.
+// 0 ends the list. Here to give bank 6 the words (collect.ac's psGC1).
+gcZap, gcMap0:0; GCMAP0
+    gcMap1:2; GCMAP1
+    gcMap6:017; GCMAP6
+    gcMap7:4; GCMAP7
+    0
+
+// A feature's function. Gives the word gFnOf would give for the symbol number in
+// pgFnOf (pgm.ac). The symbol names a feature or no function, and the word is
+// gFnFeat's, or -1. Here for the words bank 6 lacks, and not entered but for the four
+// features that name a function.
+// Takes the symbol number in pgFnOf. Returns the word, or -1, in AC.
+// AC is the result and IO is preserved.
+// Called via jsp from bank 6.
+pgFFeat,
+    local loop, found, none, key, p
+    dac ffR
+    lac i ffAdr
+    dac key
+    lac ffTab
+    dac p
+loop, lac i p
+    sza i
+    jmp none                // 0 ends the pairs
+    sad key
+    jmp found
+    idx p
+    idx p
+    jmp loop
+found, idx p
+    lac i p
+    jmp i ffR
+none, law i 1
+    jmp i ffR
+key, 0
+p, 0
+    endloc
+ffR, 0                      // the full address returned to
+ffAdr, pgFnOf:6             // the number to look for is the word at this address
+ffTab, gFnFeat:3            // the pairs: a feature's number, then its function
+
+// Finds a key's index in an ascending table by halving, for psMean and psThm (pgsys.ac).
+// Takes the return address in AC, the key in hsKey, the table's address in hsTab
+// and its length in hsN. Returns the index, or -1, in AC.
+// AC is the result and IO is preserved.
+// Called via jsp from bank 012.
+psHalve,
+    local loop, above, found, none, lo, hi, k, p
+    dac hsR
+    dzm lo
+    lac hsN
+    dac hi
+loop, lac lo
+    sad hi
+    jmp none
+    add hi
+    sar 1s
+    dac k
+    add hsTab
+    dac p
+    lac i p
+    sad hsKey
+    jmp found
+    sub hsKey
+    sma                     // skip if the table's key is the lower
+    jmp above
+    lac k
+    add [1]
+    dac lo
+    jmp loop
+above, lac k
+    dac hi
+    jmp loop
+found, lac k
+    jmp i hsR
+none, law i 1
+    jmp i hsR
+lo, 0
+hi, 0
+k, 0
+p, 0
+    endloc
+hsR, 0                      // the full address returned to
+hsKey, 0
+hsTab, 0
+hsN, 0
+
+// The collector's stack is here, not in bank 0, which bank 010's piece fills.
+bank 4
+gcMap7,
+    table GCMAP7
+gcStk,
+    table GCSTKN
+psNmBuf,
+    table 020              // 16 words (the longest symbol is 20 characters, 7)
+
+// In bank 017, between the bindings and the feature cache.
+bank 017
+PTABS/
+psMVal,
+    table NMEAN+NTHM
+gcMap6,
+    table GCMAP6

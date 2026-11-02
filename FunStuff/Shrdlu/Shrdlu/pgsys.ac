@@ -1,0 +1,2479 @@
+// The machine's cold half (pgm.ac has the hot one and the layout). It holds
+// the start of the dialogue and of each sentence, the code
+// cache's misses and the drum, the quoted lists, meanings and theorems
+// made in the heap, the collector, the property lists of atoms and the
+// lexicon's, the printing, the engine's hooks (DBMATCH, ACTION, ATAB,
+// the events and the records), and the natives a sentence seldom calls.
+// The cache is a ring of units from CACHE0 to CACHEND, each a block or
+// a gap (CGAP plus its length), less one free run, psTop to psLim. A
+// block is read at psTop. It starts with its number and its trailer's
+// length, and takes BLEN less the trailer, which is dropped once its
+// quoted lists are made. Room is made by growing the free run at psLim,
+// the blocks it reaches put out unless they are on the call stack. No
+// block moves. A meaning, a theorem or a trailer read alone is read
+// into the free run and made at once.
+// The collector marks from the roots (the variables, the stacks, the
+// constants and constant cells, the property lists, the feature cache,
+// the sentence's meanings and theorems, and the machine's few held
+// values) into a bitmap of the heap's ranges, with a stack.
+// Past the stack's end, the marked cells are passed over again until
+// nothing new is marked. It then sweeps each range onto the free lists.
+// Bank 012, eem on throughout; the hot half's words are reached by full
+// address, its routines through its far entries (fCons and the like),
+// which take fA and fB and give IO. Called from bank 013 (pgInit,
+// pgSent, psNmF) and bank 6. Needs shrdlu.ah, semantics.ac, pgm.ac,
+// events.ac's planRun (in this bank), dlist.ac's clRead and msLong
+// (bank 0), reader.ac's sentence and cTab, the engine (bank 4), parse.ac's pfC,
+// and the overlay table.
+
+// The value stack from here (psPush, psPop and psArg).
+#define CPUSH jda psPush
+#define CPOP jsp psPop
+#define CARG(nk, ni) law nk-ni+1; jda psArg
+// A call of the hot half's far entry r.
+#define FAR(r) jsp i [r:6]
+// The printing's (print.ac, bank 013), taking a value or a character in AC.
+#define PRIN dac i [prA:013]; XJSP(prPrinF, 013)
+#define PUTC dac i [prA:013]; XJSP(prPutF, 013)
+
+
+// The start, by way of rdInit. Sets the blocks' drum addresses
+// from the overlay table, once, checks the code overlays' headers, empties the
+// cache, gives the variables their first values and frees every cell.
+// Takes the return address in AC.
+// AC and IO are clobbered.
+// Called via jsp from bank 013.
+pgInit,
+    local loop, next, hloop, bad, hnext, ploop, pnext, vloop, p, k, q
+    dac psIr
+    dzm psBad
+    // A block's word BDRUM is its overlay's number, times 010000, plus
+    // its offset there, until it is made a dia word, which is negative.
+    lac [gBlk:5]
+    dac p
+    law NBLK
+    dac k
+loop, lac i p
+    spa
+    jmp next
+    rar 9s
+    rar 3s
+    and [077]
+    sub [1]
+    ral 2s
+    add [ovTable:013+OV_TBL_WINDOWS+NOVWIN+OV_ENT_DIA]
+    dac q
+    lac i p
+    and [07777]
+    add i q
+    dac i p
+next, lac p
+    add [BLKW]
+    dac p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+    // Each code overlay's header holds the table's stamp and its number.
+    lac [ovTable:013+OV_TBL_WINDOWS+NOVWIN+OV_ENT_DIA]
+    dac q
+    law 1
+    dac k
+hloop, lac i q
+    dac psXd
+    law 2
+    dac psXn
+    lac [psHdr:.]
+    dac psXa
+    jsp psXfer
+    lac psHdr
+    sas i [ovTable:013+OV_TBL_STAMP]
+    jmp bad
+    lac psHdr+1
+    sas k
+    jmp bad
+    jmp hnext
+bad, law 1
+    dac psBad
+hnext, lac q
+    add [OV_ENT_WORDS]
+    dac q
+    idx k
+    sub [NCODEOV+1]
+    spa
+    jmp hloop
+    // The property lists' keys already there.
+    dzm psPlN
+    lac [gPl:3]
+    dac p
+    law PLN
+    dac k
+ploop, lac i p
+    sza
+    idx psPlN
+    lac p
+    add [2]
+    dac p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp ploop
+    // The cache empty, NIL's property list none.
+    jsp psFlush
+    dzm psNilPl
+    dzm psPfxN
+    dzm i [psCol:013]
+    // The variables' first values, from the init block.
+    law IBLK
+    jda psPeek
+    add [BLKHDR]
+    dac p
+    lac [vTab:3]
+    dac q
+    law NVARS
+    dac k
+vloop, lac i p
+    dac i q
+    idx p
+    idx q
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp vloop
+    // Every cell is freed, with no stack and nothing held by the collector.
+    jsp psClear
+    XJSP(psGC, 6)
+    jmp i psIr
+p, 0
+k, 0
+q, 0
+    endloc
+
+// Empties the cache, so that no block is in it and none used.
+// Takes no arguments.
+// AC and IO are clobbered.
+// Called via jsp.
+psFlush,
+    local loop, rtn, p, k
+    dap rtn
+    lac [CACHE0]
+    dac psTop
+    lac [CACHEND]
+    dac psLim
+    lac [gBlk:5+BADDR]
+    dac p
+    law NBLK
+    dac k
+loop, dzm i p
+    lac p
+    add [BLKW]
+    dac p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp loop
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Sets what a sentence starts with. The stacks are empty, nothing is held,
+// and the feature cache, the drum's quoted lists, the meanings and theorems
+// made, BUILD's structures, and the blocks' marks of the last sentence are
+// cleared.
+// Takes no arguments.
+// AC and IO are clobbered.
+// Called via jsp.
+psClear,
+    local floop, sloop, rtn, p, k
+    dap rtn
+    lac [PVSTK]
+    dac i [pgSp:6]
+    lac [PCSTK]
+    dac i [pgCp:6]
+    lac [PBSTK]
+    dac i [pgBp:6]
+    law 07777
+    dac i [pgFn:6]
+    dzm i [pgLbH:6]
+    dzm i [pgLbT:6]
+    dzm i [pgConsA:6]
+    dzm i [pgConsD:6]
+    dzm i [pgPx:6]
+    dzm i [pgPv:6]
+    dzm psH1
+    dzm psH2
+    XJSP(eReset, 015)       // the Planner engine's stack and registers
+    // The feature cache's keys.
+    lac [PFC]
+    dac p
+    law PFCN
+    dac k
+floop, dzm i p
+    idx p
+    dzm i p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp floop
+    dzm psFcN
+    dzm psHotOff
+    // Lets go each quoted list on the drum, the functions' BMADE and last
+    // use, and the meanings and theorems made. These are the drop's loops,
+    // keeping none.
+    XJSP(psDrpA, 011)
+    // The structures BUILD made, roots of the collector.
+    lac [psSm:012]
+    dac p
+    law NSM
+    dac k
+sloop, dzm i p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp sloop
+rtn, jmp 0
+p, 0
+k, 0
+    endloc
+
+// Runs the sentence the reader has read. Its reply is printed as it is
+// made. The tree is then C (vTab+vC), NIL if the parse failed. pgMs
+// holds the time taken, in ms.
+// Returns a status in AC. It is 0 if the top level returned, 1 if the sentence
+// was abandoned (a Lisp error, an ERROR, more than PBOUND calls of PARSE), 2 for
+// NO ROOM, 3 if (IOC G) ended it, and 4 for a fault of the machine, with the
+// word after its operation's at pgFltA (0 if the drum's code is not this
+// build's, a drum transfer failed, or the cache could not hold what the stack
+// needs).
+// AC is the result and IO is clobbered.
+// Called via jsp from bank 013.
+pgSent,
+    local good, wloop, wdone
+    dac i [pgRtn:6]
+    XJSP(clRead, 0)
+    dac psT0
+    dzm psAOn
+    lac psBad
+    sza i
+    jmp good
+    dzm i [pgFltA:6]
+    law 4
+    jmp i [pgStop:6]
+good, jsp psClear
+    dzm i [pgCalls:6]
+    dzm i [pgPst:6]
+    dzm i [pgNotes:6]
+    dzm i [psCol:013]
+    // SENT and N get the sentence's words as values.
+    FAR(fLbNew)
+    lac i [rSLen:013]
+    dac psK
+    lac [rSent:013]
+    dac psQ
+wloop, lac psK
+    sza i
+    jmp wdone
+    lac i psQ
+    jda psWval
+    dac i [fA:6]
+    FAR(fLbAdd)
+    idx psQ
+    lac psK
+    sub [1]
+    dac psK
+    jmp wloop
+wdone, dzm i [fA:6]
+    FAR(fLbEnd)
+    dio i [vTab:3+vSENT]
+    dio i [vTab:3+vN]
+    // PUNCT gets the symbol of the punctuation that ended it.
+    lac i [rFin:013]
+    dac psV
+    lac [KSYM+sPERIOD]
+    dac i [vTab:3+vPUNCT]
+    lac psV
+    sas ['?']
+    jmp .+3
+    lac [KSYM+sQUEST]
+    dac i [vTab:3+vPUNCT]
+    lac psV
+    sas ['!']
+    jmp .+3
+    lac [KSYM+sEXCL]
+    dac i [vTab:3+vPUNCT]
+    jmp i [pgRun:6]
+    endloc
+
+// The sentence's end, from pgStop. Takes its time, split at the call of ANSWER
+// if it was reached, and leaves the stacks empty, so that no block is on
+// them while the tree is printed.
+// Takes the return address in AC.
+// AC and IO are clobbered.
+// Called via jsp from bank 6.
+psEnd, dac psEr
+    lac psT0
+    XJDA(msLong, 0)
+    dac pgMs
+    dzm pgAMs
+    lac psAOn
+    sza i
+    jmp .+7
+    lac psTA
+    XJDA(msLong, 0)
+    dac pgAMs
+    lac psPMs
+    dac pgMs
+    lac [PCSTK]
+    dac i [pgCp:6]
+    lac [PVSTK]
+    dac i [pgSp:6]
+    law 07777
+    dac i [pgFn:6]
+    jmp i psEr
+
+// Handles a call that missed. Makes block pgJ, which pgFn names, resident
+// and its quoted lists made if this sentence has not made them, sets pgIp to
+// its code, and notes its last use as now.
+// Takes the return address in AC.
+// AC and IO are clobbered.
+// Called via jsp from bank 6.
+psEnter,
+    local trail, mkt, made, go, e, a, t, n
+    dac psEnr
+    lac i [pgJ:6]
+    ral 2s
+    add [gBlk:5]
+    dac e
+    add [BADDR]
+    dac psP
+    lac i psP
+    and [0177777]
+    sza
+    jmp trail
+    // Not in the cache, so read it whole, at psTop.
+    lac e
+    add [BLEN]
+    dac t
+    lac i t
+    dac n
+    jda psRoom
+    lac i e
+    dac psXd
+    lac n
+    dac psXn
+    lac psTop
+    dac psXa
+    dac a
+    jsp psRead
+    lac a
+    add [1]
+    dac t
+    lac i t                 // the trailer's length
+    dac psTl
+    cma
+    add n
+    add a
+    dac psTop
+    // Its address first, so that a NO ROOM while its lists are made
+    // leaves every unit of the cache a block that gBlk places there.
+    lac a
+    ior i psP
+    dac i psP
+    spa                     // skip unless made already this sentence
+    jmp go
+    lac psTl
+    sza i
+    jmp made
+    // The trailer, just past the block's new end, made.
+    jmp mkt
+    // In the cache, its trailer unmade this sentence. The trailer is read alone.
+trail, add [1]
+    dac t
+    lac i t
+    dac psTl
+    sza i
+    jmp made
+    lac psTl
+    jda psRoom
+    lac e
+    add [BLEN]
+    dac t
+    lac i t
+    sub psTl
+    add i e
+    dac psXd
+    lac psTl
+    dac psXn
+    lac psTop
+    dac psXa
+    jsp psRead
+mkt, lac psTop
+    jda psMkCon
+made, lac i psP
+    ior [BMADE]
+    dac i psP
+go, lac i psP
+    and [0177777]
+    add [BLKHDR]
+    dac i [pgIp:6]
+    jmp i psEnr
+e, 0
+a, 0
+t, 0
+n, 0
+    endloc
+
+// Makes a block resident, for a block of names. It is read at psTop if it is
+// not in the cache, and used now.
+// Takes the block in AC. Returns its address in AC.
+// AC is the result and IO is clobbered.
+// Called via XJDA from bank 013.
+psEnsure,
+    local have, r, e, p, a, n
+    0                       // XJDA puts the argument here
+    dac r
+    lac psEnsure
+    ral 2s
+    add [gBlk:5]
+    dac e
+    add [BADDR]
+    dac p
+    lac i p
+    and [0177777]
+    sza
+    jmp have
+    lac e
+    add [BLEN]
+    dac psT
+    lac i psT
+    dac psXn
+    dac n
+    jda psRoom
+    lac i e
+    dac psXd
+    lac psTop
+    dac psXa
+    dac a
+    jsp psRead
+    lac psTop               // psRead leaves psXn the last part's
+    add n
+    dac psTop
+    lac a
+    ior i p
+    dac i p
+have, lac i p
+    and [0177777]
+    jmp i r
+r, 0
+e, 0
+p, 0
+a, 0
+n, 0
+    endloc
+
+// Reads a block above psTop and leaves it there, not resident. It is a
+// meaning's, a theorem's or the variables' first values, made at once.
+// Takes the block in AC. Returns its address in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psPeek,
+    local rtn, e
+    0                       // jda puts the argument here
+    dap rtn
+    lac psPeek
+    ral 2s
+    add [gBlk:5]
+    dac e
+    add [BLEN]
+    dac psT
+    lac i psT
+    dac psXn
+    jda psRoom
+    lac i e
+    dac psXd
+    lac psTop
+    dac psXa
+    jsp psRead
+    lac psTop
+rtn, jmp 0
+e, 0
+    endloc
+
+// Makes room for n words at psTop. The free run, psTop to psLim, is grown at
+// psLim a unit at a time. A gap is taken in. A block not on the call
+// stack and not running is put out and taken in. A block on the stack or
+// running ends the run, left as a gap, and the run starts again past it.
+// At CACHEND the run is left as a gap and starts again at CACHE0. No
+// block moves, unless the run comes round twice without room. Then the
+// blocks on the stack are slid together (psSlide), and still too little
+// room is NO ROOM. The running functions alone then fill the cache, which is
+// below its floor. Their marks are cleared first, so
+// that what the stop prints finds the cache as it would after a return.
+// Takes n in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+psRoom,
+    local mloop, mdone, grow, unit, agap, past, last, done, cloop, fin, \
+        mkgap, mret, rtn, p, q, n, laps
+    0                       // jda puts the argument here
+    dap rtn
+    lac psLim
+    sub psTop
+    sub psRoom
+    sma
+    jmp rtn
+    // The blocks on the stack, and the running one, marked BACT.
+    lac i [pgFn:6]
+    jda psAct
+    lac [PCSTK+PFFN]
+    dac p
+mloop, lac p
+    sub i [pgCp:6]
+    sma
+    jmp mdone
+    lac i p
+    jda psAct
+    lac p
+    add [PFW]
+    dac p
+    jmp mloop
+mdone, law 1
+    dac laps
+grow, lac psLim
+    sub psTop
+    sub psRoom
+    sma
+    jmp done
+    lac psLim
+    sas [CACHEND]
+    jmp unit
+    // At the end, round to CACHE0.
+    jsp mkgap
+    lac laps
+    sub [1]
+    dac laps
+    spa
+    jmp last
+    lac [CACHE0]
+    dac psTop
+    dac psLim
+    jmp grow
+unit, lac i psLim
+    spa
+    jmp agap
+    ral 2s                  // a block, by its number
+    add [gBlk:5]
+    dac q
+    add [BLEN]
+    dac p
+    lac psLim
+    add [1]
+    dac n
+    lac i p
+    sub i n
+    dac n                   // its words in the cache
+    lac q
+    add [BADDR]
+    dac q
+    lac i q
+    and [0177777]
+    sas psLim
+    jmp psFull              // the cache's units are not its blocks
+    lac i q
+    and [BACT]
+    sza
+    jmp past
+    lac i q                 // put out
+    and [BMADE]
+    dac i q
+    lac psLim
+    add n
+    dac psLim
+    jmp grow
+agap, and [077777]
+    add psLim
+    dac psLim
+    jmp grow
+past, jsp mkgap             // on the stack: passed over
+    lac psLim
+    add n
+    dac psLim
+    dac psTop
+    jmp grow
+    // Round twice is the last resort, its room tested after the marks are
+    // cleared.
+last, jsp psSlide
+    // BACT cleared, from the stack again.
+done, lac i [pgFn:6]
+    jda psUnact
+    lac [PCSTK+PFFN]
+    dac p
+cloop, lac p
+    sub i [pgCp:6]
+    sma
+    jmp fin
+    lac i p
+    jda psUnact
+    lac p
+    add [PFW]
+    dac p
+    jmp cloop
+fin, lac psLim
+    sub psTop
+    sub psRoom
+    spa
+    jmp i [pgRoom:6]
+    jmp rtn
+    // The free run, if any, left as a gap.
+mkgap, dap mret
+    lac psLim
+    sub psTop
+    sza i
+    jmp mret
+    ior [CGAP]
+    dac i psTop
+mret, jmp 0
+rtn, jmp 0
+p, 0
+q, 0
+n, 0
+laps, 0
+    endloc
+
+// psRoom's last resort. Puts out every block not marked BACT and slides those
+// marked down from CACHE0 in address order, each frame's return
+// into one, and pgIp if it runs, moved with it. The free run is then the
+// rest of the cache. Called at CACHEND, the free run left as a gap, so
+// the whole cache is units.
+// Takes no arguments and returns no value.
+// AC and IO are clobbered.
+// Called via jsp from psRoom.
+psSlide,
+    local sloop, unit, agap, keep, floop, fnext, fdone, copy, next, done, \
+        rtn, src, dst, b, f, n, d, p, q
+    dap rtn
+    lac [CACHE0]
+    dac src
+    dac dst
+sloop, lac src
+    sas [CACHEND]
+    jmp unit
+    jmp done
+unit, lac i src
+    spa
+    jmp agap
+    dac b                   // a block, its number
+    ral 2s
+    add [gBlk:5]
+    dac f
+    add [BLEN]
+    dac q
+    lac src
+    add [1]
+    dac n
+    lac i q
+    sub i n
+    dac n                   // its words in the cache
+    lac f
+    add [BADDR]
+    dac f
+    lac i f
+    and [BACT]
+    sza
+    jmp keep
+    lac i f                 // put out
+    and [BMADE]
+    dac i f
+    jmp next
+agap, and [077777]
+    add src
+    dac src
+    jmp sloop
+keep, lac dst
+    sub src
+    dac d
+    sza i
+    jmp copy
+    lac i f
+    add d
+    dac i f
+    // The frames that return into it, and pgIp if it runs.
+    lac [PCSTK]
+    dac p
+floop, lac p
+    sub i [pgCp:6]
+    sma
+    jmp fdone
+    lac p
+    add [PFFN]
+    dac q
+    lac i q
+    sas b
+    jmp fnext
+    lac i p
+    sza i
+    jmp fnext
+    add d
+    dac i p
+fnext, lac p
+    add [PFW]
+    dac p
+    jmp floop
+fdone, lac i [pgFn:6]
+    sas b
+    jmp copy
+    lac i [pgIp:6]
+    add d
+    dac i [pgIp:6]
+    // Its words moved down (or left, if d is 0).
+copy, lac n
+    dac q
+    lac i src
+    dac i dst
+    idx src
+    idx dst
+    lac q
+    sub [1]
+    dac q
+    sza
+    jmp copy+2
+    jmp sloop
+next, lac src
+    add n
+    dac src
+    jmp sloop
+done, lac dst
+    dac psTop
+    lac [CACHEND]
+    dac psLim
+rtn, jmp 0
+src, 0
+dst, 0
+b, 0
+f, 0
+n, 0
+d, 0
+p, 0
+q, 0
+    endloc
+
+// A fault of the cache or the drum. It is a unit of the cache that is not the
+// block gBlk places there, or a transfer that failed OV_TRIES times.
+psFull, dzm i [pgFltA:6]
+    law 4
+    jmp i [pgStop:6]
+
+// Marks a block BACT, unless it is no block (07777).
+// Takes the block in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+psAct,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psAct
+    sad [07777]
+    jmp rtn
+    ral 2s
+    add [gBlk:5+BADDR]
+    dac p
+    lac i p
+    ior [BACT]
+    dac i p
+rtn, jmp 0
+p, 0
+    endloc
+
+// Clears a block's BACT, unless it is no block (07777).
+// Takes the block in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+psUnact,
+    local rtn, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psUnact
+    sad [07777]
+    jmp rtn
+    ral 2s
+    add [gBlk:5+BADDR]
+    dac p
+    lac i p
+    and [0577777]
+    dac i p
+rtn, jmp 0
+p, 0
+    endloc
+
+// Reads from the drum, in two transfers if it would cross from bank
+// 014 into bank 015, whose first address the drum cannot run on to.
+// Takes the dia word in psXd, the length in psXn and the full address in psXa.
+// Returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+psRead,
+    local one, rtn, n
+    dap rtn
+    lac psXa
+    sub [CACHE0+010000]
+    sma
+    jmp one
+    lac psXa
+    add psXn
+    sub [CACHE0+010001]
+    spa
+    jmp one
+    lac psXn
+    dac n
+    lac [CACHE0+010000]
+    sub psXa
+    dac psXn
+    jsp psXfer
+    lac psXd
+    add psXn
+    dac psXd
+    lac n
+    sub psXn
+    dac psXn
+    lac [CACHE0+010000]
+    dac psXa
+one, jsp psXfer
+rtn, jmp 0
+n, 0
+    endloc
+
+// Makes one transfer, as the overlay manager does. It is tried OV_TRIES times,
+// then a fault of the machine.
+// Takes psXd, psXn and psXa as psRead does. Returns no value.
+// AC and IO are clobbered.
+// Called via jsp.
+psXfer,
+    local idle, busy, bad, rtn, tries
+    dap rtn
+    law i OV_TRIES
+    dac tries
+idle, cks
+    rir 1s                  // the busy bit, bit 17, to the sign
+    spi
+    jmp idle
+    lio psXd
+    iot 61
+    lio psXn
+    iot 62
+    lio psXa
+    iot 63
+busy, cks
+    rir 1s
+    spi
+    jmp busy
+    cli
+    iot 2062
+    spi                     // skip if it ended without error
+    jmp bad
+    jmp rtn
+bad, isp tries
+    jmp idle
+    jmp psFull
+rtn, jmp 0
+tries, 0
+    endloc
+
+// Makes the cells of a datum read from the drum. Its words are its
+// value, then its cells, each a CAR and a CDR, its cell i written
+// TCONS+i. All are taken at once, so no collection comes between. Each
+// cell's value is kept in its CAR's word as it is made, and the CARs and
+// CDRs are put right after.
+// Takes the address of its value's word in AC and its number of cells in psCn.
+// Returns its value in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psDatum,
+    local mloop, floop, val, one, odone, rtn, p, k, w, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac psCn
+    sza i
+    jmp val
+    dac i [fA:6]
+    FAR(fRsv)
+    // Each cell made, its raw words copied, its value in its CAR's word.
+    lac psDatum
+    add [1]
+    dac p
+    lac psCn
+    dac k
+#ifdef GCEVERY
+    // GCEVERY counts every cell made (drop.ac's psGcK), so this uses CONS itself.
+mloop, lac i p
+    dac i [fA:6]
+    idx p
+    lac i p
+    dac i [fB:6]
+    FAR(fCons)
+    law i 1
+    add p
+    dac p
+    dio i p
+    idx p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp mloop
+#else
+    // CONS's work is done here, its cells known to be free (the reservation).
+    // The free list's first cell is taken, the raw words are put in it, and its
+    // value is put in the CAR's word.
+mloop, lac i [pgFree:6]
+    dac w                   // the cell
+    idx w                   // its CDR, which links the free list
+    lac i w
+    dac i [pgFree:6]
+    idx p
+    lac i p                 // the raw CDR
+    dac i w
+    law i 1
+    add w
+    dac w
+    law i 1
+    add p
+    dac p
+    lac i p                 // the raw CAR
+    dac i w
+    lac w
+    and [077777]
+    ior [KCONS]
+    dac i p
+    idx p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp mloop
+    lac psCn
+    cma
+    add i [pgNFree:6]
+    dac i [pgNFree:6]
+#ifdef R11WRONG
+    idx i [pgNFree:6]       // R11WRONG builds with the free cells' count one too many
+#endif
+#endif
+    // Each cell's references are made values.
+    lac psDatum
+    add [1]
+    dac p
+    lac psCn
+    dac k
+floop, lac i p
+    ior [PCELLS]
+    dac w
+    lac i w
+    jda one
+    dac i w
+    idx w
+    lac i w
+    jda one
+    dac i w
+    idx p
+    idx p
+    lac k
+    sub [1]
+    dac k
+    sza
+    jmp floop
+val, lac i psDatum
+    jda one
+    jmp rtn
+    // One word. A reference to a cell of the datum, a cons with a payload
+    // below 010000, is that cell's value.
+one, 0
+    dap odone
+    lac one
+    and [KMASK]
+    sas [KCONS]
+    jmp odone-1
+    lac one
+    and [077777]
+    sub [010000]
+    sma
+    jmp odone-1
+    lac one
+    and [07777]
+    ral 1s
+    add psDatum
+    add [1]
+    dac q
+    lac i q
+    jmp odone
+    lac one
+odone, jmp 0
+rtn, jmp 0
+p, 0
+k, 0
+w, 0
+q, 0
+    endloc
+
+// Makes a trailer's quoted lists. Each is the constant's number, its cells'
+// number, then its cells. gConst gets each one's value, its first cell.
+// Takes the trailer's address in AC and its length in psTl. Returns no value.
+// AC and IO are clobbered.
+// Called via jda.
+psMkCon,
+    local loop, rtn, p, e, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac psMkCon
+    dac p
+    add psTl
+    dac e
+loop, lac p
+    sub e
+    sma
+    jmp rtn
+    lac i p
+    add [gConst:013]
+    dac k
+    idx p
+    lac i p
+    dac psCn
+    lac p
+    jda psDatum
+    lac p
+    add [1]
+    dac psT
+    lac i psT
+    dac i k
+    lac psCn
+    ral 1s
+    add p
+    add [1]
+    dac p
+    jmp loop
+rtn, jmp 0
+p, 0
+e, 0
+k, 0
+    endloc
+
+// The value stack from this bank. psPush takes the value in AC, which it
+// clobbers. psPop returns the value popped in AC. psArg takes n in AC and
+// returns the value n words under the top in AC. IO is preserved by all
+// three. psPush and psArg are called via jda, psPop via jsp.
+psPush,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac i [pgSp:6]
+    dac psPp
+    lac psPush
+    dac i psPp
+    idx i [pgSp:6]
+rtn, jmp 0
+    endloc
+psPop,
+    local rtn
+    dap rtn
+    law i 1
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    dac psPp
+    lac i psPp
+rtn, jmp 0
+    endloc
+psArg,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac psArg
+    cma
+    add i [pgSp:6]
+    dac psPp
+    lac i psPp
+rtn, jmp 0
+    endloc
+
+// The cold natives, from the hot half's ntCold with pgA the native's
+// number. Each ends at psR1 and the like, which drop its arguments and
+// return its value in IO.
+psNat, dac psNr
+    lac i [pgA:6]
+    add [psNats:.]
+    dac psT
+    jmp i psT
+psR1, dac psV
+    law i 1
+    jmp psRn
+psR2, dac psV
+    law i 2
+    jmp psRn
+psR3, dac psV
+    law i 3
+psRn, add i [pgSp:6]
+    dac i [pgSp:6]
+    lio psV
+    jmp i psNr
+psT1, lac [KSYM]
+    jmp psR1
+psN1, cla
+    jmp psR1
+psN2, cla
+    jmp psR2
+
+    // MAKESYM, for NODE and for the semantics, makes a node. Its count is the
+    // prefix's MAKESYM property, one more than last time, and its prefix's
+    // number is its place among the prefixes seen.
+csMksym,
+    local one, look, have, found, n, x
+    CARG(1, 1)
+    dac x
+    dac i [fA:6]
+    lac [KSYM+sMAKESYM]
+    dac i [fB:6]
+    FAR(fGet)
+    lai
+    sza i
+    jmp one
+    jda psNum
+    add [1]
+    jmp .+2
+one, law 1
+    dac n
+    jda psMkint
+    dac i [pgPv:6]
+    lac x
+    dac i [pgPx:6]
+    lac [KSYM+sMAKESYM]
+    dac i [pgPi:6]
+    FAR(fPut)
+    lac [psPfx:3]
+    dac psP
+    dzm psK
+look, lac psK
+    sad psPfxN
+    jmp have
+    lac i psP
+    sad x
+    jmp found
+    idx psP
+    idx psK
+    jmp look
+have, sad [037]
+    jmp i [pgFlt:6]
+    lac x
+    dac i psP
+    idx psPfxN
+found, lac n
+    ral 6s
+    ior psK
+    XJDA(psNode, 6)
+    jmp psR1
+n, 0
+x, 0
+    endloc
+    // COMBINATION? gives the combination whose words' entries are the
+    // arguments', as a list of one. A third that is no word matches none.
+csComb2,
+    local look, loop, skip, next, nf, ret, c1, c2, c3, e, p, k
+    law 2
+    dac k
+    CARG(2, 2)
+    jda psEnt
+    dac c2
+    CARG(2, 1)
+    jda psEnt
+    dac c1
+    dzm c3
+    jmp look
+csComb3, law 3
+    dac k
+    CARG(3, 3)
+    jda psEnt
+    dac c3
+    CARG(3, 2)
+    jda psEnt
+    dac c2
+    CARG(3, 1)
+    jda psEnt
+    dac c1
+    lac c3
+    sza i
+    jmp nf
+look, lac [gCombos:013]
+    dac p
+loop, lac i p
+    sza i
+    jmp nf
+    dac e
+    idx p
+    lac i p
+    sas c1
+    jmp skip
+    idx p
+    lac i p
+    sas c2
+    jmp skip
+    idx p
+    lac i p
+    sas c3
+    jmp skip
+    lac e
+    jda psWval
+    dac i [fA:6]
+    dzm i [fB:6]
+    FAR(fCons)
+    lai
+    jmp ret
+    // On to the 0 that ends this combination's words, and past it.
+skip, lac i p
+    sza i
+    jmp next
+    idx p
+    jmp skip
+next, idx p
+    jmp loop
+nf, cla
+ret, dac psV
+    lac k
+    cma
+    add i [pgSp:6]
+    dac i [pgSp:6]
+    lio psV
+    jmp i psNr
+c1, 0
+c2, 0
+c3, 0
+e, 0
+p, 0
+k, 0
+    endloc
+    // SYMVAL gives a variable's value, or for a folded one T or NIL, else an
+    // error. SET sets a variable.
+csSymval,
+    local look, floop, found, s
+    CARG(1, 1)
+    jda psVar
+    sza i
+    jmp look
+    dac psP
+    lac i psP
+    sad [KUNB]
+    jmp i [pgErr:6]
+    jmp psR1
+look, CARG(1, 1)
+    dac s
+    lac [gFolded:3]
+    dac psP
+floop, lac i psP
+    sza i
+    jmp i [pgErr:6]
+    sad s
+    jmp found
+    idx psP
+    idx psP
+    jmp floop
+found, idx psP
+    lac i psP
+    jmp psR1
+s, 0
+    endloc
+csSet, CARG(2, 1)
+    jda psVar
+    sza i
+    jmp i [pgFlt:6]
+    dac psP
+    CARG(2, 2)
+    dac i psP
+    jmp psR2
+    // FNKIND gives NIL for no function, 2 for an FEXPR, else 1.
+csFnkind, CARG(1, 1)
+    and [KMASK]
+    sas [KSYM]
+    jmp psN1
+    CARG(1, 1)
+    and [07777]
+    dac i [fA:6]
+    FAR(fFnOf)
+    lai
+    spa
+    jmp psN1
+    and [060000]
+    sas [FNFEXPR]
+    jmp .+3
+    lac [KINT+2]
+    jmp psR1
+    lac [KINT+1]
+    jmp psR1
+csTimes, CARG(2, 1)
+    jda psNum
+    dac psV
+    CARG(2, 2)
+    jda psNum
+    dac psK
+    lac psV
+    mul psK
+    scr 1s
+    lai
+    jda psMkint
+    jmp psR2
+    // QUOTIENT and REMAINDER, truncated toward 0, the remainder taking
+    // the dividend's sign; by 0 a Lisp error. A negative dividend fills
+    // AC with ones.
+csQuot, cla
+    jmp .+2
+csRem, law 1
+    dac psQ
+    CARG(2, 2)
+    jda psNum
+    sza i
+    jmp i [pgErr:6]
+    dac psK
+    CARG(2, 1)
+    jda psNum
+    lia
+    cla
+    spi
+    cma
+    scl 1s
+    div psK
+    jmp i [pgErr:6]
+    dac psV
+    lac psQ
+    sza
+    dio psV
+    lac psV
+    jda psMkint
+    jmp psR2
+    // NTH gives the nth item, from 1, and NIL past the end.
+csNth,
+    local loop, found, l
+    CARG(2, 1)
+    jda psNum
+    dac psK
+    sub [1]
+    spa
+    jmp psN2
+    CARG(2, 2)
+    dac l
+loop, lac l
+    and [KMASK]
+    sas [KCONS]
+    jmp psN2
+    lac l
+    ior [PCELLS]
+    dac psP
+    lac psK
+    sub [1]
+    dac psK
+    sza i
+    jmp found
+    idx psP
+    lac i psP
+    dac l
+    jmp loop
+found, lac i psP
+    jmp psR2
+l, 0
+    endloc
+    // REMPROP, on a node or a symbol, gives T if it was there. On NIL, or
+    // anything else with no property list, it gives NIL (SMIT ends so when it
+    // finds no referent). A disembodied list is a fault.
+csRemp,
+    local node, have, loop, found, first, cut, slot, pl, prev, ind
+    CARG(2, 2)
+    dac ind
+    CARG(2, 1)
+    and [KMASK]
+    sad [KNODE]
+    jmp node
+    sad [KCONS]
+    jmp i [pgFlt:6]
+    sas [KSYM]
+    jmp psN2
+    CARG(2, 1)
+    jda psPlSlot
+    add [1]
+    dac slot
+    jmp have
+node, CARG(2, 1)
+    ior [PCELLS]
+    add [PREGS]
+    dac slot
+have, lac i slot
+    dac pl
+    dzm prev
+loop, lac pl
+    and [KMASK]
+    sas [KCONS]
+    jmp psN2
+    lac pl
+    ior [PCELLS]
+    dac psP
+    lac i psP
+    sad ind
+    jmp found
+    idx psP
+    lac i psP               // the value's cell
+    ior [PCELLS]
+    add [1]
+    dac psP
+    lac pl
+    dac prev
+    lac i psP
+    dac pl
+    jmp loop
+    // Cut out. The prior pair's value cell, or the slot, gets the rest.
+found, idx psP
+    lac i psP
+    ior [PCELLS]
+    add [1]
+    dac psP
+    lac i psP
+    dac psV
+    lac prev
+    sza i
+    jmp first
+    ior [PCELLS]
+    add [1]
+    dac psQ
+    lac i psQ
+    ior [PCELLS]
+    add [1]
+    dac psQ
+    jmp cut
+first, lac slot
+    dac psQ
+cut, lac psV
+    dac i psQ
+    lac [KSYM]
+    jmp psR2
+slot, 0
+pl, 0
+prev, 0
+ind, 0
+    endloc
+    // CUTOFF gives the symbol for #X, from the cutoff block (CBLK).
+csCutoff,
+    local loop, found
+    law CBLK
+    jda psPeek
+    add [BLKHDR]
+    dac psP
+    CARG(1, 1)
+    dac psV
+loop, lac i psP
+    sza i
+    jmp i [pgFlt:6]
+    sad psV
+    jmp found
+    idx psP
+    idx psP
+    jmp loop
+found, idx psP
+    lac i psP
+    jmp psR1
+    endloc
+    // PROPNAME gives T for a symbol or word whose name starts with =.
+csPropn, CARG(1, 1)
+    dac i [prA:013]
+    XJSP(prNmF, 013)
+    lac i [prA:013]
+    sza i
+    jmp psN1
+    lac i [psNmP:013]
+    dac psT
+    lac i psT
+    rar 9s
+    rar 3s
+    and [077]
+    sas [0d39]              // = in the names' codes
+    jmp psN1
+    jmp psT1
+    // The printing. PRINC prints the atom's name or the list's text.
+    // PRINT3 prints a space first unless the line is new, or a new line
+    // when the word will not fit it (print.ac's psSep; a number is
+    // measured with its point, one over). PRINT prints a new line first and a
+    // space after. TERPRI prints a new line.
+    // PRINC prints a number with no point (a clarification's choices are
+    // numbered 1 - and 2 - ). Its digits are kept on the stack, the
+    // last first, as print.ac's psDec keeps them.
+csPrinc,
+    local atom, pos, loop, out, ret, k
+    CARG(1, 1)
+    and [KMASK]
+    sas [KINT]
+    jmp atom
+    CARG(1, 1)
+    jda psNum
+    sma
+    jmp pos
+    cma
+    dac psT
+    law '-'
+    PUTC
+    lac psT
+pos, dzm k
+loop, lia
+    cla
+    scl 1s
+    div [0d10]
+    jmp i [pgFlt:6]
+    dac psT
+    lai
+    add ['0']
+    CPUSH
+    idx k
+    lac psT
+    sza
+    jmp loop
+out, CPOP
+    PUTC
+    law i 1
+    add k
+    dac k
+    sza
+    jmp out
+    jmp ret
+atom, CARG(1, 1)
+    PRIN
+ret, CARG(1, 1)
+    jmp psR1
+k, 0
+    endloc
+csPrint3, CARG(1, 1)
+    dac i [prA:013]
+    XJSP(prSepF, 013)
+    jmp csPrinc
+csPrint, law 012
+    PUTC
+    CARG(1, 1)
+    PRIN
+    law ' '
+    PUTC
+    CARG(1, 1)
+    jmp psR1
+csTerpri, law 012
+    PUTC
+    cli
+    jmp i psNr
+    // SMREC keeps its argument in psSm for /SM (sm.ac). Past NSM it is left
+    // out, the table's last word staying 0.
+csSmrec, lac [psSm:012]
+    dac psT
+csSm1, lac i psT
+    sza i
+    jmp csSm2
+    idx psT
+    jmp csSm1
+csSm2, sad [psSm:012+NSM]
+    jmp csSm3
+    CARG(1, 1)
+    dac i psT
+csSm3, CARG(1, 1)
+    jmp psR1
+    // ANSMARK is called when the top level is about to call ANSWER. The parse's
+    // time is kept, and the clock read, for psEnd to time the answer.
+csAnsmk, XJSP(clRead, 0)
+    dac psTA
+    lac psT0
+    XJDA(msLong, 0)
+    dac psPMs
+    idx psAOn
+    cli
+    jmp i psNr
+    // DISPLAY only counts the semantics' calls, since the hand's calls are
+    // carried out by ACTION, from the engine's plan.
+csDisp, idx psNDisp
+    jmp psT1
+    // READ reads the number typed after a clarification, in the drum
+    // overlay sm (read.ac).
+csRead,
+    %%ovcall sm, rnRead
+    lia
+    jmp i psNr
+// The cold natives' table, by number; the hot ones' places are left 0.
+psNats,
+psNats+naMAKESYM/ jmp csMksym
+psNats+naCOMB2/ jmp csComb2
+psNats+naCOMB3/ jmp csComb3
+psNats+naSYMVAL/ jmp csSymval
+psNats+naSET/ jmp csSet
+psNats+naFNKIND/ jmp csFnkind
+psNats+naTIMES/ jmp csTimes
+psNats+naQUOTIENT/ jmp csQuot
+psNats+naREMAINDER/ jmp csRem
+psNats+naNTH/ jmp csNth
+psNats+naREMPROP/ jmp csRemp
+psNats+naMAKESYM2/ jmp csMksym
+psNats+naCUTOFF/ jmp csCutoff
+psNats+naPRINC/ jmp csPrinc
+psNats+naPRINT3/ jmp csPrint3
+psNats+naTERPRI/ jmp csTerpri
+psNats+naDISPLAY/ jmp csDisp
+psNats+naPRINT/ jmp csPrint
+psNats+naPROPNAME/ jmp csPropn
+psNats+naSMREC/ jmp csSmrec
+psNats+naANSMARK/ jmp csAnsmk
+psNats+naREAD/ jmp csRead
+psNats+naREAD+1/
+
+// Finds the variable a symbol names, by the hot half's search of gVarSym.
+// Takes the value in AC. Returns its word's full address in vTab in AC, 0
+// if none.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psVar,
+    local none, rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac psVar
+    dac i [fA:6]
+    FAR(fVarOf)
+    lai
+    spa
+    jmp none
+    add [vTab:3]
+    jmp rtn
+none, cla
+rtn, jmp 0
+    endloc
+
+// psNum and psMkint do what pgNum and pgMkint do, through the hot half's far
+// entries, which leave the result in fA. psNum takes a value in AC and returns
+// the number in AC. psMkint takes a number in AC and returns the value in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+psNum,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac psNum
+    dac i [fA:6]
+    FAR(fNum)
+    lac i [fA:6]
+rtn, jmp 0
+    endloc
+psMkint,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac psMkint
+    dac i [fA:6]
+    FAR(fMkint)
+    lac i [fA:6]
+rtn, jmp 0
+    endloc
+
+// CAR of a value, for the natives here.
+// Takes the value in AC. Returns its CAR in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+psCarV,
+    local rtn
+    0                       // jda puts the argument here
+    dap rtn
+    lac psCarV
+    dac i [fA:6]
+    FAR(fCar)
+    lac i [fA:6]
+rtn, jmp 0
+    endloc
+
+// GET of an atom the hot half leaves. It gives a symbol's, a word's or NIL's
+// property list, then a symbol's theorem or the lexicon's properties, or
+// an event's fields. Takes the atom in pgGx and the indicator in pgGi.
+// Returns the property in IO.
+// AC is clobbered and IO is the result.
+// Called via jsp from bank 6.
+psGet,
+    local sym, nil, have, lex, thm, none, ev, etype, fld, estart, eend, \
+        tim, x, ind, v
+    dac psGr2
+    lac i [pgGx:6]
+    dac x
+    lac i [pgGi:6]
+    dac ind
+    lac x
+    sza i
+    jmp nil
+    and [KMASK]
+    sad [KSYM]
+    jmp sym
+    sas [KWORD]
+    jmp none
+    lac x
+    and [077777]
+    sub [EV0]
+    sma
+    jmp ev
+sym, lac x
+    jda psPlOf
+    jmp have
+nil, lac psNilPl
+have, dac psV
+    lac ind
+    dac i [pgPlInd:6]
+    lac psV
+    dac i [fA:6]
+    FAR(fPlAt)
+    lai
+    sza i
+    jmp lex
+    dac psP
+    lio i psP
+    jmp i psGr2
+lex, lac x
+    sza i
+    jmp none
+    lac ind
+    sad [KSYM+sTHEOREM]
+    jmp thm
+    lac x
+    lio ind
+    jda psLex
+    lia
+    jmp i psGr2
+thm, lac x
+    and [KMASK]
+    sas [KSYM]
+    jmp none
+    lac x
+    jda psThm
+    lia
+    jmp i psGr2
+none, cli
+    jmp i psGr2
+    // An event's TYPE and WHY are the record's atoms, NIL for none.
+ev, dac v
+    lac ind
+    sad [KSYM+sSTART]
+    jmp estart
+    sad [KSYM+sEND]
+    jmp eend
+    sad [KSYM+sTYPE]
+    jmp etype
+    sas [KSYM+sWHY]
+    jmp none
+    law EWHY
+    jmp fld
+etype, law ETYPE
+fld, dac psK
+    lac v
+    XJDA(evAddr, 4)
+    add psK
+    dac psP
+    lac i psP
+    sza i
+    jmp none
+    sad [NIL]
+    jmp none
+    dac i [hkA:6]
+    XJSP(hkAtomF, 6)
+    lio i [hkA:6]
+    jmp i psGr2
+    // START and END are clock times, END -1 until it ends.
+estart, law ESTART
+    jmp tim
+eend, law EEND
+tim, dac psK
+    lac v
+    XJDA(evAddr, 4)
+    add psK
+    dac psP
+    lac i psP
+    sad [0777776]
+    jmp none
+    jda psMkint
+    lia
+    jmp i psGr2
+x, 0
+ind, 0
+v, 0
+    endloc
+
+// Gives the lexicon's properties of a symbol or a word. ELIM and INTERPRET of
+// a symbol come from gElims and gUnits. The rest come from its entry. They are
+// FEATURES and a combination's ROOT made once a sentence in the feature cache,
+// a root, the meaning (SEMANTICS), and the special words' code.
+// Takes the atom in AC and the indicator in IO. Returns the property in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psLex,
+    local word, went, elim, interp, feat, floop, \
+        fend, root, rcomb, rloop, rend, bspec, sspec, spec, sloop, \
+        sfound, sem, sent, snew, sown, skey, nil, rtn, gi, e, l, p, t, k
+    0                       // jda puts the argument here
+    dap rtn
+    dio gi
+    lac psLex
+    and [KMASK]
+    sas [KSYM]
+    jmp word
+    lac gi
+    sad [KSYM+sELIM]
+    jmp elim
+    sad [KSYM+sINTERPRET]
+    jmp interp
+word, lac psLex
+    jda psEnt
+went, dac e
+    lac gi
+    sad [KSYM+sSEMANTICS]
+    jmp sem
+    lac e
+    sza i
+    jmp nil
+    lac gi
+    sad [KSYM+sFEATURES]
+    jmp feat
+    sad [KSYM+sROOT]
+    jmp root
+    sad [KSYM+sBSPECIAL]
+    jmp bspec
+    sad [KSYM+sSPECIAL]
+    jmp sspec
+nil, cla
+    jmp rtn
+elim, lac psLex
+    XJDA(psElim, 5)
+    jmp rtn
+interp, lac psLex
+    XJDA(psIntp, 5)
+    jmp rtn
+    // The features are the entry's count, then its numbers two to a word.
+feat, lac psLex
+    jda psSlot
+    dac l
+    lac i l
+    sza
+    jmp rtn
+    FAR(fLbNew)
+    lac e
+    add [1]
+    dac p
+    lac i p
+    rar 3s
+    and [077]
+    dac k
+    lac e
+    add [3]
+    dac p
+floop, lac k
+    sza i
+    jmp fend
+    lac i p
+    rar 9s
+    and [0777]
+    ior [KSYM]
+    dac i [fA:6]
+    FAR(fLbAdd)
+    lac k
+    sub [1]
+    dac k
+    sza i
+    jmp fend
+    lac i p
+    and [0777]
+    ior [KSYM]
+    dac i [fA:6]
+    FAR(fLbAdd)
+    idx p
+    lac k
+    sub [1]
+    dac k
+    jmp floop
+fend, dzm i [fA:6]
+    FAR(fLbEnd)
+    dio i l
+    lai
+    jmp rtn
+    // The root is none, a word, or a combination's words, a list kept
+    // under the word's value with its kind bits complemented.
+root, lac e
+    add [2]
+    dac p
+    lac i p
+    sza i
+    jmp rtn
+    dac t
+    lac e
+    add [1]
+    dac p
+    lac i p
+    and [1]
+    sza
+    jmp rcomb
+    lac t
+    jda psWval
+    jmp rtn
+rcomb, lac psLex
+    xor [KMASK]
+    jda psSlot
+    dac l
+    lac i l
+    sza
+    jmp rtn
+    FAR(fLbNew)
+rloop, lac i t
+    sza i
+    jmp rend
+    jda psWval
+    dac i [fA:6]
+    FAR(fLbAdd)
+    idx t
+    jmp rloop
+rend, dzm i [fA:6]
+    FAR(fLbEnd)
+    dio i l
+    lai
+    jmp rtn
+bspec, law 1
+    jmp spec
+sspec, law 2
+spec, dac k
+    lac [gSpecials:013]
+    dac p
+sloop, lac i p
+    sza i
+    jmp rtn
+    sad e
+    jmp sfound
+    lac p
+    add [3]
+    dac p
+    jmp sloop
+sfound, lac p
+    add k
+    dac p
+    lac i p
+    jmp rtn
+    // The meaning is a word's entry's, a derived word's its root's, a
+    // symbol's that is no word its own. An irregular form with none of its
+    // own has its root's, as BUILDWORD gives it (IS, BE's). A learned word,
+    // its own root, has the meaning every learned word starts with
+    // (morpho.13:279), and a word derived from one the root's GET, which a
+    // definition may have set (STEEPLES).
+sem, lac e
+    sza i
+    jmp sown
+    sub [DWBASE]
+    spa
+    jmp sent
+    lac e
+    add [2]
+    dac p
+    lac i p
+    sad e
+    jmp snew
+    dac e
+    sub [DWBASE]
+    spa
+    jmp sent
+    lac e
+    jda psWval
+    dac i [pgGx:6]
+    jmp psGet+1
+snew, lac [KSYM+sNEWWORD]
+    jmp skey
+sent, lac e
+    jda psMean
+    sza
+    jmp rtn
+    lac e
+    add [1]
+    dac p
+    lac i p
+    and [2]
+    sza i
+    jmp nil
+    lac e
+    add [2]
+    dac p
+    lac i p
+    jmp skey
+sown, lac psLex
+skey, jda psMean
+rtn, jmp 0
+gi, 0
+e, 0
+l, 0
+p, 0
+t, 0
+k, 0
+    endloc
+
+// Gives a meaning, made in the heap the first time a sentence asks for it, its
+// key found by halving gMKeys, which ascends.
+// Takes its key, a lexicon entry or a symbol, in AC. Returns the meaning, NIL
+// if it has none, in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psMean,
+    local none, rtn, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac psMean
+    dac i [hsKey:3]
+    lac [gMKeys:0]
+    dac i [hsTab:3]
+    law NMEAN
+    dac i [hsN:3]
+    XJSP(psHalve, 3)
+    spa
+    jmp none
+    dac k
+    add [psMVal:017]
+    dac psQ
+    lac i psQ
+    sza
+    jmp rtn
+    lac k
+    add [MBLK0]
+    jda psMade
+    dac i psQ
+    jmp rtn
+none, cla
+rtn, jmp 0
+k, 0
+    endloc
+
+// Gives a theorem's body, made the same way, gTKeys ascending.
+// Takes its symbol in AC. Returns the body, NIL if it is no theorem, in AC.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psThm,
+    local none, rtn, k
+    0                       // jda puts the argument here
+    dap rtn
+    lac psThm
+    dac i [hsKey:3]
+    lac [gTKeys:2]
+    dac i [hsTab:3]
+    law NTHM
+    dac i [hsN:3]
+    XJSP(psHalve, 3)
+    spa
+    jmp none
+    dac k
+    add [psMVal:017+NMEAN]
+    dac psQ
+    lac i psQ
+    sza
+    jmp rtn
+    lac k
+    add [TBLK0]
+    jda psMade
+    dac i psQ
+    jmp rtn
+none, cla
+rtn, jmp 0
+k, 0
+    endloc
+
+// Reads and makes a datum's block. Takes the block in AC. Returns its
+// value in AC. psQ is kept.
+// AC is the result and IO is clobbered.
+// Called via jda.
+psMade,
+    local rtn, q
+    0                       // jda puts the argument here
+    dap rtn
+    lac psQ
+    dac q
+    lac psMade
+    ral 2s
+    add [gBlk:5+BLEN]
+    dac psT
+    lac i psT
+    sub [BLKHDR+1]
+    sar 1s
+    dac psCn
+    lac psMade
+    jda psPeek
+    add [BLKHDR]
+    jda psDatum
+    lio q
+    dio psQ
+rtn, jmp 0
+q, 0
+    endloc
+
+// Finds the feature cache's slot for a key, making it if it is new. A slot is
+// the key, then its list, NIL until it is made. Past three quarters full the
+// sentence is NO ROOM, so a search always ends.
+// Takes the key, never 0, in AC. Returns the full address of the slot's list
+// in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+psSlot,
+    local loop, new, found, rtn, k, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psSlot
+    and [PFCN-1]
+    dac k
+loop, lac k
+    ral 1s
+    add [PFC]
+    dac p
+    lac i p
+    sza i
+    jmp new
+    sad psSlot
+    jmp found
+    idx k
+    and [PFCN-1]
+    dac k
+    jmp loop
+new, idx psFcN
+    sub [PFCN-(PFCN>>2)]
+    sma
+    jmp i [pgRoom:6]
+    lac psSlot
+    dac i p
+    idx p
+    dzm i p
+    lac p
+    jmp rtn
+found, idx p
+rtn, jmp 0
+k, 0
+p, 0
+    endloc
+
+// Gives a word's entry. For a word it is the word's, for a symbol its twin's
+// (gTwins), 0 for none.
+// Takes a value in AC. Returns the entry in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+psEnt,
+    local sym, sloop, sfound, low, none, rtn, t
+    0                       // jda puts the argument here
+    dap rtn
+    lac psEnt
+    and [KMASK]
+    sad [KSYM]
+    jmp sym
+    sas [KWORD]
+    jmp none
+    lac psEnt
+    and [077777]
+    dac t
+    sub [EV0]
+    sma
+    jmp none
+    lac t
+    sub [010000]
+    spa
+    jmp low
+    lac t
+    add [DWBASE-010000]
+    jmp rtn
+low, lac t
+    add [020000]
+    jmp rtn
+sym, lac [gTwins:2]
+    dac t
+sloop, lac i t
+    sza i
+    jmp rtn
+    idx t
+    lac i t
+    sad psEnt
+    jmp sfound
+    idx t
+    jmp sloop
+sfound, law i 1
+    add t
+    dac t
+    lac i t
+    jmp rtn
+none, cla
+rtn, jmp 0
+t, 0
+    endloc
+
+// Gives a word's value. It is the symbol its entry is the twin of (gTwins),
+// or else the word, which is an entry in the lexicon's bank 2 less 020000, or
+// one in the derived words' bank 017 less DWBASE plus 010000.
+// Takes the entry in AC. Returns the value in AC.
+// AC is the result and IO is preserved.
+// Called via jda, from any bank.
+psWval,
+    local loop, twin, word, lex, rtn, ra, p
+    0                       // jda puts the argument here
+    dac ra
+    lac [gTwins:2]
+    dac p
+loop, lac i p
+    sza i
+    jmp word
+    sad psWval
+    jmp twin
+    lac p
+    add [2]
+    dac p
+    jmp loop
+twin, idx p
+    lac i p
+    jmp rtn
+word, lac psWval
+    sub [DWBASE]
+    spa
+    jmp lex
+    add [KWORD+010000]
+    jmp rtn
+lex, lac psWval
+    sub [020000]
+    add [KWORD]
+rtn, jmp i ra
+ra, 0
+p, 0
+    endloc
+
+// Finds the property list slot of a symbol or a word in gPl, making it if it
+// is new. A slot is the key, then the list. Past three quarters full is NO
+// ROOM.
+// Takes the atom in AC. Returns the key's full address in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+psPlSlot,
+    local loop, new, found, rtn, k, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psPlSlot
+    and [PLN-1]
+    dac k
+loop, lac k
+    ral 1s
+    add [gPl:3]
+    dac p
+    lac i p
+    sza i
+    jmp new
+    sad psPlSlot
+    jmp found
+    idx k
+    and [PLN-1]
+    dac k
+    jmp loop
+new, idx psPlN
+    sub [PLN-(PLN>>2)]
+    sma
+    jmp i [pgRoom:6]
+    lac psPlSlot
+    dac i p
+    idx p
+    dzm i p
+    law i 1
+    add p
+    dac p
+found, lac p
+rtn, jmp 0
+k, 0
+p, 0
+    endloc
+
+// Gives the property list of a symbol or a word, NIL if it has none. No slot
+// is made.
+// Takes the atom in AC. Returns the list in AC.
+// AC is the result and IO is preserved.
+// Called via jda.
+psPlOf,
+    local loop, next, rtn, k, p
+    0                       // jda puts the argument here
+    dap rtn
+    lac psPlOf
+    and [PLN-1]
+    dac k
+loop, lac k
+    ral 1s
+    add [gPl:3]
+    dac p
+    lac i p
+    sza i
+    jmp rtn
+    sas psPlOf
+    jmp next
+    idx p
+    lac i p
+    jmp rtn
+next, idx k
+    and [PLN-1]
+    dac k
+    jmp loop
+rtn, jmp 0
+k, 0
+p, 0
+    endloc
+
+// CDR of a symbol or a word is its property list.
+// Takes the atom in pgGx. Returns the list in IO.
+// AC is clobbered and IO is the result.
+// Called via jsp from bank 6.
+psCdr, dac psCr
+    lac i [pgGx:6]
+    jda psPlOf
+    lia
+    jmp i psCr
+
+// PUTPROP of an atom the hot half leaves. On NIL, a symbol or a word it
+// sets the property list, on a record its WHO, and on a list the property
+// after its CAR.
+// Takes the atom in pgPx, the value in pgPv and the indicator in pgPi.
+// Returns the value in IO.
+// AC is clobbered and IO is the result.
+// Called via jsp from bank 6.
+psPut,
+    local nil, sym, list, rec, put, new, rtn, slot
+    dac psPr
+    lac i [pgPx:6]
+    sza i
+    jmp nil
+    and [KMASK]
+    sad [KCONS]
+    jmp list
+    sza i
+    jmp rec
+    sad [KSYM]
+    jmp sym
+    sas [KWORD]
+    jmp i [pgErr:6]
+    lac i [pgPx:6]
+    and [077777]
+    sub [EV0]
+    sma
+    jmp i [pgFlt:6]
+#ifndef NOHOTOFF
+sym, lac i [pgPi:6]
+    sad [KSYM+sFEATURES]
+    dac psHotOff            // FEATURES put on an atom, so psHot stands down for the sentence
+    lac i [pgPx:6]
+#else
+sym, lac i [pgPx:6]
+#endif
+    jda psPlSlot
+    add [1]
+    dac slot
+    jmp put
+nil, lac [psNilPl:.]
+    dac slot
+    jmp put
+list, lac i [pgPx:6]
+    ior [PCELLS]
+    add [1]
+    dac slot
+    jmp put
+rec, lac i [pgPi:6]
+    sas [KSYM+sWHO]
+    jmp i [pgFlt:6]
+    lac i [pgPx:6]
+    add [DWHO]
+    dac psP
+    lac i [pgPv:6]
+    dac i psP
+    jmp rtn
+    // The list's value set, or the indicator and value put first in it.
+put, lac i [pgPi:6]
+    dac i [pgPlInd:6]
+    lac i slot
+    dac i [fA:6]
+    FAR(fPlAt)
+    lai
+    sza i
+    jmp new
+    dac psP
+    lac i [pgPv:6]
+    dac i psP
+    jmp rtn
+new, lac i [pgPv:6]
+    dac i [fA:6]
+    lac i slot
+    dac i [fB:6]
+    FAR(fCons)
+    dio i [fB:6]
+    lac i [pgPi:6]
+    dac i [fA:6]
+    FAR(fCons)
+    dio i slot
+rtn, lio i [pgPv:6]
+    jmp i psPr
+slot, 0
+    endloc
+
+// Runs planRun (events.ac) for hooks.ac's ACTION, the plan printed first
+// under /PLAN ON (cmds.ac's cmPlan).
+// Takes the return address in AC.
+// AC and IO are clobbered.
+// Called via jsp from bank 6.
+psPlan, dac psPlr
+    lac psShow
+    sza
+    jsp psShPl
+    jsp planRun
+    jmp i psPlr
+
+// Prints the plan, for psPlan.
+// Takes the return address in AC.
+// AC and IO are clobbered.
+// Called via jsp.
+psShPl, dac psShr
+    %%ovcall cmds, cmPlan
+    jmp i psShr
+
+// The cold half's state.
+psBad, 0                    // 1 if the drum's code is not this build's
+psTop, 0                    // the cache's free run, its first word
+psLim, 0                    // and the word past it
+psXd, 0                     // a transfer's dia word
+psXn, 0                     // its length
+psXa, 0                     // its core address
+psHdr, 0; 0                 // an overlay's header, read at start
+psTl, 0                     // a trailer's length
+psCn, 0                     // a datum's cells
+psFcN, 0                    // the feature cache's keys
+psHotOff, 0                 // nonzero once FEATURES is put on an atom this sentence
+psPlN, 0                    // the property lists' keys
+psNDisp, 0                  // DISPLAY's calls
+psPfxN, 0                   // MAKESYM's prefixes
+psNilPl, 0                  // NIL's property list, then two values held
+psH1, 0                     // and BUILD's structures for /SM (SMREC),
+psH2, 0                     // all roots of the collector
+psSm,
+    table NSM+1
+psT0, 0                     // clRead's count as the sentence started
+pgMs, 0                     // its parse's time, ms, the semantics with it
+pgAMs, 0                    // its answer's, from the call of ANSWER; 0 if none
+psPMs, 0                    // the parse's, kept by ANSMARK
+psTA, 0                     // and as ANSWER was called
+psAOn, 0                    // nonzero once ANSMARK has kept them
+sParse, ascii " PARSE "     // /TIMES's labels for them (cmds.ac)
+sAnswer, ascii " ANSWER "
+psShow, 0                   // nonzero under /PLAN ON, which prints each ACTION's plan (psPlan)
+psIr, 0                     // the full addresses the far entries return to
+psEr, 0
+psEnr, 0
+psGr, 0
+psGr2, 0
+psNr, 0
+psCr, 0
+psPlr, 0
+psShr, 0
+psPr, 0
+psT, 0                      // for the moment
+psP, 0
+psQ, 0
+psV, 0
+psK, 0
+psPp, 0                     // the value stack's word, for psPush and the like

@@ -1,0 +1,332 @@
+// What the learning sentences add to the compiled source's reach of the
+// engine. These are THASSERT of any fact, and the theorems a THTBF finds. The
+// heap's reclaim is called from here too, at bank 3's end.
+// A fact's arguments go to the database as atoms. They are an object, a
+// constant, an event, a word or stack (TWD, shrdlu.ah), or a place's list of
+// numbers as a point. A symbol that is none of those fails the assertion.
+// Banks 3 and 2, eem on. Needs shrdlu.ah, semantics.ac's defines, pgm.ac,
+// pgsys.ac's FAR, hooks.ac, db.ac, events.ac, natives.ac and planner.ac.
+
+// THASSERT (plnr.182:2196) of a fact. Takes the items' values, (THV name) forms
+// read through THALIST, to the engine's database, with a THMUNG frame of the
+// record. A derived event's fact, an event first, goes on that event too. The
+// engine's trail is idle here and is emptied, for no command may have
+// to wait on a dialogue's questions.
+// Takes the arguments in IO. Returns T or NIL in AC. NIL means the database is
+// full or holds the fact.
+// AC is the result and IO is clobbered.
+// Called via jsp.
+thAssert,
+    local loop, pt, item, have, next, made, rec, nil, rtn, rtv, l, n, ev, th
+    dac rtv
+    dio lnP
+    lac lnP
+    ior [PCELLS]
+    dac lnP
+    lac i lnP
+    ior [PCELLS]
+    dac lnP
+    lac i lnP
+    dac i [hkA:6]
+    XJSP(hkEngF, 6)
+    lac i [hkA:6]
+    sza i
+    jmp i [pgFlt:6]
+    dac i [dbP:4]
+    dzm n
+    law i 1
+    dac ev
+    idx lnP
+    lac i lnP
+    dac l
+loop, lac l
+    sza i
+    jmp made
+    ior [PCELLS]
+    dac lnP
+    lac i lnP
+    dac lnV
+    and [KMASK]
+    sas [KCONS]
+    jmp item
+    lac lnV
+    lio i EALIST
+    XJDA(eGalF, 015)
+    XJDA(eValF, 015)
+    dac lnV
+    and [KMASK]
+    sas [KCONS]
+    jmp item
+    // A place's list of numbers is a scratch point, which keep.ac keeps with
+    // the record.
+    lac [px:4]
+    dac lnQ
+pt, lac lnV
+    ior [PCELLS]
+    dac lnR
+    lac i lnR
+    xor [KINT]
+    dac i lnQ
+    idx lnQ
+    idx lnR
+    lac i lnR
+    dac lnV
+    sza
+    jmp pt
+    XJSP(mkpt, 4)
+    dac lnV
+    jmp have
+item, lac lnV
+    XJDA(lnAtom, 5)
+    sza i
+    jmp nil
+    dac lnV
+have, lac n
+    add [dbA:4]
+    dac lnQ
+    lac lnV
+    dac i lnQ
+    lac n
+    sza
+    jmp next
+    lac lnV
+    and [TAGS]
+    sas [TEV]
+    jmp next
+    lac lnV
+    and [07777]
+    dac ev
+next, idx n
+    idx lnP
+    lac i lnP
+    dac l
+    jmp loop
+made, lac n
+    dac i [dbN:4]
+    lac i [dbTop:4]
+    add [RECW]
+    sub [DBLIM]
+    sma
+    jmp nil
+    lac [TRBASE]
+    dac i [trt:4]
+    XJSP(dbAddF, 4)
+    sza i
+    jmp nil
+    dac lnV
+    lac ev
+    spa
+    jmp rec
+    XJDA(evAddr, 4)
+    add [EREC]
+    dac lnQ
+    lac lnV
+    dac i lnQ
+rec, XJSP(eTrBF, 015)
+    dac th
+    lac lnV
+    and [07777]
+    ior [KINT]
+    XJDA(ePushWF, 015)
+    lac [KSYM+sTHASSERT]
+    XJDA(ePushWF, 015)
+    lac th
+    XJDA(eTrAF, 015)
+    lac [KSYM]
+    jmp rtn
+nil, cla
+rtn, jmp i rtv
+rtv, 0
+l, 0
+n, 0
+ev, 0
+th, 0
+    endloc
+
+// THASSERT's undo (eTrU). The record is erased, but an event keeps it.
+// Takes KINT plus the record's offset in bank 7 in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via XJDA.
+evUnasF, 0
+    dac lnR
+    lac evUnasF
+    and [07777]
+    add [DBBASE+DARITY]
+    dac lnQ
+    law DERASED
+    dac i lnQ
+    jmp i lnR
+
+lnP, 0                      // for the moment
+lnQ, 0
+lnV, 0
+lnR, 0
+
+// Before a typed line, gives back the engine's heap the last line left,
+// if it left any (keep.ac). It is here because bank 4 comes before the
+// overlay manager (shrdlu.am1) and banks 012 and 013 have no room.
+// Takes the return address in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via jsp, from any bank.
+hpKeep, dac hkRtn
+#ifdef KEEPOFF
+    jmp i hkRtn             // KEEPOFF: nothing is given back
+#endif
+    lac i [hpTop:4]
+    sad i [hpBot:4]
+    jmp i hkRtn
+    %%ovcall sm, kpMain
+    jmp i hkRtn
+hkRtn, 0
+
+// What THVAL-MULT's WHO NIL run accepts under a MUMBLE filter, for ALLWHO's
+// test of the HE and range runs (evlisp.ac). rwNone is 1 once a record with
+// no WHO was accepted. rwLo and rwHi are the least and greatest WHO as words
+// (KINT and the number), 0 while none. They are cleared by ALLWHO's T, once a
+// THVAL-MULT. The fact that a color is a color, or a shape a shape, passes
+// MUMBLE under any WHO and is not noted.
+rwNone, 0
+rwLo, 0
+rwHi, 0
+
+// Notes the record eW, a THGOAL's try just ended at eTry1's dno, if it was
+// accepted under the filter MUMBLE and WHO is NIL. The filter is read from
+// the goal's frame (eF), since eFt can have been overwritten by a try
+// nested in the match.
+// Takes the return address in AC. Returns no value.
+// AC and IO are clobbered.
+// Called via XJSP, from bank 015.
+rwNote, dac rwRa
+#ifdef NORWNOTE
+    jmp i rwRa              // NORWNOTE: nothing noted, every run skipped
+#endif
+    local nprop, none, lo2, hi2, setlo, sethi, p, w
+    lac i [eOk:015]
+    sza i
+    jmp i rwRa
+    lac i [eF:015]
+    add [ESTK+FGFILT]
+    dac p
+    lac i p
+    sas [KSYM+sMUMBLE]
+    jmp i rwRa
+    lac vTab+vWHO
+    sza
+    jmp i rwRa
+    lac i [eW:015]
+    add [DPRED]
+    dac p
+    lac i p
+    sas [AIS]
+    jmp nprop
+    idx p
+    idx p
+    lac i p
+    sad [ACOLOR]
+    jmp i rwRa
+    sad [ASHAPE]
+    jmp i rwRa
+nprop, lac i [eW:015]
+    add [DWHO]
+    dac p
+    lac i p
+    sza i
+    jmp none
+    dac w
+    lac rwLo
+    sza
+    jmp lo2
+    lac w
+    dac rwLo
+    dac rwHi
+    jmp i rwRa
+lo2, lac w
+    sub rwLo
+    spa
+    jmp setlo
+hi2, lac rwHi
+    sub w
+    spa
+    jmp sethi
+    jmp i rwRa
+setlo, lac w
+    dac rwLo
+    jmp hi2
+sethi, lac w
+    dac rwHi
+    jmp i rwRa
+none, law 1
+    dac rwNone
+    jmp i rwRa
+p, 0
+w, 0
+    endloc
+rwRa, 0
+constants
+
+// The rest, in bank 2's spare words, bank 3's being full.
+bank 2
+
+// Gives THTRY1's theorems for the recommendation eX, in the frame eF. A THUSE's
+// are its list. A THTBF's are made from the pattern's predicate's in gTbf on the
+// front of THRUN, the run-time theorems, and a predicate not there is an
+// error. A pair's theorem is 0 for a predicate with only the run-time ones.
+// Takes no arguments. Returns the list in AC.
+// AC is the result and IO is clobbered.
+// Called via jsp, from bank 015.
+eTbfF,
+    local tbf, loop, next, skip, fin, rtv, found
+    dac rtv
+    lac i [eX:015]
+    ior [PCELLS]
+    dac tbP
+    lac i tbP
+    sad [KSYM+sTHTBF]
+    jmp tbf
+    idx tbP
+    lac i tbP
+    jmp i rtv
+tbf, lac i [evlS:015]
+    dac i [pgSp:6]
+    lac i [eF:015]
+    add [ESTK+FGPAT]
+    dac tbP
+    lac i tbP
+    ior [PCELLS]
+    dac tbP
+    lac i tbP
+    dac tbV
+    lac i [vTab:3+vTHRUN]
+    dac i [fB:6]
+    dzm found
+    lac [gTbf:5]
+    dac tbQ
+loop, lac i tbQ
+    sza i
+    jmp fin
+    sas tbV
+    jmp next
+    idx found
+    idx tbQ
+    lac i tbQ
+    sza i
+    jmp skip
+    dac i [fA:6]
+    FAR(fCons)
+    dio i [fB:6]
+    jmp skip
+next, idx tbQ
+skip, idx tbQ
+    jmp loop
+fin, lac found
+    sza i
+    jmp i [pgErr:6]
+    lac i [fB:6]
+    jmp i rtv
+rtv, 0
+found, 0
+    endloc
+
+tbP, 0                      // for the moment
+tbQ, 0
+tbV, 0

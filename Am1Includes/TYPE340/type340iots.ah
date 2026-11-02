@@ -10,6 +10,9 @@
  * Instead, use the alt version to get t340dra and t340dss.
  */
 
+// Note that drp is now equivalent to drc, the custom subcommand tht drp
+// was for is obsolete, drc provides the same functionality now.
+
 #ifndef _NO_DRA_DSS
 #ifdef dra
 #warning "dra is already defined, you are probably using the Type 23 drum, use t340dra and t340dss instead."
@@ -30,7 +33,7 @@
 #define t340dra iot 016
 #define t340dss iot 0217
 #define drc iot 0116
-#define drp iot 0216
+#define drp iot 0116
 #define dsp iot 0117
 #define dsv iot 0417
 #define dsh iot 01017

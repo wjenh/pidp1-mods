@@ -5,12 +5,15 @@
 #include <TYPE340/type340defs.ah>
 #undef _NO_DRA_DSS
 
+// Note that drp is now equivalent to drc, the custom subcommand tht drp
+// was for is obsolete, drc provides the same functionality now.
+
 // Define equivalents for all for consistency, only dra and drs conflict
 #define t340dla iot 015
 #define t340drs iot 0115
 #define t340dcf iot 0215
 #define t340drc iot 0116
-#define t340drp iot 0216
+#define t340drp iot 0116
 #define t340dsp iot 0117
 #define t340dsv iot 0417
 #define t340dsh iot 01017

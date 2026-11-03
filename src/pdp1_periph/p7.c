@@ -13,6 +13,8 @@
  * wje 11-Feb-26 update with new lightlen code.
  * wje 18-Feb-26 now working with the lightpen
  * wje 4-Oct-26 add a fix so this works with the new emulator optimizations
+ * Claude 03-Nov-26 pverts had no bounds check.
+ *     A frame of more than 10,000 points overran it onto npoints and crashed the display thread.
  *
 */
 
@@ -48,7 +50,8 @@ Point newpoints[1024 * 1024];
 int nnewpoints;
 Point points[1024 * 1024];
 int npoints;
-float pverts[4 * 10000];
+// Room for every point points[] can hold, so a crowded frame is drawn whole.
+float pverts[4 * nelem(points)];
 
 struct
 {
@@ -235,7 +238,7 @@ drawDisplayUpdate(void)
 
     for(i = 0; i < npoints; i++)
     {
-        if(i >= nelem(pverts))
+        if(i >= (int)(nelem(pverts) / 4))
         {
             break;
         }

@@ -36,6 +36,9 @@ lbHide, dac lbR
 // the labels are not on, builds them and turns them on.
 // AC and IO are clobbered. Called via jsp from any bank.
 lbIdle, dac lbR
+#ifdef EDGETEST
+    jmp i lbR               // no labels, so the group stays lbOff's edge
+#endif
     lac lbSt
     sza
     jmp i lbR

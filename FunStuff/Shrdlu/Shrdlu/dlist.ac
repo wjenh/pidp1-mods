@@ -1011,7 +1011,18 @@ dlNull, scale(0) | next(point)
 // The labels' group while the program is busy. It is a halt alone, which
 // the 340 takes no time over, so that the extra group adds a break to the frame
 // and nothing to its length.
+// EDGETEST, defined, makes it a vector off the right edge instead, so that
+// every frame has one edge violation (Tests/EdgeBreak); lbIdle then never
+// turns the labels on.
+#ifdef EDGETEST
+lbOff, scale(0) | intensity(IWHITE) | next(point)
+    0200000 | next(point) | 0d512
+    0d1000 | next(vector)
+    deltax(0d127) | end
+    halt | interrupt
+#else
 lbOff, halt | interrupt
+#endif
 
 // The idle labels' list, written by lbMain (labels.ac); and the gate's state.
 lbBuf,

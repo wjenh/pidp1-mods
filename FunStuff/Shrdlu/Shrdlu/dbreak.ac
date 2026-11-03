@@ -15,8 +15,11 @@
 // A due hand position is applied only before the held object's group, the
 // one before the hand's, so the load and the hand move together and the
 // 340 is stopped for a step once a frame at most.
-// A break with the 340 not stopped is left alone.
-// The words to 077 are full.
+// An edge violation sets only its edge flag, not the stop flag, so the
+// edge flags are tested before the stop flag, or an edge's break would be
+// taken for someone else's and the 340 left stopped.
+// A break with the 340 neither on an edge nor stopped is left alone.
+// The words to 077 are nearly full.
 // What it calls, nothing in the program calls, since the program may be
 // inside any routine at the break.
 // The drum's end-of-transfer break, at each overlay load, is one of those
@@ -26,18 +29,18 @@
 // Entered from location 3. AC and IO are restored from 0 and 2, and the
 // return restores the interrupted code's extend mode.
 dpyBreak,
-    local again, out, hand, p
+    local again, out, hand, p, notEdge, toNext
     eem
+    t340dsv t340dsh         // skip on an edge violation
+    jmp notEdge
+    idx dpEdges
+    jmp toNext
+notEdge,
 #ifndef NOSTOPTEST
-    t340dss
+    t340dss                 // skip if the display stopped at a group's halt
     jmp out
 #endif
-    t340dsv
-    jmp .+2
-    jmp .+3
-    t340dsh
-    jmp .+2
-    idx dpEdges
+toNext,
     idx dpGrp
     sas [NGROUP]
     jmp again

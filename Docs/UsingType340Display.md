@@ -111,7 +111,6 @@ different IOT assignments.
 - dcf - display clear flags, clears the flags that the skip IOTs below test
 - dra - display read address counter, the last address executed
 - drc - display read coordinates, the x and y position of the lightpen hit
-- drp - display read predicted coordinates, the x and y position of where the lightpen currently is
 - dsp - display skip on lightpen flag
 - dss - display skip on stop
 - dsv - display skip on vertical edge violation
@@ -122,7 +121,6 @@ In more detail:
 
 Only one IOT, dla, takes a value passed in the IO register.\
 Only two standard IOTs return a value, dra and drc, both in the IO register.\
-An additional non-standard IOT, drp, also returns a value in the IO register.
 
 | IOT | pdp-1 opcode | input | output | notes |
 |-----|--------------|-------|--------|-------|
@@ -131,7 +129,6 @@ An additional non-standard IOT, drp, also returns a value in the IO register.
 | dcf | 720215 | none | none | clears the lightpen, stop and edge violation flags; it neither starts nor stops the display: a running display keeps running, a halted one stays halted |
 | dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
 | drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
-| drp | 720216 | none | IO has the predicted lightpen position coordinates | see note 3 |
 | dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 4 |
 | dss | 720217 | none | none ||
 | dsv | 720417 | none | none ||
@@ -173,7 +170,7 @@ doesn't match the display client's reported lightpen hit coordinates.
 This provides very fast target tracking and is totally transparent, it is implemented in the core
 display logic shared by this and by the Type 30 display emulation.
 Previously, this was a configurable feature and had a special IOT subcommand for using it, drp.
-That is now identical to drc, the subcommand is kept only for backwards compatibility.
+That is now identical to drc, the #define for the subcommand is kept only for backwards compatibility.
 
 ## Scale factor
 

@@ -64,6 +64,10 @@
  * 10-Oct-2026 Claude - a deposit (DDS) clears the save, so an escape between it and the block's next
  *    save no longer returns at once.
  * 16-Oct-2026 wje - left and right arrow comments reversed in charset 2.
+ * 3-Nov-2026 Claude - a resume after a lightpen hit takes the 340's 1.5 us before the display goes on,
+ *    in every mode but character.
+ * 3-Nov-2026 Claude - an edge sets only its edge flag, never the stop flag, so dss no longer skips at
+ *    an edge (H-340 p. 3-4). A vector continue's edge flag is cleared at once, as its RFD does.
  */
 
 #include <stdlib.h>
@@ -124,6 +128,14 @@
 // This defines the time it takes to initialize after a start via dla.
 // The documentation is vague, 2.8 us for a PDP-4, 'faster' for others. Pick 1.5 us.
 #define START_TIME 1500
+// A vector's COUNT BRM pulse starts the 1.0 us sequence delay, whose end starts the 0.5 us
+// intensify delay that ends in the next pulse (H-340 p. 3-6). A pulse that ends the loop at an
+// edge or a lightpen hit costs only the sequence delay.
+#define BRM_PULSE_TIME 1500
+#define BRM_HALT_PULSE_TIME 1000
+// The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay,
+// before the display goes on where it left off (H-340 pp. 3-6, 3-27).
+#define RESUME_TIME 1500
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -258,19 +270,19 @@ typedef enum {
     ESCAPE
     } Status;
 
-// This holds state for the pseudo-binary-rate-multiplier.
+// This holds state for the binary rate multiplier.
 typedef struct {
     int startX;
     int startY;
     int deltaX;     // relative to startX, accumulated delta
     int deltaY;     // relative to startY, accumulated delta
     int dotSpacing; // pixel spacing in pixels, not the raw value from the instruction
-    int curStep;    // how many steps we have consumed
-    int nPoints;    // and how many steps we do
+    int count;      // the BRM's next count, 0 to lastCount
+    int lastCount;  // the full count, 2^countBits - 1
+    int countBits;  // the BRM's length once shortened, 3 to 7 bits
+    int pulses;     // COUNT BRM pulses walked by the last brmNext(), the one it returned on included
     int xSpan;      // total x moves in the vector, abs(dX)
     int ySpan;      // total y moves in the vector, abs(dY)
-    int xAccum;     // x rate accumulator, gains xSpan every step, x moves when it reaches nPoints
-    int yAccum;     // y rate accumulator, gains ySpan every step, y moves when it reaches nPoints
     bool plusX;     // the x axis endpoint is greater than the initial point
     bool plusY;     // the y axis endpoint is greater than the initial point
     bool draw;      // if true, the vector is drawn, else just positions
@@ -309,6 +321,7 @@ static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
 static volatile bool lpHitLatched = false;  // a hit was seen and the 340 has not been resumed since;
                                             // keeps lpX, lpY and lpDisplay at that first hit
+static Modes lpHitMode;             // the mode of that hit; an escape in the same word changes curMode
 static bool needBreak = false;      // edge violation occurred and an interrupt is needed
 static bool origCharsets = false;   // initial twoCharsets from config or default
 static bool twoCharsets = false;
@@ -537,7 +550,7 @@ emuClearFlags()
 void
 emuClearFlag(int flagbit)
 {
-    iotCondLog(LOG_FLAGS,"Clear flag %0\n", flagbit);
+    iotCondLog(LOG_FLAGS,"Clear flag %o\n", flagbit);
     __atomic_fetch_and(&flags, ~flagbit, __ATOMIC_RELAXED);
 }
 
@@ -685,6 +698,11 @@ uint64_t idleT0;
             // The manual says this also clears the lp enable flag and the edge violation flags.
             if( isPaused )
             {
+                // H-340 gives no resume time for the 342 in character mode, so none is charged there.
+                if( lpHitLatched && (lpHitMode != CHARACTER) )
+                {
+                    pendingDelay = RESUME_TIME;
+                }
                 emuClearFlags();
                 lpEnabled = isPaused = false;
                 lpHitLatched = false;
@@ -940,6 +958,8 @@ uint64_t idleT0;
                         }
                         else
                         {
+                            // The 340 still runs the 8 empty pulses of a 3 bit BRM, the last free
+                            pendingDelay += (7 * BRM_PULSE_TIME);
                             curState = INITIALIZE;
                         }
                     }
@@ -948,24 +968,31 @@ uint64_t idleT0;
                 {
                     if( (status = brmNext(&brmState, &curX, &curY)) != BRMRUNNING )
                     {
-                        // The vector has ended, or hit an edge. Nothing is owed here: each step
-                        // paid its own 1.5us as it was drawn, so a long vcontinue is not one
-                        // delay at its end.
+                        // The vector has ended, or hit an edge. Each return pays for the pulses
+                        // walked since the last one, so a long vcontinue is not one delay at its end.
                         if( status == COMPLETED )
                         {
+                            // The pulses after the last move, through the full count. In a vector,
+                            // the full count's pulse ends the loop and requests the next word, so
+                            // it is free; in a vcontinue it wraps the BRM to zero and runs on.
                             if( curMode == VCONTINUE )
                             {
+                                pendingDelay += (brmState.pulses * BRM_PULSE_TIME);
                                 // We stay in run mode, updating the start and end points
                                 brmContinue(&brmState, curX, curY);
                             }
                             else
                             {
+                                pendingDelay += ((brmState.pulses - 1) * BRM_PULSE_TIME);
                                 curState = INITIALIZE;     // back to fetching another vector
                             }
                             break;
                         }
                         else
                         {
+                            // The edge's ESCAPE comes at the end of its pulse's sequence delay
+                            pendingDelay += (((brmState.pulses - 1) * BRM_PULSE_TIME) + BRM_HALT_PULSE_TIME);
+
                             // The only error that can be returned is an edge violation.
                             // VCONTINUE does NOT cause a break, it just enters param mode.
                             // VECTOR stops and breaks if enabled.
@@ -973,6 +1000,9 @@ uint64_t idleT0;
                             // and its edge is its usual end.
                             if( curMode == VCONTINUE )
                             {
+                                // The edge's RFD requests the next word and clears both edge flags
+                                // (H-340 pp. 3-8, 3-14), so no program sees them.
+                                emuClearFlag(FLAG_HEDGE | FLAG_VEDGE);
                                 curMode = PARAMETER;
                                 curState = INITIALIZE;
                                 sawEscape = true;
@@ -984,6 +1014,7 @@ uint64_t idleT0;
                                 curState = STOPPED;
                                 needBreak = true;
                                 sawEscape = false;      // the stop wins; the continue skips the escape block
+                                pendingDelay = paceWait(pendingDelay);  // the break follows the pulse
                                 continue;
                             }
                         }
@@ -992,18 +1023,19 @@ uint64_t idleT0;
                     }
                     else
                     {
-                        // The hardware 0.5 us intensify-s delay always runs, followed by the
-                        // 1.0 us sequence delay, for a fixed 1.5 us per step regardless of
-                        // whether the beam is actually unblanked (BR1 / intensify bit).
-                        pendingDelay += 1500;
-
-                        if( brmState.draw )
+                        // Every pulse walked to this point, moving or not, takes its 1.0 us
+                        // sequence delay and the 0.5 us intensify delay after it, whether or not
+                        // the beam is unblanked (BR1 / intensify bit).
+                        if( brmState.draw && drawAndCheck(true, curX, curY, curIntensity) )
                         {
-                            if( drawAndCheck(true, curX, curY, curIntensity) )
-                            {
-                                isPaused = true;    // A lightpen hit was detected
-                                iotCondLog(LOG_PAUSE, "LP hit in vector, pausing\n");
-                            }
+                            // A lightpen hit: its LP flag keeps the intensify delay from starting
+                            isPaused = true;
+                            pendingDelay += (((brmState.pulses - 1) * BRM_PULSE_TIME) + BRM_HALT_PULSE_TIME);
+                            iotCondLog(LOG_PAUSE, "LP hit in vector, pausing\n");
+                        }
+                        else
+                        {
+                            pendingDelay += (brmState.pulses * BRM_PULSE_TIME);
                         }
                     }
                 }
@@ -1243,11 +1275,13 @@ reset340()
 }
 
 // A binary rate multiplier implementation, needed for vectors.
-// A vector is divided into nPoints steps, the vector's length times this scale factor.
-// Each step, each axis adds its span to its accumulator and moves one unit when the accumulator
-// reaches nPoints, so over the nPoints steps an axis moves exactly its span, as the real BRM does.
-// A step where neither axis moves produces no point.
-#define BRMSCALEFACTOR 20.0
+// The 340 steps both axes from one counter (H-340, pp. 3-28 to 3-31, Figure 6-6), and a program
+// can see which points that lights, so the points follow it rather than the straight line.
+// The counter is shortened to the larger magnitude's length, 3 to 7 bits, and runs 0 to its full
+// count once per vector. On a count with k trailing ones, the magnitude bit of weight
+// 2^(countBits - 1 - k) moves its axis if set; the full count moves nothing and ends the vector.
+// So each axis moves exactly its magnitude, and both move together wherever their bits share a
+// count. A count where neither axis moves produces no point.
 
 // Initialize a brm, expects the origin in initialX and initialY, the realtive lenghts in dX and dY,
 // with a step increment in step.
@@ -1259,7 +1293,7 @@ reset340()
 bool
 brmInitialize(BRMStateP stateP, int initialX, int initialY, int dX, int dY, int dotSpacing, bool draw)
 {
-float side, fx, fy;
+int larger;
 
     if( dotSpacing == 0 )
     {
@@ -1284,34 +1318,22 @@ float side, fx, fy;
     stateP->xSpan = abs(dX);
     stateP->ySpan = abs(dY);
 
-    // Figure out the step count
-    if( (stateP->xSpan == 0) || (stateP->ySpan == 0) )
+    // The hardware shortens the count by one bit for each leading magnitude bit that is zero in
+    // both bytes, at most four of them, so the count fits the larger magnitude
+    larger = (stateP->xSpan > stateP->ySpan) ? stateP->xSpan : stateP->ySpan;
+    stateP->countBits = 3;
+    while( (larger >> stateP->countBits) != 0 )
     {
-        // Horizontal or vertical: the one moving axis moves on every step
-        stateP->nPoints = (stateP->xSpan + stateP->ySpan);
+        stateP->countBits++;
     }
-    else
-    {
-        // The step count is the one the older truncated-rate code used, so a vector still
-        // produces about the same number of points (over all vectors, within about 1%), and so
-        // takes about the same time. That timing was tuned against the Linux scheduler.
-        // Only which steps move is different: the truncated rates moved an axis up to 6 units
-        // past its span.
-        fx = (float)(stateP->xSpan);
-        fy = (float)(stateP->ySpan);
-        side = hypot(fx, fy);
-        stateP->nPoints = (int)(side * BRMSCALEFACTOR);
-    }
-
-    // Starting the accumulators half full puts each move at the rounded position on the true line
-    stateP->xAccum = (stateP->nPoints / 2);
-    stateP->yAccum = (stateP->nPoints / 2);
+    stateP->lastCount = ((1 << stateP->countBits) - 1);
 
     stateP->dotSpacing = dotSpacing;
     stateP->draw = draw;
-    stateP->curStep = 0;
-    iotCondLog(LOG_BRM, "brmInit initial x %d xspan %d initial y %d yspan %d dotSpacing %d steps %d\n",
-        stateP->startX, stateP->xSpan, stateP->startY, stateP->ySpan, dotSpacing, stateP->nPoints);
+    stateP->count = 0;      // CLR BRM when the word loads
+    stateP->pulses = 0;
+    iotCondLog(LOG_BRM, "brmInit initial x %d xspan %d initial y %d yspan %d dotSpacing %d bits %d\n",
+        stateP->startX, stateP->xSpan, stateP->startY, stateP->ySpan, dotSpacing, stateP->countBits);
     return(true);
 }
 
@@ -1324,66 +1346,77 @@ brmContinue(BRMStateP stateP, int nextX, int nextY)
     stateP->startY =  nextY;
     stateP->deltaX = 0;         // current delta offsets from starting point
     stateP->deltaY = 0;
-    stateP->curStep = 0;
-    stateP->xAccum = (stateP->nPoints / 2);    // the BRM starts over, as brmInitialize() left it
-    stateP->yAccum = (stateP->nPoints / 2);
+    stateP->count = 0;      // the BRM wraps to zero and counts the same vector again
     iotCondLog(LOG_BRM, "brmContinue new x %d new y %d\n", stateP->startX, stateP->startY);
 }
 
 // Get the next point from the passed brm state.
 // Return RUNNING if there was a point,COMPLETED if done or VIOLATION for an edge violation.
 // If there was an edge violation, the offending axis coordinate will be set to its opposite edge.
+// stateP->pulses is set to the counts walked to get there; the full count is in the COMPLETED one.
 Status
 brmNext(BRMStateP stateP, int *xP, int *yP)
 {
 bool didOne;
 Status brmStatus;
+int count, phase, weight;
 
     iotCondLog(LOG_BRM, "brmNext deltaX %d deltaY %d\n", stateP->deltaX, stateP->deltaY);
 
     didOne = false;
+    stateP->pulses = 0;     // every count is a pulse, moving or not, and the caller charges them
 
     while( !didOne )
     {
-        if( ++(stateP->curStep) > stateP->nPoints )
+        if( stateP->count > stateP->lastCount )
         {
             iotCondLog(LOG_BRM, "brmNext finished with deltaX %d deltayY %d\n", stateP->deltaX, stateP->deltaY);
             return(COMPLETED);
         }
 
-        // Each axis gains its span every step, and moves one unit when that reaches nPoints
-        stateP->xAccum += stateP->xSpan;
-        if( stateP->xAccum >= stateP->nPoints )
+        // The count's trailing ones pick the one magnitude bit both axes look at on this count
+        count = stateP->count++;
+        stateP->pulses++;
+        phase = 0;
+        while( (count & 1) != 0 )
         {
-            stateP->xAccum -= stateP->nPoints;
+            count >>= 1;
+            phase++;
+        }
+        if( phase >= stateP->countBits )
+        {
+            continue;       // the full count, which only ends the vector
+        }
+        weight = (1 << (stateP->countBits - 1 - phase));
+
+        if( (stateP->xSpan & weight) != 0 )
+        {
             if( stateP->plusX )
             {
                 stateP->deltaX++;
-                iotCondLog(LOG_BRM, "brmNext increment x at step %d\n", stateP->curStep);
+                iotCondLog(LOG_BRM, "brmNext increment x at count %d\n", (stateP->count - 1));
             }
             else
             {
                 stateP->deltaX--;
-                iotCondLog(LOG_BRM, "brmNext decrement x at step %d\n", stateP->curStep);
+                iotCondLog(LOG_BRM, "brmNext decrement x at count %d\n", (stateP->count - 1));
             }
 
             *xP = stateP->startX + (stateP->deltaX * stateP->dotSpacing);
             didOne = true;
         }
 
-        stateP->yAccum += stateP->ySpan;
-        if( stateP->yAccum >= stateP->nPoints )
+        if( (stateP->ySpan & weight) != 0 )
         {
-            stateP->yAccum -= stateP->nPoints;
             if( stateP->plusY )
             {
                 stateP->deltaY++;
-                iotCondLog(LOG_BRM, "brmNext increment y at step %d\n", stateP->curStep);
+                iotCondLog(LOG_BRM, "brmNext increment y at count %d\n", (stateP->count - 1));
             }
             else
             {
                 stateP->deltaY--;
-                iotCondLog(LOG_BRM, "brmNext decrement y at step %d\n", stateP->curStep);
+                iotCondLog(LOG_BRM, "brmNext decrement y at count %d\n", (stateP->count - 1));
             }
 
             *yP = stateP->startY + (stateP->deltaY * stateP->dotSpacing);
@@ -1842,6 +1875,7 @@ uint64_t t0;
                         lpY = y;
                         lpDisplay = i;          // which one
                         lpHitLatched = true;    // before the flag, so drc sees the hit once dsp does
+                        lpHitMode = curMode;
                         // Make the coordinates and the latch visible before the flag, on ARM too.
                         // Pairs with the acquire fence in emuGetXY(). Runs only on a hit.
                         atomic_thread_fence(memory_order_release);
@@ -2009,14 +2043,15 @@ bool xViolation, yViolation;
         yViolation = true;
     }
 
+    // Only a parameter word's stop bit sets the stop flag, so an edge sets its edge flag alone
     if( xViolation )
     {
-        emuOrFlags(FLAG_STOP | FLAG_HEDGE);
+        emuOrFlags(FLAG_HEDGE);
     }
 
     if( yViolation )
     {
-        emuOrFlags(FLAG_STOP | FLAG_VEDGE);
+        emuOrFlags(FLAG_VEDGE);
     }
 
     return( xViolation || yViolation );

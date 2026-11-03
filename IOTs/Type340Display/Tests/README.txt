@@ -3,6 +3,9 @@ They test:
 
 vec1 - param, point, vector, should draw an isocoles triangle
 vec2 - vector continue, should draw a line from the lower left corner to the upper right corner
+vecbrm - five vectors (shallow, steep, 45 degrees, short, long) at each scale and sign, an invisible
+    vector, and a vector continue to the right edge, drawn over and over; each is stepped as the 340's
+    binary rate multiplier steps it, so diagonals take the 340's points, not the straight line's
 subjmp - subroutine mode JUMP, draw a triangle while main code increments AC in a loop
 subsave - subroutine mode SAVE, draws 3 triangles side-by-side using a subroutine
 subdeposit - subroutine mode DEPOSIT, draws 3 triangles vertically using nested subroutines
@@ -14,7 +17,8 @@ increment3 - draws 4 diamonds at different sizes with their leftmost points coin
 intensity - draws a line at each of the 8 intensities, dimmest at the top
 type340AlignmentTest - draws a border at the extreme edges, 0,0 to 0,1023 to 1023,1023 to 1023,0 to 0,0
     then draws a plus in the center at 512,512 and 2 corner-to-corner diagonals, all should intersect;
-    PF1 and PF2 shoudl be on to indicate edge violations from the diagonals
+    PF1 and PF2 should be on to indicate edge violations from two invisible vectors after the picture,
+    one off the top and one off the right edge
 type340Stress - draw 19 full-width horizontal vectors using vcontinue at scale 0, 19,456 total points
 type340FullTest - unified, self-checking regression test: exercises every display host IOT (dla,
     drs, dcf, dra, dss, dsv, dsh, dsp, drc) and all 8 display-program modes with no panel

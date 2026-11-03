@@ -282,7 +282,7 @@ fr2,
     jmp fr2a
     jsp lphit
 fr2a,
-    dss                         // skip once the display has halted
+    dss dsv dsh                 // skip once the display has halted, at its halt or at an edge
     jmp fr2
 frx,
     jmp .

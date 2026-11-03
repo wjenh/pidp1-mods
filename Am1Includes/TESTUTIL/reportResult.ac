@@ -26,7 +26,7 @@
  *   jda reportResult
  *
  * The printSummary subroutine takes no arguments.
- * Tt prints the three running totals accumulated since the last resetResults call on one line.
+ * It prints the three running totals accumulated since the last resetResults call on one line.
  * Called via jsp. Neither AC nor IO is preserved.
  */
 
@@ -153,10 +153,11 @@ printCount,
     spa                 // >= 10, two digits
     jmp afterTensDigit
 tensLoop,
+    dac units                 // idx leaves tens in AC, so hold the remainder here
+    idx tens                  // count the ten just subtracted
+    lac units
     sub [0d10
-    spa                       // skip if AC >= 0, there's room for (at least) one more ten
-    jmp tensDone
-    idx tens
+    sma                       // skip if AC < 0, no ten left
     jmp tensLoop
 tensDone,
     add [0d10                 // undo the subtraction that went negative; AC is now 0-9

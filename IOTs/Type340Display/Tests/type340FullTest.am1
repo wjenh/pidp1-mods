@@ -23,11 +23,13 @@ Unified, self-checking regression test for the Type 340 display (IOTs/Type340Dis
  *    surface in this environment to verify the visual effect.
  *
  * No panel interaction: every display program below ends in an explicit 'halt' (or a deliberate
- * edge violation, which also halts the display and sets the stop flag per the documentation), so
- * the dss-poll idiom already used by every other test in this directory never blocks forever on a
+ * edge violation in vector mode, which halts the display with its edge flag but not the stop flag,
+ * H-340 p. 3-4), so waitStop, which polls dss, dsv and dsh together, never blocks forever on a
  * correctly functioning display engine.
  *
  * 8-Oct-2026 Claude - add secDrsAfterDla: a drs issued right after a dla must not lose the dla.
+ * 3-Nov-2026 Claude - an edge no longer sets the stop flag, and a vector continue's edge flag is not
+ *    seen: the edge sections use plain vectors, and secVcontEdge checks that the display goes on.
  */
 
 100/
@@ -111,8 +113,9 @@ progDra, scale(0) intensity(3) next(point)
 progDraAfter,
 
 // ---------------------------------------------------------------------------
-// secDcf -- deliberately cause a vertical edge violation, confirm dss and dsv are both set, then
-// issue dcf (clear flags) on its own (no new dla needed) and confirm both read clear afterward.
+// secDcf -- deliberately cause a vertical edge violation, confirm dsv is set and dss is not (an
+// edge never sets the stop flag), then issue dcf (clear flags) on its own (no new dla needed) and
+// confirm dsv reads clear afterward.
 // ---------------------------------------------------------------------------
 secDcf,
     local rtn
@@ -122,7 +125,9 @@ secDcf,
     jsp waitStop
 
     dss
-    jmp dcfFail1          // clear (unexpected) -> bad
+    jmp dcfNoStop         // clear (expected) -> go on
+    jmp dcfFail1          // set (unexpected) -> bad
+dcfNoStop,
     dsv
     jmp dcfFail1          // clear (unexpected) -> bad
     lac [lblDcfSet
@@ -149,11 +154,11 @@ dcfClearOk,
 rtn, jmp .
     endloc
 
-// Aimed straight off the top edge from a safely-interior point: y goes well past 1023.
+// A plain vector aimed straight off the top edge from near it: y passes 1023 and the display halts.
 progViolateV, scale(0) intensity(3) next(point)
-    y(CENTER) next(point)
-    x(CENTER) show next(vcontinue)
-    visible up deltay(0d127) right deltax(0)
+    y(0d1000) next(point)
+    x(CENTER) show next(vector)
+    visible up deltay(0d127) right deltax(0) end
     halt
 
 // ---------------------------------------------------------------------------
@@ -490,8 +495,9 @@ progVector, scale(0) intensity(3) next(point)
     halt
 
 // ---------------------------------------------------------------------------
-// secVcontEdge -- vcontinue aimed straight off the right edge from the center; this is the
-// dedicated horizontal-edge-violation check (dsh expected set, dsv expected clear).
+// secVcontEdge -- vcontinue aimed straight off the right edge from the center, then a point and
+// the halt. The edge requests the next word in parameter mode (H-340 p. 3-8), so the display goes
+// on to the halt (dra past it), and that request clears the edge flag (p. 3-14): dsh and dsv clear.
 // ---------------------------------------------------------------------------
 secVcontEdge,
     local rtn
@@ -500,25 +506,27 @@ secVcontEdge,
     dla
     jsp waitStop
 
-    dsh
-    jmp vceFailNoH         // clear (unexpected) -> bad
-    lac [lblVceH
-    lio [REPORT_PASS
-    jda reportResult
-    jmp vceCheckV
-vceFailNoH,
+    dra
+    lai
+    sad [progVcontEdgeAfter    // skip (mismatch) -> bad; fall through (match) -> good
+    jmp vceGoesOn
     lac [lblVceH
     lio [REPORT_FAIL
     jda reportResult
+    jmp vceCheckFlags
+vceGoesOn,
+    lac [lblVceH
+    lio [REPORT_PASS
+    jda reportResult
 
-vceCheckV,
-    dsv
-    jmp vceVok             // clear (expected) -> good
+vceCheckFlags,
+    dsv dsh
+    jmp vceFlagsOk         // both clear (expected) -> good
     lac [lblVceV
     lio [REPORT_FAIL
     jda reportResult
     jmp rtn
-vceVok,
+vceFlagsOk,
     lac [lblVceV
     lio [REPORT_PASS
     jda reportResult
@@ -529,7 +537,11 @@ progVcontEdge, scale(0) intensity(3) next(point)
     y(CENTER) next(point)
     x(CENTER) show next(vcontinue)
     visible right deltax(0d127) deltay(0)
+    scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(parameter)
     halt
+progVcontEdgeAfter,
 
 // ---------------------------------------------------------------------------
 // secCharacter -- a short type340 string, forcing charsets(2) explicitly so the result doesn't
@@ -711,9 +723,9 @@ progDepDone,
     0
 
 // ---------------------------------------------------------------------------
-// secEdgeVertical -- dedicated vertical-edge check, aimed off the bottom edge this time (the
-// horizontal case is already covered by secVcontEdge above); confirms dsv set AND dsh clear,
-// reported as two independent assertions.
+// secEdgeVertical -- dedicated vertical-edge check, a plain vector aimed off the bottom edge this
+// time (secDcf's goes off the top); confirms dsv set AND dsh clear, reported as two independent
+// assertions.
 // ---------------------------------------------------------------------------
 secEdgeVertical,
     local rtn
@@ -748,13 +760,13 @@ rtn, jmp .
     endloc
 
 progViolVBot, scale(0) intensity(3) next(point)
-    y(CENTER) next(point)
-    x(CENTER) show next(vcontinue)
-    visible deltay(0d127) deltax(0) down
+    y(0d20) next(point)
+    x(CENTER) show next(vector)
+    visible deltay(0d127) deltax(0) down end
     halt
 
 // ---------------------------------------------------------------------------
-// secEdgeCorner -- corner-to-corner diagonal, like type340AlignmentTest.am1's diagonals, but
+// secEdgeCorner -- a plain 45 degree vector into the upper right corner, crossing both edges,
 // checked via the combined 'dsv dsh' instruction itself (the documented OR-combination feature),
 // not by eye. Either flag being set is the expected/good outcome here.
 // ---------------------------------------------------------------------------
@@ -779,9 +791,9 @@ rtn, jmp .
     endloc
 
 progCorner, scale(0) intensity(3) next(point)
-    y(0) next(point)
-    x(0) show next(vcontinue)
-    visible deltax(0d127) right deltay(0d127) up
+    y(0d1000) next(point)
+    x(0d1000) show next(vector)
+    visible deltax(0d127) right deltay(0d127) up end
     halt
 
 // ---------------------------------------------------------------------------
@@ -899,8 +911,9 @@ progSlave, scale(0) intensity(3) next(slave)
 progSlaveAfter,
 
 // ---------------------------------------------------------------------------
-// waitStop -- poll dss until the display halts (covers both a normal program halt and an edge
-// violation, which the documentation states also sets the stop flag). No timeout: every display
+// waitStop -- poll dss, dsv and dsh together until the display halts: a program halt sets the
+// stop flag, and an edge violation in vector mode halts it with its edge flag alone (H-340
+// p. 3-4). No timeout: every display
 // program in this suite is built to reach one or the other, so a hang here is itself diagnostic
 // of a real regression, exactly like the dss-poll idiom every other test in this directory uses.
 // Called via jsp. IO is preserved.
@@ -908,7 +921,7 @@ progSlaveAfter,
 waitStop,
     local rtn
     dap rtn
-poll, dss
+poll, dss dsv dsh
     jmp poll
 rtn, jmp .
     endloc
@@ -935,7 +948,7 @@ lblBasicDra,
     text "dla/dss/dra basic check"
     13
 lblDcfSet,
-    text "edge violation sets dss+dsv"
+    text "edge violation sets dsv, not dss"
     13
 lblDcfClear,
     text "dcf clears flags"
@@ -974,10 +987,10 @@ lblVector,
     text "vector mode"
     13
 lblVceH,
-    text "vcontinue horizontal edge (dsh)"
+    text "vcontinue edge goes on to the halt"
     13
 lblVceV,
-    text "vcontinue horizontal edge leaves dsv clear"
+    text "vcontinue edge leaves dsh and dsv clear"
     13
 lblCharacter,
     text "character mode"

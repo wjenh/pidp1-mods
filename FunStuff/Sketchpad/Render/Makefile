@@ -6,7 +6,7 @@ endif
 CFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 
 sketchplot: sketchplot.c
-	$(CC) $(CFLAGS) -o sketchplot sketchplot.c -lm
+	$(CC) $(CFLAGS) -o sketchplot sketchplot.c -lz -lm
 
 clean:
 	rm -f sketchplot

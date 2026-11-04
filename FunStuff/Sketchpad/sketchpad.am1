@@ -34,6 +34,7 @@ Sketchpad, a light pen drawing program for the Type 340
 //
 // 18-Oct-2026 Claude: first release.
 // 18-Oct-2026 Claude: production cleanup, comments only.
+// 4-Nov-2026 Version 2.0 adding the remainder of the thesis operations
 
 #include <TYPE340/type340alt.ah>
 #include <LIGHTPEN/lightpen.ah>

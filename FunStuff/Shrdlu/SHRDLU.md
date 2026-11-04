@@ -1,29 +1,41 @@
 # SHRDLU and how to run it
 
-Version 1.0\
-2-Nov-2026
+Version 1.1\
+4-Nov-2026\
+Minor update for color markings moving with their objects.
 
 SHRDLU, Terry Winograd's blocks-world program (MIT, 1968-70), originally running on a PDP-6,
 rewritten in am1 for the pidp1-mods PDP-1D.
 It is the complete blocks world rendered on the Type 340 as the orginal was,
-with hidden lines, the hand with its motion, the original's action theorems, accurately reproducing the
-actions of all the original sentences.
+with hidden lines, the arm and hand, and the original's action theorems.
+
+It accurately reproduces the actions of all the original sentences in the Winograd movie, except for real.
+The original was basically faked, scripted for the camera, that is not SHRDLU running.
+See the explanation in *A demonstration* below.
+
+However, the original SHRDLU would execute those sentences if it was run.
+Mostly.
+There were 4 additional thesis sentences that were dropped from the movie, probably because they didn't work.
+However, here they do.
 
 Each sentence typed is read word by word as it is typed using the original's dictionary and morphology,
-parsed by Winograd's own grammar, and answered. A command is carried out by the hand if motion is invoved and answered.
+parsed by Winograd's grammar, and answered.
+A command is carried out by the hand if motion is invoved.
+
 The grammar, the semantics, and the answers are derived directly from Winograd's code.
 The original micro-Planner is replicated, but with some improvements.
 It still reproduces what the original did, but far more efficiently.
 
-It answers all of Winograd's demo dialogue's 42 sentences as well as the four addtional ones from
+It answers all of Winograd's demo dialog's 42 sentences as well as the four addtional ones from
 his thesis.
 
 ## What is here
 
 | File or directory | What |
 |---|---|
-| `shrdlu.am1`, `shrdlu.ah`, the `.ac` files, `Makefile` | The PDP-1 program, assembled by `make`. |
 | `SHRDLU.md` | This guide. |
+| `README.md` | What it says. |
+| `Shrdlu/` | The PDP-1 program, assembled by `make`. |
 | `Modern/` | SHRDLU in C, one Linux executable implementing the same behavior with no emulator. |
 | `Player/` | `shrdlu_play`, a client that simulates a real user, sending sentences from a text file. |
 
@@ -34,7 +46,8 @@ In SHRDLU:
 make
 ```
 This makes *shrdlu.rim* and *shrdlu.ovl*, the program's drum overlays.
-The overlays hold the compiled Lisp, about 40K words, as well as all the '/' commands and support code.
+The overlays hold the compiled Lisp and micro-planner, about 40K words,
+as well as all the '/' commands and support code.
 
 *semantics.ac* and *lexicon.ac* are generated from the original's Lisp and dictionary.
 
@@ -59,18 +72,23 @@ Each SHRDLU reply ends with a line having only `*`.\
 Input is folded to upper case.\
 Every number, typed or printed, is octal, as in the original.
 
-If an output line is longer than 90 characters it wraps at the prior space so a telnet window of
-80 columns is sufficient.
-`WORDS:` follows and echoes your sentence.
-The line you type is an exception, it doesn't wrap as you type it.
+If an output line is longer than 79 characters it wraps at the prior space so a telnet window of
+80 columns is sufficient.\
+`WORDS:` follows and echoes your sentence.\
+The line you type is an exception, it doesn't wrap as you type it but your telnect client probably does.\
 The `/` command output is also not wrapped.
 
 A line that starts with `/` is a command.
-Anything else is English that is intperpreted as a sentence.
+Anything else is English that is interpreted as a sentence.
 
 ## What's different?
 
-Externally, nothing signifcant.\
+Externally, not much signifcant.
+
+However, the movie and some other videos show the objects labeled with their color.
+The original code did not do this, they were added in the movie as was the text supposedly on the screen.
+Here, they are shown because it's much easier to identify what's what.
+
 Internally, a lot.
 
 The code executed is essentially the orginal, but the execution engines for lisp and micro-planner
@@ -130,7 +148,7 @@ Bill
 ### Sentences
 
 Type a sentence, ending it with `.`, `?` or `!`.\
-Return alone does not end a sentence, it ends the word, as space does, and the sentence continus on the next line.\
+Return alone does not end a sentence, it ends the word, as space does, and the sentence continues on the next line.\
 This also is the original behavior.\
 `:` and `;` are part of the sentence.'\
 A comma or hyphen is dropped, so *pick-up* is typed *pick up*.
@@ -191,18 +209,18 @@ Other replies:
   earlier to stand for.
 - `I CAN'T.`: the command cannot be done, such as a stack too high for the hand.
 - `NO ROOM`: the sentence was too long, or it needed more memory than is available.
-  None of the dialogue's 42 sentences will cause `NO ROOM`.
+  None of the dialog's 42 sentences will cause `NO ROOM`.
   **Commands can run out after it** that move something keeps some of the planner's memory,
   such as what `/ROOM` calls `EVENTS` and `DATABASE`.
-  About 50 one-move commands after the dialogue will fill memory, fewer if they move several things.
+  About 50 one-move commands after the dialog will fill memory, fewer if they move several things.
   Every command then replies `NO ROOM` until the program is loaded again.
   **Questions about moves cost memory also:** `did you move ...?` keeps an event for each time the
   object was moved, and `what did you move?` one for every move, so about a dozen of the second fill
-  the same table after the dialogue.
-  `what did you move?` after the dialogue has too many things to name so it replies `NO ROOM`,
+  the same table after the dialog.
+  `what did you move?` after the dialog has too many things to name so it replies `NO ROOM`,
   though the sentences after it work as usual.
 - `FAULT` and an address: the program hit something it cannot do.
-  None of the dialogue's 42 gets one; a sentence of your own could.
+  None of the dialog's 42 gets one; a sentence of your own could.
 - `OVERLAY ERROR 2`: the drum does not hold this build's overlays
 
 `/TREE ON` also types each sentence's tree after its answer.
@@ -210,7 +228,7 @@ A unit's line is the unit, CLAUSE, NG for a noun group, VG for a verb group, PRE
 then the words it spans.
 A word's line is the word, then its features.
 Each level is indented two spaces under the unit that holds it.
-A sentence abandoned or one that ends the dialogue has none.
+A sentence abandoned or one that ends the dialog has none.
 
 **A sentence takes time.**
 
@@ -321,22 +339,17 @@ Coordinates run from `0` to `1200` in each axis. `x` runs to the right, `y` away
   A MOVETO with a load does the same to whatever would hide the load
   where it is going. After an `/UNGRASP` the object stays a wireframe until `/REFRESH`; a
   `/DO` ends with a REFRESH.
-- **Colors are intensities.** Red is 5, green 3 and blue 1; the box and the table are 7.
-  he initial scene's colors, as `/SCENE` prints them: `:B1` red block, `:B2`
+- **Colors are intensities.** Red is 6, green 4 and blue 2; the box and the table are 7.
+  You can change these in *shrdlu.ah* if you wish.
+  The initial scene's colors, as `/SCENE` prints them: `:B1` red block, `:B2`
   green pyramid, `:B3` green block, `:B4` blue pyramid (in the box), `:B5` red pyramid, `:B6`
   red block, `:B7` green block, `:B10` blue block, `:BOX` white.
-- **The scene stays on the screen while the program thinks**:  parsing, planning, and rebuilding never stop it.
-- **A color label is on each block and pyramid while the program is idle**: `RD`, `GR` or `BL`, drawn
-  beside the object's longest visible line, a held object's from the hand, only while the program
-  waits at READY for the first character of a line.
-  The first character typed turns them off and they stay off while a sentence or a command is read,
-  parsed, answered and carried out.
-  They return at the next READY.
-  An object none of whose lines is visible has none.
+- **Objects are also labeled with their color.** Each will be identifed with BL, RD, GR for blue, red, and green.
   The box and the table are not labeled.
+- **The scene stays on the screen while the program thinks**:  parsing, planning, and rebuilding never stop it.
 - **The hand has two crossbars**, as in the film of the original's demonstration: a short one
   at the arm's top and a longer one at the hand, resting on the top of what it carries.
-- **The hand moves at most one step a frame**. A move steps `STEPX` and `STEPY` screen points (20 and 14 octal).
+- **The hand moves one step a frame**. A move steps `STEPX` and `STEPY` screen points (20 and 14 octal).
   These are defined in *shrdlu.ah*.
   For slower motion set `PERIOD` greater than a frame time, about 23 msecs, and for smoother
   motion make the steps smaller.
@@ -346,7 +359,7 @@ Coordinates run from `0` to `1200` in each axis. `x` runs to the right, `y` away
   after `/RESET` the same goals give the same plans.
   `/SEED` changes them.
 - **A command takes time**, typed in English or as `/DO`.
-  Planning takes about half a second for a pickup; carrying it pace takes several seconds a move.
+  Planning takes about half a second for a pickup; carrying it takes several seconds a move.
 
 ## A demonstration
 
@@ -365,12 +378,12 @@ No, almost everything in the movie it could actually do.
 Almost? There were a couple of sentences that seem to have been faked, the original code
 wouln't handle them. This version will.
 When you go through this script, SHRDLU will actually be doing what it pretended to do in the movie,
-even if you use shrdlu_player, it just feeds the text to SHRDLU directly.
+even if you use shrdlu_play, it just feeds the text to SHRDLU directly.
 
-**The dialogue.** Start the program, then type, in order, the dialogue's 42 sentences from
+**The dialog.** Start the program, then type, in order, the dialog's 42 sentences from
 the transcript of the original's demonstration, and `2` after 20's question.
-`Player/dialogue.txt` has them, and `shrdlu_play` will type them for you.
-In that file the thesis's original four sentences, below, have been added between the
+`Player/dialog.txt` has them, and `shrdlu_play` will type them for you.
+In that file the thesis's original four missing sentences, below, have been added between the
 demo's 12 and 13.
 ```
 sentence 1   OK.  (the hand puts the green cube off the big red block, then picks it up)
@@ -426,10 +439,12 @@ sentence 42  YOU'RE WELCOME!
 Each answer is the transcript's line, with three small differences in this program.
 20's second choice reads `ANYWHERE ON TOP OF?`, where the transcript has `ANWHERE ON TOP OF ?`,
 and 19's answer is `RED.`, with a period. The whole takes about 23 minutes, most of it the
-sentences' thinking (37 alone nearly 2), the rest the hand's moves, with your typing on top; `/TIMES`
-after each gives its parse and its answer. Some answers depend on the sentences before: typed without 4 before it,
-5 gets `I DON'T UNDERSTAND WHICH PYRAMID SUPPORTED YOU MEAN.`, and typed without 7, 8 gets `I
-DON'T UNDERSTAND.`, as the original would. `/PLAN ON` first shows the hand's calls for the
+sentences' thinking (37 alone nearly 2), the rest the hand's moves, with your typing added.
+`/TIMES` gives its parse and its answer times.
+Some answers depend on the sentences before: typed without 4 before it,
+5 gives `I DON'T UNDERSTAND WHICH PYRAMID SUPPORTED YOU MEAN.`, and typed without 7, 8
+gives `I DON'T UNDERSTAND.`, as the original would.
+`/PLAN ON` first shows the hand's calls for the
 commands (1, 3, 13, 16, 17, 32 and 37), and `/TREE ON` each sentence's tree.
 
 **The thesis's four sentences** are outside the 42, and come from Winograd's thesis, after 12.
@@ -442,7 +457,7 @@ do i like the box?                                                       NO.
 do i like anything in the box?                                           YES, TWO THINGS: THE BLUE PYRAMID AND THE BLUE BLOCK.
 ```
 
-**The planner alone.** The goals of the dialogue's commands, in order, after a `/RESET`:
+**The motion planner by itself.** The goals of the dialog's commands, in order, after a `/RESET`:
 ```
 /DO PICKUP :B6
 /DO PUTIN :B10 :BOX
@@ -457,7 +472,7 @@ The first picks up the big red block, putting the green one off it first. The se
 blue block in the box: the hand puts down the red block first. The third gets `I CAN'T`: two
 pyramids cannot be stacked. The fourth stacks the red block, the small red one and the green
 cube, clearing the small red block's top on the way. The last three end as the original's film
-of the dialogue ends. `/EVENTS` then lists all of it, each step with the step it was done for.
+of the dialog ends. `/EVENTS` then lists all of it, each step with the step it was done for.
 
 ## A final footnote
 

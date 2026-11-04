@@ -7,12 +7,12 @@
 
 // Sets up the variables a sentence starts with. seed is the generator's.
 void topInit(unsigned seed);
-// Reads, parses and answers a sentence whose words the Lisp reader takes from
-// the typed text. Says how it ended, a STOP_ value.
+// A sentence whose words the Lisp reader takes from the typed text: read, parse
+// and answer. Says how it ended, a STOP_ value.
 int topSentenceRead(void);
 // A sentence whose words are read already, in order, with its punctuation.
 int topSentence(V words, V punct);
-// A goal, /DO's. okP says whether it succeeded. planFn, if there is one, is given
+// A goal, /DO's: okP says whether it succeeded. planFn, if there is one, is given
 // the plan, and only if run is set is it carried out.
 int topGoal(V goal, int *okP, int run, void (*planFn)(V plan));
 // What the last sentence's parse and answer took, in microseconds.

@@ -1,9 +1,9 @@
 // The scene: the world's objects, the hand, the hidden-line pass and the display.
 //
-// The picture is six groups of points. They are the red, green, blue and white
-// objects (the box and the table), the held object, and the hand. Each edge of an
-// object is clipped against the screen outlines of the opaque objects in front of
-// it, Cyrus-Beck in the edge's steps; what is left is expanded to points as the
+// The picture is six groups of points: the red, green, blue and white objects
+// (the box and the table), the held object, and the hand. Each edge of an object
+// is clipped against the screen outlines of the opaque objects in front of it,
+// Cyrus-Beck in the edge's own steps; what is left is expanded to points as the
 // 340 draws a vector. Where two objects share a line it is drawn once, by the
 // brighter, so that the two do not fight on the same pixels.
 //
@@ -68,11 +68,11 @@
 // The longest a hand step waits for a frame to end, so a stopped refresh cannot hold a move.
 #define FRAME_WAIT_MAX_MICROS 200000L
 
-// The idle color labels (sceneLabelsOn): two letters of the 340's character set 1 at
-// scale 1, so the dots of a letter's 5 by 7 matrix are LABEL_STEP raster units apart
+// The color labels (rebuild and frameBuild): two letters of the 340's character set 1
+// at scale 1, so the dots of a letter's 5 by 7 matrix are LABEL_STEP raster units apart
 // and the next letter starts LABEL_ADVANCE dots on. A label stands LABEL_DX and
 // LABEL_DY right of and above the middle of its object's longest visible piece, and
-// is kept where both letters fit on the raster.
+// is kept where both letters fit on the raster. They are never clipped.
 #define LABEL_INTENSITY 7
 #define LABEL_STEP 2
 #define LABEL_ADVANCE 7
@@ -104,7 +104,7 @@ typedef struct Object
     int flags;
 } Object;
 
-// An occluder, with its screen outline, counterclockwise, and its box in the world.
+// An occluder: its screen outline, counterclockwise, and its box in the world.
 typedef struct Occluder
 {
     int sminx;
@@ -120,8 +120,8 @@ typedef struct Occluder
     int py[6];
 } Occluder;
 
-// A kind's shape. Each vertex is three octal digits, the x, y and z choices of
-// coordOf, and each edge is two vertex numbers as octal pairs. An edge starts where the
+// A kind's shape: each vertex three octal digits, the x, y and z choices of
+// coordOf; each edge two vertex numbers as octal pairs. An edge starts where the
 // last ended wherever the shape allows, which a vector list needs and a point
 // list does not, but the choice of each edge's first end decides its points.
 typedef struct Shape
@@ -167,7 +167,7 @@ static const char *const kindWords[] = {"WALL", "BLOCK", "PYRAMID", "BOX"};
 static const int intensityOf[] = {5, 3, 1, 7};
 
 // A letter of the 342 Character Generator's table (the Type 340 Programming Manual,
-// Table 2). Its seven rows from the top have five dots each, the leftmost the high bit.
+// Table 2): its seven rows from the top, five dots each, the leftmost the high bit.
 // The letter begins at its lower left dot.
 typedef struct Glyph
 {
@@ -291,15 +291,18 @@ static int heldOffY;
 static int heldFirst;
 static int shownX;
 static int shownY;
-// The labels' dots while they are on, none while they are off.
+// The labels' dots of the objects not held, made with the scene they belong to. The held
+// object's label hangs from the hand, so it is made in each frame from its color, -1 when
+// nothing is held.
 static Points shownLabels;
+static int shownHeldColor = -1;
 
-// Each object's longest visible piece in the last rebuild, as its length (the sum of its
-// two extents) and its middle. The first of equals wins.
+// Each object's longest visible piece in the last rebuild: its length (the sum of its
+// two extents), and its middle. The first of equals wins.
 static int bestLen[NOBJ];
 static int bestX[NOBJ];
 static int bestY[NOBJ];
-static int labelsOn;
+// SHRDLU_NOLABELS=1 draws no labels, for the tests that compare the plain picture.
 static int noLabels;
 
 // What STATUS reports.
@@ -312,6 +315,7 @@ static long handDue;
 static int detached;
 
 static void rebuild(void);
+static void labelDots(Points *pP, int color, int x, int y);
 
 // Microseconds on a clock that does not stop.
 static long
@@ -370,7 +374,7 @@ clampTo(int v, int count)
     return v;
 }
 
-// One coordinate of a vertex. 0 is the low side, 1 the high side, 2 the middle, 3
+// One coordinate of a vertex: 0 the low side, 1 the high side, 2 the middle, 3
 // one wall in from the low side, 4 one wall in from the high side.
 static int
 coordOf(int choice, int lo, int size)
@@ -419,9 +423,8 @@ geomBuild(int kind, const int *sizeP, int lx, int ly, int lz)
     }
 }
 
-// Adds the outline geomBuild made as an occluder. The outline is a block's first
-// six vertices, or a pyramid's base corners, apex and, when it shows, the back left
-// corner.
+// Adds the outline geomBuild made as an occluder: a block's first six vertices,
+// a pyramid's base corners, apex and, when it shows, the back left corner.
 static void
 occAdd(int owner, int wall)
 {
@@ -460,8 +463,8 @@ occAdd(int owner, int wall)
     }
 }
 
-// Lists the occluders. They are every object drawn, opaque and not held, and the
-// box as its four walls, each a block.
+// Lists the occluders: every object drawn, opaque and not held; the box as its
+// four walls, each a block.
 static void
 occBuild(void)
 {
@@ -502,7 +505,7 @@ occBuild(void)
 }
 
 // True if the working object is not the box and its center is strictly inside
-// the box's outline. The box hides nothing that is in it.
+// the box's outline: the box hides nothing that is in it.
 static int
 inBox(void)
 {
@@ -528,7 +531,7 @@ inBox(void)
 }
 
 // True if the occluder is on the viewer's side (+x, -y or +z) of the edge. Boxes
-// that overlap go by their centers' depth. Against the box's edges an object
+// that overlap go by their centers' depth. Against the box's own edges an object
 // in it is taken WALL in from each side, since what is in the box can overlap a
 // wall by the wall's thickness; behind then finds what lies in front of it.
 static int
@@ -635,7 +638,7 @@ absLong(long v)
     return (v < 0) ? -v : v;
 }
 
-// The crossing of one side, the step L (-F) / G, rounded. A crossing before the
+// The crossing of one side: the step L (-F) / G, rounded. A crossing before the
 // edge is -1 and one at or past its end is L. Both magnitudes are halved until G
 // is under 2^17 first, as the machine must, which decides some roundings.
 static int
@@ -680,9 +683,9 @@ sign(int v)
     return (v > 0) - (v < 0);
 }
 
-// Finds, by Cyrus-Beck, where the edge is strictly inside the occluder's outline.
-// An edge lying along a side, both its ends within about two raster units of the
-// side's line, is on the outline, not inside it. Their ends were rounded separately.
+// Cyrus-Beck: where the edge is strictly inside the occluder's outline. An edge
+// lying along a side, both its ends within about two raster units of the side's
+// line, is on the outline, not inside it: their ends were rounded separately.
 // True with the interval in cKlo..cKhi.
 static int
 cyrus(const Occluder *qP)
@@ -801,9 +804,8 @@ boxSpan(const Object *oP, int ax, int *loP, int *hiP)
     }
 }
 
-// Lists the objects that can draw part of an edge of the working object. Those
-// that outrank it, are neither held nor a wall, and have a box that touches the
-// working object's.
+// Lists the objects that can draw part of an edge of the working object: those
+// that outrank it, are neither held nor a wall, and whose box touches its own.
 static void
 shareObj(void)
 {
@@ -981,8 +983,7 @@ vectorPoints(Points *pP, int x, int y, int dx, int dy, int intensity)
     j = 0;
     while((i < adx) || (j < ady))
     {
-        // The i-th step of x comes at (2i + 1) / 2adx of the way.
-        // The two are compared across.
+        // The i-th step of x comes at (2i + 1) / 2adx of the way: compared across.
         xTime = (i < adx) ? (((2 * i) + 1) * ady) : INT_MAX;
         yTime = (j < ady) ? (((2 * j) + 1) * adx) : INT_MAX;
         if(xTime <= yTime)
@@ -1073,7 +1074,7 @@ dlBegin(Points *pP, int intensity)
     dlRel = 0;
 }
 
-// round(m k / L) with the sign of s, which is one axis of the point at step k.
+// round(m k / L) with the sign of s: one axis of the point at step k.
 static int
 stepAxis(int m, int s, int k)
 {
@@ -1114,7 +1115,7 @@ piece(int a, int b)
     dlSeg(x0, y0, x1, y1);
 }
 
-// Turns the hidden intervals into visible pieces. Sorted by their starts, each
+// Turns the hidden intervals into visible pieces: sorted by their starts, each
 // gap between them is a piece, and so are the ends.
 static void
 pieces(void)
@@ -1155,8 +1156,8 @@ pieces(void)
     }
 }
 
-// Clips one edge, on the screen with its world box, against the occluders.
-// The hiders go into cMask, and with cEmit set the visible pieces are drawn.
+// Clips one edge, on the screen with its world box, against the occluders: the
+// hiders go into cMask, and with cEmit set the visible pieces are drawn.
 static void
 clipOne(void)
 {
@@ -1253,7 +1254,7 @@ clipEdges(void)
     }
 }
 
-// The table's four edges. Everything stands on it, so everything is in front.
+// The table's four edges: everything stands on it, so everything is in front.
 static void
 clipTable(void)
 {
@@ -1312,17 +1313,19 @@ heldBuild(Points *pP)
     }
 }
 
-// Rebuilds the scene. What changed is drawn again, which here is all of it.
+// Rebuilds the scene: what changed is drawn again, which here is all of it.
 static void
 rebuild(void)
 {
     static Points building;
     static Points buildingHeld;
+    static Points buildingLabels;
     Points t;
     long t0;
     int c;
     int o;
     int size[3];
+    int heldColor;
     const Object *oP;
 
     if(detached)
@@ -1359,6 +1362,29 @@ rebuild(void)
         }
     }
     heldBuild(&buildingHeld);
+    // The labels of what is not held, from the pieces just found, so that a frame never
+    // has a scene and labels from different rebuilds. The held object's hangs from the hand.
+    buildingLabels.n = 0;
+    heldColor = -1;
+    if(!noLabels)
+    {
+        for(o = 0; o < NOBJ; o++)
+        {
+            oP = &objs[o];
+            if((oP->kind == KWALL) || (oP->color == CWHITE))
+            {
+                continue;
+            }
+            if(o == held)
+            {
+                heldColor = oP->color;
+            }
+            else if(bestLen[o] > 0)
+            {
+                labelDots(&buildingLabels, oP->color, bestX[o], bestY[o]);
+            }
+        }
+    }
     pthread_mutex_lock(&showLock);
     t = shownScene;
     shownScene = building;
@@ -1366,12 +1392,16 @@ rebuild(void)
     t = shownHeld;
     shownHeld = buildingHeld;
     buildingHeld = t;
+    t = shownLabels;
+    shownLabels = buildingLabels;
+    buildingLabels = t;
+    shownHeldColor = heldColor;
     pthread_mutex_unlock(&showLock);
     rebuildMicros = nowMicros() - t0;
 }
 
-// The objects that hide part of an object's drawn edges were it at (lx, ly, lz).
-// Returns their bits, the object's bit not among them.
+// The objects that hide part of an object's drawn edges were it at (lx, ly, lz):
+// their bits, its own not among them.
 static unsigned
 hidersOf(int o, int lx, int ly, int lz)
 {
@@ -1482,7 +1512,7 @@ handJump(void)
     handShow(sx, sy, 0);
 }
 
-// One leg of a move. Each pass shows the hand, then steps each axis still moving
+// One leg of a move: each pass shows the hand, then steps each axis still moving
 // or puts it at its end; an axis stops when within a step of its end.
 static void
 leg(int x, int y, int z)
@@ -1520,8 +1550,8 @@ leg(int x, int y, int z)
     handShow(nx, ny, 0);
 }
 
-// The hand from where it is to the point given, by up, across in y, across in x,
-// down, or by a jump if it is to go fast.
+// The hand from where it is to the point given: up, across in y, across in x,
+// down; a jump if it is to go fast.
 static void
 moveHand(int x, int y, int z)
 {
@@ -1563,7 +1593,7 @@ sceneMoveto(int x, int y, int z)
     moveHand(x, y, z);
 }
 
-// Lets go of the held object. It stays a wireframe, centered below the hand.
+// Lets go of the held object: it stays a wireframe, centered below the hand.
 static void
 letGo(void)
 {
@@ -1672,8 +1702,8 @@ sceneObject(const char *nameP)
     return -1;
 }
 
-// OCCUPIER finds the first object, in table order, whose open box holds the point.
-// Returns -1 for none, -2 below the table.
+// OCCUPIER: the first object, in table order, whose open box holds the point; -1
+// for none, -2 below the table.
 static int
 occupier(int x, int y, int z, int skip)
 {
@@ -1697,7 +1727,7 @@ occupier(int x, int y, int z, int skip)
     return -1;
 }
 
-// SUPPORT finds what holds an object up. Returns -2 for the table, -1 for nothing.
+// SUPPORT: what holds an object up: -2 for the table, -1 for nothing.
 static int
 support(int o)
 {
@@ -1838,78 +1868,22 @@ glyphDots(Points *pP, int x, int y, char letter)
     return x + (LABEL_ADVANCE * LABEL_STEP);
 }
 
-// Puts the color labels up. Each colored object's two letters go beside the middle of its
-// longest visible piece in the last rebuild, the held object's beside the point its
-// drawing hangs from the hand by (an object with no visible piece has none). They are
-// made from the scene as it stands, and stay until sceneLabelsOff. Nothing
-// happens if they are up already, or switched off by SHRDLU_NOLABELS.
-void
-sceneLabelsOn(void)
+// A color's two letters beside the point (x, y): the middle of an object's longest
+// visible piece, or the point the held object's drawing hangs from the hand by. The
+// label stands LABEL_DX right of and LABEL_DY above it, kept where both letters fit.
+static void
+labelDots(Points *pP, int color, int x, int y)
 {
-    static Points building;
-    Points t;
-    const Object *oP;
     const char *wordP;
-    int o;
-    int x;
-    int y;
 
-    if(labelsOn || noLabels || detached)
+    x += LABEL_DX;
+    y += LABEL_DY;
+    x = (x > LABEL_MAXX) ? LABEL_MAXX : x;
+    y = (y > LABEL_MAXY) ? LABEL_MAXY : y;
+    for(wordP = labelWords[color]; *wordP; wordP++)
     {
-        return;
+        x = glyphDots(pP, x, y, *wordP);
     }
-    building.n = 0;
-    for(o = 0; o < NOBJ; o++)
-    {
-        oP = &objs[o];
-        if((oP->kind == KWALL) || (oP->color == CWHITE))
-        {
-            continue;
-        }
-        if(o == held)
-        {
-            x = shownX + heldOffX;
-            y = shownY + heldOffY;
-            x = (x < 0) ? 0 : x;
-            y = (y < 0) ? 0 : y;
-        }
-        else if(bestLen[o] > 0)
-        {
-            x = bestX[o];
-            y = bestY[o];
-        }
-        else
-        {
-            continue;
-        }
-        x += LABEL_DX;
-        y += LABEL_DY;
-        x = (x > LABEL_MAXX) ? LABEL_MAXX : x;
-        y = (y > LABEL_MAXY) ? LABEL_MAXY : y;
-        for(wordP = labelWords[oP->color]; *wordP; wordP++)
-        {
-            x = glyphDots(&building, x, y, *wordP);
-        }
-    }
-    pthread_mutex_lock(&showLock);
-    t = shownLabels;
-    shownLabels = building;
-    building = t;
-    pthread_mutex_unlock(&showLock);
-    labelsOn = 1;
-}
-
-void
-sceneLabelsOff(void)
-{
-    if(!labelsOn || detached)
-    {
-        return;
-    }
-    pthread_mutex_lock(&showLock);
-    shownLabels.n = 0;
-    pthread_mutex_unlock(&showLock);
-    labelsOn = 0;
 }
 
 // A whole frame's points, made from what is shown now.
@@ -1950,6 +1924,10 @@ frameBuild(Points *pP)
     {
         pointAdd(pP, (int)(shownLabels.wordP[i] & 01777u), (int)((shownLabels.wordP[i] >> 10) & 01777u),
                  (int)(shownLabels.wordP[i] >> 20));
+    }
+    if(shownHeldColor >= 0)
+    {
+        labelDots(pP, shownHeldColor, clampTo(shownX + heldOffX, 0), clampTo(shownY + heldOffY, 0));
     }
     handPoints(pP, shownX, shownY);
     pthread_mutex_unlock(&showLock);

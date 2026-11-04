@@ -62,8 +62,6 @@ rtn, 0
 // character at a time, until a command line is ready for the main loop
 // (tReady) or nothing more has come. On a new connection it makes channel 0
 // current and sends the banner. On a dropped one it rebinds. Never waits.
-// The idle labels (labels.ac) go off at the first character read, and on
-// when the poll ends with the reader waiting for a line's first.
 // Takes the return address in AC. AC and IO are clobbered.
 // Called via jsp from bank 0.
 rdPoll,
@@ -107,7 +105,6 @@ loop, cli
     rch rchclr
     spi
     jmp out                 // negative, so no character after all
-    XJSP(lbHide, 1)         // the idle labels off, before anything is read
     lai
     and [0177]
     jda rdEcho
@@ -119,8 +116,7 @@ loop, cli
 closed, lio [scbbnd]
     scb
     dzm i [tConn:0]
-out, XJSP(lbIdle, 1)        // nothing more to read, so the idle labels, if idle
-    jmp i rtn
+out, jmp i rtn
 rtn, 0
 st, 0
     endloc

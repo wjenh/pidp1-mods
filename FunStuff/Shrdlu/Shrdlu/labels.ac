@@ -1,64 +1,18 @@
-// The idle labels are two letters beside each visible colored object (RD, GR,
-// BL) while the program waits at READY for the first character of a line,
-// and gone from that character until the next READY. The group is the
-// sixth of each display buffer's table (dlist.ac); here are the gate's two
-// routines, called from the reader's poll, and the overlay lbl that builds
-// the list.
-// The root's part is in bank 1, which has the room, and reads the reader's
-// words by full address. The overlay is in bank 012, eem on. Needs
-// shrdlu.ah, <TYPE340/type340alt.ah>, dlist.ac (lbOff, lbBuf, lbSt, lbR,
-// grpTab), cache.ac (the piece cache), world.ac (objTab, wHeld) and the
-// overlay manager before it.
-// NOLBHIDE, defined, builds without the labels' removal at the first
-// character.
-
-// The first character of a line turns the labels off. Each is a word
-// store, so the break routine finds either table's entry whole.
-// AC is clobbered and IO is preserved (the poll holds a character in it).
-// Called via jsp from any bank.
-bank 1
-lbHide, dac lbR
-#ifdef NOLBHIDE
-    jmp i lbR               // the labels stay on once they are on
-#endif
-    lac lbSt
-    sza i
-    jmp i lbR
-    dzm lbSt
-    lac [lbOff:1]
-    dac i [(grpTab:0)+GLABEL]
-    dac i [(grpTab:0)+GHAND+GLABEL]
-    jmp i lbR
-
-// Called when the reader's poll found nothing more to read. If the program
-// is waiting for the first character of a line (no command ready, nothing
-// of a sentence or a command line begun, the cursor at a line's start) and
-// the labels are not on, builds them and turns them on.
-// AC and IO are clobbered. Called via jsp from any bank.
-lbIdle, dac lbR
-#ifdef EDGETEST
-    jmp i lbR               // no labels, so the group stays lbOff's edge
-#endif
-    lac lbSt
-    sza
-    jmp i lbR
-    lac i [tReady:0]
-    ior i [rSLen:013]
-    ior i [rWLen:013]
-    ior i [rMode:013]
-    sza
-    jmp i lbR
-    lac i [rBol:013]
-    sza i
-    jmp i lbR
-    %%ovcall lbl, lbMain
-    law 1
-    dac lbSt
-    lac [lbBuf:1]
-    dac i [(grpTab:0)+GLABEL]
-    dac i [(grpTab:0)+GHAND+GLABEL]
-    jmp i lbR
-constants
+// The color labels are two letters beside each visible colored object (RD, GR,
+// BL), drawn all the time, idle or busy. The overlay lbl writes them as part
+// of every scene rebuild (dlist.ac's dlRebuild calls it last, before the
+// buffer is switched in), so a label is switched in with the scene it
+// belongs to. The labels of the objects on the table are the buffer's label
+// group (GLABEL); the held object's label is the end of the held group,
+// reached from the group's first point, so it moves with the object each
+// time the break routine patches that point (anchorPatch).
+// The overlay is in bank 012, eem on. Needs shrdlu.ah,
+// <TYPE340/type340alt.ah>, dlist.ac (dlWp, dlRun, dlCx, dlCy, dpFront,
+// hbAnchor, grpTab), cache.ac (the piece cache), world.ac (objTab, wHeld)
+// and the overlay manager before it.
+// EDGETEST, defined, builds no labels (dlist.ac), so that the label group is
+// lbOff's edge violation. NOBUSYLB, defined, builds none either, with lbOff a
+// halt alone. That is a build without labels, to compare frame times.
 
 bank 012
 %%overlay lbl, cmdWin
@@ -69,38 +23,155 @@ bank 012
 // followed by the end character as the word's third.
 #define LBCH(a, b) (((a) << 0d12) | ((b) << 6) | 037)
 
-// Writes the labels' group into lbBuf. For each colored object that has a
-// visible piece in the piece cache, it writes a parameter word (the
-// letters' scale and intensity), a point at the middle of its longest
-// visible piece, up and right of it by LBDX and LBDY and kept inside the
-// raster, and the letters. Then it writes a halt. At most NOBJ labels of
-// four words, and the halt. LBWORDS is sized for the eight labels the
-// colored objects make. The pieces are the last rebuild's (cache.ac). An
-// object whose pieces did not fit the cache (count -1), or which none of
-// the scene shows, gets none. The held object, which the cache does not
-// hold, is labeled from the hand's point (lmHeld).
+// Writes the labels after the held object's group, which ends at dlWp, and
+// points the buffer being built at them. The held object's label is
+// appended to its group, in place of the group's last two words. It is an
+// invisible move from the group's last point to the first point plus
+// (LBDX, LBDY), the letters, and the group's halt. Then for each colored
+// object that has a visible piece in the piece cache the label group has a
+// parameter word (the letters' scale and intensity), a point at the middle
+// of its longest visible piece, up and right of it by LBDX and LBDY and kept
+// inside the raster, and the letters, and ends with a halt. At most NOBJ
+// labels of four words, and the halt. LBWORDS is sized for those and the held
+// object's. The pieces are the rebuild's (cache.ac). An object whose pieces
+// did not fit the cache (count -1), or which none of the scene shows, gets
+// none. The held object's is not kept inside the raster, since its group
+// moves. It ends the object's group, so when the object's drawing runs off
+// the raster the 340 stops the group first and the label is not drawn.
 // AC and IO are clobbered. Entered via %%ovcall, with the return in AC.
 lbMain, dac lmRtn
-    lac [lbBuf:1]
+    lac i [dlWp:0]
     dac lmP
-    dzm lmO
-    // The object's record in the table, and its color.
-lmObj, lac lmO
-    sal 2s
-    dac lmT
-    sal 1s
-    add lmT
-    add [objTab:2]
-    add [RCOLOR]
+    // The held object's group is a first point, its vectors, and its end
+    // (an escape from vector mode and a halt), when it drew anything.
+    lac i [wHeld:0]
+    spa
+    jmp lmGroup
+    dac lmO
+    lac i [dlRun:0]
+    sza i
+    jmp lmGroup
+    jsp lmColor
+    lac lmC
+    sub [CWHITE]
+    sma
+    jmp lmGroup
+    lac lmP
+    sub [2]
+    dac lmP
+    // The target, the group's first point and the label's offset from it,
+    // and the beam, where the group's last piece ended.
+    lac i [hbAnchor:0]
     dac lmT
     lac i lmT
-    dac lmC
+    and [01777]
+    add [LBDY]
+    dac lmTy
+    idx lmT
+    lac i lmT
+    and [01777]
+    add [LBDX]
+    dac lmTx
+    lac i [dlCx:0]
+    dac lmCx
+    lac i [dlCy:0]
+    dac lmCy
+    // Invisible vectors there, each within 127 of both axes.
+    lac lmTx
+    sub lmCx
+    dac lmDx
+    lac lmTy
+    sub lmCy
+    dac lmDy
+lmVec, lac lmDy
+    spa
+    cma
+    dac lmAy
+    lac lmDx
+    spa
+    cma
+    dac lmAx
+    ior lmAy
+    sza i
+    jmp lmArr
+    lac lmAy
+    sub [0d127]
+    sma
+    jmp lmY127
+    lac lmAy
+    jmp lmYset
+lmY127, lac [0d127]
+lmYset, dac lmAy
+    lac lmAx
+    sub [0d127]
+    sma
+    jmp lmX127
+    lac lmAx
+    jmp lmXset
+lmX127, lac [0d127]
+lmXset, dac lmAx
+    lac lmAy
+    ral 8s
+    dac lmW
+    lac lmDy
+    spa
+    jmp lmDyN
+    sub lmAy
+    dac lmDy
+    jmp lmDxS
+lmDyN, lac lmW
+    ior [down]
+    dac lmW
+    lac lmDy
+    add lmAy
+    dac lmDy
+lmDxS, lac lmDx
+    spa
+    jmp lmDxN
+    sub lmAx
+    dac lmDx
+    jmp lmEmit
+lmDxN, lac lmW
+    ior [left]
+    dac lmW
+    lac lmDx
+    add lmAx
+    dac lmDx
+lmEmit, lac lmW
+    ior lmAx
+    dac i lmP
+    idx lmP
+    jmp lmVec
+    // Then out of vector mode, the letters, the group's halt.
+lmArr, lac [end]
+    dac i lmP
+    idx lmP
+    lac [scale(LBSCALE) | intensity(LBINT) | next(character)]
+    dac i lmP
+    idx lmP
+    jsp lmLetters
+    lac [halt | interrupt]
+    dac i lmP
+    idx lmP
+    // The label group's entry in the buffer being built.
+lmGroup, lac i [dpFront:0]
+    xor [1]
+    sza
+    law GHAND
+    add [(grpTab:0)+GLABEL]
+    dac lmT
+    lac lmP
+    dac i lmT
+    dzm lmO
+    // The object's record in the table, and its color.
+lmObj, jsp lmColor
+    lac lmC
     sub [CWHITE]
     sma
     jmp lmNext              // the box, the table, the walls
     lac lmO
     sad i [wHeld:0]
-    jmp lmHeld
+    jmp lmNext              // the held object's is in its group
     // The cache's record of its slot holds the pieces kept, -1 if not good.
     lac lmO
     sal 4s
@@ -164,7 +235,7 @@ lmPn, isp lmN
     sza i
     jmp lmNext
     // The point, offset and kept inside the raster.
-lmPt, lac lmMx
+    lac lmMx
     add [LBDX]
     dac lmMx
     sub [LBMAXX]
@@ -191,12 +262,7 @@ lmYok, lac [scale(LBSCALE) | intensity(LBINT) | next(point)]
     ior [next(character)]
     dac i lmP
     idx lmP
-    lac lmC
-    add [lmLet:.]           // a full address, since lac i below reads through it
-    dac lmT
-    lac i lmT
-    dac i lmP
-    idx lmP
+    jsp lmLetters
 lmNext, idx lmO
     lac lmO
     sub [NOBJ]
@@ -206,21 +272,32 @@ lmNext, idx lmO
 lmEnd, lac [halt | interrupt]
     dac i lmP
     jmp i lmRtn
-    // The held object has no pieces in the cache. Its group is drawn whole
-    // from one point, the hand's place on the screen plus the offset
-    // heldBuild left (hbOffX, hbOffY), which is a vertex of the object.
-    // The label goes from there, and not below the raster's edge.
-lmHeld, lac i [hsx:0]
-    add i [hbOffX:0]
-    spa
-    cla
-    dac lmMx
-    lac i [hsy:0]
-    add i [hbOffY:0]
-    spa
-    cla
-    dac lmMy
-    jmp lmPt
+
+// Sets lmC to the color of object lmO. AC and IO are clobbered.
+// Called via jsp, from this overlay only.
+lmColor, dap lmCr
+    lac lmO
+    sal 2s
+    dac lmT
+    sal 1s
+    add lmT
+    add [objTab:2]
+    add [RCOLOR]
+    dac lmT
+    lac i lmT
+    dac lmC
+lmCr, jmp 0
+
+// Writes the letters of the color lmC at lmP, one word. AC and IO are
+// clobbered. Called via jsp, from this overlay only.
+lmLetters, dap lmLr
+    lac lmC
+    add [lmLet:.]           // a full address, since lac i below reads through it
+    dac lmT
+    lac i lmT
+    dac i lmP
+    idx lmP
+lmLr, jmp 0
 
 // RD, GR, BL, by the color's number. A is 01, B 02, D 04, G 07, L 014, R 022.
 lmLet, LBCH(022, 04)
@@ -242,4 +319,13 @@ lmX1, 0
 lmY1, 0
 lmMx, 0
 lmMy, 0
+lmTx, 0                     // the held label's point
+lmTy, 0
+lmCx, 0                     // the beam
+lmCy, 0
+lmDx, 0                     // the move left to make
+lmDy, 0
+lmAx, 0                     // the next vector's magnitudes
+lmAy, 0
+lmW, 0                      // its word
 %%endoverlay

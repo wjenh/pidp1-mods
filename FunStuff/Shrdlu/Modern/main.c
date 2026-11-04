@@ -1,18 +1,17 @@
-// SHRDLU, Terry Winograd's blocks-world dialogue of 1968-70, as a native Linux program.
+// SHRDLU, Terry Winograd's blocks-world of 1968-70, as a native Linux program.
+// The dialog is via is a telnet connection, on port 2042 by default; the
+// scene is the point stream of the PiDP-1's Type 340 display, on port 3400 by
+// default, for t30dpy, just as the assembly program uses.
 //
-// Why? Just as a simple demo to show what a modern cpu that you can buy for what, in todays's dollars,
-// a single roll of paper tape for the tape punch would have cost.
+// The Lisp and micro-planner of the original run as C, code.c and image.c are generated from it.
+// It runs on a thread with a stack of its own, deep enough for any sentence that
+// ends; a sentence that does not end falls off the stack, or fills the list cells,
+// and is abandoned as one the program does not understand.
 //
-// It operates the same way the PDP-1 assembly progam does, you can drive it with shrdlu_player also.
-//
-// The dialogue is via a telnet connection, on port 2042 by default.
-// The block-world view is the point stream of the PiDP-1's Type 340 display, on port 3400 by
-// default, for t30dpy.
-//
-// The Lisp of the original runs as C.
-// The files code.c and image.c are generated from it.
-//
-// 2-Nov-2026 Claude/wje - initial version
+// 31-Oct-2026 Claude: First version.
+// 2-Nov-2026 Claude: scene.c: the hand takes one step on every frame, as the PDP-1 program's does.
+// 2-Nov-2026 Claude: Every function definition has its return type on a line of its own.
+// 4-Nov-2026 wje Objects now carry a color label, as done the assembler version.
 
 #include <pthread.h>
 #include <signal.h>
@@ -41,8 +40,7 @@ static unsigned seed = 1;
 
 static char *stackLowP;
 
-// A fault in the stack's guard is a sentence recursing for good.
-// It stops here.
+// A fault in the stack's guard is a sentence recursing for good: it stops there.
 // Any other fault is left to be the fault it is.
 static void
 faultHandler(int sig, siginfo_t *infoP, void *contextP)
@@ -58,7 +56,7 @@ faultHandler(int sig, siginfo_t *infoP, void *contextP)
     signal(sig, SIG_DFL);
 }
 
-// The thread the program runs on.
+// The program's own thread.
 static void *
 lispThread(void *argP)
 {
@@ -85,7 +83,7 @@ static void
 usage(const char *nameP)
 {
     fprintf(stderr, "usage: %s [-p telnet-port] [-d display-port] [-f] [-s seed]\n", nameP);
-    fprintf(stderr, "  -p port  the dialogue's telnet port, %d if not given\n", TELNET_PORT);
+    fprintf(stderr, "  -p port  the dialog's telnet port, %d if not given\n", TELNET_PORT);
     fprintf(stderr, "  -d port  the display's port, %d if not given\n", DISPLAY_PORT);
     fprintf(stderr, "  -f       the hand jumps where it would walk\n");
     fprintf(stderr, "  -s seed  the random numbers' first state, 1 if not given\n");

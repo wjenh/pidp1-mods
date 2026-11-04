@@ -2,7 +2,7 @@
 //
 // A frame is seven groups, each a 340 program started with t340dla. They
 // are the red, green, blue and white objects (the box, the table), the held
-// object, the idle labels, and the hand with its arm. The first five are
+// object, the labels, and the hand with its arm. The first five are
 // built together into one of two buffers in bank 1 while the other is
 // shown; the new one is switched in between frames. The held object's
 // group is drawn whole, relative to one point word that follows the hand;
@@ -10,14 +10,12 @@
 // only while the 340 is stopped between groups, so nothing it is drawing
 // ever changes. Grouping by color gives each color its one intensity.
 //
-// The labels' group is the sixth of each buffer's table, but is built by
-// no rebuild. While the program is busy both tables point it at lbOff, a
-// halt alone, and when the program is idle at READY (lbIdle, called from
-// the reader's poll) the overlay lbl (labels.ac) writes the two letters of
-// each visible colored object into lbBuf and lbIdle points both tables at
-// it; the first character typed points them back (lbHide). A pointer is
-// one word, so the break routine never sees a half-switched group. The
-// routines are in labels.ac, which follows the overlay manager.
+// The labels' group is the sixth of each buffer's table. Each rebuild ends
+// by calling the overlay lbl (labels.ac), which writes the group after the
+// held object's, with the two letters of each visible colored object, and
+// the held object's label at the end of its group; the label group
+// goes in and out with the other five. Until the first rebuild, and always
+// in an EDGETEST build, the group is lbOff, a halt alone.
 //
 // A group has, for each run of pieces (each starting where the last
 // ended), a parameter word (scale 0, the group's intensity) and a point at
@@ -58,7 +56,6 @@ loop, lac [dlNull:1]
     lac [lbOff:1]
     dac grpTab+GLABEL
     dac grpTab+GHAND+GLABEL
-    dzm i [lbSt:1]
     dzm anchor
     dzm anchor+1
     dzm dpFront
@@ -106,7 +103,7 @@ dlRebuild,
     dac c
     lac i c
     dac dlWp
-    add [BUFWORDS-BUFSLACK]
+    add [BUFWORDS-BUFSLACK-LBWORDS]
     dac dlLim
     law 1
     dac gClamp
@@ -206,6 +203,11 @@ onext, idx o
     jmp .+3
 nheld, lac [halt | interrupt]
     jda dlRaw
+#ifndef EDGETEST
+#ifndef NOBUSYLB
+    %%ovcall lbl, lbMain    // the labels, after the held object's group
+#endif
+#endif
     law 1
     dac dpSwap
     rck
@@ -639,7 +641,7 @@ rtn, jmp 0
 // one's, so steps that land on whole frames keep PERIOD as their mean;
 // if that time has passed already (a move begun after a pause, or frames
 // running long), PERIOD after now instead, so steps never burst to catch
-// up. The clock counts milliseconds and wraps at 60000: a due time less
+// up. The clock counts milliseconds and wraps at 60000. A due time less
 // than half a minute ahead is still to come. The 340 must be stopped.
 // AC and IO are clobbered. Called via jsp.
 handApply,
@@ -1008,12 +1010,11 @@ dlNull, scale(0) | next(point)
     left | 0d127 | end
     halt | interrupt
 
-// The labels' group while the program is busy. It is a halt alone, which
-// the 340 takes no time over, so that the extra group adds a break to the frame
-// and nothing to its length.
+// The labels' group before the first rebuild. It is a halt alone, which
+// the 340 takes no time over.
 // EDGETEST, defined, makes it a vector off the right edge instead, so that
-// every frame has one edge violation (Tests/EdgeBreak); lbIdle then never
-// turns the labels on.
+// every frame has one edge violation and the break routine's edge handling
+// can be checked. No rebuild then writes labels.
 #ifdef EDGETEST
 lbOff, scale(0) | intensity(IWHITE) | next(point)
     0200000 | next(point) | 0d512
@@ -1024,11 +1025,6 @@ lbOff, scale(0) | intensity(IWHITE) | next(point)
 lbOff, halt | interrupt
 #endif
 
-// The idle labels' list, written by lbMain (labels.ac); and the gate's state.
-lbBuf,
-    table LBWORDS
-lbSt, 0                     // 1: the labels' group is on (lbIdle, lbHide)
-lbR, 0                      // their return
 buf0,
     table BUFWORDS
 buf1,

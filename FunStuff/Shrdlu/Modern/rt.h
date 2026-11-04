@@ -3,7 +3,7 @@
 // original was written for: every variable is dynamically bound, a GO or a
 // RETURN may leave the functions it is called from, and functions are
 // properties of symbols. rt.c holds the code; code.c and image.c, generated,
-// hold the program. All of it runs on the program's one thread.
+// hold the program. All of it runs on one thread, the program's own.
 
 #ifndef RT_H
 #define RT_H
@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// A value is a pointer to a cell or a symbol, a small number or a boxed float,
+// A value: a pointer to a cell or a symbol, a small number or a boxed float,
 // told apart by the low three bits. NIL is 0, so a C test of a value is a Lisp
 // test of it.
 typedef uintptr_t V;
@@ -90,7 +90,7 @@ enum
 {
     STOP_NONE = 0,
     STOP_ABORT,         // ERTERR, GLOBAL-ERR, an error nothing caught
-    STOP_QUIT,          // (IOC G), after which what it said is all
+    STOP_QUIT,          // (IOC G): what it said is all
     STOP_INPUT          // the Lisp reader ran off the typed text
 };
 
@@ -152,7 +152,7 @@ void rtCheckCallable(Symbol *symP);
 V rtArith(int op, V a, V b);
 void rtSentenceStart(void);
 
-// Set up from the image, with the program's initial state.
+// Set up from the image, the program's own initial state with it.
 void rtInit(void *stackBaseP);
 // A value that lives in the host's C data, seen by the collector.
 void rtAddRoot(V *rootP);
@@ -198,7 +198,7 @@ typedef struct ImgFn
     RtFn fn;
 } ImgFn;
 
-// A quoted LAMBDA, or a unit's PROG list, compiled. Holds K's index and the function.
+// A quoted LAMBDA, or a unit's PROG list, compiled: K's index and the function.
 typedef struct ImgLam
 {
     int k;
@@ -264,7 +264,7 @@ rtBind(Symbol *symP, V value)
     symP->value = value;
 }
 
-// Undoes the last k bindings, a function's on its way out.
+// Undoes the last k bindings, a function's own on its way out.
 static inline void
 rtUnbindN(int k)
 {

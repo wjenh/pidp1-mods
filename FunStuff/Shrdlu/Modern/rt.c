@@ -4,7 +4,7 @@
 // answer's action) and calls the compiled functions by their symbols. Every
 // value lives in the cells, the symbols, the binding stack or the C stack, and
 // the collector reads the C stack conservatively, so generated code holds
-// values in plain C variables. Runs on the program's thread.
+// values in plain C variables. Runs on the program's own thread.
 
 #include <alloca.h>
 #include <ctype.h>
@@ -118,8 +118,8 @@ extendCells(void)
     cellsSinceGc += extendBy;
 }
 
-// A cons when the free list is empty. Collects if enough has been made since
-// the last collection, else takes more space. Under SHRDLU_GC_CELLS every empty
+// A cons when the free list is empty: collect if enough has been made since
+// the last collection, else take more space. Under SHRDLU_GC_CELLS every empty
 // list collects, and space is added only to leave that many cells free.
 V
 rtConsSlow(V a, V d)
@@ -213,7 +213,7 @@ markRoot(V x)
     markDrain(spP);
 }
 
-// A word on the C stack that may be a value. Anything pointing into a live
+// A word on the C stack that may be a value: anything pointing into a live
 // cell or at a made symbol counts, interior pointers too, since the compiler
 // may keep only the address of a cell's cdr.
 static void
@@ -261,8 +261,8 @@ markStack(void)
     }
 }
 
-// The collection marks from the symbols, the constants, the binding stack and
-// the C stack, then sweeps. Every free cell is left in address order for the caches.
+// The collection: mark from the symbols, the constants, the binding stack and
+// the C stack, then sweep, every free cell in address order for the caches.
 __attribute__((noinline)) static void
 gcNow(void)
 {
@@ -278,7 +278,7 @@ gcNow(void)
 
     gcCount++;
     // A stale word on the C stack may point at a free cell. Cleared, it holds
-    // that one cell, where the list's links would hold all the rest.
+    // that one cell, where the list's own links would hold all the rest.
     for(freeP = rtFreeP; freeP; freeP = nextP)
     {
         nextP = (Cell *)freeP->cdr;
@@ -324,7 +324,7 @@ gcNow(void)
     markStack();
 
     // Image cells stay allocated whatever marks them: they are the program's
-    // constants, and K's list of them is not every one.
+    // constants, and K's own list of them is not every one.
     listP = NULL;
     live = cellImage;
     for(k = cellTop; k > cellImage; k--)
@@ -601,7 +601,7 @@ rtInit(void *baseP)
     installSubrs();
 }
 
-// The Lisp world back as it starts. Only the words typed since stay as names,
+// The Lisp world back as it starts: only the words typed since stay as names,
 // with nothing on them. Nothing may be running.
 void
 rtReload(void)
@@ -744,7 +744,7 @@ rtStopInput(void)
     unwindTo(topFrame(), STOP_INPUT);
 }
 
-// An error MacLisp would signal. The innermost ERRSET gives NIL, or the
+// An error MacLisp would signal: the innermost ERRSET gives NIL, or the
 // sentence is abandoned.
 void
 rtError(const char *msgP, V what)
@@ -773,7 +773,7 @@ rtError(const char *msgP, V what)
     abort();
 }
 
-// A GO goes to the innermost active PROG with the tag.
+// A GO: the innermost active PROG with the tag.
 void
 rtGo(V tag)
 {
@@ -800,7 +800,7 @@ rtGo(V tag)
     abort();
 }
 
-// A RETURN leaves the innermost active PROG.
+// A RETURN: the innermost active PROG.
 void
 rtReturn(V value)
 {
@@ -821,7 +821,7 @@ rtReturn(V value)
     abort();
 }
 
-// (ERR x) makes the innermost ERRSET return x.
+// (ERR x): the innermost ERRSET returns x.
 static void errExit(V value) __attribute__((noreturn));
 static void
 errExit(V value)
@@ -950,7 +950,7 @@ rtEval(V x)
     return rtApply(rtEval(f), n, aP);
 }
 
-// A form's head names no function. Its variable must hold one, and that is
+// A form's head names no function: its variable must hold one, and that is
 // asked before the arguments are evaluated.
 void
 rtCheckCallable(Symbol *symP)
@@ -961,7 +961,7 @@ rtCheckCallable(Symbol *symP)
     }
 }
 
-// A form whose head names no function. Its variable's value is called.
+// A form whose head names no function: its variable's value is called.
 V
 rtCallVar(Symbol *symP, int n, V *argsP)
 {
@@ -1193,7 +1193,7 @@ rtAssq(V x, V list)
     return NIL;
 }
 
-// GET takes a symbol's property list. It takes a list's CDR as a property list too,
+// GET: of a symbol its property list; of a list its CDR is a property list too,
 // which Micro-Planner's assertions lean on.
 V
 rtGet(V sym, V ind)
@@ -1402,7 +1402,7 @@ SUB(sCdr)
     return rtCdr(a[0]);
 }
 
-// The compositions, by their names. CADR walks D then A.
+// The compositions, by their names: CADR walks D then A.
 static V
 cxr(const char *nameP, V x)
 {
@@ -1664,7 +1664,7 @@ SUB(sZero)
     return FIX(0);
 }
 
-// What the inline arithmetic leaves here, which is anything not two small numbers.
+// What the inline arithmetic leaves here: anything not two small numbers.
 V
 rtArith(int op, V a, V b)
 {
@@ -1925,7 +1925,7 @@ SUB(sSubst)
     return subst(a[0], a[1], a[2]);
 }
 
-// DELQ and DELETE make a new list here.
+// DELQ and DELETE make a new list here, as the reference's do.
 static V
 deleted(V x, V l, int byEqual)
 {
@@ -2373,7 +2373,7 @@ SUB(sMaknam)
     return res;
 }
 
-// INTERN of a made symbol gives the interned one of that name, or this one.
+// INTERN of a made symbol: the interned one of that name, or this one.
 SUB(sIntern)
 {
     Symbol *symP;
@@ -2405,8 +2405,8 @@ SUB(sIntern)
     return a[0];
 }
 
-// READLIST of a word makes a number of a token of digits, octal unless it has an
-// 8 or a 9 or ends in a point, and a symbol of anything else.
+// READLIST of a word: a token of digits is a number, octal unless it has an
+// 8 or a 9 or ends in a point; anything else is a symbol.
 SUB(sReadlist)
 {
     char *sP;
@@ -2843,7 +2843,7 @@ SUB(sParseStatistics)
     return symP->value;
 }
 
-// A parse past this many calls of PARSE is abandoned.
+// A4: a parse past this many calls of PARSE is abandoned.
 #define PARSE_BOUND 1000
 
 void
@@ -2856,7 +2856,7 @@ rtCountParse(void)
     }
 }
 
-// The start of a sentence, for the count of PARSE calls.
+// The start of a sentence, for A4's count.
 void
 rtSentenceStart(void)
 {
@@ -2864,7 +2864,7 @@ rtSentenceStart(void)
     sentenceStartNanos = threadNanos();
 }
 
-// The interpreted PARSE, used when it has no compiled form, counts its calls.
+// PARSE, when no compiled form of it counts its own calls.
 static V
 parseInterpreted(int n, V *a)
 {

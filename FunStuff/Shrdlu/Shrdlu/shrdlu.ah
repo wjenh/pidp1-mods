@@ -48,8 +48,8 @@
 
 // The 340 intensity of each color group, 0 dimmest to 7.
 // To show every object at one intensity, make all four the same.
-#define IRED 5
-#define IGREEN 3
+#define IRED 6
+#define IGREEN 4
 #define IBLUE 1
 #define IWHITE 7
 
@@ -96,25 +96,26 @@
 #define TAB4Y 0d254
 
 // The display buffers in bank 1 are two for the scene (one shown while the
-// other is built), each BUFWORDS long, the hand's, and the idle labels'
-// (dlist.ac, labels.ac).
-// The scene's peak is 347 words (the wireframe scene), so the buffers give up
-// 44 words each for the labels and the code that shows them.
+// other is built), each BUFWORDS long, and the hand's (dlist.ac).
+// The scene's peak is 347 words (the wireframe scene). A buffer ends with the
+// labels' words (labels.ac). They are the held object's tail, at most 14 words,
+// and the label group, 8 labels of 4 words and a halt, LBWORDS in all, which
+// the scene's words leave room for.
 #define BUFWORDS 0d1856
 #define BUFSLACK 0d16
 #define HANDWORDS 0d24
-#define LBWORDS 0d36
+#define LBWORDS 0d48
 
 // Each frame has NGROUP display groups.
 // They are the four colors, the held object, the labels and the hand.
 // The labels' group is in each buffer's table (grpTab), pointing at the label
-// list while the program is idle and at a bare halt otherwise.
+// list each rebuild writes (a bare halt until the first rebuild).
 #define NGROUP 7
 #define GHELD 4
 #define GLABEL 5
 #define GHAND 6
 
-// The idle labels (labels.ac) are two letters at scale LBSCALE (0 to 3) and
+// The labels (labels.ac) are two letters at scale LBSCALE (0 to 3) and
 // intensity LBINT.
 // A build may give LBINT a value no other group has, 6, so that the labels
 // show alone in the display's stream.

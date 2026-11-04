@@ -5,7 +5,7 @@
 // stops the sentence where it is, and after a Return the user goes on from there.
 // Each reply ends with a line holding only *.
 //
-// The commands after / read the Lisp world's state and print it in the
+// The commands after / read the Lisp world's own state and print it in the
 // machine's forms, numbers in octal.
 
 #include <arpa/inet.h>
@@ -32,13 +32,13 @@
 #define LIST_MAX 8
 #define FIND_ARGS 4
 #define MICROS_PER_MILLI 1000L
-// The output's wrapping width, the Lisp's LINEL and the WORDS: echo's. A word ends at
-// the width less one characters at the most. With a closing quote and period after
-// it, a line is OUT_WIDTH+1 characters, 79, at the most.
+// The output's wrapping width: the Lisp's LINEL, and the WORDS: echo's. A word ends at
+// the width less one characters at the most, so with a closing quote and period after
+// it a line is OUT_WIDTH+1 characters, 79, at the most (TASK-LINE-WRAP).
 #ifndef OUT_WIDTH
 #define OUT_WIDTH 78
 #endif
-// More numbers than any sentence has questions. A question that will not take its
+// More numbers than any sentence has questions: a question that will not take its
 // answer stops the sentence, or there would be no way out of it.
 #define ANSWERS_MAX 4
 
@@ -61,7 +61,7 @@
 // What a command line's carrying out says beside 0, bad, and 1, done.
 #define LINE_WORD_BAD 2
 
-// What a telnet client is told on connecting. This end echoes, and characters
+// What a telnet client is told on connecting: this end echoes, and characters
 // come one at a time.
 static const unsigned char greeting[] =
 {
@@ -77,7 +77,7 @@ static const char banner[] =
 typedef struct GoalForm
 {
     const char *nameP;
-    int nArgs;              // -1 means the rest of the line, as one list
+    int nArgs;              // -1: the rest of the line, as one list
 } GoalForm;
 
 static const GoalForm goalForms[] =
@@ -98,7 +98,7 @@ static int atLineStart = 1;
 static int termCol;         // the characters sent on this line
 static long readMicros;
 static int answers;
-static int lispMuted;       // what a goal's planning prints is the planning's, not the user's
+static int lispMuted;       // what a goal's planning prints is its own, not the user's
 
 // The reader.
 static int mode;
@@ -376,7 +376,7 @@ hostPlanDone(void)
     sceneRefresh();
 }
 
-// A name as the replies print it. A " is an apostrophe, unless it stands alone.
+// A name as the replies print it: a " is an apostrophe, unless it stands alone.
 static void
 nameOut(const char *sP)
 {
@@ -427,8 +427,8 @@ valueLen(V x)
 }
 
 // The separator before a word of n characters on the WORDS: line, as the Lisp's PRINT3
-// has it. It is a space where the word and the space fit under OUT_WIDTH, else a new
-// line, and nothing at a line's start.
+// has it: a space where the word and the space fit under OUT_WIDTH, else a new line,
+// and nothing at a line's start.
 static void
 wordSeparator(size_t n)
 {
@@ -571,7 +571,7 @@ wordsOut(V node)
     }
 }
 
-// A tree, a node a line. A unit's features come then its words, a word's the other way
+// A tree, a node a line: a unit's features then its words, a word's the other way
 // round, each level two spaces in, the first parsed first.
 static void
 treeOut(V node, int depth)
@@ -616,7 +616,7 @@ value(const char *nameP)
     return rtIntern(nameP)->value;
 }
 
-// After a sentence or a stopped one. Ends its line, then does what is due.
+// After a sentence or a stopped one: the end of its line, then what is due.
 static void
 sentenceReply(int stop)
 {
@@ -677,9 +677,8 @@ typedShow(void)
     }
 }
 
-// A sentence read whole.
-// The reply is the WORDS: line echoing its words and final punctuation, then the answer, then *.
-// A sentence with no words gets only the *.
+// A sentence read whole: its words and punctuation, what it means, then *. A
+// sentence with no words gets only the *.
 static void
 sentenceRun(int finalChar)
 {
@@ -786,8 +785,8 @@ wordRun(void)
     return res;
 }
 
-// A word's end. The word is looked up and put in the sentence, or the sentence is
-// stopped at it if it is unknown, and then any punctuation that ended it is taken.
+// A word's end: the word looked up and put in the sentence, or the sentence
+// stopped at it if it is unknown; then any punctuation that ended it.
 static void
 wordEnd(void)
 {
@@ -952,24 +951,11 @@ sentenceChar(int c)
     }
 }
 
-// True when nothing of a sentence or a command line is begun and the cursor is at a
-// line's start. The program is waiting for a line's first character.
-static int
-readerIdle(void)
-{
-    return (mode == MODE_SENTENCE) && !wordLen && !typedLen && !quoteOpen && !punct
-           && atLineStart;
-}
-
 // One character as it is read, lower case folded to upper; a Return read away
-// from a line's start is followed by our line feed. The color labels go down at the
-// first character, so they are down through the sentence or command it starts.
+// from a line's start is followed by our line feed.
 static void
 readerChar(int c)
 {
-#ifndef NOLABELGATE
-    sceneLabelsOff();
-#endif
     c &= 0177;
     if((c >= ' ') && (c != CHAR_DEL))
     {
@@ -1005,7 +991,7 @@ readerChar(int c)
     }
 }
 
-// The next token of the command line, a word or ( or ). Empty at its end.
+// The next token of the command line: a word, or ( or ). Empty at its end.
 static int
 tokenRead(void)
 {
@@ -1041,7 +1027,7 @@ tokenRead(void)
     return n;
 }
 
-// An octal number from the token. Says whether it was one.
+// An octal number from the token: says whether it was one.
 static int
 tokenNumber(const char *sP, long *nP)
 {
@@ -1084,8 +1070,8 @@ constantOf(const char *sP)
     return (symP->plist != NIL) ? SYMV(symP) : 0;
 }
 
-// An atom from the token. It is an object (:B1), an event (EE, or En in octal), a
-// number in octal, a constant, or NIL. The Lisp's events are numbered in decimal.
+// An atom from the token: an object (:B1), an event (EE, or En in octal), a number
+// in octal, a constant, or NIL. The Lisp's events are numbered in decimal.
 // Says whether it was one.
 static int
 atomRead(V *atomP)
@@ -1173,7 +1159,7 @@ valueRead(V *valueP)
     return 1;
 }
 
-// A goal and its arguments from the line, as (#NAME args). Says whether they are right.
+// A goal and its arguments from the line: (#NAME args). Says whether they are right.
 static int
 goalRead(V *goalP)
 {
@@ -1361,7 +1347,7 @@ commandTry(V goal)
 }
 
 // A form to find every assertion of a predicate that matches, ? matching
-// anything. It is (THVAL '(THFIND ALL ($?A ...) (A ...) (THGOAL (pred ...))) env).
+// anything: (THVAL '(THFIND ALL ($?A ...) (A ...) (THGOAL (pred ...))) env).
 static V
 findMatches(V pred, int n, const V *argsP, int *anyP)
 {
@@ -1411,7 +1397,7 @@ findMatches(V pred, int n, const V *argsP, int *anyP)
     return rtEval(form);
 }
 
-// An atom as a line of the database shows it. An event's number is in octal.
+// An atom as a line of the database shows it: an event's number in octal.
 static void
 atomOut(V x)
 {
@@ -1524,7 +1510,7 @@ findAllOne(Symbol *symP)
     }
 }
 
-// FIND, under a frame. An error in it is only a shorter list.
+// FIND, under a frame: an error in it is only a shorter list.
 static void
 commandFind(V pred, int n, const V *argsP, int all)
 {
@@ -1603,7 +1589,7 @@ eventsOut(void)
     }
 }
 
-// Where an object has been, newest first, as the time, the place and what held it.
+// Where an object has been, newest first: the time, the place, what held it.
 static void
 historyOut(V obj)
 {
@@ -1622,7 +1608,7 @@ historyOut(V obj)
     }
 }
 
-// /SM gives each structure the last sentence built, in the order made, its properties
+// /SM: each structure the last sentence built, in the order made, its properties
 // newest first.
 static void
 structuresOut(void)
@@ -1742,7 +1728,7 @@ featureCollect(Symbol *symP)
     featureCollectFrom(rtGet(SYMV(symP), SYMV(rtIntern("ELIM"))));
 }
 
-// A token of a /WORD line in the word's spelling. Says whether it can be one.
+// A token of a /WORD line in the word's own spelling: says whether it can be one.
 static int
 wordToken(char *sP)
 {
@@ -1866,7 +1852,7 @@ pointRead(long *pP)
     return !tokenRead();
 }
 
-// A reply wraps at a space under OUT_WIDTH. The Lisp's PRINT3 does it, by LINEL.
+// A reply wraps at a space under OUT_WIDTH: the Lisp's PRINT3 does it, by LINEL.
 static void
 lineWidthSet(void)
 {
@@ -2142,7 +2128,7 @@ commandLine(void)
     starLine();
 }
 
-// Serves one connection, with the greeting, the banner, then what it types until it goes.
+// One connection: the greeting, the banner, then what it types until it goes.
 static void
 clientServe(int fd)
 {
@@ -2168,12 +2154,6 @@ clientServe(int fd)
     starLine();
     for(;;)
     {
-        // About to wait with nothing typed.
-        // The color labels go up, in the scene as it stands.
-        if((inAt >= inLen) && readerIdle())
-        {
-            sceneLabelsOn();
-        }
         c = termGet();
         if(c < 0)
         {
@@ -2211,9 +2191,6 @@ termServe(int port)
     }
     for(;;)
     {
-        // Waiting for a client is idle too.
-        // The scene, with its labels, is there to be seen.
-        sceneLabelsOn();
         fd = accept(listenFd, NULL, NULL);
         if(fd >= 0)
         {

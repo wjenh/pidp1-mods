@@ -16,12 +16,9 @@ void sceneRefresh(void);
 // The world as it starts.
 void sceneReset(void);
 
-// The color labels, two letters beside each colored object: up while the program waits
-// for the first character of a line, down from that character on. The labels are made
-// from the scene as it stands when they go up. The environment variable
-// SHRDLU_NOLABELS=1 keeps them down, so the picture stays plain.
-void sceneLabelsOn(void);
-void sceneLabelsOff(void);
+// The color labels, two letters beside each colored object, are part of the picture at all
+// times: made with each rebuild, and the held object's with the hand. The environment
+// variable SHRDLU_NOLABELS=1 draws none, for the tests that compare the plain picture.
 
 // An object's index from its name, :B1; -1 for none.
 int sceneObject(const char *nameP);

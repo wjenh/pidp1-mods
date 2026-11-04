@@ -91,9 +91,11 @@ SHRDLU
 // SMALLKEEP makes a heap of 192 words.
 // NOHOTOFF makes a FEATURES put on an atom not stop psHot.
 // HOTANY makes psHot take the first slot, whatever its key.
-// NOLBHIDE leaves the idle labels on.
+// NOBUSYLB leaves the color labels out.
+// LBINT sets the labels' intensity, 7 by default.
 //
 // 2-Nov-2026 Claude/wje - first release
+// 4-Nov-2026 Claude/wje - color labels are drawn at all times, even when objects are being moved
 
 #include <TYPE340/type340alt.ah>
 #include <DCS/dcs2defs.ah>
@@ -132,6 +134,11 @@ main, XJSP(rdPoll, 013)
     dzm tReady
     jmp main
 
+// The overlay manager comes before the first %%ovcall, the labels' in dlist.ac.
+bank 013
+#include <DRUM/overlay.ac>
+
+bank 0
 #include "project.ac"
 #include "world.ac"
 #include "hidden.ac"
@@ -151,10 +158,6 @@ bank 4
 #include "engine.ac"
 #include "events.ac"
 constants
-
-// The overlay manager, before the first %%ovcall (goals.ac).
-bank 013
-#include <DRUM/overlay.ac>
 
 bank 012
 #include "goals.ac"
@@ -247,8 +250,7 @@ bank 012
 #include "keep.ac"
 %%endoverlay
 
-// The idle labels consist of the gate's routines in bank 1 and the overlay lbl that
-// builds them.
+// The labels are built by the overlay lbl, which every scene rebuild calls.
 #include "labels.ac"
 
 bank 013

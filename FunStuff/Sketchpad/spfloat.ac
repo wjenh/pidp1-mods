@@ -4,9 +4,9 @@
 // integer and rounding to one; and the normalizing and the right shift they share (fpNorm,
 // fpShR).
 //
-// Included in bank 11 after sptruss.ac, whose phases are its only callers. It reaches nothing
-// outside itself but the numbers whose full addresses it is given, so the extend window must
-// be open while it runs. Part of sketchpad.am1, included where it stands.
+// Included by sptruss.ac, at its end, whose phases are its only callers, as the rest of the
+// overlay truss. It reaches nothing outside itself but the numbers whose full addresses it is
+// given, so the extend window must be open while it runs.
 //
 // A number in core is three words: its exponent e; its high part, the top 16 bits of its
 // magnitude M, carrying the number's sign (a negative number's complemented); its low part, M's

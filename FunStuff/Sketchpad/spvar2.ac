@@ -1,0 +1,177 @@
+// spvar2.ac -- two scale words composed (ieComp); and the variants' root calls with no room in bank
+// 9, every entry freed for a load and a record made resident for the overlay scale.
+//
+// Bank 2, after spdefine.ac. Entered by jsp i [X:2] from code running with the extend window open,
+// and returning so, reaching other banks' words through their 16-bit addresses.
+// Part of sketchpad.am1, included where it stands.
+
+// An instance to make a record resident for (vaRec), NOPOINT for none.
+vaRecI, NOPOINT
+
+// The scale word of two scale words' product, in iScale's form: k the sum of their k's, c their
+// codes' product / 2^15, rounded, no code counting as 2^15; then c doubled and k taken down while
+// k > 0 and c is 2^14 or less, so that m stays in (1/2, 1] above x1, and c of 2^15 is no code. So
+// x1/2 at x4 is x2, and x1.5 at x1.5 is k 2, c 0.5625.
+// Entry: ieComp = w1; IO = w2. Exit: AC = the word, or -1 outside x1/4 to x8. IO is clobbered.
+// Called by dac i [ieComp:2] and jsp i [ieComp:2+1].
+ieComp, 0
+    local cmLoop, cmEnd, cmNo, cmRtnW, cmK, cmC, cmD
+    dac cmRtnW
+    dio cmD
+    lac cmD
+    and [IKMASK]
+    dac cmK
+    lac ieComp
+    and [IKMASK]
+    add cmK
+    dac cmK
+    lac ieComp
+    sar 2s
+    sza i               // skip if a code
+    lac [2 * SCODEHALF]
+    dac cmC
+    lac cmD
+    sar 2s
+    sza i               // skip if a code
+    lac [2 * SCODEHALF]
+    mul cmC
+    scl 3s
+    add [1]
+    sar 1s
+    dac cmC
+cmLoop,
+    lac cmK
+    sza i               // skip while k > 0
+    jmp cmEnd
+    lac cmC
+    sub [SCODEHALF + 1]
+    sma                 // skip if c is 2^14 or less
+    jmp cmEnd
+    lac cmC
+    sal 1s
+    dac cmC
+    lac cmK
+    sub [1]
+    dac cmK
+    jmp cmLoop
+cmEnd,
+    lac cmK
+    sub [4]
+    sma                 // skip if x8 or less
+    jmp cmNo
+    lac cmC
+    sub [SCODEHALF / 2]
+    spa                 // skip if x1/4 or more
+    jmp cmNo
+    lac cmC
+    sad [2 * SCODEHALF] // skip if a code
+    cla
+    sal 2s
+    add cmK
+    jmp i cmRtnW
+cmNo,
+    law i 1
+    jmp i cmRtnW
+cmRtnW, 0
+cmK, 0
+cmC, 0
+cmD, 0
+    endloc
+
+// Every entry free, for a load, whose masters are new.
+// AC and IO are clobbered. Called via jsp i [vaEmpty:2].
+vaEmpty,
+    local emLoop, emRtnW, emP
+    dac emRtnW
+    lac [vaO:5]
+    dac emP
+emLoop,
+    lac [MNOPOOL]
+    dac i emP
+    idx emP
+    sas [vaO:5 + NVARIANT] // skip once every entry is free
+    jmp emLoop
+    jmp i emRtnW
+emRtnW, 0
+emP, 0
+    endloc
+
+// The record of instance vaRecI's master made resident, if one is asked for, before the overlay
+// scale reads it (a pick, Undo), since an overlay cannot.
+// AC and IO are clobbered. Called via jsp i [vaRec:2].
+vaRec,
+    local rcRtnW, rcP
+    dac rcRtnW
+    lac vaRecI
+    sad [NOPOINT]       // skip if one is asked for
+    jmp i rcRtnW
+    add [iMaster:012]
+    dac rcP
+    lio i rcP
+    jsp i [mrLoadX:7]
+    lac [NOPOINT]
+    dac vaRecI
+    jmp i rcRtnW
+rcRtnW, 0
+rcP, 0
+    endloc
+
+// Instance i going, the last instance taking its place (instRemove): its size entries are left
+// with NOPOINT, for the next purge to drop, and the last's named by i. The solver is woken, for
+// that purge.
+// Entry: IO = i. AC and IO are clobbered. called via jsp i [szRm:2].
+szRm,
+    local rmLoop, rmWord, rmLast, rmPut, rmAdv, rmNext, rmRtnW, rmI, rmL, rmP, rmQ, rmN
+    dac rmRtnW
+    dio rmI
+    lac i [instCount:012]
+    add [MAXPTS - 1]
+    dac rmL
+    lac rmI
+    add [MAXPTS]
+    dac rmI
+    lac [cEntries:011]
+    dac rmP
+rmLoop,
+    lac rmP
+    sad i [cEnd:010]    // skip while entries remain
+    jmp i rmRtnW
+    lac i rmP
+    sub [CTSAME]
+    spa                 // skip if a constraint on size
+    jmp rmNext
+    lac rmP
+    add [1]
+    dac rmQ
+    law i 2
+    dac rmN
+rmWord,
+    lac i rmQ
+    sas rmI             // skip if the instance going
+    jmp rmLast
+    law 1
+    dac i [conWake:4]
+    lac [NOPOINT]
+    jmp rmPut
+rmLast,
+    sas rmL             // skip if the last, which moves
+    jmp rmAdv
+    lac rmI
+rmPut,
+    dac i rmQ
+rmAdv,
+    idx rmQ
+    isp rmN             // skip once A and B are looked at
+    jmp rmWord
+rmNext,
+    lac rmP
+    add [CW]
+    dac rmP
+    jmp rmLoop
+rmRtnW, 0
+rmI, 0
+rmL, 0
+rmP, 0
+rmQ, 0
+rmN, 0
+    endloc

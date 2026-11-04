@@ -1,0 +1,1872 @@
+// spdefword.ac -- Define's words: the drawing walked into a display subroutine of vectors, its
+// words counted and then stored in the master's record.
+//
+// In the overlay defdism (W, bank 6), included by spinst.ac where it stands; it runs with the
+// extend window open throughout. Define's words that live across its calls stay in bank 2
+// (sparcdata.ac, dfK to dmDY), since the overlay is read again from the drum unchanged, and are
+// reached as OP i [X:2], as are the line and the arc being written (lnX0 to lnY1, arcEX to arcK);
+// arcLoad and arcVertex are called through bank 2's gates (spdefine.ac, arcLoadW, arcVertexW).
+// Part of sketchpad.am1.
+
+// Define (IEWORDS): make the drawn parts master masterArg, a display subroutine of vectors
+// relative to its origin, the center of their box. For each line, in the order the instance
+// module's dkChain chose in Define's map (dfOrd), which joins lines where it can and draws each
+// from either end, the words hold a beam-off move from where the beam is to its start, unless
+// the beam is there, then the line; for each arc a beam-off move to its end, then its steps back
+// to its start as its slot draws them; then each attacher's cross, at the visits the instance
+// module's instMap listed. The last word carries end, so a save returns. A line of no length
+// draws nothing and is passed over. Here the words are only counted, nothing written: refused
+// when nothing is drawn (DEFEMPTY), past MPOOL1 words or CPLINES lines (DEFWORDS), or past
+// MTIME of drawing (DEFTIME). The main bank's actDefine, which took apart first the instances of
+// the master being defined (the others kept as sub-instances, instMap's blocks, sbBlk), then
+// removes the instances, has the instance module empty the master store and make the
+// master's record resident (instStore), stores the words in the record (defineStoreOv), has the
+// instance module keep the parts there too (instDef), and clears the drawing.
+// Exit: AC = 0 to be defined, or why not. IO is clobbered. Called by the manager, from its stub
+// (instWords).
+defineMasterOv,
+    local rtn, dfBox, dfEmpty, dfWords, dfTime, rtnW
+    dac rtnW
+    jsp dfMine
+    lac i [masterArg:4]
+    dac i [dfK:2]
+    lac i [lineCount:4]
+    dac i [dfNL:2]
+    ior i [arcCount:2]
+    ior i [sbN:2]       // or kept sub-instances (instMapOv)
+    sza i               // skip if something is drawn
+    jmp dfEmpty
+
+    // The box of every point the beam goes to, and the origin at its center; then the words
+    // counted, the beam starting at the origin. First, Copy's store must hold the lines.
+dfBox,
+    lac i [dfNL:2]
+    sub [CPLINES+1]
+    sma                 // skip if Copy's store holds the lines
+    jmp dfWords
+    lac [01777]
+    dac i [dfMinX:2]
+    dac i [dfMinY:2]
+    dzm i [dfMaxX:2]
+    dzm i [dfMaxY:2]
+    dzm i [dfPass:2]
+    jsp defWalk
+    lac i [dfMinX:2]
+    add i [dfMaxX:2]
+    sar 1s
+    dac i [dfCX:2]
+    dac i [dfBX:2]
+    lac i [dfMinY:2]
+    add i [dfMaxY:2]
+    sar 1s
+    dac i [dfCY:2]
+    dac i [dfBY:2]
+    dzm i [dfN:2]
+    dzm i [dfT:2]
+    dzm i [dfOver:2]
+    law 1
+    dac i [dfPass:2]
+    jsp defWalk
+    lac i [dfOver:2]
+    sza                 // skip if the words fit
+    jmp dfWords
+    lac i [dfN:2]
+    sza i               // skip if there is a word
+    jmp dfEmpty
+    lac i [dfT:2]
+    sub [MTIME+1]
+    sma                 // skip if the drawing takes MTIME or less
+    jmp dfTime
+    cla
+    jmp rtn
+dfEmpty,
+    law DEFEMPTY
+    jmp rtn
+dfWords,
+    law DEFWORDS
+    jmp rtn
+dfTime,
+    law DEFTIME
+rtn, jmp i rtnW
+rtnW, 0
+    endloc
+
+// Define's words into the master's record (IEWSTORE), once defineMasterOv has counted them and
+// the instance module's instStore has made the record resident, dfAt its words' address
+// (mrWords, bank 5): the words stored (dfPut); then the length and the box relative to the
+// origin into the master directory, and the own words' count and the count before the crosses
+// (mOwnLen, mDrawLen).
+// Exit: AC = 0. IO is clobbered. Called by the manager, from its stub (instWStore).
+defineStoreOv,
+    local rtn, dfP, rtnW
+    dac rtnW
+    jsp dfPut
+
+    // The directory (bank 5), the length and the box relative to the origin.
+    lac i [dfK:2]
+    add [mLen:5]
+    dac dfP
+    lac i [dfN:2]
+    dac i dfP
+    lac i [dfK:2]
+    add [mMinX:5]
+    dac dfP
+    lac i [dfMinX:2]
+    sub i [dfCX:2]
+    dac i dfP
+    lac i [dfK:2]
+    add [mMaxX:5]
+    dac dfP
+    lac i [dfMaxX:2]
+    sub i [dfCX:2]
+    dac i dfP
+    lac i [dfK:2]
+    add [mMinY:5]
+    dac dfP
+    lac i [dfMinY:2]
+    sub i [dfCY:2]
+    dac i dfP
+    lac i [dfK:2]
+    add [mMaxY:5]
+    dac dfP
+    lac i [dfMaxY:2]
+    sub i [dfCY:2]
+    dac i dfP
+    lac i [dfK:2]
+    add [mOwnLen:5]
+    dac dfP
+    lac i [dfOwnN:2]
+    dac i dfP
+    lac i [dfK:2]
+    add [mDrawLen:5]
+    dac dfP
+    lac i [dfDrawN:2]
+    dac i dfP
+    cla
+rtn, jmp i rtnW
+rtnW, 0
+dfP, 0
+    endloc
+
+// defWalk set to walk Define's drawing: its lines and arcs, its blocks (sbN, sbBlk) and its
+// crosses' visits (avN to avV), which the propagation's walks point elsewhere (rwBuild).
+// AC is clobbered, IO preserved. Called via jsp.
+dfMine,
+    dap dmnR
+    dzm i [dfSrc:2]
+    lac [sbN:2]
+    dac i [dfSbA:2]
+    lac [avN:7]
+    dac i [dfAvA:2]
+dmnR, jmp .
+
+// Define's words stored from dfAt on: the drawing walked again, the beam starting at the origin
+// (dfCX, dfCY) as on the counting pass, so the same words, each stored, the last given end. For
+// defineStoreOv into the record, and for the propagation's trial (rewriteOv) into the store.
+// Entry: dfAt. AC and IO are clobbered. Called via jsp.
+dfPut,
+    dap dptR
+    jsp dfMine
+    lac i [dfCX:2]
+    dac i [dfBX:2]
+    lac i [dfCY:2]
+    dac i [dfBY:2]
+    dzm i [dfN:2]
+    law 2
+    dac i [dfPass:2]
+    jsp defWalk
+    jsp dfEnd
+dptR, jmp .
+
+// The last word stored given end, so that a save returns, unless none was stored.
+// Entry: dfN, dfAt. AC is clobbered, IO preserved. Called via jsp.
+dfEnd,
+    local rtn, deP
+    dap rtn
+    lac i [dfN:2]
+    sza i               // skip if a word was stored
+    jmp rtn
+    add i [dfAt:2]
+    sub [1]
+    dac deP
+    lac i deP
+    ior [end]
+    dac i deP
+rtn, jmp .
+deP, 0
+    endloc
+
+// One pass over the drawn parts in the order a master draws them, each point the beam goes to
+// given to defVisit. They are a line's start beam off and its end beam on, the lines in dfOrd's
+// order (loadLine), then an arc's end beam off and its vertices from arcK down to 0, the start,
+// beam on; then the sub-instances' words, composed; then the attachers' crosses, the visits at
+// dfAvA (instMap's in bank 7, avX, avY, avV, avN of them, for Define). The words' count is kept
+// after the arcs (dfOwnN) and before the crosses (dfDrawN). With dfSrc set there are no lines or
+// arcs: a master's own words come as the first block (rwBuild).
+// A sub-instance's words are its master's in the store up to its crosses, its block's address
+// and count, the blocks at dfSbA (sbBlk, for Define). Each word is read back into its move, the
+// move doubled to the sub-instance's k and added to the beam's place, starting from the
+// sub-instance's origin, and the places are visited: a run of beam-off words is taken as one
+// move, made only before a word drawn, so a run at the end is dropped. defMove splits a move
+// that the doubling took past MSTEP. A block with a code c holds its variant's words for Define,
+// so the doubling gives the rule's places. The propagation's holds its master's, new, with no
+// variant to be had, so each place is worked out from the word's rule (ieSize), the move the
+// difference from the last, as the overlay scale's vaWalkOv does (dwMul).
+// Entry: dfNL, dfPass, dfSrc, dfSbA, dfAvA. AC and IO are clobbered. Called via jsp.
+defWalk,
+    local rtn, dwLine, dwDraw, dwNext, dwArcs, dwArc, dwVert, dwArcNext, dwCross, dwCr, dwI, \
+        dwK, dwT, dwSubs, dwSub, dwWord, dwXp, dwYp, dwOn, dwOff, dwNx, dwSbNx, dwScl, dwSl, \
+        dwSd, dwSr, dwAdd, dwAr, dwB, dwP, dwX, dwY, dwS, dwA, dwN, dwPd, dwW, dwU, dwV, \
+        dwC, dwNoM, dwHvS, dwMul, dwMr, dwMc, dwPX, dwPY, dwQX, dwQY
+    dap rtn
+    lac i [dfSrc:2]
+    sza                 // skip if Define's drawing
+    jmp dwSubs
+    dzm dwI
+dwLine,
+    lac dwI
+    sad i [dfNL:2]      // skip while lines remain
+    jmp dwArcs
+    lio dwI
+    jsp i [loadLine:014]
+    lac i [lnX1:2]
+    sas i [lnX0:2]      // skip if the x are the same
+    jmp dwDraw
+    lac i [lnY1:2]
+    sad i [lnY0:2]      // skip unless the y are the same too (no length)
+    jmp dwNext
+dwDraw,
+    dzm i [dvVis:2]
+    lio i [lnY0:2]
+    lac i [lnX0:2]
+    jda defVisit
+    lac [visible]
+    dac i [dvVis:2]
+    lio i [lnY1:2]
+    lac i [lnX1:2]
+    jda defVisit
+dwNext,
+    idx dwI
+    jmp dwLine
+dwArcs,
+    dzm dwI
+dwArc,
+    lac dwI
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp dwSubs
+    dac i [agArg:2]
+    jsp i [arcLoadW:2]
+    dzm i [dvVis:2]
+    lio i [arcEY:2]
+    lac i [arcEX:2]
+    jda defVisit
+    lac [visible]
+    dac i [dvVis:2]
+    lac i [arcK:2]
+    dac dwK
+dwVert,
+    lac dwK
+    dac i [agArg:2]
+    jsp i [arcVertexW:2]
+    lio i [arcY:2]
+    lac i [arcX:2]
+    jda defVisit
+    lac dwK
+    sza i               // skip until vertex 0, the start
+    jmp dwArcNext
+    sub [1]
+    dac dwK
+    jmp dwVert
+dwArcNext,
+    idx dwI
+    jmp dwArc
+dwSubs,
+    lac i [dfN:2]
+    dac i [dfOwnN:2]
+    lac i [dfSbA:2]
+    dac dwB
+    lac i dwB
+    sza i               // skip if there are sub-instances
+    jmp dwCross
+    cma
+    dac dwK
+    idx dwB             // the first block, after the count
+dwSub,
+    lac dwB
+    add [DBX]
+    dac dwP
+    lac i dwP
+    dac dwX
+    idx dwP
+    lac i dwP
+    dac dwY
+    idx dwP
+    lac i dwP
+    dac dwMc
+    and [IKMASK]
+    dac dwS
+    lac i [dfSrc:2]
+    sza i               // skip if the propagation's
+    dzm dwMc
+    lac dwMc
+    sar 2s
+    sza i               // skip if a code c, multiplied
+    jmp dwNoM
+    dzm dwS
+    dzm dwPX
+    dzm dwPY
+    dzm dwQX
+    dzm dwQY
+    jmp dwHvS
+dwNoM,
+    dzm dwMc
+dwHvS,
+    idx dwP
+    lac i dwP
+    dac dwA
+    idx dwP
+    lac i dwP
+    sza i               // skip if its master draws words
+    jmp dwSbNx
+    cma
+    dac dwN
+    law 1
+    dac dwPd
+dwWord,
+    lac i dwA
+    dac dwW
+    idx dwA
+    lac dwW
+    and [0177]
+    jda dwScl
+    dac dwU
+    lac dwW
+    and [0200]
+    sza i               // skip if x is minus
+    jmp dwXp
+    lac dwU
+    cma
+    dac dwU
+dwXp,
+    lac dwW
+    rar 8s
+    and [0177]
+    jda dwScl
+    dac dwV
+    lac dwW
+    and [0100000]
+    sza i               // skip if y is minus
+    jmp dwYp
+    lac dwV
+    cma
+    dac dwV
+dwYp,
+    lac dwMc
+    sza                 // skip unless multiplied
+    jsp dwMul
+    lac dwW
+    and [visible]
+    sza i               // skip if the beam is on
+    jmp dwOff
+    lac dwPd
+    sza i               // skip if the beam must move first
+    jmp dwOn
+    dzm dwPd
+    dzm i [dvVis:2]
+    lio dwY
+    lac dwX
+    jda defVisit
+dwOn,
+    jsp dwAdd
+    lac [visible]
+    dac i [dvVis:2]
+    lio dwY
+    lac dwX
+    jda defVisit
+    jmp dwNx
+dwOff,
+    jsp dwAdd
+    law 1
+    dac dwPd
+dwNx,
+    isp dwN             // skip once every word is read
+    jmp dwWord
+dwSbNx,
+    lac dwB
+    add [DBW]
+    dac dwB
+    isp dwK             // skip once every sub-instance is composed
+    jmp dwSub
+dwCross,
+    lac i [dfN:2]
+    dac i [dfDrawN:2]
+    lac i [dfAvA:2]
+    dac dwB
+    lac i dwB
+    sza i               // skip if there are crosses
+    jmp rtn
+    cma
+    dac dwK
+    idx dwB             // the x, after the count; the y and the beam a table and two on
+    dzm dwI
+dwCr,
+    lac dwI
+    add dwB
+    add [010 * NATT]
+    dac dwT
+    lac i dwT
+    dac i [dvVis:2]
+    lac dwI
+    add dwB
+    add [4 * NATT]
+    dac dwT
+    lio i dwT
+    lac dwI
+    add dwB
+    dac dwT
+    lac i dwT
+    jda defVisit
+    idx dwI
+    isp dwK             // skip once every visit is made
+    jmp dwCr
+rtn, jmp .
+
+    // AC doubled dwS times. Exit: AC = the result. IO is preserved. Called via jda.
+dwScl, 0
+    dap dwSr
+    lac dwS
+    sza i               // skip if the sub-instance is scaled
+    jmp dwSd
+    cma
+    dac dwC
+dwSl,
+    lac dwScl
+    sal 1s
+    dac dwScl
+    isp dwC             // skip once doubled dwS times
+    jmp dwSl
+dwSd,
+    lac dwScl
+dwSr, jmp .
+
+    // The word's moves (dwU, dwV), read at x1, added to the master's place, and made the moves
+    // from the last new place to the rule's new one at the word dwMc. AC and IO are clobbered.
+    // Called via jsp.
+dwMul,
+    dap dwMr
+    lac dwU
+    add dwPX
+    dac dwPX
+    lio dwMc
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
+    dac dwT
+    sub dwQX
+    dac dwU
+    lac dwT
+    dac dwQX
+    lac dwV
+    add dwPY
+    dac dwPY
+    lio dwMc
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
+    dac dwT
+    sub dwQY
+    dac dwV
+    lac dwT
+    dac dwQY
+dwMr, jmp .
+
+    // The beam's place moved by (dwU, dwV). AC is clobbered, IO preserved. Called via jsp.
+dwAdd,
+    dap dwAr
+    lac dwX
+    add dwU
+    dac dwX
+    lac dwY
+    add dwV
+    dac dwY
+dwAr, jmp .
+dwI, 0
+dwK, 0
+dwT, 0
+dwB, 0                  // the sub-instance's block
+dwP, 0
+dwX, 0                  // the beam's place
+dwY, 0
+dwS, 0                  // the sub-instance's k, 0 when multiplied
+dwMc, 0                 // its scale word when multiplied, 0 otherwise
+dwPX, 0                 // the master's place, and the new place, when multiplied
+dwPY, 0
+dwQX, 0
+dwQY, 0
+dwA, 0                  // its next word's address
+dwN, 0                  // its words left, complemented
+dwPd, 0                 // a beam-off move waits
+dwW, 0
+dwU, 0
+dwV, 0
+dwC, 0
+    endloc
+
+// A point the beam goes to in Define's pass. The first pass (dfPass 0) takes it into the box,
+// the second appends the move to it from where the beam is (defMove), beam on when dvVis is
+// visible.
+// Entry: AC = x, IO = y; dvVis. AC and IO are clobbered. Called via jda.
+defVisit, 0
+    local rtn, dvMaxX, dvMinY, dvMaxY, dvEmit, dvY
+    dap rtn
+    dio dvY
+    lac i [dfPass:2]
+    sza                 // skip on the box's pass
+    jmp dvEmit
+    lac defVisit
+    sub i [dfMinX:2]
+    sma                 // skip if left of the box
+    jmp dvMaxX
+    lac defVisit
+    dac i [dfMinX:2]
+dvMaxX,
+    lac i [dfMaxX:2]
+    sub defVisit
+    sma                 // skip if right of the box
+    jmp dvMinY
+    lac defVisit
+    dac i [dfMaxX:2]
+dvMinY,
+    lac dvY
+    sub i [dfMinY:2]
+    sma                 // skip if below the box
+    jmp dvMaxY
+    lac dvY
+    dac i [dfMinY:2]
+dvMaxY,
+    lac i [dfMaxY:2]
+    sub dvY
+    sma                 // skip if above the box
+    jmp rtn
+    lac dvY
+    dac i [dfMaxY:2]
+    jmp rtn
+dvEmit,
+    lac defVisit
+    sub i [dfBX:2]
+    dac i [dmDX:2]
+    lac dvY
+    sub i [dfBY:2]
+    dac i [dmDY:2]
+    jsp defMove
+    lac defVisit
+    dac i [dfBX:2]
+    lac dvY
+    dac i [dfBY:2]
+rtn, jmp .
+dvY, 0
+    endloc
+
+// Append the move by (dmDX, dmDY) to Define's words, split into the fewest vectors of at most
+// MSTEP units on either axis, each within a unit of the true line, as emitVecs splits a line;
+// and add each vector's drawing time to dfT, 10 + 3 * its steps in half microseconds. A move of
+// nothing appends nothing. A word is counted on the counting pass (dfPass 1) and also stored,
+// at dfAt, on the storing pass (2). Past MPOOL1 words dfOver is set and nothing more is appended.
+// Entry: dmDX, dmDY; dvVis. AC and IO are clobbered. Called via jsp.
+defMove,
+    local rtn, dmXPos, dmYPos, dmMX, dmMHave, dmKLoop, dmKDone, dmLoop, dmY, dmTime, dmVBig, \
+        dmSt, dmTakeM, dmAddM, dmOver, dmAX, dmAY, dmSX, dmSY, dmM, dmK, dmKM, dmBX, dmBY, \
+        dmRX, dmRY, dmCX, dmCY, dmI, dmU, dmV, dmMx, dmMn, dmD, dmW, dmP, dmCount
+    dap rtn
+    dzm dmSX
+    lac i [dmDX:2]
+    sma                 // skip if dx is minus
+    jmp dmXPos
+    lio [0200]          // left
+    dio dmSX
+    cma
+dmXPos,
+    dac dmAX
+    dzm dmSY
+    lac i [dmDY:2]
+    sma                 // skip if dy is minus
+    jmp dmYPos
+    lio [0100000]       // down
+    dio dmSY
+    cma
+dmYPos,
+    dac dmAY
+
+    // M, the larger magnitude; none is no move.
+    sub dmAX
+    spa                 // skip if |dy| is the larger or equal
+    jmp dmMX
+    lac dmAY
+    jmp dmMHave
+dmMX,
+    lac dmAX
+dmMHave,
+    sza i               // skip unless there is no move
+    jmp rtn
+    dac dmM
+
+    // K, the fewest with K * MSTEP at least M; each step |d| / K, and a unit more whenever the
+    // remainders summed so far reach another K. The divide's dividend is shifted left one place,
+    // and a successful div skips; K is 1 or more, so it cannot overflow.
+    law 1
+    dac dmK
+    law MSTEP
+    dac dmKM
+dmKLoop,
+    lac dmKM
+    sub dmM
+    sma                 // skip while K * MSTEP is short of M
+    jmp dmKDone
+    idx dmK
+    lac dmKM
+    add [MSTEP]
+    dac dmKM
+    jmp dmKLoop
+dmKDone,
+    lio dmAX
+    cla
+    scl 1s
+    div dmK
+    cla                 // no skip means overflow
+    dac dmBX
+    dio dmRX
+    lio dmAY
+    cla
+    scl 1s
+    div dmK
+    cla                 // no skip means overflow
+    dac dmBY
+    dio dmRY
+    dzm dmCX
+    dzm dmCY
+    lac dmK
+    cma
+    dac dmI
+dmLoop,
+    lac dmBX
+    dac dmU
+    lac dmCX
+    add dmRX
+    dac dmCX
+    sub dmK
+    spa                 // skip once the remainders reach another unit
+    jmp dmY
+    dac dmCX
+    idx dmU
+dmY,
+    lac dmBY
+    dac dmV
+    lac dmCY
+    add dmRY
+    dac dmCY
+    sub dmK
+    spa                 // skip once the remainders reach another unit
+    jmp dmTime
+    dac dmCY
+    idx dmV
+
+    // The step's time. Its major axis M and minor m take M + min(m, M - m) steps.
+dmTime,
+    lac dmU
+    sub dmV
+    spa                 // skip if the x step is the larger or equal
+    jmp dmVBig
+    lac dmU
+    dac dmMx
+    lac dmV
+    dac dmMn
+    jmp dmSt
+dmVBig,
+    lac dmV
+    dac dmMx
+    lac dmU
+    dac dmMn
+dmSt,
+    lac dmMx
+    sub dmMn
+    sub dmMn
+    sma                 // skip if M - m is under m, the minimum then
+    jmp dmTakeM
+    lac dmMx
+    sub dmMn
+    jmp dmAddM
+dmTakeM,
+    lac dmMn
+dmAddM,
+    add dmMx
+    dac dmD
+    sal 1s
+    add dmD
+    add [0d10]
+    add i [dfT:2]
+    dac i [dfT:2]
+
+    // The word, unless the words are full.
+    lac dmV
+    sal 8s
+    ior dmU
+    ior dmSX
+    ior dmSY
+    ior i [dvVis:2]
+    dac dmW
+    lac i [dfN:2]
+    sad [MPOOL1]        // skip unless the words are full
+    jmp dmOver
+    lac i [dfPass:2]
+    sas [2]             // skip on the pass that stores the words
+    jmp dmCount
+    lac i [dfN:2]
+    add i [dfAt:2]
+    dac dmP
+    lac dmW
+    dac i dmP
+dmCount,
+    idx i [dfN:2]
+    isp dmI             // skip once every step is appended
+    jmp dmLoop
+    jmp rtn
+dmOver,
+    law 1
+    dac i [dfOver:2]
+rtn, jmp .
+dmAX, 0
+dmAY, 0
+dmSX, 0
+dmSY, 0
+dmM, 0
+dmK, 0
+dmKM, 0
+dmBX, 0
+dmBY, 0
+dmRX, 0
+dmRY, 0
+dmCX, 0
+dmCY, 0
+dmI, 0
+dmU, 0
+dmV, 0
+dmMx, 0
+dmMn, 0
+dmD, 0
+dmW, 0
+dmP, 0
+    endloc
+
+// The propagation: the masters holding master rwK at any depth (rwSet), recomposed with its new
+// words, inner first, a master once every changed master it holds is (rwOp):
+// - Define's trial (RWDEF), after defineMasterOv has counted k's words: the instances emptied,
+//   their tie lists kept (RQCLEAR), so the whole store is the trial's; k's new words stored in
+//   its slot in the store (dfPut), then each changed master counted from them (rwBuild,
+//   rwPass), and one another changed master holds stored in its slot too. Refused whole, at
+//   the first master past MPOOL1 words (DEFPBIG) or MTIME (DEFPSLOW), or with the store or the
+//   masters' texts' table short of room (DEFPROOM), the master named (rwWho); or before
+//   anything, for digits in k's texts (DEFPDIGIT), a master holding k named. Pass or refusal,
+//   each changed master's mLen and mDrawLen are put back and it is out of the store, and
+//   Define's box (dfMinX to dfMaxY) is put back; on a refusal every master goes back to its
+//   place in the store, its words from its record, unchanged (RQPUT), and the instances' slots
+//   are written again from their tables, as the main bank's tapeRebuild writes them.
+// - The library's trial (RWLIB), as Define's, but k's new words already in its slot, rwTx its
+//   new texts' count and rwDig whether it has digits (the library's root sets them); the
+//   instances stay, and so do their masters (pbDrop).
+// - The commit (RWCOM), after the master is defined or loaded: each changed master recomposed
+//   into its record (rwRedo), the masters it holds brought into the store first.
+// An overlay cannot make a record resident or bring a master into the store, so each such step
+// returns a request (RQLOAD to RQCLEAR, its master in rwArg) to the root's rwRun, which makes it
+// and calls this again, to take up at rwSt.
+// Exit: AC = a request; or 0, done; or the refusal. IO is clobbered. Called by the manager, from
+// its stub (rwRun).
+rewriteOv,
+    local rtn, rtnW, rxInit, rxCl, rxClL, rxClN, rxHeld, rxTz, rxTc, rxTk, rxTd, rxTs, rxDgL, \
+        rxDgN, rxDgH, rxDg, rxDgN2, rxSv, rxMd, rxMdN, rxBs, rxBsL, rxEmp, rxClr, rxKSt, rxKOk, \
+        rxPick, rxPkL, rxPkN, rxGo, rxBrg, rxBNx, rxBNo, rxLoad, rxComp, rxTry, rxT1, rxT2, \
+        rxTl, rxT3, rxT4, rxWhoJ, rxStore, rxSOk, rxDone1, rxEnd, rxFail, rxRest, rxRsL, rxRsN, \
+        rxUndo, rxInst, rxInL, rxWhy, rxBit, rxBr0, rxMove, rxMvL, rxMvR, rxMvA, rxMvB, rxCn, \
+        rxM, rxB, rxP, rxT, rxN, rxC, rxA, rxCh
+    dac rtnW
+    lac i [rwSt:2]
+    sad [RWSINIT]       // skip unless starting
+    jmp rxInit
+    sad [RWSCLR]        // skip unless the instances are emptied
+    jmp rxClr
+    sad [RWSKST]        // skip unless k's slot is asked for
+    jmp rxKSt
+    sad [RWSBRUNG]      // skip unless a held master is brought
+    jmp rxBrg
+    sad [RWSCOMP]       // skip unless the master's record is resident
+    jmp rxComp
+    sad [RWSSTORE]      // skip unless the master's slot is asked for
+    jmp rxStore
+    jmp rxUndo
+
+    // The masters holding k at any depth, k never among them (DEFLOOP).
+rxInit,
+    dzm i [rwSet:2]
+rxCl,
+    dzm rxCh
+    dzm rxM
+rxClL,
+    lac rxM
+    add [mLen:5]
+    dac rxP
+    lac i rxP
+    sza i               // skip if master rxM is defined
+    jmp rxClN
+    lac rxM
+    sad i [rwK:2]       // skip unless k
+    jmp rxClN
+    jda rxBit
+    dac rxB
+    and i [rwSet:2]
+    sza                 // skip unless in the set already
+    jmp rxClN
+    lac i [rwK:2]
+    jda rxBit
+    ior i [rwSet:2]
+    dac rxT
+    lac rxM
+    add [mUses:5]
+    dac rxP
+    lac i rxP
+    and rxT
+    sza i               // skip if it holds k or a master holding k
+    jmp rxClN
+    lac rxB
+    ior i [rwSet:2]
+    dac i [rwSet:2]
+    law 1
+    dac rxCh
+rxClN,
+    idx rxM
+    sas [NMASTER]       // skip once every master is looked at
+    jmp rxClL
+    lac rxCh
+    sza                 // skip once the set is whole
+    jmp rxCl
+    lac i [rwSet:2]
+    sza                 // skip if nothing holds k
+    jmp rxHeld
+    jmp rtn
+rxHeld,
+    dzm i [rwDone:2]
+    dzm i [rwKeep:2]
+    dzm i [rwBase:2]
+    dzm i [rwCl:2]
+    lac i [rwOp:2]
+    sad [RWCOM]         // skip unless the commit
+    jmp rxPick
+
+    // The trial. Each master's texts' count as the table holds them (rwTot), and k's new count:
+    // the library's (rwTx), or the canvas's texts and its blocks' masters' copies.
+    lac [rwTot:2]
+    dac rxP
+    law i NMASTER
+    dac rxC
+rxTz,
+    dzm i rxP
+    idx rxP
+    isp rxC             // skip once every count is cleared
+    jmp rxTz
+    dzm rxM
+rxTc,
+    lac rxM
+    sad i [mtN:012]     // skip while the masters' texts remain
+    jmp rxTk
+    add [mtM:013]
+    dac rxP
+    lac i rxP
+    add [rwTot:2]
+    dac rxP
+    idx i rxP
+    idx rxM
+    jmp rxTc
+rxTk,
+    lac i [rwOp:2]
+    sas [RWDEF]         // skip if Define's
+    jmp rxTs
+    lac i [txN:012]
+    dac i [rwTx:2]
+    lac i [sbN:2]
+    sza i               // skip if it keeps sub-instances
+    jmp rxTs
+    cma
+    dac rxC
+    lac [sbBlk:2 + DBM]
+    dac rxA
+rxTd,
+    lac i rxA
+    add [rwTot:2]
+    dac rxP
+    lac i [rwTx:2]
+    add i rxP
+    dac i [rwTx:2]
+    lac rxA
+    add [DBW]
+    dac rxA
+    isp rxC             // skip once every block is counted
+    jmp rxTd
+rxTs,
+    lac i [rwK:2]
+    add [rwTot:2]
+    dac rxP
+    lac i [rwTx:2]
+    dac rxN
+    sub i rxP
+    add i [mtN:012]
+    dac i [rwTx:2]
+    lac rxN
+    dac i rxP
+
+    // Digits in k's texts: refused before anything changes (C4), the first master holding k
+    // named.
+    lac i [rwOp:2]
+    sas [RWDEF]         // skip if Define's
+    jmp rxDgH
+    dzm i [rwDig:2]
+    dzm rxM
+rxDgL,
+    lac rxM
+    sad i [txN:012]     // skip while the canvas's texts remain
+    jmp rxDgH
+    add [txAn:3]
+    dac rxP
+    lac i rxP
+    sad [NOPOINT]       // skip if digits
+    jmp rxDgN
+    law 1
+    dac i [rwDig:2]
+rxDgN,
+    idx rxM
+    jmp rxDgL
+rxDgH,
+    lac i [rwDig:2]
+    sza i               // skip if digits
+    jmp rxSv
+    lac i [rwK:2]
+    jda rxBit
+    dac rxB
+    dzm rxM
+rxDg,
+    lac rxM
+    jda rxBit
+    and i [rwSet:2]
+    sza i               // skip if a changed master
+    jmp rxDgN2
+    lac rxM
+    add [mUses:5]
+    dac rxP
+    lac i rxP
+    and rxB
+    sza i               // skip if it holds k
+    jmp rxDgN2
+    lac rxM
+    dac i [rwWho:2]
+    law DEFPDIGIT
+    jmp rtn
+rxDgN2,
+    idx rxM
+    jmp rxDg
+
+    // The tables as they stand, for putting back (rwSvL, rwSvD, rwSvS, rwSvB).
+rxSv,
+    law i NMASTER
+    dac rxCn
+    lio [rwSvL:2]
+    lac [mLen:5]
+    jda rxMove
+    law i NMASTER
+    dac rxCn
+    lio [rwSvD:2]
+    lac [mDrawLen:5]
+    jda rxMove
+    law i NMASTER
+    dac rxCn
+    lio [rwSvS:2]
+    lac [mStart:5]
+    jda rxMove
+    law i 4
+    dac rxCn
+    lio [rwSvB:2]
+    lac [dfMinX:2]
+    jda rxMove
+
+    // The changed masters another changed master holds, which are stored in the trial (rwMid).
+    dzm i [rwMid:2]
+    dzm rxM
+rxMd,
+    lac rxM
+    jda rxBit
+    and i [rwSet:2]
+    sza i               // skip if a changed master
+    jmp rxMdN
+    lac rxM
+    add [mUses:5]
+    dac rxP
+    lac i rxP
+    and i [rwSet:2]
+    ior i [rwMid:2]
+    dac i [rwMid:2]
+rxMdN,
+    idx rxM
+    sas [NMASTER]       // skip once every master is looked at
+    jmp rxMd
+    lac i [rwOp:2]
+    sas [RWLIB]         // skip if the library's
+    jmp rxBs
+    lac i [rwK:2]
+    jda rxBit
+    dac i [rwKeep:2]
+    jmp rxPick
+
+    // Define's: its blocks' masters kept in the store (rwBase), where its words read them; the
+    // instances emptied (RQCLEAR), to be put back after a refusal.
+rxBs,
+    lac i [sbN:2]
+    sza i               // skip if it keeps sub-instances
+    jmp rxEmp
+    cma
+    dac rxC
+    lac [sbBlk:2 + DBM]
+    dac rxA
+rxBsL,
+    lac i rxA
+    jda rxBit
+    ior i [rwBase:2]
+    dac i [rwBase:2]
+    lac rxA
+    add [DBW]
+    dac rxA
+    isp rxC             // skip once every block is looked at
+    jmp rxBsL
+rxEmp,
+    lac i [instCount:012]
+    dac i [rwIC:2]
+    lac i [dfN:2]
+    dac i [rwKN:2]
+    law 1
+    dac i [rwCl:2]
+    law RWSCLR
+    dac i [rwSt:2]
+    law RQCLEAR
+    jmp rtn
+
+    // k's new words into its slot in the store (dfPut, from Define's drawing as counted).
+rxClr,
+    lac i [rwK:2]
+    add [mLen:5]
+    dac rxP
+    lac i [rwKN:2]
+    dac i rxP
+    lac i [rwK:2]
+    add [mStart:5]
+    dac rxP
+    lac [MNOPOOL]
+    dac i rxP
+    lac i [rwBase:2]
+    dac i [pbKeep:7]
+    lac i [rwK:2]
+    dac i [rwArg:2]
+    law RWSKST
+    dac i [rwSt:2]
+    law RQBRING
+    jmp rtn
+rxKSt,
+    lac i [rwRes:2]
+    sza i               // skip if the store has no room
+    jmp rxKOk
+    lac i [rwK:2]
+    dac i [rwWho:2]
+    law DEFPROOM
+    jmp rxFail
+rxKOk,
+    lac i [rwK:2]
+    add [mStart:5]
+    dac rxP
+    lac i rxP
+    dac i [msAddr:7]
+    jsp i [msAddr:7+1]
+    dac i [dfAt:2]
+    jsp dfPut
+    lac i [rwK:2]
+    add [mDrawLen:5]
+    dac rxP
+    lac i [dfDrawN:2]
+    dac i rxP
+    lac i [rwK:2]
+    jda rxBit
+    ior i [rwKeep:2]
+    dac i [rwKeep:2]
+
+    // The next changed master, one holding no changed master not yet done; the masters it
+    // holds brought into the store first (RQBRING, each kept there with those the trial keeps,
+    // pbKeep), then its record made resident (RQLOAD).
+rxPick,
+    dzm rxM
+rxPkL,
+    lac rxM
+    jda rxBit
+    dac rxB
+    and i [rwSet:2]
+    sza i               // skip if a changed master
+    jmp rxPkN
+    lac rxB
+    and i [rwDone:2]
+    sza                 // skip unless done
+    jmp rxPkN
+    lac i [rwDone:2]
+    cma
+    and i [rwSet:2]
+    dac rxT
+    lac rxM
+    add [mUses:5]
+    dac rxP
+    lac i rxP
+    and rxT
+    sza i               // skip if it holds a changed master not yet done
+    jmp rxGo
+rxPkN,
+    idx rxM
+    sas [NMASTER]       // skip once every master is looked at
+    jmp rxPkL
+    jmp rxEnd
+rxGo,
+    lac rxM
+    dac i [rwJ:2]
+    dzm i [rwM:2]
+    dzm i [rwRes:2]
+rxBrg,
+    lac i [rwRes:2]
+    sza                 // skip if brought
+    jmp rxBNo
+rxBNx,
+    lac i [rwM:2]
+    sad [NMASTER]       // skip while masters remain
+    jmp rxLoad
+    jda rxBit
+    dac rxB
+    idx i [rwM:2]
+    lac i [rwJ:2]
+    add [mUses:5]
+    dac rxP
+    lac i rxP
+    and rxB
+    sza i               // skip if the master holds it
+    jmp rxBNx
+    lac i [rwM:2]
+    sub [1]
+    dac i [rwArg:2]
+    lac i rxP
+    ior i [rwBase:2]
+    ior i [rwKeep:2]
+    dac i [pbKeep:7]
+    law RWSBRUNG
+    dac i [rwSt:2]
+    law RQBRING
+    jmp rtn
+rxBNo,
+    lac i [rwOp:2]
+    sad [RWCOM]         // skip unless the commit, which its trial has shown has room
+    jmp rxBNx
+    law DEFPROOM
+    jmp rxWhoJ
+rxLoad,
+    lac i [rwJ:2]
+    dac i [rwArg:2]
+    law RWSCOMP
+    dac i [rwSt:2]
+    law RQLOAD
+    jmp rtn
+
+    // Its record resident: the commit's recomposed (rwRedo); the trial's counted and checked.
+rxComp,
+    lac i [rwOp:2]
+    sas [RWCOM]         // skip if the commit
+    jmp rxTry
+    jsp rwRedo
+    jmp rxDone1
+rxTry,
+    jsp rwBuild
+    law 1
+    jda rwPass
+    lac i [dfOver:2]
+    sza i               // skip if past MPOOL1 words
+    jmp rxT1
+    law DEFPBIG
+    jmp rxWhoJ
+rxT1,
+    lac i [dfT:2]
+    sub [MTIME+1]
+    spa                 // skip if past MTIME
+    jmp rxT2
+    law DEFPSLOW
+    jmp rxWhoJ
+
+    // Its texts' new count, its own and each sub-instance's master's (rwTot, theirs new, inner
+    // first), and the table's with it (rwTx).
+rxT2,
+    lac i [rwJ:2]
+    add [mTxOwn:5]
+    dac rxP
+    lac i rxP
+    dac rxN
+    lac i [rwJ:2]
+    add [mNSub:5]
+    dac rxP
+    lac i rxP
+    sza i               // skip if it has sub-instances
+    jmp rxT3
+    cma
+    dac rxC
+    lac [cpSub:5 + SBM]
+    dac rxA
+rxTl,
+    lac i rxA
+    add [rwTot:2]
+    dac rxP
+    lac rxN
+    add i rxP
+    dac rxN
+    lac rxA
+    add [SUBW]
+    dac rxA
+    isp rxC             // skip once every sub-instance is counted
+    jmp rxTl
+rxT3,
+    lac i [rwJ:2]
+    add [rwTot:2]
+    dac rxP
+    lac i [rwTx:2]
+    sub i rxP
+    add rxN
+    dac i [rwTx:2]
+    lac rxN
+    dac i rxP
+    lac i [rwTx:2]
+    sub [NMTEXT+1]
+    spa                 // skip if past NMTEXT
+    jmp rxT4
+    law DEFPROOM
+    jmp rxWhoJ
+
+    // Stored in its slot if another changed master holds it (RQBRING, then rwPass's store).
+rxT4,
+    lac i [rwJ:2]
+    jda rxBit
+    and i [rwMid:2]
+    sza i               // skip if another changed master holds it
+    jmp rxDone1
+    lac i [rwJ:2]
+    add [mLen:5]
+    dac rxP
+    lac i [dfN:2]
+    dac i rxP
+    lac i [rwJ:2]
+    add [mDrawLen:5]
+    dac rxP
+    lac i [dfDrawN:2]
+    dac i rxP
+    lac i [rwJ:2]
+    add [mStart:5]
+    dac rxP
+    lac [MNOPOOL]
+    dac i rxP
+    lac i [rwJ:2]
+    add [mUses:5]
+    dac rxP
+    lac i rxP
+    ior i [rwBase:2]
+    ior i [rwKeep:2]
+    dac i [pbKeep:7]
+    lac i [rwJ:2]
+    dac i [rwArg:2]
+    law RWSSTORE
+    dac i [rwSt:2]
+    law RQBRING
+    jmp rtn
+rxWhoJ,
+    dac rxT
+    lac i [rwJ:2]
+    dac i [rwWho:2]
+    lac rxT
+    jmp rxFail
+rxStore,
+    lac i [rwRes:2]
+    sza i               // skip if the store has no room
+    jmp rxSOk
+    law DEFPROOM
+    jmp rxWhoJ
+rxSOk,
+    jsp rwBuild
+    lac i [rwJ:2]
+    add [mStart:5]
+    dac rxP
+    lac i rxP
+    dac i [msAddr:7]
+    jsp i [msAddr:7+1]
+    dac i [dfAt:2]
+    law 2
+    jda rwPass
+    lac i [rwJ:2]
+    jda rxBit
+    ior i [rwKeep:2]
+    dac i [rwKeep:2]
+rxDone1,
+    lac i [rwJ:2]
+    jda rxBit
+    ior i [rwDone:2]
+    dac i [rwDone:2]
+    jmp rxPick
+
+    // Every changed master done.
+rxEnd,
+    dzm i [pbKeep:7]
+    dzm i [rwWhy:2]
+    lac i [rwOp:2]
+    sas [RWCOM]         // skip if the commit
+    jmp rxRest
+    cla
+    jmp rtn
+rxFail,
+    dac i [rwWhy:2]
+    dzm i [pbKeep:7]
+
+    // The trial's end, pass or refusal: each changed master's, and k's, length and count before
+    // its crosses put back, and it out of the store; Define's box put back.
+rxRest,
+    lac i [rwK:2]
+    jda rxBit
+    ior i [rwSet:2]
+    dac rxT
+    dzm rxM
+rxRsL,
+    lac rxM
+    jda rxBit
+    and rxT
+    sza i               // skip if a changed master or k
+    jmp rxRsN
+    lac rxM
+    add [rwSvL:2]
+    dac rxP
+    lac i rxP
+    dac rxN
+    lac rxM
+    add [mLen:5]
+    dac rxP
+    lac rxN
+    dac i rxP
+    lac rxM
+    add [rwSvD:2]
+    dac rxP
+    lac i rxP
+    dac rxN
+    lac rxM
+    add [mDrawLen:5]
+    dac rxP
+    lac rxN
+    dac i rxP
+    lac rxM
+    add [mStart:5]
+    dac rxP
+    lac [MNOPOOL]
+    dac i rxP
+rxRsN,
+    idx rxM
+    sas [NMASTER]       // skip once every master is looked at
+    jmp rxRsL
+    law i 4
+    dac rxCn
+    lio [dfMinX:2]
+    lac [rwSvB:2]
+    jda rxMove
+    jsp dfMine
+    lac i [rwWhy:2]
+    sza i               // skip if refused
+    jmp rtn
+    lac i [rwCl:2]
+    sza i               // skip if the store must be put back
+    jmp rxWhy
+
+    // Define's refusal: every master back at its place in the store, its words from its record
+    // (RQPUT), then the instances' slots written again from their tables.
+    law i NMASTER
+    dac rxCn
+    lio [mStart:5]
+    lac [rwSvS:2]
+    jda rxMove
+    dzm i [rwM:2]
+rxUndo,
+    lac i [rwM:2]
+    sad [NMASTER]       // skip while masters remain
+    jmp rxInst
+    dac rxM
+    idx i [rwM:2]
+    lac rxM
+    add [mLen:5]
+    dac rxP
+    lac i rxP
+    sza i               // skip if the master has words
+    jmp rxUndo
+    lac rxM
+    add [mStart:5]
+    dac rxP
+    lac i rxP
+    sad [MNOPOOL]       // skip if it was in the store
+    jmp rxUndo
+    lac rxM
+    dac i [rwArg:2]
+    law RWSUNDO
+    dac i [rwSt:2]
+    law RQPUT
+    jmp rtn
+rxInst,
+    lac i [rwIC:2]
+    dac i [instCount:012]
+    dzm rxM
+rxInL,
+    lac rxM
+    sad i [rwIC:2]      // skip while instances remain
+    jmp rxWhy
+    dac i [instParam:7]
+    jsp i [instParam:7+1]
+    lac rxM
+    dac i [instXY:7]
+    jsp i [instXY:7+1]
+    lac rxM
+    dac i [instGate:7]
+    jsp i [instGate:7+1]
+    idx rxM
+    jmp rxInL
+rxWhy,
+    lac i [rwWhy:2]
+rtn, jmp i rtnW
+
+    // Master m's bit in mUses (the root's masterBit).
+    // Entry: AC = m. Exit: AC = the bit. IO is preserved. Called via jda.
+rxBit, 0
+    dap rxBr0
+    lac rxBit
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+rxBr0, jmp .
+
+    // rxCn words, their count complemented, moved from the 16-bit address in AC to that in IO.
+    // AC is clobbered. Called via jda.
+rxMove, 0
+    dap rxMvR
+    dio rxMvB
+    lac rxMove
+    dac rxMvA
+rxMvL,
+    lac i rxMvA
+    dac i rxMvB
+    idx rxMvA
+    idx rxMvB
+    isp rxCn            // skip once every word is moved
+    jmp rxMvL
+rxMvR, jmp .
+rtnW, 0
+rxMvA, 0
+rxMvB, 0
+rxCn, 0
+rxM, 0
+rxB, 0
+rxP, 0
+rxT, 0
+rxN, 0
+rxC, 0
+rxA, 0
+rxCh, 0
+    endloc
+
+// The propagation's walk of master rwJ, its record resident, for rewriteOv: its blocks, the
+// first its own words (mOwnLen of them from mrWords, at the origin and x1), then one for each of
+// its sub-instances (cpSub), its master's words in the store up to their crosses (mStart,
+// mDrawLen) at its offset and scale; and its crosses' visits, made from its attachers' offsets
+// (cpAX, cpAY) as instMap makes Define's. Its own words come back unchanged: each is within
+// MSTEP, so defMove makes each one word again, and a run of beam-off words, one move split, is
+// split again the same. defWalk is pointed at them (dfSrc, dfSbA, dfAvA).
+// AC and IO are clobbered. Called via jsp.
+rwBuild,
+    local rtn, rbSub, rbAt0, rbAtt, rbEnd, rbJ, rbP, rbA, rbQ, rbN, rbM, rbX, rbY
+    dap rtn
+    lac i [rwJ:2]
+    dac rbJ
+    lac [rwBlk:5]
+    dac rbP
+    lac rbJ
+    dac i rbP           // DBM
+    idx rbP
+    dzm i rbP           // DBX
+    idx rbP
+    dzm i rbP           // DBY
+    idx rbP
+    dzm i rbP           // DBS
+    idx rbP
+    lac [mrWords:5]
+    dac i rbP           // DBA
+    idx rbP
+    lac rbJ
+    add [mOwnLen:5]
+    dac rbQ
+    lac i rbQ
+    dac i rbP           // DBL
+    law 1
+    dac i [rwSbN:5]
+    lac [rwBlk:5 + DBW]
+    dac rbP
+    lac rbJ
+    add [mNSub:5]
+    dac rbQ
+    lac i rbQ
+    sza i               // skip if it has sub-instances
+    jmp rbAt0
+    cma
+    dac rbN
+    lac [cpSub:5]
+    dac rbA
+rbSub,
+    lac i rbA           // SBM
+    dac i rbP           // DBM
+    dac rbM
+    idx rbA
+    idx rbP
+    lac i rbA           // SBX
+    dac i rbP           // DBX
+    idx rbA
+    idx rbP
+    lac i rbA           // SBY
+    dac i rbP           // DBY
+    idx rbA
+    idx rbP
+    lac i rbA           // SBS
+    dac i rbP           // DBS
+    idx rbP
+    lac rbM
+    add [mStart:5]
+    dac rbQ
+    lac i rbQ
+    dac i [msAddr:7]
+    jsp i [msAddr:7+1]
+    dac i rbP           // DBA
+    idx rbP
+    lac rbM
+    add [mDrawLen:5]
+    dac rbQ
+    lac i rbQ
+    dac i rbP           // DBL
+    lac rbP
+    add [DBW-DBL]
+    dac rbP
+    lac rbA
+    add [SUBW-SBS]
+    dac rbA
+    idx i [rwSbN:5]
+    isp rbN             // skip once every sub-instance has its block
+    jmp rbSub
+rbAt0,
+    dzm i [rwAvN:5]
+    lac rbJ
+    add [cpNAtt:5]
+    dac rbQ
+    lac i rbQ
+    sza i               // skip if it has attachers
+    jmp rbEnd
+    cma
+    dac rbN
+    lac rbJ
+    sal 1s
+    add rbJ
+    sal 1s              // j * NATT, 6
+    dac rbA
+rbAtt,
+    lac rbA
+    add [cpAX:5]
+    dac rbQ
+    lac i rbQ
+    dac rbX
+    lac rbA
+    add [cpAY:5]
+    dac rbQ
+    lac i rbQ
+    dac rbY
+    dzm rbVv
+    lac rbX
+    sub [MARKARM]
+    lio rbY
+    jda rbVis
+    lac [visible]
+    dac rbVv
+    lac rbX
+    add [MARKARM]
+    lio rbY
+    jda rbVis
+    dzm rbVv
+    lac rbY
+    sub [MARKARM]
+    lia
+    lac rbX
+    jda rbVis
+    lac [visible]
+    dac rbVv
+    lac rbY
+    add [MARKARM]
+    lia
+    lac rbX
+    jda rbVis
+    idx rbA
+    isp rbN             // skip once every attacher's cross is made
+    jmp rbAtt
+rbEnd,
+    law 1
+    dac i [dfSrc:2]
+    lac [rwSbN:5]
+    dac i [dfSbA:2]
+    lac [rwAvN:5]
+    dac i [dfAvA:2]
+rtn, jmp .
+rbJ, 0
+rbP, 0
+rbA, 0
+rbQ, 0
+rbN, 0
+rbM, 0
+rbX, 0
+rbY, 0
+    endloc
+
+// One of rwBuild's visits for a cross, x, y and rbVv, its beam, appended to rwAvX, rwAvY and
+// rwAvV. Entry: AC = x, IO = y. AC is clobbered, IO preserved. Called via jda.
+rbVis, 0
+    local rtn, rvT
+    dap rtn
+    lac i [rwAvN:5]
+    add [rwAvX:5]
+    dac rvT
+    lac rbVis
+    dac i rvT
+    lac i [rwAvN:5]
+    add [rwAvY:5]
+    dac rvT
+    dio i rvT
+    lac i [rwAvN:5]
+    add [rwAvV:5]
+    dac rvT
+    lac rbVv
+    dac i rvT
+    idx i [rwAvN:5]
+rtn, jmp .
+rvT, 0
+    endloc
+
+// A pass of the propagation's walk (rwBuild's), the beam starting at the origin: the box's (0),
+// from a box larger than any, the count's (1) or the store's (2), from dfAt, the last word given
+// end. Entry: AC = the pass. AC and IO are clobbered. Called via jda.
+rwPass, 0
+    local rtn, rpGo
+    dap rtn
+    lac rwPass
+    dac i [dfPass:2]
+    sza                 // skip on the box's pass
+    jmp rpGo
+    lac [0177777]
+    dac i [dfMinX:2]
+    dac i [dfMinY:2]
+    cma
+    dac i [dfMaxX:2]
+    dac i [dfMaxY:2]
+rpGo,
+    dzm i [dfBX:2]
+    dzm i [dfBY:2]
+    dzm i [dfN:2]
+    dzm i [dfT:2]
+    dzm i [dfOver:2]
+    jsp defWalk
+    lac i [dfPass:2]
+    sas [2]             // skip on the store's pass
+    jmp rtn
+    jsp dfEnd
+rtn, jmp .
+    endloc
+
+// The commit's master rwJ, its record resident and the masters it holds in the store: its words
+// composed again into its record (rwBuild, the box's pass, then the store's into mrWords); its
+// length, its count before its crosses and its box from the words (origin 0) into the directory;
+// out of the store, its words there stale; its sub-instances' tie points moved to their masters'
+// attachers (sketchpad.am1's rwTies); its copy box, the words' box widened to every point of
+// its; its texts but its own dropped and its own texts' box and cost taken again (the
+// text module's mtRecost); then each sub-instance's master's texts copied in again and the box
+// widened to its (the instance module's dqDer), as Define does them.
+// AC and IO are clobbered. Called via jsp.
+rwRedo,
+    local rtn, rdPt, rdXlo, rdXok, rdYlo, rdYok, rdBox, rdSub, rdEnd, rdJ, rdP, rdI, rdN, \
+        rdV, rdX0, rdX1, rdY0, rdY1
+    dap rtn
+    jsp rwBuild
+    cla
+    jda rwPass
+    lac [mrWords:5]
+    dac i [dfAt:2]
+    law 2
+    jda rwPass
+    lac i [rwJ:2]
+    dac rdJ
+    add [mLen:5]
+    dac rdP
+    lac i [dfN:2]
+    dac i rdP
+    lac rdJ
+    add [mDrawLen:5]
+    dac rdP
+    lac i [dfDrawN:2]
+    dac i rdP
+    lac rdJ
+    add [mStart:5]
+    dac rdP
+    lac [MNOPOOL]
+    dac i rdP
+    lac i [dfMinX:2]
+    dac rdX0
+    lac i [dfMaxX:2]
+    dac rdX1
+    lac i [dfMinY:2]
+    dac rdY0
+    lac i [dfMaxY:2]
+    dac rdY1
+    lac rdJ
+    add [mMinX:5]
+    dac rdP
+    lac rdX0
+    dac i rdP
+    lac rdJ
+    add [mMaxX:5]
+    dac rdP
+    lac rdX1
+    dac i rdP
+    lac rdJ
+    add [mMinY:5]
+    dac rdP
+    lac rdY0
+    dac i rdP
+    lac rdJ
+    add [mMaxY:5]
+    dac rdP
+    lac rdY1
+    dac i rdP
+
+    jsp i [rwTies:5]
+
+    // The copy box: the words' box widened to each of the master's points.
+    lac rdJ
+    add [cpNP:5]
+    dac rdP
+    lac i rdP
+    sza i               // skip if it has points
+    jmp rdBox
+    cma
+    dac rdN
+    dzm rdI
+rdPt,
+    lac rdI
+    add [cpX:5]
+    dac rdP
+    lac i rdP
+    dac rdV
+    sub rdX0
+    spa                 // skip unless left of the box
+    jmp rdXlo
+    lac rdX1
+    sub rdV
+    sma                 // skip if right of the box
+    jmp rdXok
+    lac rdV
+    dac rdX1
+    jmp rdXok
+rdXlo,
+    lac rdV
+    dac rdX0
+rdXok,
+    lac rdI
+    add [cpY:5]
+    dac rdP
+    lac i rdP
+    dac rdV
+    sub rdY0
+    spa                 // skip unless below the box
+    jmp rdYlo
+    lac rdY1
+    sub rdV
+    sma                 // skip if above the box
+    jmp rdYok
+    lac rdV
+    dac rdY1
+    jmp rdYok
+rdYlo,
+    lac rdV
+    dac rdY0
+rdYok,
+    idx rdI
+    isp rdN             // skip once every point is taken in
+    jmp rdPt
+rdBox,
+    lac rdJ
+    add [mMinX:5 + CBOXOFF]
+    dac rdP
+    lac rdX0
+    dac i rdP
+    lac rdJ
+    add [mMaxX:5 + CBOXOFF]
+    dac rdP
+    lac rdX1
+    dac i rdP
+    lac rdJ
+    add [mMinY:5 + CBOXOFF]
+    dac rdP
+    lac rdY0
+    dac i rdP
+    lac rdJ
+    add [mMaxY:5 + CBOXOFF]
+    dac rdP
+    lac rdY1
+    dac i rdP
+
+    // The texts, then each sub-instance's master's texts and box.
+    jsp i [mtRecost:012]
+    lac rdJ
+    add [mNSub:5]
+    dac rdP
+    lac i rdP
+    sza i               // skip if it has sub-instances
+    jmp rdEnd
+    cma
+    dac rdN
+    lac [cpSub:5 + SBS]
+    dac dqB
+rdSub,
+    lac rdJ
+    dac dqK
+    jsp dqDer
+    lac dqB
+    add [SUBW]
+    dac dqB
+    isp rdN             // skip once every sub-instance is taken
+    jmp rdSub
+rdEnd,
+    law 1
+    dac i [txDirty:012]
+rtn, jmp .
+rdJ, 0
+rdP, 0
+rdI, 0
+rdN, 0
+rdV, 0
+rdX0, 0
+rdX1, 0
+rdY0, 0
+rdY1, 0
+    endloc
+
+// rbVis's beam, which rwBuild sets. Its blocks and visits are in bank 5 (sketchpad.am1, rwSbN
+// to rwAvV), for W's room.
+rbVv, 0

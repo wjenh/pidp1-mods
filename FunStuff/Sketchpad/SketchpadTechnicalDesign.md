@@ -5,8 +5,9 @@ This document describes how Sketchpad, the light pen drawing program for the PiD
 Where the program does something differently from the thesis, it says what and why.
 How to use the program is *UsingSketchpad.md*.
 
-This is version 1.0 and covers the program's first release.\
-Edit date 18-Oct-2026
+This is version 2.0\
+Edit date 4-Nov-2026\
+Updated to include the remaining thesis functionality
 
 **NOTE** This document was written by Claude Opus because wje didn't have the patientce to do it.\
 The writing is probably a bit, well, AI (duh). Sorry, but it is what it is.\
@@ -43,8 +44,8 @@ cut the cost of pen tracking with prediction (chapter IV).
 | Pen | Light pen reporting each spot it sees, by interrupt | Light pen pausing the display at each point it sees, by sequence break |
 | Controls | 37 push buttons, 592 toggle switches, four knobs | None but the pen and the menu |
 | Text entry | Lincoln Writer keyboard | A keyboard drawn on the screen, worked by the pen |
-| Storage | Magnetic tape, library tape | Type 550 Microtape, sixteen pictures a tape |
-| Hard copy | Plotter | *sketchplot*, a PNG drawn from the tape image |
+| Storage | Magnetic tape, library tape | Type 550 Microtape, twelve pictures a tape, or a library tape of up to 256 masters |
+| Hard copy | Plotter | Misc > Plot on the CalComp plotter, device 73, and *sketchplot*, a PNG drawn from the tape image |
 
 Two differences shape everything else.
 
@@ -63,10 +64,10 @@ menu on the screen.
 
 The program is assembled by **am1** from *sketchpad.am1*, which holds the
 variables and the tables, and includes *sketchpad.ah*, every constant but the intensities,
-*intensities.ah*, the intensities, and thirty-one *sp\*.ac* files in memory order.
+*intensities.ah*, the intensities, and thirty-nine *sp\*.ac* files in memory order.
 All of them are in *FunStuff/Sketchpad*, and the program is assembled there.
 It starts at `boot`, at 100, which opens the extend window and enters `initVars` in bank 12, then
-`initGates` in bank 6, then `init` in the main bank, bank 4.
+`initGates` in bank 11, then `init` in the main bank, bank 4.
 
 Three things run at once.
 - The **Type 340** runs the display list, over and over, a *frame* at a time.
@@ -96,8 +97,11 @@ One pass of the main loop does, in order,
 4. `onMenuHit` runs the menu.
 5. `checkLost` declares a lift once no target hit has come for 100 ms, and runs the mode's lift
    handler.
-6. `onClock` runs the timed work, a cycle's step, a label's flash, the status word's timeout,
-   an idle list's closing and the display watchdog.
+6. `onClock` runs the timed work, a cycle's step, a label's flash, an idle list's closing and
+   the display watchdog, which restarts the display when no frame has ended for 500 ms and its
+   address (`dra`) stands still over two clock ticks, so a frame drawing for longer than that is
+   left to end, not started over. The status word is not timed: a fresh press in `onMenuHit`
+   or a hit in `onTargetHit` hides it (`msgHide`).
 7. `kbTick` ends a key press on the pen keyboard while it is open.
 8. `onRate` measures the frame rate and sets how often the target is drawn.
 9. `solveStep` runs the constraint solver for up to 40 ms while it is awake.
@@ -118,14 +122,16 @@ Everything else is in modules, each in a separate bank, each entered through one
 
 | Gate | Module | Bank |
 |---|---|---|
-| `arcCall` | Arcs, the removal and merging of points and lines, Define's and Copy's geometry | 2 |
-| `tapeCall` | Saving and loading pictures | 6 |
-| direct calls | Scale, its slider and its Undo | 6 |
-| `instCall` | Instances, masters, Copy, Change, cycles, Dismember | 7 |
+| `arcCall` | Arcs, the removal and merging of points and lines, Copy's geometry | 2 |
+| `tapeCall` | Saving and loading pictures, a drum overlay; its kept words and stubs in bank 11 | 6 |
+| direct calls | Scale, its slider and its Undo, a drum overlay | 6 |
+| direct calls | The pen keyboard, a drum overlay | 6 |
+| `instCall` | Instances, masters, Copy, Change, cycles; Define and Dismember a drum overlay | 7 |
 | `conCall` | Constraints and the solver | 8 |
 | `txCall` | Texts and numbers | 10 |
-| `taInit`, `taTick` | The truss analysis, its floating point, and what a lift will take | 11 |
-| direct calls | The view, the pen keyboard, the target's clipping, routines moved for room | 12 |
+| `taInit`, `taTick`, `taRedo` | The truss analysis and its floating point, a drum overlay; its stubs in bank 11 | 6 |
+| direct calls | What a lift will take | 11 |
+| direct calls | The view, the target's clipping, routines moved for room | 12 |
 | direct calls | The constraints' marks, the line search, arcs through the view | 13 |
 
 A module is entered by an entry number.
@@ -162,7 +168,7 @@ A frame holds, in order,
 10. the halt.
 
 At that halt `penISR` may start three more lists, each by `dla`, each ending in a halt.
-These are the constraints' arms in bank 5, the texts in bank 3, and the truss's readouts in bank
+These are the constraints' arms in bank 5, the texts in bank 12, and the truss's readouts in bank
 13.
 The pen keyboard and the tape directory replace the whole frame while they show, through the word
 `frameGo`, which names the list each restart begins with.
@@ -213,8 +219,8 @@ across the screen.
 
 A line is the whole straight line the user drew, one table entry between two points, as in the
 thesis.
-Only its display slot splits it, into the fewest vectors of at most 100 units on either axis, up
-to 11, the remainders of the division spread so that every step ends within a unit of the true
+Only its display slot splits it, into the fewest vectors of at most 127 units on either axis, up
+to 9, the remainders of the division spread so that every step ends within a unit of the true
 line.
 
 ### Arcs
@@ -238,13 +244,32 @@ it stays smooth when magnified.
 
 A master is a Type 340 subroutine of relative vectors from its origin, the center of its box,
 beam-off moves to each line and arc, its last word carrying `end`.
+Define takes the lines greedily, each next one the nearest not yet drawn, from either end, so a
+line that starts where the last one ended needs no move; the arcs follow, then the words of the
+instances the master holds, composed in place (see *Define and instances*), then the attachers'
+crosses.
 An instance is a slot that sets the scale and the origin's position and calls the master with
 `save`.
 The 340 scales relative vectors by 1, 2, 4 or 8, so an instance's size is one of those, at no cost
 in drawing time.
-A master is at most 128 words and 5 ms of drawing, one period of the target's presentation, since
-the target cannot be called from inside a master.
-The four masters' words live in bank 0, because `save` reaches only banks 0 and 1.
+A master is at most 128 lines, 530 words and 20 ms of drawing, about four periods of the
+target's presentation, since the target cannot be called from inside a master: 20 ms is the most
+that still holds a pen moving at 1000 units/s, measured.
+Every master's words are kept in its record on the drum (see *Drum overlays*), and those the
+drawing calls are also in a store of two regions, 422 words of bank 0 and the last 530 of bank 1,
+because `save` reaches only banks 0 and 1.
+A master lies whole in one region: the 340 returns from a `save` at its first escape from vector
+mode, so a master cannot `jump` on from one bank's part to the other's.
+Define counts the drawing's words first, refusing it as too many for a region or too slow, writes
+the master's record, and empties the store, since the canvas it clears leaves no slot calling a
+master.
+A master is called while it is an instance's, while Undo would put back a dismembered instance of
+it, and, while any instance cycles, every master of the cycle's sequence.
+The first call brings its words in from its record, into the free run that fits it most tightly,
+taking out first any master nothing calls whose room is wanted; with no room even then, the Inst,
+the Change or the cycle's start is refused.
+Each master's start is kept in the masters' directory, and every instance's slot is written from
+it.
 
 The thesis's instance is a four-component variable, its center and its size times the cosine and
 sine of its rotation (chapter VI).
@@ -261,8 +286,8 @@ So an instance's texts are copies in the texts' list, written at the instance's 
 text's size times the instance's, up to x8.
 
 A character takes about 27 us to draw at any size, and a text's other words about 39 us.
-The program limits what the screen shows to 180 characters, each text counting two more, about
-4.9 ms of drawing, one period of the target's presentation, so that text cannot slow the target.
+The program limits what the screen shows to 360 characters, each text counting two more, about
+9.7 ms of drawing, half of the 20 ms a master may take, so that text cannot lose the pen.
 
 ## The light pen and tracking
 
@@ -296,10 +321,10 @@ presentations a second, spread evenly through the frame, changing them only when
 160 to 250.
 A held pen then costs about 12% of the frames.
 
-At each target hit, `penISR` reads `drp`, the emulator's predicted pen position, and moves the
-target there.
-`drp` is an addition of this emulator's Type 340, a predictor that makes up for the lag between
-the mouse and the display.
+At each target hit, `penISR` reads `drc`, which gives the emulator's predicted pen position, and
+moves the target there.
+The prediction is an addition of this emulator's Type 340, a predictor that makes up for the lag
+between the mouse and the display.
 The thesis tried prediction and set it aside for stability (chapter IV), while noting that BBN had
 it working at about 3% of machine time.
 With prediction the pen has been measured tracking at up to 40 inches a second.
@@ -367,9 +392,9 @@ are the rows' sublists.
 | Stop, or the pen's flick | A lift, or Stop |
 | Horv | Edit > Constr > Horv |
 | Constraint, with the type in toggle register 25 | Edit > Constr > a type |
-| Copy, with the definition in toggle registers 20 to 23 | Picture > Copy > M1 to M4 |
-| Instance, with the picture in toggle register 25 | Picture > Inst > M1 to M4 |
-| Change instance | Edit > Change > M1 to M4 |
+| Copy, with the definition in toggle registers 20 to 23 | Picture > Copy, a master picked |
+| Instance, with the picture in toggle register 25 | Picture > Inst, a master picked |
+| Change instance | Edit > Change > Master, a master picked |
 | Dismember | Edit > Dismem |
 | Tie | Picture > Tie |
 | Designate | Picture > Desig |
@@ -379,11 +404,11 @@ are the rows' sublists.
 | Delete picture, meta-guarded | Picture > Clear, guarded by its OK |
 | Text | Draw > Text |
 | Number | Draw > Dim > Number |
-| Library, Library write | Misc > Load, Misc > Save |
+| Library, Library write | Misc > Library > Load, Misc > Library > Save; a whole picture by Misc > Load and Misc > Save |
 | Garbage, recentering on the pen | View > Center |
 | The scale and position knobs | View > x1 to x8, and Pan; Edit > Scale for one part's size |
 | Toggle switches showing the constraints | Edit > Constr > Show |
-| Sheet of paper, the toggle choosing a picture | Define > M1 to M4, and Clear |
+| Sheet of paper, the toggle choosing a picture | Define, a master picked and named, and Clear; Picture > Name renames a master |
 
 Without the button box, a command needs a place on the screen and a way to be taken without being
 taken by accident.
@@ -420,8 +445,8 @@ parallel arrays.
 - Arcs, their center, start and end points, direction, whole steps and radius, 19.
 - Instances, their origin, scale, master, tie points and cycling flag, 32.
 - Constraints, six words an entry, the type and up to four points and a parameter, 64.
-- Texts, their origin, size, characters and 340 code run, 32, and the masters' texts, 32.
-- Scalars, their value and whether it is set, 32.
+- Texts, their origin, size, characters and 340 code run, 64, and the masters' texts, 64.
+- Scalars, their value and whether it is set, 64.
 
 A removal moves the last entry into the hole and renames every reference to the entry moved, so no
 table has a free list or a dead entry.
@@ -442,7 +467,7 @@ line it was made on (chapter II, its "first basic error").
 |---|---|---|---|
 | `CTHL`, `CTHP` | H | 2 | Level or plumb |
 | `CTF` | F | 1 | Fixed |
-| `CTEQ` | E | 4 | Two lengths equal |
+| `CTEQ` | E, M | 4 | Two lengths equal (E), or A-B k times C-D (M), k 2 or 3 in the parameter's low bits, 0 for E; x1/3 and x1/2 are stored as 3 and 2 with the lines exchanged |
 | `CTLEN` | L | 2 | A length, kept in the parameter |
 | `CTPAR` | P | 4 | Two lines parallel |
 | `CTPERP` | R | 4 | Two lines perpendicular |
@@ -457,15 +482,38 @@ line it was made on (chapter II, its "first basic error").
 | `CTDIST` | D | 3 | A scalar equal to a distance |
 | `CTCHG` | Y | 3 | A scalar equal to a change in distance |
 | `CTGAP` | O | 2 | A point kept beside a number's digits |
+| `CTSAME` | S | 2 | Instance A at a ratio of instance B's overall size, the parameter the ratio's index |
+| `CTFULL` | U | 1 | An instance at x1 |
+| `CTINCH` | I | 1 | An instance's overall size, the parameter in thousandths of an inch |
+| `CTSZNUM` | Z | 3 | A scalar equal to an instance's size in inches, A twice, C the digits' anchor |
 
-The thesis's letters (appendix A) are kept where they are free, H, C, X, P, D, Y and O.
-The thesis uses P for both parallel and perpendicular, M for equal length at a ratio, L for a point
-on a line and W for a fixed distance.
+The last four name instances, as `MAXPTS` plus the instance's index, not points.
+The solver numbers an instance's origin the same way, so a mark stands on such an index as it
+stands on a point.
+Size is not a solver variable: a size change walks a variant from the drum at 0.8 ms a word, so
+nothing can happen inside a sweep.
+These entries are records the sweeps pass over, and a resolver acts on them at a commit.
+The resolver, in the overlay `scale`, works each instance's overall size out in 16ths of a unit:
+the absolutes first, then the instance changed, then, while a group has no known member, its first
+entry's present size, each followed by passes over the S entries until none changes.
+An overlay cannot bring a master's record, the window holding one record and only root code reading
+the drum, so a root runner, `szRun` in *spsize.ac*, calls the overlay and brings each record it asks
+for.
+The main loop calls the runner, not the solver, since the overlay calls the constraint module,
+which is not reentrant.
+A refusal sends the instance changed back, and takes a new entry off.
+
+The thesis's letters (appendix A) are kept where they are free, H, C, X, P, D, Y, O and M, M for
+a length at a ratio of another's other than 1.
+The thesis uses P for both parallel and perpendicular, M for equal length too, L for a point on a
+line and W for a fixed distance.
 Here each row has a letter, named for the menu, so E is equal, R is perpendicular, L is a
 length and N a point on a line.
 B and W here are the truss's member and load.
-The thesis's B makes a scalar equal to a size, and its W keeps a distance, which with Y built its
-bridge beams.
+The thesis's B makes a scalar equal to a size, here Z, and its W keeps a distance, which with Y
+built its bridge beams.
+The thesis's S keeps its letter; its letter for full size is lost in the scan, so U here, and its
+inch sizes are I, a letter free since its I constraint needs rotation.
 
 ### Memory
 
@@ -474,27 +522,98 @@ the others.
 
 | Bank | Holds |
 |---|---|
-| 0 | The break vector, `boot`, `penISR`, and every display word the 340 reaches by `jump` or `save`, the frame, the menus, the arc and instance slots, the marks and their glyphs, the master store |
-| 1 | The line slots alone |
-| 2 | The arc module, merging and removal, Define's and Copy's geometry, the arc table |
-| 3 | The point, line and instance tables, the dispatch tables, the texts' list buffers, the scalars, some of the truss's tables |
+| 0 | The break vector, `boot`, `penISR`, and every display word the 340 reaches by `jump` or `save`, the frame, the menus, the arc and instance slots, the marks and their glyphs, the masters' first region |
+| 1 | The line slots, then the masters' second region |
+| 2 | The arc module, merging and removal, Copy's geometry, Define's working words and the held instances' blocks, the arc table |
+| 3 | The point, line and instance tables, the dispatch tables, the scalars, some of the truss's tables |
 | 4 | The main bank, the main loop, the menus, the modes, Undo, the gates |
-| 5 | Copy's store, each master's points, lines and arcs, the constraints' arms list, and a saved copy of the arc module's working words |
-| 6 | The tape module, start-up's display gates, the menu rows' census, the scale module |
-| 7 | The instance module, which rows can act, the offsets of an arc's first quarter |
+| 5 | The window MW, holding one master's record, its points, lines, arcs, constraints, display words and the instances it holds; after it, the masters' attachers, directory and nesting, the constraints' arms list, a saved copy of the arc module's working words, the library's screen and its directory's header and page, the masters' picker's list and lines, each line holding its master's name, what a master's remaking keeps, the offsets of an arc's first quarter, Scale's Undo record and the variants' tables |
+| 6 | The overlay window, holding the scale module, the pen keyboard, Define and Dismember, the tape module, the library, Plot or the truss analysis; after it, Scale's kept words and stubs, the pen keyboard's entries and kept words |
+| 7 | The instance module but its Define and Dismember parts, their stubs, which masters the drawing calls, the masters' name keyboards' blocks and the name typed |
 | 8 | The constraint module |
-| 9 | The constraint table, the solver's working tables, the masters' constraints |
-| 10 | The text and number module, the texts' tables, the instance count and each instance's master |
-| 11 | The truss analysis, the floating point, and what a lift will take |
-| 12 | The view, the pen keyboard, the target's clipping, start-up's first part |
+| 9 | The constraint table, the solver's working tables, the masters' constraints' counts, the variants' lookup and sweep, which rows can act |
+| 10 | The text and number module, the canvas's texts' tables, the instance count and each instance's master |
+| 11 | The overlay manager, the tape module's kept words, directory, screen and stubs, the tape's mount, seek, read and write, which the tape module and the library both call, the tape rows' steps, the library's kept words, stub and steps, the masters' picker's blocks, keys and hits, start-up's display gates, the menu rows' census, the truss's stubs, what a lift will take, the masters' texts and their numbers' digits, the overlay table |
+| 12 | The view, the target's clipping, start-up's first part, the texts' list buffers |
 | 13 | The truss's snapshot and readouts, the constraints' marks, the line search, arcs through the view |
 | 14, 15 | The truss's stiffness matrix |
 
-Every bank is close to full.
+Every bank but 2, 3 and 5 is close to full.
 When a bank runs short, more is moved out of it than the change needs, so that the next change
 finds room.
 The main bank runs with the extend window open and reaches bank 0 and the tables by full address.
 Bank 0's words 4 to 077, unused by the single-channel break, hold display words too.
+
+### Drum overlays
+
+The scale module, the pen keyboard, the instance module's Define and Dismember parts, the tape
+module (Save, Load, Dir), the library (its Load, Save, Dir and Delete), Plot, the marks' ranks
+and the truss analysis are drum overlays, kept on the Type 23 drum's tracks 11 to 20 octal, one a
+track, and
+read into one window, W, at bank 6's start when called, by am1's overlay manager
+(*UsingOverlays.md*).
+The window is 3,934 words, 8 more than the largest, the library's 3,926, the header included,
+its entry's buffer of 2,560 among them, so that an overlay growing by a few words still
+assembles; Scale's takes 3,114, the keyboard's 1,226, Define and
+Dismember's 3,857, the tape's 3,297, a master's entry's buffer of 1,643 among them, the truss's
+3,869, Plot's 2,743, its characters' strokes' table of 1,087 among them, and the ranks' 216.
+The ranks (*spranks.ac*), which set apart the constraints' letters that would stand at one place,
+run only when a constraint is added or removed, so their load waits on a command, never on a
+drag; called while another overlay holds the window, they are counted at Show's next pass.
+The tape's mount, seek, read and write are in bank 11's root, since an overlay cannot call
+another and both the tape module and the library need them.
+The sixteen masters' records are data overlays, packed two a track at their own length on tracks
+12 (after the keyboard's overlay) and 20 to 27 octal, read into a second window, MW, at bank 5's start, 1,636 words: a master's display words and Copy's store, its
+points, lines, arcs and constraints, and the instances it holds, at the same addresses whichever
+record is resident.
+They are persistent, so Define writes the record in the window and the overlay manager writes it
+back to the drum when another record takes its place.
+MW is a two-pass window: the manager writes the outgoing record, then reads the incoming one, so
+a stop during the write (an ad1 stop, the STOP switch, a single step) is retried and loses no part
+of the drawing, at a cost of up to a drum revolution, about 35 ms, more an eviction than a
+single transfer swapping the two.
+A master's attachers, its directory entry and its nesting (how many instances it holds, its own
+words' count, which masters it holds, and how many of its texts are its own) stay in the root, so the solver, a carry, Change and
+the pickers read them with any record, or none, resident.
+The lowest tracks, 0 to 10 octal, are left to other programs (the owner, 21-Oct-2026), and am1
+places the overlays above them.
+W holds the truss, persistent, and swaps it in one transfer, so am1 gives each of W's overlays a
+track of its own at the same drum address, first; it packs the records, MW being two-pass, at
+their own length after them, which leaves tracks 30 to 37 octal free.
+Define and Dismember are one overlay, since Define takes the instances of the master being
+defined apart as Dismember does; Define's words, and their composing, are in it too.
+Their stubs are in bank 7, and the words they keep between calls are bank 7's and bank 2's.
+Only Define's first call, a Dismember's first lift and Undo of a Dismember can read them.
+All but the truss are read-only, so a call that finds another in the window reads its own over
+it, the display dark for one frame gap of about 13 ms (Scale's, measured).
+What each keeps between calls stays outside the window: the tape's directory, the picture's
+name and the pen keyboard's blocks, Scale's knob, counts and Undo's record, so Undo of a Scale
+reads the module back after a Save, and the keyboard's press, lit key and pick.
+The truss keeps its tables, over a thousand words, in the window: it is persistent, written back
+to its track in the same transfer that reads the overlay taking its place, so an analysis goes
+on where it was after a Save or a Dir, and is not started again.
+Each entry its callers call is a stub under the entry's own name, in bank 6 for Scale and the
+keyboard, bank 7 for Define and Dismember, bank 11 for the tape, the library and the truss, which makes the
+manager's call, so the callers' code is the same as without overlays.
+The truss's stub `taTick`, which the main loop calls each pass, calls the truss only when it has
+work: Forces on, readouts shown or Stiff mode, and neither Scale the mode nor the keyboard open,
+whose overlays hold the window meanwhile, the readouts hidden; `taInit` at start reads nothing,
+so a session that never turns Forces on never reads the truss, and `taRedo`, from the view,
+notes the change for the pass's call.
+Scale's `scDone`, which every mode change calls, returns at once when no part is held, so a mode
+change reads nothing.
+The keyboard's per-pass work stays outside the window too: `kbTick`, which the main loop calls
+each pass, and `kbKey`'s test for a press under way run in bank 6's root, so the manager is
+called only when the keyboard opens, at a press's first hit and when a key's flash ends.
+A Dir or a Save reads the tape module and then the keyboard, which shows the directory and the
+names, so the keyboard is in the window after either.
+A load that fails, the drum holding another build's overlays or none, goes to the program's
+hook, not a halt: DRUM shows under the bar, the mode is left, and the main loop goes on.
+When it was the truss's, at a pass's end, the mode stays, and the stub tries again after 10 s.
+When it was the keyboard's that failed, the hook also turns tracking back on if the keyboard had
+turned it off.
+The drum asks for a break at the end of each transfer; `penISR` counts it apart from the
+display's while a stub's call is under way.
 
 ## Editing
 
@@ -543,8 +662,10 @@ spares the user a step and leaves nothing invisible behind.
 The thesis scales with a knob, exponentially (chapter V).
 Here Edit > Scale picks up one part, and a slider drawn in the band's words stands for the
 knob.
-It is a zigzag of one vector a doubling, 128 screen units long and 32 high, its corners the
-ticks, at most five doublings each way inside the target's reach.
+It is a square wave read as a ruler: a level run of one vector a doubling, 128 screen units
+long, on its two lines 32 apart by turns, joined by upright ticks at the doublings, at most five
+doublings each way inside the target's reach. Its up to 13 words are the band's 9 and 4 more
+before them (`slideVec`).
 It stands 32 units below the pick, so as not to lie on a level line, or 32 above where it would
 fall under the target's reach; the dot rides over it at the pick's height as its knob.
 The factor at the pen's offset d is 2^k (1 + r/128), k whole doublings and r units more, kept in
@@ -554,9 +675,35 @@ rounding never builds up.
 A line goes about its middle or its fixed end, rewritten live as Move's drag of a whole line
 rewrites it; an arc's start goes radially about its center, as Move's drag of a start changes a
 radius.
-A text, digits or an instance steps through Size's four sizes.
+A text or digits step through Size's four sizes.
 A step that would leave the target's reach or the arc module's radii is not made, and the knob
 stays at the last factor applied.
+An instance takes any size from x1/4 to x8, though the 340 scales a subroutine only by powers of
+two.
+A size is a power of two times a multiplier in (1/2, 1], the 340 doing the first and a *variant*
+the second: a copy of the master's display list, in the master store, each place in it the
+master's times the multiplier, rounded, so that a figure still closes and a tie point stays on its
+cross, and the move from the last place the difference.
+So a place on the screen is always that rounded place shifted by the 340's scale, and nothing else
+a variant needs is new: it is as long as its master, and a variant is found by its master and
+multiplier, which the instance's own words hold.
+There are 16 entries, the multipliers lying on 32 sizes to a doubling so that instances showing
+the same digits share one, and x1.5 and x3 sharing one since only the multiplier keys it.
+While the pen slides nothing changes but a box drawn dim and pen-blind, 9 words past the band at
+the smallest 340 scale that reaches its longer side, its sides rounded to that scale; a size whose
+box would leave the screen is held.
+The walk takes about 0.8 ms a word, at the lift, once: 85 ms for a master of 108 words.
+A variant no instance has stays until room is wanted, and a master all of whose instances are at
+a multiplier leaves the store the same way, since nothing draws it.
+A cycling instance stays on the powers of two, so that a sequence does not need a variant at each
+step.
+Define keeps an instance at a multiplier by reading its variant, so its master need not be in the
+store, and a holder's size is kept whole, multiplier and all, with its place in the holder.
+A redefinition recomposes such a holder from the held master's words, each place by the same rule
+as the walk, about 0.8 ms a word on each pass.
+Its trial keeps every variant, since the trial's instances are emptied and a refusal gives them
+back: so a redefinition with instances at a multiplier on the canvas can be refused for room an
+empty canvas would have had.
 The digits beside the knob are the status word's block, moved.
 The scale module is in bank 6; it reaches the main bank's routines through a trampoline,
 `mainCall`, since their `dap` returns cannot leave bank 4.
@@ -576,20 +723,66 @@ module's snapshot), and Undo puts them back, with the part's size and a Length's
 
 ### Define and instances
 
-The thesis's subpictures (chapters I, VI and VII) are kept, masters in four slots, instances that
+The thesis's subpictures (chapters I, VI and VII) are kept, masters in sixteen slots, instances that
 show the master, and copies that become ordinary drawing.
 Define writes the drawing's lines, arcs and attachers' crosses as the master's display words, and
-keeps the master's points, lines and arcs in Copy's store in bank 5, its texts in the text module
-and its constraints in bank 9.
+keeps them with the master's points, lines, arcs and constraints in its record on the drum, its
+texts in the text module.
 
 The thesis nests instances to any depth, expanding them recursively at display time (chapter V and
 VI).
-Here a master's words never call another master.
-Define takes every instance on the screen apart first and copies its parts into the new master as
-plain words.
+Here a master keeps the instances it holds in its record, up to eight, each one's master, place
+relative to the origin, scale and tie points, so the hierarchy is in the data.
+Its display words still never call another master.
 The 340 keeps one return address for its subroutines, so a master that called another master
 could not return to the instance that called it.
-A consequence is that redefining an inner master later leaves the outer one as it was.
+Define composes them instead: each held instance's master's words are written into the new
+master's, a beam-off move to the instance's place, each vector doubled to its scale, one that
+outgrows its field split in two.
+Its texts are copied in at the same place and scale.
+Define refuses a loop, an instance whose master holds the one being defined at any depth.
+An instance of the master being defined is taken apart one level as Dismember does, and the
+instances it holds become the new master's, counted against the eight with the others.
+A master's own texts come first among its texts, the copied ones after them, and the master keeps
+their count, so that Dismember and Copy place only its own as texts and leave the rest to the
+instances they add.
+A library save does not take a master that holds instances, and refuses it.
+
+Composed words go stale when an inner master changes, so a Define or a library load of a held
+master makes every master holding it again, at any depth, inner ones first.
+The thesis gets this free, by expanding at display time; here it costs a pass over each holder, at
+the one moment no holder can be on the screen: Define clears the canvas and refuses an instance
+that calls the master being defined, and the library's picker dims a master the drawing calls.
+Each holder keeps its own lines and arcs, the first `mOwnLen` words of its record; its held
+masters' words and its crosses are composed again from its sub-instances and attachers, its box
+worked out again, and its derived texts dropped and copied again.
+Tie points on its sub-instances go to their masters' new attachers, which Dismember ties to.
+An attacher of the holder's own on such a point keeps its place, since moving it would change the
+crosses' words after they were counted, and a line of the holder's ending there keeps its words.
+
+All of it is a trial first, the master store its scratch space: each new master, inner first, is
+composed into the store and judged.
+Define's trial has the whole 1,042 words, every master having left the store with the canvas's
+clear; a library load's has what the drawing's masters leave.
+A refusal leaves everything as it was, the instances the Define emptied put back from their
+tables.
+A holder is refused if it would pass 530 words or 20 ms, if the masters' texts' table or the store
+runs out, or if the master it holds would carry digits, which a holder has no way to keep
+following their anchor; the refusal names the holder, by number under the menu, by name under a
+library load's status word.
+Then the commit writes each holder's record, and its copy in the store is given up.
+A library load holds its entry in an overlay's buffer that the trial's overlay overwrites, so it
+reads the entry from the tape again for the commit.
+
+A master's name, up to 12 characters, is kept in its line on the masters' picker, bank 5, a slot
+label and a name's run as the tape directory's screen keeps a picture's, so the picker shows the
+names with no other table and no drum read.
+Define's keyboard and Define itself are both overlays in bank 6's window, so the name typed waits
+in bank 7 until Define runs, and is copied into the line only when Define succeeds, a refusal or
+a Cancel leaving the old name.
+Every writer of a master writes its name: Define and Name the name typed, a library load its
+entry's, a library save the name saved under, and a picture's load each master's saved name,
+blanking the rest.
 
 ### Attachers and tie points
 
@@ -623,6 +816,7 @@ be undesignated.
 
 Copying a master that holds constraints copies them onto the new parts, so a constraint can be
 defined by drawing it and applied by Copy, as the thesis's equal-length definition is.
+Copying a master that holds instances places them as instances, as Dismember does at x1.
 
 ### Change, cycling and the winking girl
 
@@ -645,8 +839,26 @@ together on one sequence and one set of dwells, so both eyes of the girl blink t
 ### Dismember
 
 The thesis's Dismember reduces an instance by one level (appendix B).
-Here instances are one level deep, so Dismember turns an instance into its master's parts at its
-place and size, with the master's constraints, each attacher merged into the tie point it had.
+Here Dismember turns an instance into its master's parts at its place and size, with the
+master's constraints, each attacher merged into the tie point it had.
+Each instance its master holds becomes an instance on the canvas of its own master, as in the
+thesis, so a second Dismember takes the next level.
+Its origin is the instance's plus its offset at the instance's size, and its size the two
+composed: the shifts added, the multipliers multiplied, and the product brought back into
+(1/2, 1] by moving doublings out of the shift, so that x1/2 at x4 is x2 with no multiplier.
+A size past x8 or under x1/4 is refused.
+The composed size stays exact, not snapped to the slider's 32 sizes a doubling, so a dismember
+shows what it showed, and two bays taken apart the same way still share a variant.
+Its tie points are the placed points for its ties, written before the attachers merge, so the
+merges rename them as they rename every tie.
+The held instances' masters are brought into the store first, pinned so that bringing one does
+not take out another nothing yet calls, since the store cannot be filled while the outer master's
+record is resident.
+Those at a multiplier are brought as variants, from one sweep and a hold over the rest, since a
+variant has no instance yet for a sweep to spare, and the words to bring are read from the record
+first, as each variant loads another's.
+Undo removes the added instances before it puts the instance back, since putting it back first
+would overwrite the slot of the first one added.
 
 ## Constraints
 
@@ -669,7 +881,10 @@ A sweep takes each constraint in turn and moves its points the least distance th
 projection, in 32nds of a unit, a fixed point never moving.
 - H brings both ends to their mean y, or x.
 - E brings both lines to their mean length, each about its middle, and L its line to the length
-  kept.
+  kept. M is E with A-B's length divided by k first: both lines free go to the mean of that and
+  C-D's length, A-B taking k times it; one free goes to the ratio of the other. A type number
+  could not be spared, every value past `CTSAME` naming instances, so M is an E with k in its
+  parameter, and `cBad` does not swap its lines into E's fixed order, which would invert it.
 - P turns both lines toward the direction between them, and R toward a right angle, each about
   its middle or its fixed end, with directions normalized by a square root and no angles.
 - X shares the error by least squares, the point moving two thirds and the ends a third each.
@@ -714,7 +929,11 @@ ring of radius 10.
 Its place is the average of its points, but a letter whose average lies on one line, H, L, X, N,
 B and W, stands beside the line, a second on the other side and a third a ring further out, which
 answers the thesis's overlap.
-Equal, Paral and Perp, the marks that relate two lines, have dotted arms from one line's middle to
+A letter for one point, F, A, a designation's digit and a roller's O, stands beside its point in
+whichever of eight directions the point's lines leave clearest, a second on the same point in the
+next clearest, a direction past the screen's edge passed over, so that a pin's or a roller's
+letter is not crossed by the lines it joins.
+Equal, its ratios, Paral and Perp, the marks that relate two lines, have dotted arms from one line's middle to
 the other's, through the circle.
 The thesis's mark for a scalar, a `#` on its digits, is left out, since the digits show the
 scalar.
@@ -840,31 +1059,44 @@ Marks keep their size and are placed through the view.
 
 The thesis saves to magnetic tape, compacting storage first, and keeps a library tape of
 definitions (chapter III, appendix B).
-Here a picture is saved to the Type 550 Microtape, sixteen pictures a tape.
+Here a picture is saved to the Type 550 Microtape, twelve pictures a tape.
 A picture is the tables as they stand, a few runs of words, since every display word can be
 written again from them.
-- Picture p is one stream of words over 32 blocks, in a slot of 35, the last 3 spare.
-  P1 to P8 have the slots from block 1, the directory is block 281, and P9 to P16 have the slots
-  from block 282, so every picture is within eight slots of the directory.
+- Picture p is one stream of words over 23 blocks, then its masters' entries, then a closing
+  block, in a slot of 47, so the entries may take up to 23 blocks.
+  P1 to P6 have the slots from block 1, the directory is block 283, and P7 to P12 have the slots
+  from block 284, so every picture is within six slots of the directory.
 - The stream is a header, the constraint table, the tie lists, the name, the cycle's settings,
-  the masters' constraints, the texts, the numbers' digits and the tables, then zeros, and the
-  header again as its last words.
+  the masters' attachers, the texts, the numbers' digits, the tables and the masters' nesting,
+  then zeros.
   The parts follow one another, not starting on a block.
-- The header holds a magic word, the format, the stream's size and a generation word new at each
-  save, so a save cut short, whose two headers differ, reads as empty.
+- Each defined master's entry follows from a block's start: its record's tables as far as its
+  counts reach, its display words first among them and the instances it holds last, then the
+  master's name, padded to a whole block.
+  The name is last so that every entry's display words stay where *sketchplot* reads them.
+  The tables go through one buffer, gathered into it before a save's seek and scattered from it
+  after a load's read, since the word loop has no time for a run a table, and the seek's flag
+  leaves only 400 us to start the transfer.
+- The closing block is zeros with the header again as its last words.
+- The header holds a magic word, the format, the stream's size, a generation word new at each
+  save, so a save cut short, whose two headers differ, reads as empty, and the entries' blocks.
+  A save counts the entries first and refuses a picture whose masters need more than 23 blocks,
+  TOO BIG, before it writes.
 - The directory holds each picture's format word, zero for none, and its name.
-  A save writes it after the picture, and Dir, Save and Load read it to show the sixteen names,
+  A save writes it after the picture, and Dir, Save and Load read it to show the twelve names,
   Save and Load picking a picture by a touch on its line.
   Only the pictures' headers say whether a picture is there.
-  A directory block that fails its checksum reads as sixteen empty entries, and the next save
+  A directory block that fails its checksum reads as twelve empty entries, and the next save
   rewrites it.
 
-A load reads the picture forward once to check every block's checksum and both headers, and
-changes nothing unless all is well.
-Then it searches back to the picture's last block and reads the stream in reverse straight into
+A load reads the first block for the header, then the whole picture forward once to check every
+block's checksum and both headers, and changes nothing unless all is well.
+Then it searches back to the stream's last block and reads the stream in reverse straight into
 the tables, a block read backward giving its words last first, so the tape does not run back to
-the start of the picture.
-If that second pass fails, which a tape that has not changed between the passes cannot do, the
+the start of the picture, and then each entry forward into its master's record, the record
+written back to the drum before the next is read.
+A loaded master goes back into the store at the place it was saved from, if it was there.
+If a later pass fails, which a tape that has not changed between the passes cannot do, the
 tables are emptied.
 Then the display is rewritten.
 
@@ -874,16 +1106,60 @@ Each run of words is a pointer, a count and a step, and the next run is taken in
 loop, between two words.
 Meanwhile the display runs a small list that loops on itself, showing WAIT and needing no CPU.
 
-The format is 14.
-It is the only format a load accepts, and any other format reads as EMPTY rather than loading
+The format is 19.
+A load also accepts format 18, written before a master kept the count of its own texts, its
+masters' texts then all counted as their own, and format 17, written before a master could hold
+instances, its masters then holding none; any other format reads as EMPTY rather than loading
 wrongly.
 An instance's scale word keeps its low two bits for the Type 340's scale and the rest for a
-multiplier, which this program always saves as zero.
-A word with a multiplier loads at the power of two, and *sketchplot* draws it at its size, so
-sizes between the powers of two can be added without a new format.
+multiplier, zero at a power of two, and needed no new format.
+A load keeps the word, each variant made again from its master's record as the list is rebuilt,
+and *sketchplot* draws it at its size, its lines by the factor, within a unit of the variant's
+rounded places.
 
-*sketchplot* reads a picture from a tape image and draws it as a PNG, the reading half of the
-thesis's Plot.
+*sketchplot* reads a picture of any of the three formats from a tape image and draws it as a PNG, the
+reading half of the thesis's Plot.
+
+### The library tape
+
+The thesis's library tape holds drawings to build others with (chapter IX's wedge, dimension
+line, bridge bay, raster and alphabet), read by Library and written by Library write.
+Here a library tape holds masters only, each an entry, so a tape holds up to 256 where a picture
+tape holds twelve pictures.
+- An entry is one master, starting at a block: a header (a magic word, the format, its size, a
+  generation word, its name), the master's directory words, attachers, constraint count and
+  texts with their digits, then its record's tables as a picture's entry has them.
+  The cycle's settings are the picture's and are not kept.
+  An entry is at most ten blocks, the size of the library's buffer, which a master at every
+  table's limit still fits with 38 texts; a larger one is refused, TOO BIG, before anything is
+  written.
+  A master that holds instances is refused, NESTED, since its entry would not carry the masters
+  it holds.
+- The directory is at block 283, where a picture tape keeps its own, so that one block tells the
+  two kinds apart, and a library command on a picture tape, or a picture command on a library
+  tape, is refused before it writes.
+  It is a header block (each page's count of entries and a map of the tape's blocks, a bit a
+  block) and sixteen pages after it, each naming sixteen entries by a slot word (its first block
+  and its length) and a name.
+  A blank tape is an empty library, written at its first save.
+- A save takes the first free run long enough, looking from just past the directory to the
+  tape's end and then from block 1, so its seeks to the directory stay short.
+  It writes the entry, then the header with its blocks taken, then the page with its slot, so a
+  save cut short leaves only blocks taken that no entry names, never an entry whose blocks are
+  free; a delete writes the page, then the header.
+  Save's keyboard starts from the master's name, or from the name last saved for a master with
+  none, and a save that succeeds gives the master the name it was saved under, so the master and
+  its entry agree.
+- A load reads the entry whole, checks every block's checksum and judges the header (its counts
+  within the tables, its size, room for its texts) before anything changes; then it replaces the
+  master's texts, puts its words back, writes its tables into the master's record and gives the
+  master the entry's name.
+  It may replace only a master the drawing does not call, directly or through a master holding
+  it at any depth, so the canvas never changes; Undo does not cover it.
+
+Misc's Save, Load and Dir and the library's four rows are one driver in the main bank, which
+asks the tape module's root for each step (open a screen or the keyboard, run a transfer, or
+stop) and runs each transfer through the same call, WAIT showing and the breaks off.
 
 ## Timing
 
@@ -895,6 +1171,7 @@ Measured on the emulator.
 | A frame, 64 short lines | About 15 ms |
 | A frame, 192 short lines | About 44 ms |
 | A frame, 192 lines across the screen | About 0.3 s |
+| A frame, 32 instances of a 20 ms master | About 0.63 s, 1.6 frames a second |
 | A held pen's cost | About 12% of the frames |
 | A change at 192 lines across the screen | 3 to 6 ms |
 | A whole rebuild | 0.35 s at 64 short lines to about 1 s at 192 across the screen |
@@ -902,9 +1179,9 @@ Measured on the emulator.
 | The hexagon in a circle settling | About 2 s |
 | The sample bridge's forces | About 0.5 s |
 | A truss that can fold found UNSTABLE | About 2 s |
-| A load or save of P8 or P9, beside the directory | 4 to 5 s |
-| A load of P1 or P16, from the directory | 16 to 19 s |
-| A save of P1 or P16, from the directory | About 30 s |
+| A load or save of P6 or P7, beside the directory | 4 to 5 s |
+| A load of P1 or P12, from the directory | 16 to 19 s |
+| A save of P1 or P12, from the directory | About 30 s |
 
 ## Divergences from the thesis
 
@@ -916,9 +1193,10 @@ Measured on the emulator.
 | Tracking about 100 times a second, no prediction | About 200 presentations a second with the emulator's predictor | A frame grows with the drawing, and the gap between presentations is what loses the pen |
 | A ring structure with generic blocks | Dense tables, the last entry moved into a hole | Far less code, and a picture saved as a few runs of words |
 | Circles by a difference equation | Each vertex rotated directly from the start | No error builds up, and every circle closes |
-| Instances rotate and scale continuously | Instances translate and scale x1, x2, x4 or x8 | The 340 scales by those four and cannot rotate a subroutine |
+| Instances rotate and scale continuously | Instances translate and scale from x1/4 to x8, 32 sizes to a doubling | The 340 scales only by powers of two, so the sizes between are copies of the display list, and it cannot rotate a subroutine |
 | A scale knob, exponential | Edit > Scale, a slider whose doublings are equal steps, for one part at a time | The PDP-1 here has no knobs; the slider keeps the thesis's exponential feel |
-| Instances nest to any depth | Define flattens instances into the master | The 340 keeps one return address |
+| A definition chosen by its number in toggle registers | A master picked on a screen of sixteen, each shown with its name | The PDP-1 here has no toggle registers to spare, and a name says what a slot holds |
+| Instances nest to any depth, expanded at display time | A master holds up to eight instances, its words composed from theirs; changing an inner master makes its holders again or is refused whole, at Define or a library load; Dismember and Copy place them as instances again | The 340 keeps one return address |
 | Fastened instances follow by satisfaction | A fastened group moves rigidly under the pen | Nothing is solved during a drag |
 | Masters and instances share a page frame | Change lines masters up by their attachers | Define clears the drawing, so frames could not be drawn over one another |
 | SOLVE, relaxation and the one pass method | Relaxation by projection, one constraint at a time, nothing solved during a drag | No matrices, cheap on this machine, and fast enough for the thesis's examples |
@@ -931,19 +1209,33 @@ Measured on the emulator.
 | No undo | One level of Undo for additions | Cheap, since every addition appends |
 | No undesignate | Desig undesignates | The thesis calls its lack an oversight |
 | A scalar shown as `#` | Not shown | The digits show the scalar |
+| Constraints on the size of any thing | On instances only, each at its overall size, the inch sizes any value from 0.001 to 10 | A text or digits steps through four sizes, so 1/3, 3 and most inch sizes could never be met |
 
 ## Not implemented
+
+Every constraint type of the thesis's appendix A is built but I and E, and every push button of
+its appendix B is built or replaced by a menu row but the four below.
 
 Ruled out, since the Type 340 cannot rotate a subroutine or a character.
 - Rotated and mirrored instances, rotated text and digits, and the thesis's I and E constraints
 
+Ruled out, as covered another way or not needed here.
+- A larger page, the full zoom: a larger page would change every table, the solver's units and
+  the tape
+- The Constraint button, a constraint of any type on dummy points, left moving and merged onto
+  points: each type is a row applied to what is picked, and a master's constraints, which Copy
+  adds on the copy's points, define new ones, as the bridge beam is defined
+- Members inside instances: an instance is rigid, so a member in one could carry no force; the
+  thesis's bridge is built of copies, as it can be here
+- Order and Disorder: Plot orders the lines itself, each from its end nearer the pen, and Define
+  chains a master's lines the same way
+- Punch, the plotter tape: the tape was for a plotter offline, and Plot draws on the plotter
+  directly
+
 Not built.
-- Equal at ratios other than 1, and instance sizes other than x1 to x8 with the constraints on size
-- A larger page, the full zoom
 - Whole canvases held in memory for a fast load
-- A library of masters, and members inside instances
-- Plotter tape and punched output, the thesis's Plot and Punch, and saving as text
-- Order and Disorder, which sort lines for the plotter
+- A library save of a master that holds instances, and numbers inside a held master
+- Saving as text
 
 ## The source files
 
@@ -953,8 +1245,9 @@ Not built.
 | *sketchpad.ah* | | Every constant but the intensities, and `BOXAT`, the one macro two files use |
 | *intensities.ah* | | The intensity of each kind of thing drawn, the tracking target's among them |
 | *spbreak.ac* | 0 | The break vector, `boot`, `penISR` |
-| *spframe.ac* | 0 | The frame, the menus, the slots, the marks and glyphs, the master store, WAIT |
+| *spframe.ac* | 0 | The frame, the menus, the slots, the marks and glyphs, the masters' first region, WAIT |
 | *spdispatch.ac* | 3 | The mode and menu dispatch tables, the lists' descriptors |
+| *splibdir.ac* | 5 | The library's screen, and its directory's header and page as read |
 | *spmain.ac* | 4 | Init, the main loop, the clock, the frame rate, the solver's pass |
 | *spmenus.ac* | 4 | The menu, lists, sublists, the OK box, the tape's rows |
 | *spundo.ac* | 4 | Undo |
@@ -964,21 +1257,28 @@ Not built.
 | *sparcs.ac* | 2 | The arc module |
 | *spedit.ac* | 2 | Removal, deletion, merging |
 | *spdrag.ac* | 2 | A drag's arcs |
-| *spdefine.ac* | 2 | Define's master words, Copy's arcs and merge |
-| *sparcdata.ac* | 2 | The arc tables, the masters' directory, the sine table |
-| *sptape.ac* | 6 | Saving and loading pictures, the tape directory and its screen |
-| *spinit.ac* | 6 | Start-up's display gates |
-| *spcensus.ac* | 6 | `rowCensus`: what the menu's rows act on, counted as a list opens |
-| *spscale.ac* | 6 | The scale module: Scale's pick, slider, steps, drop and Undo |
-| *spinst.ac* | 7 | The instance module |
-| *sprows.ac* | 7 | `rowCan`: whether a row can act, by item |
+| *spdefine.ac* | 2 | Copy's arcs and merge, the gates through which Define's words reach the arcs |
+| *sparcdata.ac* | 2 | The arc tables, the sine table, Define's working words and the held instances' blocks |
+| *spscale.ac* | 6 | The scale module: Scale's pick, slider, steps, drop and Undo, and the constraints on size's rows and resolver |
+| *spkbd.ac* | 6 | The pen keyboard, and the directory's screen's touches: its entries, a drum overlay's stubs, and the overlay |
+| *spinst.ac* | 7, 6 | The instance module: its stubs, and Define and Dismember's overlay |
+| *spdefword.ac* | 6 | Define's words, the held instances' composed among them, in Define and Dismember's overlay |
+| *spvar.ac* | 9 | The variants: an instance's words at a size between the powers of two, their lookup, sweep and root path |
+| *spvar2.ac* | 2 | Two sizes composed, and the variants' root calls with no room in bank 9 |
+| *spsub.ac* | 12 | The words a dismember's or a copy's held instances will call brought into the master store |
+| *sprows.ac* | 9 | `rowCan`: whether a row can act, by item |
 | *spcons.ac* | 8 | The constraint module and solver |
 | *sptext.ac* | 10 | Texts and numbers |
-| *sptruss.ac* | 11 | The truss analysis and readouts |
-| *spfloat.ac* | 11 | The floating point |
+| *sptape.ac* | 11, 6 | Saving and loading pictures, the tape directory and its screen, the masters' picker, the tape's mount, seek, read and write, the tape rows' steps: its kept words and stubs, and the overlay |
+| *splib.ac* | 11, 6 | The library of masters: its kept words, stub and rows' steps, and the overlay |
+| *spplot.ac* | 11, 6 | Plot: its first step and stub, and the overlay, the page on the plotter with its characters' strokes |
+| *spinit.ac* | 11 | Start-up's display gates, the overlays' failure hook |
+| *spcensus.ac* | 11 | `rowCensus`: what the menu's rows act on, counted as a list opens |
+| *sptruss.ac* | 11, 6 | The truss analysis and readouts: its stubs, and the overlay |
+| *spsize.ac* | 11 | The constraints on size: the root runner that brings each master record the resolver wants |
+| *spfloat.ac* | 6 | The floating point, the end of the truss's overlay |
 | *splock.ac* | 11 | The dot, the lock mark, the lit line |
 | *spaux.ac* | 12 | Routines kept out of banks 0 and 4 for room, start-up's first part |
-| *spkbd.ac* | 12 | The pen keyboard, and the directory's screen's touches |
 | *spview.ac* | 12 | The view, clipping, the constraints' arms |
 | *spmarks.ac* | 13 | The constraints' marks |
 | *spsearch.ac* | 13 | The line search |

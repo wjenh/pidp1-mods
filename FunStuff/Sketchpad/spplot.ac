@@ -1,0 +1,2734 @@
+// spplot.ac -- Plot: the drawing on the CalComp plotter, device 73 (Docs/UsingThePlotter.md).
+//
+// Bank 11, after the library. The root part first: Plot's first step, tsPlot, which the tape
+// module's tapeStep gives Plot's row, and the stub plotEntry, to which the library's stub
+// libEntry passes TEPLOT, so that the main bank's tapeCall runs the plot as it runs a tape's
+// entry: the gesture ended first, then the result's word shown, the frame started again and the
+// breaks turned back on. Then the overlay plot, read into the window W, in bank 6, from the drum
+// when it is called (Docs/UsingOverlays.md), every word it uses within one call among it. It
+// runs with the extend window open throughout, so every indirect address is a 16-bit one, reads
+// the drawing's tables in their banks, and calls nothing outside W but the text module's entry
+// (txEntry, bank 10), for the texts' list at x1.
+// Part of sketchpad.am1, included where it stands.
+//
+// The page at x1 is plotted at full size, a plotter step a unit, since Sketchpad's unit is a
+// hundredth of an inch and so is the step: the carriage is x, pen right x up; the drum is y,
+// drum down y up, so the sheet reads as the screen does. The pen starts at the page's (0, 0),
+// where the operator set it, and every plot ends there with the pen up, so the next one draws
+// over it in register. What is drawn is what sketchplot -i draws (Render/sketchplot.c,
+// drawPicture), by its rules: the lines, by Bresenham's steps, each from the end nearer the pen
+// and nearest first, so that lines that meet are drawn without a lift; the arcs, true, by the
+// plotter's steps round the circle; the instances, their masters' vector words; and the texts as
+// the text list shows them at x1, each character's dots joined as sketchplot joins them, by the
+// strokes of the table at the end. Every step goes through a virtual pen: a step with both ends
+// on the page is drawn, the pen taken there first; any other moves the virtual pen only, so an
+// arc or an instance crossing the page's edge is drawn where it is on it, and the carriage never
+// meets its stops.
+//
+// Each command waits for the plotter to be free (cks, PLT_WAIT_READY's bit), and while it waits
+// the screen is kept: the list showing PLOT and STOP is started again whenever it stops, and a
+// pen hit on STOP ends the plot, the pen lifted and taken home. The break system is off
+// throughout, as for the tape's entries. A plotter that does not come ready within PLSTARTMS of
+// the first command, as with no plugin for device 73, gives NO PLOT, nothing drawn.
+
+// Plot's row's first step, from tapeStep with tsItem its item: the plot entry, then nothing more.
+// Exit as tapeStep's: AC = TEPLOT complemented. Reached by jmp, from tapeStep.
+tsPlot,
+    law tsEnd
+    dap tsGo
+    law i TEPLOT
+    jmp i tsRtn
+
+// The plot entry, TEPLOT, from the library's stub libEntry, which jumps here with teStubR set:
+// the overlay's entry, through the manager, which reads it into W first if W holds another.
+// Entry: teStubR = the return address, which carries the main bank. Exit: AC = the overlay's
+// result. IO is clobbered. Reached by jmp, from libEntry.
+plotEntry,
+    %%ovcall plot, plotEntryOv
+    jmp i teStubR
+
+// The overlay plot: the plot (plotEntryOv), with every word it uses within one call, read again
+// from the drum at each load.
+%%overlay plot, W
+    export plotEntryOv
+
+// Plot the page: the plotter started, the pen lifted at the page's (0, 0), then the lines, the
+// arcs, the instances and the texts, then the pen taken home; the status word's text and the
+// name's line under it, blank, written for the result. The break system is turned off first and
+// the display set to the plot's list, off the frame.
+// Entry: AC = the return address, which carries the main bank. Exit: AC = TSPLOTTED, TSSTOPPED
+// (STOP touched) or TSNOPLOT (no plotter); the window open, the display on the plot's list and the
+// break system off. IO is clobbered. Called through the root stub plotEntry, by the manager.
+plotEntryOv,
+    local peWait, peUp
+    dac plRtn
+    lsm
+    lio [plList:.]
+    dla
+    dzm plQuit
+    plnop
+    rck
+    dio plT0
+peWait,
+    cks
+    ril 7s
+    spi                 // skip while the plotter is not ready
+    jmp peUp
+    rck
+    lai
+    sub plT0
+    spa                 // skip unless the clock wrapped since the first command
+    add [CLOCKWRAP]
+    sub [PLSTARTMS]
+    spa                 // skip once PLSTARTMS have passed
+    jmp peWait
+    law TSNOPLOT
+    jmp plDone
+peUp,
+    dzm plPX
+    dzm plPY
+    law 1
+    dac plPD            // the pen taken for down, so that plLift lifts it
+    jsp plLift
+    jsp plLines
+    jsp plArcs
+    jsp plInsts
+    jsp plTexts
+    law TSPLOTTED
+    dac plRes
+
+    // Home, the pen up, after the plot or a stop.
+plHome,
+    jsp plLift
+    dzm plVX
+    dzm plVY
+    jsp plGo
+    lac plRes
+plDone,
+    dac plRes
+    sub [TSPLOTTED]
+    sal 2s
+    add [plMsgs:.]
+    dac plFrom
+    lac [msgText:0]
+    dac plTo
+    law 4
+    jda plMove
+    lac [plBlank:.]
+    dac plFrom
+    lac [msgName:0]
+    dac plTo
+    law NAMEW
+    jda plMove
+    lac plRes
+    jmp i plRtn
+    endloc
+
+// STOP touched while a command waited: the pen lifted and taken home, no more drawn, the
+// screen kept meanwhile but STOP no longer heard. Reached by jmp, from plCmd.
+plAbort,
+    law 1
+    dac plQuit
+    law TSSTOPPED
+    dac plRes
+    jmp plHome
+
+// Give the plotter one command, once it is free. While it is busy the plot's list is started
+// again each time it stops, and a pen hit, which only STOP can take, resumes the list and ends
+// the plot (plAbort) unless it is ending already.
+// Entry: AC = the command, a plotter IOT. AC and IO are clobbered. Called via jda.
+plCmd, 0
+    local pcWait, pcPen, pcGo, pcRtn
+    dap pcRtn
+    lac plCmd
+    dac pcGo
+pcWait,
+    cks
+    ril 7s
+    spi                 // skip while the plotter is busy
+    jmp pcGo
+    t340dss             // skip if the plot's list has stopped
+    jmp pcPen
+    lio [plList:.]
+    dla
+pcPen,
+    dsp                 // skip on a pen hit
+    jmp pcWait
+    drs
+    lac plQuit
+    sza                 // skip unless the plot is ending already
+    jmp pcWait
+    jmp plAbort
+pcGo, 0                 // the command
+pcRtn, jmp .
+    endloc
+
+// One step of the pen, sx and sy each -1, 0 or 1, not both 0: one command (plStT), but for
+// left with the drum down (x -1, y +1), which the plotter takes as two. The pen's place moves
+// with each command once it is given, so that a stop while one waits leaves it true.
+// Entry: AC = sx, IO = sy. AC and IO are clobbered. Called via jda.
+plStep, 0
+    local psRtn, psY, psI, psP, psLast
+    dap psRtn
+    dio psY
+    lac plStep
+    add [1]
+    dac psI
+    add psI
+    add psI
+    add psY
+    add [1]
+    dac psI             // (sx + 1) * 3 + sy + 1
+    add [plStT:.]
+    dac psP
+    lac i psP
+    jda plCmd
+    lac plStep
+    add plPX
+    dac plPX
+    lac psI
+    sas [2]             // skip if left with the drum down: the drum's step after it
+    jmp psLast
+    lac [pldd]
+    jda plCmd
+psLast,
+    lac psY
+    add plPY
+    dac plPY
+psRtn, jmp .
+psY, 0
+psI, 0
+psP, 0
+    endloc
+
+// A step, (sx + 1) * 3 + sy + 1 -> its command: the carriage is x, pen right x up; the drum is y,
+// drum down y up.
+plStT,
+    plpl plud           // x -1, y -1
+    plpl                // x -1
+    plpl                // x -1, y +1, the drum's step after it
+    pldu                // y -1
+    plnop               // none
+    pldd                // y +1
+    plpr pldu           // x +1, y -1
+    plpr                // x +1
+    plpr pldd           // x +1, y +1
+
+// The pen lifted, unless it is up; plPD follows the command once given. AC and IO are
+// clobbered. Called via jsp.
+plLift,
+    dap plLfR
+    lac plPD
+    sza i               // skip if the pen is down
+    jmp plLfR
+    lac [plpu]
+    jda plCmd
+    dzm plPD
+plLfR, jmp .
+
+// The pen lowered, unless it is down; plPD follows the command once given. AC and IO are
+// clobbered. Called via jsp.
+plDown,
+    dap plDnR
+    lac plPD
+    sza                 // skip if the pen is up
+    jmp plDnR
+    lac [plpd]
+    jda plCmd
+    law 1
+    dac plPD
+plDnR, jmp .
+
+// The sign of a value. Entry: AC, never -0. Exit: AC = 1, 0 or -1. IO preserved. Called via jda.
+plSgn, 0
+    local sgRtn, sgMinus
+    dap sgRtn
+    lac plSgn
+    sza i               // skip unless 0
+    jmp sgRtn
+    spa                 // skip if positive
+    jmp sgMinus
+    law 1
+    jmp sgRtn
+sgMinus,
+    law i 1
+sgRtn, jmp .
+    endloc
+
+// The pen lifted and taken to the virtual pen's place (plVX, plVY): diagonally while both axes
+// differ, then along the one that still does. AC and IO are clobbered. Called via jsp.
+plGo,
+    local pgRtn, pgLp, pgStep, pgSX
+    dap pgRtn
+    jsp plLift
+pgLp,
+    lac plVX
+    sub plPX
+    jda plSgn
+    dac pgSX
+    lac plVY
+    sub plPY
+    jda plSgn
+    lia
+    sza                 // skip if there in y
+    jmp pgStep
+    lac pgSX
+    sza i               // skip unless there in x too
+    jmp pgRtn
+pgStep,
+    lac pgSX
+    jda plStep
+    jmp pgLp
+pgRtn, jmp .
+pgSX, 0
+    endloc
+
+// Whether a coordinate lies off the page, 0 to PLPAGE. Entry: AC. Exit: AC = 0 on the page, 1 off
+// it. IO preserved. Called via jda.
+plOff, 0
+    local pfRtn, pfOut
+    dap pfRtn
+    lac plOff
+    spa                 // skip unless below the page
+    jmp pfOut
+    sub [PLPAGE + 1]
+    sma                 // skip if on the page
+    jmp pfOut
+    cla
+    jmp pfRtn
+pfOut,
+    law 1
+pfRtn, jmp .
+    endloc
+
+// The pen down at the virtual pen's place, taken there first (plGo) if it is elsewhere.
+// AC and IO are clobbered. Called via jsp.
+plAt,
+    local paRtn, paGo, paDown
+    dap paRtn
+    lac plPX
+    sas plVX            // skip if the pen is there across
+    jmp paGo
+    lac plPY
+    sas plVY            // skip if it is there
+    jmp paGo
+    jmp paDown
+paGo,
+    jsp plGo
+paDown,
+    jsp plDown
+paRtn, jmp .
+    endloc
+
+// A dot at the virtual pen's place, if it is on the page. AC and IO are clobbered. Called via
+// jsp.
+plDot,
+    dap plDtR
+    lac plVX
+    jda plOff
+    sza                 // skip if on the page across
+    jmp plDtR
+    lac plVY
+    jda plOff
+    sza                 // skip if on it
+    jmp plDtR
+    jsp plAt
+plDtR, jmp .
+
+// A step of the virtual pen, drawn when both its ends are on the page, the pen taken down to its
+// start first (plAt); otherwise only the virtual pen moves.
+// Entry: AC = dx, IO = dy, each -1, 0 or 1. AC and IO are clobbered. Called via jda.
+plInk, 0
+    local pkRtn, pkMove, pkY, pkNX, pkNY
+    dap pkRtn
+    dio pkY
+    lac plVX
+    add plInk
+    dac pkNX
+    lac plVY
+    add pkY
+    dac pkNY
+    lac plVX
+    jda plOff
+    sza                 // skip if on the page
+    jmp pkMove
+    lac plVY
+    jda plOff
+    sza                 // skip if on the page
+    jmp pkMove
+    lac pkNX
+    jda plOff
+    sza                 // skip if on the page
+    jmp pkMove
+    lac pkNY
+    jda plOff
+    sza                 // skip if on the page
+    jmp pkMove
+    jsp plAt
+    lac plInk
+    lio pkY
+    jda plStep
+pkMove,
+    lac pkNX
+    dac plVX
+    lac pkNY
+    dac plVY
+pkRtn, jmp .
+pkY, 0
+pkNX, 0
+pkNY, 0
+    endloc
+
+// A line from (plAX, plAY) to (plBX, plBY), by sketchplot's steps (pixelLine, Bresenham's):
+// its first point a dot, then a step at a time, x where twice the error is at least -dy, y where
+// it is at most dx, both a diagonal. AC and IO are clobbered. Called via jsp.
+plLine,
+    local plnRtn, plnLp, plnStep, plnNoX, plnNoY
+    dap plnRtn
+    lac plAX
+    dac plVX
+    lac plAY
+    dac plVY
+    jsp plDot
+    lac plBX
+    sub plAX
+    dac lnDX
+    jda plSgn
+    dac lnSX
+    lac lnDX
+    spa                 // skip unless negative
+    cma
+    dac lnDX            // |dx|
+    lac plBY
+    sub plAY
+    dac lnDY
+    jda plSgn
+    dac lnSY
+    lac lnDY
+    spa                 // skip unless negative
+    cma
+    dac lnDY
+    cla
+    sub lnDY
+    dac lnDY            // -|dy|
+    add lnDX
+    dac lnErr
+plnLp,
+    lac plVX
+    sas plBX            // skip if at the end across
+    jmp plnStep
+    lac plVY
+    sad plBY            // skip unless at the end
+    jmp plnRtn
+plnStep,
+    lac lnErr
+    add lnErr
+    dac lnE2
+    dzm lnMX
+    dzm lnMY
+    sub lnDY
+    spa                 // skip if twice the error is at least -dy
+    jmp plnNoX
+    lac lnErr
+    add lnDY
+    dac lnErr
+    lac lnSX
+    dac lnMX
+plnNoX,
+    lac lnDX
+    sub lnE2
+    spa                 // skip if twice the error is at most dx
+    jmp plnNoY
+    lac lnErr
+    add lnDX
+    dac lnErr
+    lac lnSY
+    dac lnMY
+plnNoY,
+    lac lnMX
+    lio lnMY
+    jda plInk
+    jmp plnLp
+plnRtn, jmp .
+    endloc
+
+// Whether point index p names a point, one of the first pointCount. Entry: AC = p. Exit: AC = 0
+// it does, 1 it does not (NOPOINT, -0, among them). IO preserved. Called via jda.
+plPtOk, 0
+    local poRtn, poNo
+    dap poRtn
+    lac plPtOk
+    spa                 // skip unless negative
+    jmp poNo
+    sub i [pointCount:4]
+    sma                 // skip if below the count
+    jmp poNo
+    cla
+    jmp poRtn
+poNo,
+    law 1
+poRtn, jmp .
+    endloc
+
+// Point p's place. Entry: AC = p, a point. Exit: AC = x, IO = y. Called via jda.
+plPt, 0
+    local ppRtn, ppP
+    dap ppRtn
+    lac plPt
+    add [pointY:3]
+    dac ppP
+    lio i ppP
+    lac plPt
+    add [pointX:3]
+    dac ppP
+    lac i ppP
+ppRtn, jmp .
+ppP, 0
+    endloc
+
+// The distance from the virtual pen to (x, y) in the plotter's time, the larger of the two
+// axes' distances. Entry: AC = x, IO = y. Exit: AC = the distance. IO is clobbered. Called via
+// jda.
+plDist, 0
+    local pdRtn, pdY
+    dap pdRtn
+    dio pdY
+    lac plDist
+    sub plVX
+    spa                 // skip unless negative
+    cma
+    dac plDist
+    lac pdY
+    sub plVY
+    spa                 // skip unless negative
+    cma
+    sub plDist
+    spa                 // skip if the y distance is the larger
+    cla
+    add plDist
+pdRtn, jmp .
+pdY, 0
+    endloc
+
+// The lines, each from its end nearer the pen, the nearest next: lines that meet are drawn one
+// after another with no lift. A line whose point is not one is passed over, as sketchplot does.
+// lnDone marks those drawn. AC and IO are clobbered. Called via jsp.
+plLines,
+    local llRtn, llClr, llBad, llNext, llDraw, llSrch, llLoop, llSkip, llTo, llFound, llBest, llK
+    addlocal llRev
+    addlocal llP, llA, llB
+    dap llRtn
+    dzm llK
+llClr,
+    lac llK
+    sad i [lineCount:4] // skip while lines remain
+    jmp llSrch
+    add [lnDone:.]
+    dac llP
+    dzm i llP
+    lac llK
+    add [lineFrom:3]
+    dac llA
+    lac i llA
+    jda plPtOk
+    sza                 // skip if a point
+    jmp llBad
+    lac llK
+    add [lineTo:3]
+    dac llA
+    lac i llA
+    jda plPtOk
+    sza                 // skip if a point
+llBad,
+    idx i llP           // passed over
+    idx llK
+    jmp llClr
+
+    // The line with an end nearest the pen, and which end.
+llSrch,
+    lac [0377777]
+    dac llBest
+    law i 1
+    dac llFound
+    dzm llK
+llLoop,
+    lac llK
+    sad i [lineCount:4] // skip while lines remain
+    jmp llNext
+    add [lnDone:.]
+    dac llP
+    lac i llP
+    sza                 // skip unless drawn or passed over
+    jmp llSkip
+    lac llK
+    add [lineFrom:3]
+    dac llA
+    lac i llA
+    jda plPt
+    jda plDist
+    sub llBest
+    sma                 // skip if nearer than the best
+    jmp llTo
+    add llBest
+    dac llBest
+    lac llK
+    dac llFound
+    dzm llRev
+llTo,
+    lac llK
+    add [lineTo:3]
+    dac llA
+    lac i llA
+    jda plPt
+    jda plDist
+    sub llBest
+    sma                 // skip if nearer than the best
+    jmp llSkip
+    add llBest
+    dac llBest
+    lac llK
+    dac llFound
+    law 1
+    dac llRev
+llSkip,
+    lac llBest
+    sza i               // skip unless an end is at the pen
+    jmp llNext
+    idx llK
+    jmp llLoop
+
+    // Draw it, from the nearer end.
+llNext,
+    lac llFound
+    spa                 // skip if a line was found
+    jmp llRtn
+    add [lnDone:.]
+    dac llP
+    idx i llP
+    lac llFound
+    add [lineFrom:3]
+    dac llA
+    lac llFound
+    add [lineTo:3]
+    dac llB
+    lac llRev
+    sza i               // skip if from its to end
+    jmp llDraw
+    lac llA
+    lio llB
+    dio llA
+    dac llB
+llDraw,
+    lac i llA
+    jda plPt
+    dac plAX
+    dio plAY
+    lac i llB
+    jda plPt
+    dac plBX
+    dio plBY
+    jsp plLine
+    jmp llSrch
+llRtn, jmp .
+llBest, 0
+llFound, 0
+llK, 0
+llRev, 0
+llP, 0
+llA, 0
+llB, 0
+    endloc
+
+// The arcs, in the table's order: each whose three points are points and whose direction is 1
+// or -1 (plArc). AC and IO are clobbered. Called via jsp.
+plArcs,
+    local paRtn, paLp, paDraw, paNext, paP, paK
+    dap paRtn
+    dzm paK
+paLp,
+    lac paK
+    sad i [arcCount:2]  // skip while arcs remain
+    jmp paRtn
+    add [arcTC:2]
+    dac paP
+    lac i paP
+    dac arCI
+    jda plPtOk
+    sza                 // skip if a point
+    jmp paNext
+    lac paK
+    add [arcTS:2]
+    dac paP
+    lac i paP
+    dac arSI
+    jda plPtOk
+    sza                 // skip if a point
+    jmp paNext
+    lac paK
+    add [arcTE:2]
+    dac paP
+    lac i paP
+    dac arEI
+    jda plPtOk
+    sza                 // skip if a point
+    jmp paNext
+    lac paK
+    add [arcTD:2]
+    dac paP
+    lac i paP
+    dac arD
+    sad [1]             // skip unless counterclockwise
+    jmp paDraw
+    sas [0777776]       // skip if clockwise, -1
+    jmp paNext
+paDraw,
+    jsp plArc
+paNext,
+    idx paK
+    jmp paLp
+paRtn, jmp .
+paP, 0
+paK, 0
+    endloc
+
+// Arc arCI, arSI, arEI in direction arD, drawn true, as sketchplot's drawArc does: from the start
+// round the circle through the start, about the center, the way the arc turns, to the end's
+// direction (a full turn when the end is the start), then a line on to the end itself, should it
+// lie off the circle. Each step is the one of the eight, moving the way the arc turns, that
+// leaves the point nearest the circle: (u, v) the point from the center, err = u^2 + v^2 - r^2,
+// a step's change in it 2u dx + 1 for x and 2v dy + 1 for y. The end's direction is crossed
+// where u ey - v ex, the end (ex, ey) from the center taken the way the arc turns, turns from
+// positive to not, on the end's side of the center (u, or v, the sign of the end's larger
+// axis); it is kept as arCH * 65536 + arCL, arCL 0 to 65535, its step dx ey - dy ex. Never more
+// than six times |u| + |v| steps, a turn and more.
+// AC and IO are clobbered. Called via jsp.
+plArc,
+    local acRtn, acGo, acLp, acCand, acCNext, acCar, acBor, acCDone, acSide, acOut, acEnd, acNoSw
+    addlocal acNoSwV, acNext, acLine, acX, acY
+    dap acRtn
+    lac arCI
+    jda plPt
+    dac acX
+    dio acY
+    lac arSI
+    jda plPt
+    dac plVX
+    dio plVY
+    sub acX
+    dac arU
+    lac plVY
+    sub acY
+    dac arV
+    sza                 // skip if the start is level with the center
+    jmp acGo
+    lac arU
+    sza i               // skip unless the start is the center
+    jmp acRtn
+acGo,
+    jsp plDot
+    lac arEI
+    jda plPt
+    dac plBX
+    dio plBY
+    lac plBY
+    sub acY
+    dac arEY
+    lac plBX
+    sub acX
+    dac arEX
+
+    // The end's side: the sign of its larger axis, and which of u and v to test.
+    spa                 // skip unless negative
+    cma
+    dac arT
+    lac arEY
+    spa                 // skip unless negative
+    cma
+    sub arT
+    sma                 // skip if |ex| is the larger
+    jmp acSide
+    lac [arU:.]
+    dac arSW
+    lac arEX
+    jda plSgn
+    dac arSS
+    jmp acOut
+acSide,
+    lac [arV:.]
+    dac arSW
+    lac arEY
+    jda plSgn
+    dac arSS
+acOut,
+
+    // The end taken the way the arc turns, and the words the steps read.
+    lac arEX
+    dac arCEX
+    lac arEY
+    dac arCEY
+    lac arD
+    sma                 // skip if clockwise
+    jmp acNoSw
+    cla
+    sub arCEX
+    dac arCEX
+    cla
+    sub arCEY
+    dac arCEY
+acNoSw,
+    cla
+    sub arCEX
+    dac arNCX
+    cla
+    sub arCEY
+    dac arNCY
+
+    // u ey - v ex, the cross product, from two products.
+    lac arU
+    lio arCEY
+    jda plMul
+    lac plMH
+    dac arCH
+    lac plML
+    dac arCL
+    cla
+    sub arV
+    lio arCEX
+    jda plMul
+    lac arCL
+    add plML
+    dac arCL
+    lac arCH
+    add plMH
+    dac arCH
+    lac arCL
+    sub [0200000]
+    spa                 // skip if 65536 or more
+    jmp acCDone
+    dac arCL
+    idx arCH
+acCDone,
+    jsp arPos
+    dac arWas
+    dzm arErr
+
+    // The steps' limit.
+    lac arU
+    spa                 // skip unless negative
+    cma
+    dac arT
+    lac arV
+    spa                 // skip unless negative
+    cma
+    add arT
+    dac arT
+    add arT
+    add arT
+    sal 1s
+    add [0d16]
+    cma
+    dac arN
+
+    // A step: the terms for each direction, then the one nearest the circle among those that move
+    // the way the arc turns.
+acLp,
+    lac arU
+    add arU
+    add [1]
+    dac arA1
+    law 1
+    sub arU
+    sub arU
+    dac arA2
+    lac arV
+    add arV
+    add [1]
+    dac arB1
+    law 1
+    sub arV
+    sub arV
+    dac arB2
+    lac arU
+    dac arDU
+    cla
+    sub arU
+    dac arDNU
+    lac arV
+    dac arDV
+    cla
+    sub arV
+    dac arDNV
+    lac arD
+    sma                 // skip if clockwise, the progress the other way
+    jmp acNoSwV
+    lac arDU
+    lio arDNU
+    dac arDNU
+    dio arDU
+    lac arDV
+    lio arDNV
+    dac arDNV
+    dio arDV
+acNoSwV,
+    lac [0377777]
+    dac arBA
+    dzm arJ
+    law i 0d8
+    dac arJN
+acCand,
+    lac arJ
+    add [arYP:.]
+    jda arGet
+    dac arT
+    lac arJ
+    add [arXP:.]
+    jda arGet
+    add arT
+    spa                 // skip unless it moves against the arc's way
+    jmp acCNext
+    sza i               // skip unless it moves along the radius
+    jmp acCNext
+    lac arJ
+    add [arXE:.]
+    jda arGet
+    add arErr
+    dac arT
+    lac arJ
+    add [arYE:.]
+    jda arGet
+    add arT
+    dac arT
+    spa                 // skip unless negative
+    cma
+    sub arBA
+    sma                 // skip if nearer the circle than the best
+    jmp acCNext
+    add arBA
+    dac arBA
+    lac arT
+    dac arBE
+    lac arJ
+    dac arBJ
+acCNext,
+    idx arJ
+    isp arJN            // skip once every direction is tried
+    jmp acCand
+
+    // The step taken.
+    lac arBE
+    dac arErr
+    lac arBJ
+    add [plDX:.]
+    dac arT
+    lac i arT
+    dac arMX
+    add arU
+    dac arU
+    lac arBJ
+    add [plDY:.]
+    dac arT
+    lac i arT
+    dac arMY
+    add arV
+    dac arV
+    lac arMX
+    lio arMY
+    jda plInk
+
+    // The cross product moved on.
+    lac arBJ
+    add [arXC:.]
+    jda arGet
+    add arCL
+    dac arCL
+    lac arBJ
+    add [arYC:.]
+    jda arGet
+    add arCL
+    dac arCL
+    spa                 // skip unless below 0
+    jmp acBor
+    sub [0200000]
+    sma                 // skip if below 65536
+    jmp acCar
+    jmp acEnd
+acBor,
+    add [0200000]
+    dac arCL
+    lac arCH
+    sub [1]
+    dac arCH
+    jmp acEnd
+acCar,
+    dac arCL
+    idx arCH
+
+    // The end's direction crossed, or the limit reached.
+acEnd,
+    jsp arPos
+    lio arWas
+    dac arWas
+    lai
+    sza i               // skip if the cross product was positive
+    jmp acNext
+    lac arWas
+    sza                 // skip if it is not now
+    jmp acNext
+    lac i arSW
+    jda plSgn
+    sas arSS            // skip if on the end's side of the center
+    jmp acNext
+    jmp acLine
+acNext,
+    isp arN             // skip once the limit is reached
+    jmp acLp
+
+    // On to the end itself.
+acLine,
+    lac plVX
+    dac plAX
+    lac plVY
+    dac plAY
+    jsp plLine
+acRtn, jmp .
+acX, 0
+acY, 0
+    endloc
+
+// Whether the arc's cross product is positive. Exit: AC = 1 positive, 0 not. IO preserved.
+// Called via jsp.
+arPos,
+    local apRtn, apHi, apNo
+    dap apRtn
+    lac arCH
+    sza                 // skip if its high part is 0
+    jmp apHi
+    lac arCL
+    sza i               // skip unless its low part is 0 too
+    jmp apNo
+    law 1
+    jmp apRtn
+apHi,
+    spa                 // skip if positive
+    jmp apNo
+    law 1
+    jmp apRtn
+apNo,
+    cla
+apRtn, jmp .
+    endloc
+
+// The word a table's entry names. Entry: AC = the entry's 16-bit address. Exit: AC = the word
+// its entry's address names. IO preserved. Called via jda.
+arGet, 0
+    dap agRtn
+    lac i arGet
+    dac arGet
+    lac i arGet
+agRtn, jmp .
+
+// The product of two values, each within 077777, as plMH * 65536 + plML, plML 0 to 65535.
+// Entry: AC = a, IO = b. IO is clobbered. Called via jda.
+plMul, 0
+    local pmRtn, pmB, pmNeg, pmT, pmA, pmGo, pmZero
+    dap pmRtn
+    dio pmB
+    dzm pmNeg
+    lac plMul
+    sma                 // skip if negative
+    jmp pmA
+    cma
+    dac plMul
+    law 1
+    dac pmNeg
+pmA,
+    lac pmB
+    sma                 // skip if negative
+    jmp pmGo
+    cma
+    dac pmB
+    lac pmNeg
+    xor [1]
+    dac pmNeg
+pmGo,
+    lac plMul
+    mul pmB
+    scr 1s              // AC:IO the product
+    dio pmT
+    scl 2s
+    dac plMH            // the product over 65536
+    lac pmT
+    and [0177777]
+    dac plML
+    lac pmNeg
+    sza i               // skip if the product is negative
+    jmp pmRtn
+    lac plML
+    sza i               // skip unless its low part is 0
+    jmp pmZero
+    cla
+    sub plML
+    add [0200000]
+    dac plML
+    cla
+    sub plMH
+    sub [1]
+    dac plMH
+    jmp pmRtn
+pmZero,
+    cla
+    sub plMH
+    dac plMH
+pmRtn, jmp .
+pmB, 0
+pmNeg, 0
+pmT, 0
+    endloc
+
+// The eight directions, east first, counterclockwise: a step's dx and dy; then, for the arcs,
+// which of the step's words each term reads: its change in the error on x and on y, its progress
+// the way the arc turns (u dy - v dx, so dir u for dy and -dir v for dx), and its change in the
+// cross product (dx ey - dy ex).
+plDX,
+    1
+    1
+    0
+    -1
+    -1
+    -1
+    0
+    1
+plDY,
+    0
+    1
+    1
+    1
+    0
+    -1
+    -1
+    -1
+arXE,
+    arA1:.
+    arA1:.
+    arZ:.
+    arA2:.
+    arA2:.
+    arA2:.
+    arZ:.
+    arA1:.
+arYE,
+    arZ:.
+    arB1:.
+    arB1:.
+    arB1:.
+    arZ:.
+    arB2:.
+    arB2:.
+    arB2:.
+arXP,
+    arDNV:.
+    arDNV:.
+    arZ:.
+    arDV:.
+    arDV:.
+    arDV:.
+    arZ:.
+    arDNV:.
+arYP,
+    arZ:.
+    arDU:.
+    arDU:.
+    arDU:.
+    arZ:.
+    arDNU:.
+    arDNU:.
+    arDNU:.
+arXC,
+    arCEY:.
+    arCEY:.
+    arZ:.
+    arNCY:.
+    arNCY:.
+    arNCY:.
+    arZ:.
+    arCEY:.
+arYC,
+    arZ:.
+    arNCX:.
+    arNCX:.
+    arNCX:.
+    arZ:.
+    arCEX:.
+    arCEX:.
+    arCEX:.
+
+// The instances, each its master's vector words from its origin at its size, a word with the
+// beam on a line and one with it off a move, to the word carrying end; an instance whose master
+// has no words, or none in the store, is passed over. AC and IO are clobbered. Called via jsp.
+plInsts,
+    local piRtn, piLp, piNext, piWd, piRight, piUp, piMove, piReg1, piGo, piK, piP, piN, piW
+    addlocal piSh, piX, piY, piM
+    dap piRtn
+    dzm piK
+piLp,
+    lac piK
+    sad i [instCount:012] // skip while instances remain
+    jmp piRtn
+    add [iMaster:012]
+    dac piP
+    lac i piP
+    dac piM
+    spa                 // skip unless negative
+    jmp piNext
+    sub [NMASTER]
+    sma                 // skip if a master
+    jmp piNext
+    lac piM
+    add [mLen:5]
+    dac piP
+    lac i piP
+    sza i               // skip if it has words
+    jmp piNext
+    cma
+    dac piN
+    lac piK
+    dac i [vaOf:011]
+    jsp i [vaOf:011+1]
+    sad [MNOPOOL]       // skip if in the store
+    jmp piNext
+    sub [MPOOL0]
+    sma                 // skip if in region 0
+    jmp piReg1
+    add [MPOOL0]
+    add [masters:0]
+    jmp piGo
+piReg1,
+    add [mpool1:1]
+piGo,
+    dac piW
+    lac piK
+    add [iScale:3]
+    dac piP
+    lac i piP
+    and [3]
+    add [plShTab:.]
+    dac piP
+    lac i piP
+    dac piSh
+    lac piK
+    add [iX:3]
+    dac piP
+    lac i piP
+    dac piX
+    lac piK
+    add [iY:3]
+    dac piP
+    lac i piP
+    dac piY
+
+    // Each word: its dx and dy at the instance's size, then a line or a move.
+piWd,
+    lac piX
+    dac plAX
+    lac piY
+    dac plAY
+    lac i piW
+    and [0177]
+    xct piSh
+    dac plBX
+    lac i piW
+    and [left]
+    sza i               // skip if leftward
+    jmp piRight
+    cla
+    sub plBX
+    dac plBX
+piRight,
+    lac plBX
+    add piX
+    dac plBX
+    dac piX
+    lac i piW
+    sar 8s
+    and [0177]
+    xct piSh
+    dac plBY
+    lac i piW
+    and [down]
+    sza i               // skip if downward
+    jmp piUp
+    cla
+    sub plBY
+    dac plBY
+piUp,
+    lac plBY
+    add piY
+    dac plBY
+    dac piY
+    lac i piW
+    and [visible]
+    sza i               // skip if the beam is on
+    jmp piMove
+    jsp plLine
+piMove,
+    lac i piW
+    spa                 // skip unless it carries end
+    jmp piNext
+    idx piW
+    isp piN             // skip once every word is read
+    jmp piWd
+piNext,
+    idx piK
+    jmp piLp
+piRtn, jmp .
+piK, 0
+piP, 0
+piN, 0
+piW, 0
+piSh, 0
+piX, 0
+piY, 0
+piM, 0
+    endloc
+
+// A scale's shift, x1 to x8, for xct.
+plShTab,
+    nop
+    sal 1s
+    sal 2s
+    sal 3s
+
+// The texts, as the text list shows them at x1: the list written by the text module's txSync
+// into the buffer not shown, with the view held at x1 and the list taken as changed and two
+// frames old, then every word saved put back, the list marked changed so that the next pass
+// writes it again for the view; then each text's parameter, y and x words and its characters
+// plotted. The frame is not running, the display showing the plot's list, so neither buffer is
+// being read. AC and IO are clobbered. Called via jsp.
+plTexts,
+    local ptRtn, ptSave, ptPut, ptLp, ptChars, ptCode, ptNext, ptUp, ptLow, ptDraw, ptP, ptK
+    addlocal ptW, ptJ
+    dap ptRtn
+    dzm ptK
+ptSave,
+    lac ptK
+    add [ptAt:.]
+    jda arGet
+    dac ptW
+    lac ptK
+    add [ptOld:.]
+    dac ptP
+    lac ptW
+    dac i ptP
+    idx ptK
+    sas [PLTXWORDS]       // skip once every word is saved
+    jmp ptSave
+    dzm i [vwS:014]
+    dzm i [vwOutX:014]
+    dzm i [vwOutY:014]
+    lac [0d1024]
+    dac i [vwTopP:014]
+    law 1
+    dac i [txDirty:012]
+    lac i [frameTotal:4]
+    sub [2]
+    dac i [txHeld:012]
+    lio [TXSYNC]
+    jsp i [txEntry:012]
+    lac i [txGo:0]
+    dac ptP
+    dzm ptK
+ptPut,
+    lac ptK
+    add [ptAt:.]
+    dac ptW
+    lac i ptW
+    dac ptW
+    lac ptK
+    add [ptOld:.]
+    dac ptJ
+    lac i ptJ
+    dac i ptW
+    idx ptK
+    sas [PLTXWORDS]       // skip once every word is put back
+    jmp ptPut
+    law 1
+    dac i [txDirty:012]
+    lac ptP
+    sza i               // skip if the list holds a text
+    jmp ptRtn
+
+    // Each text: its parameter word's scale, its y and x words, then its characters.
+ptLp,
+    lac i ptP
+    sad [lpoff halt interrupt] // skip unless the list's end
+    jmp ptRtn
+    sar 4s
+    and [3]
+    dac plCS
+    add [plShTab:.]
+    dac ptJ
+    lac i ptJ
+    dac plGSh
+    idx ptP
+    lac i ptP
+    and [01777]
+    dac plCY
+    idx ptP
+    lac i ptP
+    and [01777]
+    dac plCX
+    idx ptP
+    dzm plCSet
+ptChars,
+    lac i ptP
+    dac ptW
+    idx ptP
+    law i 3
+    dac ptJ
+ptCode,
+    lac ptW
+    rcl 6s              // the next code into IO's low bits, from the word's top
+    dac ptW
+    lai
+    and [077]
+    sad [KCEND]         // skip unless the text's end
+    jmp ptLp
+    sad [KCUP]          // skip unless the upper shift
+    jmp ptUp
+    sad [KCLOW]         // skip unless the lower shift
+    jmp ptLow
+    sad [033]           // skip unless a code that draws nothing
+    jmp ptNext
+    sad [034]           // skip unless a code that draws nothing
+    jmp ptNext
+    jda plChar
+    law 7
+    xct plGSh
+    add plCX
+    dac plCX
+    jmp ptNext
+ptUp,
+    dzm plCSet
+    jmp ptNext
+ptLow,
+    law 1
+    dac plCSet
+ptNext,
+    isp ptJ             // skip once the word's three codes are read
+    jmp ptCode
+    jmp ptChars
+ptRtn, jmp .
+ptP, 0
+ptK, 0
+ptW, 0
+ptJ, 0
+    endloc
+
+// The words plTexts saves and puts back: the view's (bank 12) and the text list's (bank 10, and
+// txGo in bank 0).
+ptAt,
+    vwS:014
+    vwOutX:014
+    vwOutY:014
+    vwTopP:014
+    txDirty:012
+    txHeld:012
+    txBufSel:012
+    txShown:012
+    txGo:0
+ptOld,
+    table PLTXWORDS, 0
+
+// Character code c of set plCSet, its first dot's lower left at (plCX, plCY), at scale plCS: its
+// strokes from the table (plGlyph, plStroke), each a new stroke's first dot, then steps of a dot,
+// 2^plCS units each, with the pen down.
+// Entry: AC = c. AC and IO are clobbered. Called via jda.
+plChar, 0
+    local pcRtn, pcLp, pcNew, pcStep
+    dap pcRtn
+    lac plCSet
+    sal 6s
+    add plChar
+    add [plGlyph:.]
+    dac plGT
+    lac i plGT
+    add [plStroke:.]
+    dac plGP
+    dzm plGN
+    law 1
+    xct plGSh
+    dac plGM
+pcLp,
+    jsp plNib
+    sad [017]           // skip unless the end
+    jmp pcRtn
+    sad [010]           // skip unless a new stroke
+    jmp pcNew
+    dac plGD
+    lac plGM
+    cma
+    dac plGC
+pcStep,
+    lac plGD
+    add [plDY:.]
+    dac plGT
+    lio i plGT
+    lac plGD
+    add [plDX:.]
+    dac plGT
+    lac i plGT
+    jda plInk
+    isp plGC            // skip once the step's units are drawn
+    jmp pcStep
+    jmp pcLp
+pcNew,
+    jsp plNib
+    xct plGSh
+    add plCX
+    dac plVX
+    jsp plNib
+    xct plGSh
+    add plCY
+    sub plGM
+    sub plGM
+    dac plVY
+    jsp plDot
+    jmp pcLp
+pcRtn, jmp .
+    endloc
+
+// The next code of a character's strokes, from the word plGP names, four to a word from its top.
+// Exit: AC = the code. IO preserved. Called via jsp.
+plNib,
+    local pnRtn, pnNext
+    dap pnRtn
+    lac plGN
+    sza                 // skip once the word's codes are used
+    jmp pnNext
+    lac i plGP
+    dac plGW
+    idx plGP
+    law 4
+pnNext,
+    sub [1]
+    dac plGN
+    lac plGW
+    ral 4s
+    dac plGW
+    and [017]
+pnRtn, jmp .
+    endloc
+
+// Copy AC words from plFrom to plTo, 16-bit addresses, leaving each past its run.
+// AC is clobbered, IO preserved. Called via jda.
+plMove, 0
+    local pmvRtn, pmvLp
+    dap pmvRtn
+    lac plMove
+    cma
+    dac plN
+pmvLp,
+    lac i plFrom
+    dac i plTo
+    idx plFrom
+    idx plTo
+    isp plN             // skip once every word is copied
+    jmp pmvLp
+pmvRtn, jmp .
+    endloc
+
+// The status word's texts for the results, TSPLOTTED on, a status word's four words each; and
+// the name's line under it, blank.
+plMsgs,
+    type340 "PLOTTED  "
+    type340 "STOPPED  "
+    type340 "NO PLOT  "
+plBlank,
+    table NAMEW - 1, KBPAD
+    KBBLANK
+
+// The screen while the plot runs: PLOT, and under it STOP, which the pen may touch; a list that
+// ends in a halt, started again by plCmd each time it stops, since the 340 jumps only within
+// banks 0 and 1.
+plList, PLOTPARAM
+    y(PLOTY) next(point)
+    x(PLOTX) next(character)
+    type340 "PLOT"
+    PLSTOPPARAM
+    y(PLSTOPY) next(point)
+    x(PLOTX) next(character)
+    type340 "STOP"
+    lpoff halt
+
+// The plot's words.
+plRtn, 0                // the entry's return
+plRes, 0                // the result
+plQuit, 0               // set once the plot is ending, STOP touched
+plT0, 0                 // the clock at the first command
+plPX, 0                 // the pen's place on the page
+plPY, 0
+plPD, 0                 // 1 while the pen is down
+plVX, 0                 // the virtual pen's place
+plVY, 0
+plAX, 0                 // a line's ends (plLine)
+plAY, 0
+plBX, 0
+plBY, 0
+plMH, 0                 // a product (plMul)
+plML, 0
+plFrom, 0               // a copy's run (plMove)
+plTo, 0
+plN, 0
+lnDX, 0                 // a line's steps (plLine)
+lnDY, 0
+lnSX, 0
+lnSY, 0
+lnErr, 0
+lnE2, 0
+lnMX, 0
+lnMY, 0
+arCI, 0                 // an arc's center, start and end points, and its direction (plArc)
+arSI, 0
+arEI, 0
+arD, 0
+arU, 0                  // the point from the center
+arV, 0
+arEX, 0                 // the end from the center
+arEY, 0
+arCEX, 0                // the end taken the way the arc turns, and its negatives
+arCEY, 0
+arNCX, 0
+arNCY, 0
+arCH, 0                 // the cross product, arCH * 65536 + arCL
+arCL, 0
+arWas, 0                // 1 while it was positive
+arSW, 0                 // u's or v's address, for the end's side, and the side's sign
+arSS, 0
+arErr, 0                // the error, u^2 + v^2 - r^2
+arN, 0                  // the steps' limit, negative
+arT, 0
+arJ, 0                  // the direction tried, and the count of those to go
+arJN, 0
+arBA, 0                 // the best direction's error's size, its error and its number
+arBE, 0
+arBJ, 0
+arMX, 0                 // the step taken
+arMY, 0
+arZ, 0                  // a step's terms (arXE to arYC)
+arA1, 0
+arA2, 0
+arB1, 0
+arB2, 0
+arDU, 0
+arDNU, 0
+arDV, 0
+arDNV, 0
+plCX, 0                 // a character's place, scale, scale's shift and set
+plCY, 0
+plCS, 0
+plGSh, 0
+plCSet, 0
+plGP, 0                 // its strokes' next word, the codes left in the word, the word
+plGN, 0
+plGW, 0
+plGM, 0                 // a dot's units, and a step's direction, units to go, and entry
+plGD, 0
+plGC, 0
+plGT, 0
+lnDone,                 // each line, nonzero once drawn or passed over (plLines)
+    table MAXLINES, 0
+
+// The strokes' table, written by Tests/plot_glyphs.py from Render/sketchplot.c's glyphs;
+// written again from them, never edited.
+plGlyph,
+    01
+    013
+    023
+    033
+    037
+    046
+    056
+    065
+    073
+    0103
+    0110
+    0114
+    0123
+    0127
+    0137
+    0150
+    0155
+    0163
+    0173
+    0203
+    0210
+    0215
+    0222
+    0226
+    0236
+    0243
+    0247
+    00
+    00
+    00
+    00
+    00
+    00
+    0260
+    0263
+    0266
+    0302
+    0313
+    0324
+    0333
+    0336
+    0341
+    0344
+    0353
+    0360
+    0364
+    0366
+    0371
+    0373
+    0403
+    0410
+    0416
+    0424
+    0433
+    0441
+    0447
+    0454
+    0462
+    0470
+    0476
+    0504
+    0507
+    0513
+    0516
+    0523
+    0535
+    0542
+    0551
+    0555
+    0564
+    0573
+    0600
+    0606
+    0614
+    0621
+    0625
+    0634
+    0640
+    0646
+    0653
+    0657
+    0666
+    0675
+    0701
+    0705
+    0712
+    0717
+    0722
+    0730
+    0734
+    0743
+    00
+    00
+    00
+    00
+    00
+    00
+    0752
+    01010
+    01046
+    01050
+    01106
+    01144
+    01151
+    01156
+    01163
+    01170
+    01172
+    01177
+    01204
+    01207
+    01212
+    01250
+    01252
+    01310
+    01313
+    01351
+    01407
+    01445
+    01447
+    01451
+    01507
+    00
+    00
+    01545
+    01603
+    01641
+    00
+plStroke,
+    0777774
+    0410520  // set 1, 00: 1 stroke
+    0346130
+    0312334
+    0210010
+    0146704
+    0140024
+    0152630
+    0100534
+    0042310
+    0017774
+    0410210  // set 1, 01: 1 stroke
+    0106010
+    0250414
+    0314630
+    0104120
+    0104100
+    0016630
+    0337774
+    0402200  // set 1, 02: 1 stroke
+    0002214
+    0044320
+    0212120
+    0314610
+    0350630
+    0300310
+    0040074
+    0410324  // set 1, 03: 1 stroke
+    0210310
+    0104204
+    0000774
+    0400704  // set 1, 04: 1 stroke
+    0000730
+    0314624
+    0210330
+    0006210
+    0104200
+    0777774
+    0410520  // set 1, 05: 1 stroke
+    0210330
+    0314600
+    0000020
+    0210310
+    0050210
+    0052200
+    0000074
+    0410520  // set 1, 06: 1 stroke
+    0210530
+    0304210
+    0114014
+    0102430
+    0040000
+    0777774
+    0410414  // set 1, 07: 1 stroke
+    0200030
+    0312420
+    0144210
+    0102000
+    0377774
+    0410410  // set 1, 10: 1 stroke
+    0104230
+    0312730
+    0304210
+    0210424
+    0314210
+    0100330
+    0104274
+    0404200  // set 1, 11: 1 stroke
+    0152010
+    0104210
+    0140024
+    0137774
+    0400334  // set 1, 12: 1 stroke
+    0000110
+    0104210
+    0777774
+    0410214  // set 1, 13: 1 stroke
+    0146310
+    0114630
+    0314610
+    0102410
+    0342104
+    0777774
+    0410220  // set 1, 14: 1 stroke
+    0210330
+    0006210
+    0104274
+    0410210  // set 1, 15: 1 stroke
+    0104214
+    0246410
+    0352630
+    0314210
+    0104200
+    0342030
+    0142674
+    0410410  // set 1, 16: 1 stroke
+    0104230
+    0312730
+    0304210
+    0206320
+    0314630
+    0304210
+    0102330
+    0777774
+    0400334  // set 1, 17: 1 stroke
+    0000110
+    0104214
+    0210530
+    0314674
+    0400210  // set 1, 20: 1 stroke
+    0102000
+    0044320
+    0212120
+    0314600
+    0154674
+    0410210  // set 1, 21: 1 stroke
+    0104210
+    0150424
+    0314630
+    0340114
+    0340520
+    0056410
+    0077774
+    0406504  // set 1, 22: 1 stroke
+    0106420
+    0242430
+    0314234
+    0010430
+    0314210
+    0056200
+    0256774
+    0400334  // set 1, 23: 1 stroke
+    0000110
+    0150414
+    0102000
+    0377774
+    0404210  // set 1, 24: 1 stroke
+    0104210
+    0040420
+    0210034
+    0137774
+    0401030  // set 1, 25: 1 stroke
+    0314630
+    0340004
+    0104210
+    0137774
+    0401030  // set 1, 26: 1 stroke
+    0314634
+    0342110
+    0104274
+    0410330  // set 1, 27: 1 stroke
+    0142210
+    0104630
+    0314620
+    0152330
+    0012210
+    0104210
+    0777774
+    0410214  // set 1, 30: 1 stroke
+    0152504
+    0044214
+    0156704
+    0077774
+    0404210  // set 1, 31: 1 stroke
+    0104214
+    0156704
+    0077774
+    0410220  // set 1, 32: 1 stroke
+    0210330
+    0006104
+    0000330
+    0210614
+    0000104
+    0150420
+    0000000
+    0337774
+    0404240  // set 1, 41: 2 strokes
+    0110210
+    0105774
+    0402610  // set 1, 42: 2 strokes
+    0120330
+    0105774
+    0403030  // set 1, 43: 1 stroke
+    0340224
+    0246724
+    0014134
+    0304314
+    0300530
+    0106110
+    0202600
+    0342534
+    0214114
+    0310110
+    0006274
+    0410714  // set 1, 44: 1 stroke
+    0210730
+    0352200
+    0354514
+    0300420
+    0156110
+    0142620
+    0144100
+    0303774
+    0400210  // set 1, 45: 2 strokes
+    0042104
+    0150424
+    0114014
+    0014100
+    0015020
+    0152014
+    0304030
+    0777774
+    0410214  // set 1, 46: 1 stroke
+    0146310
+    0056624
+    0254700
+    0202014
+    0314104
+    0777774
+    0405030  // set 1, 47: 1 stroke
+    0054434
+    0106074
+    0406214  // set 1, 50: 1 stroke
+    0144204
+    0077774
+    0402204  // set 1, 51: 1 stroke
+    0044214
+    0177774
+    0410314  // set 1, 52: 1 stroke
+    0144014
+    0246704
+    0310724
+    0346504
+    0014120
+    0102174
+    0410520  // set 1, 53: 1 stroke
+    0152400
+    0342430
+    0304300
+    0105774
+    0402500  // set 1, 54: 1 stroke
+    0310234
+    0312114
+    0077774
+    0400500  // set 1, 55: 1 stroke
+    0000074
+    0404214  // set 1, 56: 1 stroke
+    0302430
+    0005774
+    0400304  // set 1, 57: 1 stroke
+    0042174
+    0400510  // set 1, 60: 1 stroke
+    0102000
+    0354614
+    0054424
+    0252200
+    0154634
+    0000110
+    0137774
+    0404200  // set 1, 61: 1 stroke
+    0152010
+    0104214
+    0014304
+    0337774
+    0410220  // set 1, 62: 1 stroke
+    0210330
+    0006204
+    0000110
+    0150424
+    0777774
+    0404500  // set 1, 63: 1 stroke
+    0354520
+    0206700
+    0002214
+    0044320
+    0213774
+    0406210  // set 1, 64: 1 stroke
+    0106400
+    0000510
+    0104224
+    0344424
+    0240234
+    0057774
+    0400334  // set 1, 65: 1 stroke
+    0000110
+    0150414
+    0102000
+    0010420
+    0215774
+    0400634  // set 1, 66: 1 stroke
+    0000730
+    0250414
+    0104604
+    0204204
+    0000774
+    0400210  // set 1, 67: 1 stroke
+    0042104
+    0150420
+    0302000
+    0015774
+    0402500  // set 1, 70: 1 stroke
+    0016624
+    0210310
+    0046204
+    0000730
+    0277774
+    0400334  // set 1, 71: 1 stroke
+    0000110
+    0140224
+    0210310
+    0040034
+    0314674
+    0404214  // set 1, 72: 2 strokes
+    0302430
+    0005010
+    0250200
+    0306604
+    0777774
+    0402530  // set 1, 73: 2 strokes
+    0352110
+    0112014
+    0020234
+    0204604
+    0216274
+    0406214  // set 1, 74: 1 stroke
+    0146104
+    0077774
+    0400400  // set 1, 75: 2 strokes
+    0000040
+    0214420
+    0211774
+    0402204  // set 1, 76: 1 stroke
+    0042314
+    0177774
+    0406524  // set 1, 77: 1 stroke
+    0314210
+    0100110
+    0150424
+    0777774
+    0410520  // set 2, 00: 1 stroke
+    0346130
+    0312334
+    0210010
+    0146704
+    0140024
+    0152630
+    0100534
+    0042310
+    0017774
+    0406324  // set 2, 01: 1 stroke
+    0206210
+    0040710
+    0216630
+    0377774
+    0400730  // set 2, 02: 1 stroke
+    0302430
+    0314720
+    0116000
+    0044214
+    0210310
+    0777774
+    0410324  // set 2, 03: 1 stroke
+    0210310
+    0102000
+    0377774
+    0410724  // set 2, 04: 1 stroke
+    0210530
+    0316000
+    0054404
+    0104230
+    0140210
+    0777774
+    0406220  // set 2, 05: 1 stroke
+    0206210
+    0340000
+    0112420
+    0244014
+    0040034
+    0777774
+    0402210  // set 2, 06: 1 stroke
+    0102430
+    0156114
+    0240210
+    0040774
+    0402000  // set 2, 07: 1 stroke
+    0002210
+    0104320
+    0212630
+    0340004
+    0310774
+    0410210  // set 2, 10: 1 stroke
+    0104320
+    0210234
+    0254630
+    0104210
+    0105774
+    0404200  // set 2, 11: 2 strokes
+    0152010
+    0104220
+    0360240
+    0777774
+    0402334  // set 2, 12: 2 strokes
+    0044210
+    0217014
+    0437774
+    0406624  // set 2, 13: 1 stroke
+    0304514
+    0104230
+    0314610
+    0352610
+    0100034
+    0377774
+    0404200  // set 2, 14: 1 stroke
+    0152010
+    0104210
+    0110774
+    0404210  // set 2, 15: 1 stroke
+    0104324
+    0314610
+    0104200
+    0342730
+    0315774
+    0400530  // set 2, 16: 1 stroke
+    0314210
+    0050234
+    0040730
+    0315774
+    0400334  // set 2, 17: 1 stroke
+    0000110
+    0106420
+    0254674
+    0400504  // set 2, 20: 1 stroke
+    0214630
+    0314610
+    0050234
+    0000110
+    0106420
+    0777774
+    0410230  // set 2, 21: 1 stroke
+    0304320
+    0206210
+    0040034
+    0140630
+    0314404
+    0777774
+    0400530  // set 2, 22: 1 stroke
+    0314210
+    0050234
+    0040774
+    0400200  // set 2, 23: 1 stroke
+    0000114
+    0210304
+    0000074
+    0404620  // set 2, 24: 1 stroke
+    0306110
+    0312010
+    0352630
+    0340174
+    0400630  // set 2, 25: 1 stroke
+    0314700
+    0040210
+    0114624
+    0345774
+    0400630  // set 2, 26: 1 stroke
+    0316704
+    0044274
+    0404530  // set 2, 27: 1 stroke
+    0312310
+    0104630
+    0316134
+    0044210
+    0777774
+    0410214  // set 2, 30: 1 stroke
+    0146334
+    0352504
+    0042174
+    0400630  // set 2, 31: 1 stroke
+    0314700
+    0002210
+    0114630
+    0314520
+    0200004
+    0110774
+    0404214  // set 2, 32: 1 stroke
+    0310110
+    0002220
+    0210000
+    0342430
+    0310530
+    0000074
+    0410730  // set 2, 41: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 42: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0400704  // set 2, 43: 1 stroke
+    0356174
+    0410730  // set 2, 44: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 45: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0404210  // set 2, 46: 1 stroke
+    0104210
+    0202600
+    0152504
+    0342774
+    0404304  // set 2, 47: 1 stroke
+    0110134
+    0204334
+    0352320
+    0237774
+    0410424  // set 2, 50: 1 stroke
+    0244234
+    0210334
+    0346110
+    0104274
+    0410520  // set 2, 51: 1 stroke
+    0206630
+    0050434
+    0346304
+    0077774
+    0410314  // set 2, 52: 1 stroke
+    0146374
+    0406220  // set 2, 53: 1 stroke
+    0156410
+    0104210
+    0050604
+    0037774
+    0406324  // set 2, 54: 1 stroke
+    0200010
+    0104210
+    0110400
+    0377774
+    0406214  // set 2, 55: 1 stroke
+    0106110
+    0077774
+    0402204  // set 2, 56: 1 stroke
+    0102310
+    0177774
+    0410730  // set 2, 57: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0400200  // set 2, 60: 1 stroke
+    0000074
+    0410730  // set 2, 61: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0404210  // set 2, 62: 1 stroke
+    0104210
+    0137774
+    0410730  // set 2, 63: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 64: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 65: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0406614  // set 2, 66: 1 stroke
+    0177774
+    0400604  // set 2, 67: 1 stroke
+    0056774
+    0410730  // set 2, 70: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 71: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 74: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 75: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+    0410730  // set 2, 76: 1 stroke
+    0304420
+    0350534
+    0210604
+    0144724
+    0100030
+    0340420
+    0200224
+    0204710
+    0342130
+    0206110
+    0140514
+    0006430
+    0300500
+    0016014
+    0310304
+    0104000
+    0306420
+    0254710
+    0140134
+    0352024
+    0314114
+    0240710
+    0104304
+    0204524
+    0106030
+    0254604
+    0314110
+    0140604
+    0103774
+// The end of the strokes' table.
+
+%%endoverlay

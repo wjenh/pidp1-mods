@@ -67,37 +67,6 @@ cMkDirty, 0
 cGone, 0
 cScChg, 0
 
-// Per type, indexed by the type word's low bits (CTMASK), the projection a sweep runs on it.
-// How many points it names, cNPts, and the mark's call of its glyph, cGlyph, are bank 9's.
-cPjTab,
-    nop
-    jsp cProjH
-    jsp cProjH
-    nop                 // a fix is nothing to project
-    jsp cProjM
-    jsp cProjM
-    jsp cProjP
-    jsp cProjP
-    jsp cProjX
-    jsp cProjN
-    jsp cProjK
-    nop                 // an attacher is nothing to project
-    nop                 // nor is a beam, a load or a roller: the truss's analysis reads them
-    nop
-    nop
-    nop                 // nor a designation
-    jsp cProjD
-    jsp cProjY
-    jsp cProjM          // an O, as a Length
-
-// An O's parameter by its digits' scale, x1 to x8 (cScBind), the gap in 32nds,
-// with CUNUSED's sign bit set, as a Length's is.
-cGapTab,
-    CUNUSED + (GAPHALF + GAPMARGIN) * 0d32
-    CUNUSED + (0d2 * GAPHALF + GAPMARGIN) * 0d32
-    CUNUSED + (0d4 * GAPHALF + GAPMARGIN) * 0d32
-    CUNUSED + (0d8 * GAPHALF + GAPMARGIN) * 0d32
-
 // The module's entry, from the main bank's conCall. Run entry n with the argument in AC, and
 // return across the banks with AC as the routine leaves it. Each table word is the routine's
 // call, a jsp or a jda, so each keeps its calling form and returns here inside bank 8.
@@ -146,6 +115,7 @@ ceTable,
     jda cStiff          // CESTIFF
     jda cStSet          // CESTSET
     jsp cSnap           // CESNAP
+    jsp cSzAdd          // CESZADD
 
 // Start-up. No point held, the diagnostic counters cleared, then the table emptied (cClear).
 // Exit: AC = 0. IO is clobbered. Called via jsp.
@@ -298,7 +268,7 @@ rtn, jmp .
 // Exit: AC = the points written, their FMOV marks set. IO is clobbered. Called via jsp.
 cTick,
     local rtn, ctPt, ctDrag, ctPen, ctDrop, ctSame, ctTopo, ctLoad, ctAwake, ctRun, ctItem, \
-        ctArc, ctTie, ctNext, ctTime, ctSwept, ctStop, ctPace, ctPub, ctNone, ctT, ctN4
+        ctArc, ctTie, ctNext, ctTime, ctSwept, ctStop, ctPace, ctPub, ctNone, ctT, ctN4, ctJ
     dap rtn
     idx cTickTot
     jsp cUnmark
@@ -375,9 +345,11 @@ ctItem,
     dac cE
     lac i cE
     and [CTMASK]
-    add [cPjTab:010]
+    add [cPjTab:5]
     dac ctT
-    xct i ctT           // the type's projection
+    lac i ctT           // the type's projection, run here: an xct's jsp stays in the table's bank
+    dac ctJ
+ctJ, 0
     jmp ctNext
 ctArc,
     sub cArcN
@@ -965,18 +937,19 @@ phH, 0
 phFA, 0
     endloc
 
-// An E or L entry, cE. Line A-B's length is made line C-D's (CTEQ), or the entry's parameter
-// (CTLEN, and CTGAP, whose parameter cScBind writes). Each line is measured once (cLine), its
-// root started from its length at the last sweep (cLast). For E, when both lines can change
-// (each with an end that may move, cFree), both go to their mean, each from its measure; when
-// one can, it goes to the other's; when neither can, nothing moves. A line changes along its
-// direction (cSetLen); a line of no length has none, and the entry is passed over. The
-// length each line is given is kept in cLast for the next sweep's root, as is the one found for
-// a line that cannot change.
+// An E or L entry, cE. Line A-B's length is made k times line C-D's (CTEQ, k the parameter's low
+// bits, 0 reading as 1), or the entry's parameter (CTLEN, and CTGAP, whose parameter cScBind
+// writes). Each line is measured once (cLine), its root started from its length at the last sweep
+// (cLast). For E, with E1 line A-B's length over k: when both lines can change (each with an end
+// that may move, cFree), line C-D goes to the mean of E1 and its length and line A-B to k times
+// that, each from its measure; when one can, it goes to what the other asks; when neither can,
+// nothing moves. A line changes along its direction (cSetLen); a line of no length has none, and
+// the entry is passed over, as one whose target no word holds is. The length each line is given
+// is kept in cLast for the next sweep's root, as is the one found for a line that cannot change.
 // Entry: cE, and cNext its place in the table. AC and IO are clobbered. Called via jsp.
 cProjM,
     local rtn, pmLen, pmOnly1, pmOnly2, pmSet1, pmR1, pmR2, pmF1, pmF2, pmU1, pmV1, pmFA1, \
-        pmFB1, pmP, pmC
+        pmFB1, pmP, pmC, pmK, pmE
     dap rtn
     lac cNext
     sal 1s
@@ -1030,13 +1003,26 @@ cProjM,
     dac i pmC
     lac cLnF
     dac pmF2
+    lac cE
+    add [5]
+    dac pmP
+    lac i pmP
+    and [3]
+    sza i               // skip if at a ratio
+    law 1
+    dac pmK
+    lac pmR1
+    mul [1]
+    div pmK
+    jmp rtn             // no skip: overflow, which a divisor of 1 to 3 cannot make
+    dac pmE
     lac pmF1
     sza i               // skip if line A-B can change
     jmp pmOnly2
     lac pmF2
     sza i               // skip if line C-D can change too
     jmp pmOnly1
-    lac pmR1            // both: to the mean, line C-D first, its measure still in place
+    lac pmE             // both: to the mean, line C-D first, its measure still in place
     add pmR2
     sar 1s
     dac slT
@@ -1047,7 +1033,7 @@ pmOnly2,
     lac pmF2
     sza i               // skip if line C-D can change
     jmp rtn
-    lac pmR1
+    lac pmE
     dac slT
     dac i pmC
     jsp cSetLen
@@ -1056,6 +1042,11 @@ pmOnly1,
     lac pmR2
     dac slT
 pmSet1,
+    lac slT
+    mul pmK
+    div [1]
+    jmp rtn             // no skip: a target no word holds, past any line on the screen
+    dac slT
     law i 1             // back to line A-B's kept length
     add pmC
     dac pmC
@@ -1106,6 +1097,8 @@ pmFA1, 0
 pmFB1, 0
 pmP, 0
 pmC, 0
+pmK, 0
+pmE, 0
     endloc
 
 // Line slA-slB, whether each end may move (cFA, cFB, and cLnF if either may), and its vector
@@ -2057,8 +2050,8 @@ pkT, 0
 
 // A tie, t, its place in iTie. Instance i's attacher a, t being
 // a * MAXINST + i, holds tie point p where the attacher's master point lies in the instance, its
-// origin (the solver's point MAXPTS + i) plus the point's offset in Copy's store at the
-// instance's scale. The error, that place less p, is shared as an H's is: when both may move, p
+// origin (the solver's point MAXPTS + i) plus the point's offset (the root's cpAX and cpAY) at
+// the instance's scale. The error, that place less p, is shared as an H's is: when both may move, p
 // goes half of it and the origin the rest the other way; when one may, it goes all of it. Each
 // move is a nudge (cNudge), which clamps the origin as instAt would (cClamp).
 // Entry: AC = t. AC and IO are clobbered. Called via jda.
@@ -2072,8 +2065,7 @@ cProjT, 0
     add [iScale:3]
     dac ptT
     lac i ptT
-    add [ieShTab:7]
-    dac ptS             // the scale's shift
+    dac ptS             // the scale word
     lac ptO
     add [iMaster:012]
     dac ptT
@@ -2086,12 +2078,7 @@ cProjT, 0
     lac cProjT
     sar 5s              // a
     add ptT
-    add [cpAtt:5]
-    dac ptT
-    lac ptJ
-    sal CPPSHIFT
-    add i ptT
-    dac ptJ             // the master point's word in Copy's store
+    dac ptJ             // the attacher's word in cpAX and cpAY
     lac ptO
     add [MAXPTS]
     dac ptO
@@ -2103,10 +2090,12 @@ cProjT, 0
 
     // The error on each axis, in 32nds.
     lac ptJ
-    add [cpX:5]
+    add [cpAX:5]
     dac ptT
     lac i ptT
-    xct i ptS
+    lio ptS
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     sal 5s
     dac ptE
     lac ptO
@@ -2122,10 +2111,12 @@ cProjT, 0
     sub i ptT
     dac ptEX
     lac ptJ
-    add [cpY:5]
+    add [cpAY:5]
     dac ptT
     lac i ptT
-    xct i ptS
+    lio ptS
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     sal 5s
     dac ptE
     lac ptO
@@ -2480,13 +2471,12 @@ clO,
     add [iScale:3]
     dac clS
     lac i clS
-    add [ieShTab:7]
-    dac clS             // the scale's shift
+    dac clS             // the scale word
     lac clI
     add [iMaster:012]
     dac clM
     lac i clM
-    add [mMinX:2]
+    add [mMinX:5]
     dac clM
     jsp clOAx
     lac cClamp
@@ -2503,7 +2493,9 @@ clO,
 clOAx,
     dap clORt
     lac i clM
-    xct i clS
+    lio clS
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     sal 5s
     dac clLo
     cla
@@ -2513,7 +2505,9 @@ clOAx,
     add [NMASTER]
     dac clI
     lac i clI
-    xct i clS
+    lio clS
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     sal 5s
     dac clHi
     lac [0d1023 * 0d32]
@@ -2722,8 +2716,8 @@ aiN, 0
 // their working values taken from the point table, and the lines on any of them listed (cLines),
 // for conRedraw. The counts of lines and arcs seen are kept, for cTick. With every flag clear,
 // cPub is empty; with every point taken up, no reload is wanted (cRld); the marks are to be
-// written again (cMkDirty), the ranks of the marks on one line counted again first (bank 13's
-// mkRkOld); the numbers are bound to their scalars (cScBind); the point held
+// written again (cMkDirty), the marks' ranks counted again first (bank 13's mkRkOld, the
+// overlay ranks); the numbers are bound to their scalars (cScBind); the point held
 // is found again under its index now (cRefind).
 // AC and IO are clobbered. Called via jsp.
 cBuild,
@@ -2767,6 +2761,9 @@ cbCon,
     sub [CTDIST-CTATT]
     spa                 // skip if a number's type, D, Y or O, whose points are the solver's: an
     cli                 // attacher's point, and a beam's, a load's, a roller's or a designation's,
+    sub [CTSAME-CTDIST]
+    sma                 // skip unless a size's, which names instances
+    cli
 cbFl,                   // is neither
     dio cbF
     lac cbP
@@ -3039,6 +3036,8 @@ sbHas,
     jmp sbGap
     sad [CTCHG]         // skip unless a Y
     jmp sbY
+    sad [CTSZNUM]       // skip unless a Z, which no line's solver reads
+    jmp sbNext
     lac sbS
     add [scDN:3]
     jmp sbCnt
@@ -3054,7 +3053,7 @@ sbGap,
     add [txSc:012]
     dac sbT
     lac i sbT
-    add [cGapTab:010]
+    add [cGapTab:5]
     dac sbT
     lac sbP
     add [5]
@@ -3199,6 +3198,10 @@ bdPt,
     idx bdP
     isp bdK             // skip once every point is looked at
     jmp bdPt
+    lac cfT
+    sub [CTSAME]
+    sma                 // skip unless a size's, its instances in their places
+    jmp bdOk
     lac cfN
     sad [1]             // skip unless one point, which has no order
     jmp bdOk
@@ -3250,6 +3253,10 @@ bdFour,
     sma                 // skip if D is below B
     jmp bdOk
 bdSwap,
+    lac cfPar
+    and [3]
+    sza                 // skip unless an E at a ratio, whose lines keep their places
+    jmp bdOk
     lac cfA
     lio cfC
     dac cfC
@@ -3765,6 +3772,16 @@ adLdT,
     dac cfA
     lac ceF
     dac cfB
+    jmp adChk
+
+    // A constraint on size, its words in szTy (spscale.ac, szLift), entered at its own CESZADD.
+cSzAdd,
+    dap rtn
+    lac [szTy:3]
+    dac mvS
+    lac [cfT:010]
+    dac mvD
+    jsp cMove
 adChk,
     jsp cBad
     sza                 // skip unless its points run together
@@ -3933,10 +3950,11 @@ cdNone,
 rtn, jmp .
     endloc
 
-// Copy's drop, its constraints. Master copyArg's (cpCon, bank 9) are added, their points moved
+// Copy's drop, its constraints. Master copyArg's (cpCon, its record in bank 5, which the
+// instance module's copyParts has made resident) are added, their points moved
 // past the points the table held before the copy (copyBase), each put in order (cBad); the
-// copy's points are new, so none repeats an entry. A Length's length, and a Y's, is shifted by a
-// dismember's scale (the instance module's dismShift, none for Copy), its sign bit kept. Every
+// copy's points are new, so none repeats an entry. A Length's length, and a Y's, is taken to a
+// dismember's scale word (the instance module's dismShift, 0 for Copy), its sign bit kept. Every
 // point's place is kept first (cSnap) and the
 // main bank's uLk set, so that Undo of the drop takes them back, and the N's and C's the drop
 // makes, with whatever the solver moved for them. The caller has checked for room (copyRoom).
@@ -3961,12 +3979,7 @@ cqKept,
     jmp cqDone
     cma
     dac cqN
-    lac i [copyArg:4]
-    sal 5s
-    dac cqS
-    sal 1s
-    add cqS             // k * 96, NCPCON * CW
-    add [cpCon:011]
+    lac [cpCon:5]
     dac cqS
 cqLoop,
     lac cqS
@@ -3984,7 +3997,9 @@ cqLoop,
 cqShift,
     lac cfPar
     and [0377777]       // the length, its sign bit cleared: sal brings the sign in at the right
-    xct i [dismShift:7]
+    lio i [dismShift:7]
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     ior [CUNUSED]       // and set again
     dac cfPar
 cqLen,

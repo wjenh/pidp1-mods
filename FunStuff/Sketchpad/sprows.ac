@@ -1,79 +1,52 @@
-// sprows.ac -- which menu rows can act, a row's answer from the census and its master slot. A
-// row that cannot act is drawn dim and passed over by the pen, so a user sees what is possible.
-// spmenus.ac's paintAny, onListHit and selectRow ask.
+// sprows.ac -- which menu rows can act, a row's answer from the census. A row that cannot act
+// is drawn dim and passed over by the pen, so a user sees what is possible. spmenus.ac's
+// paintAny, onListHit and selectRow ask. Which masters a row can take, the masters' picker shows
+// (the instance module's mpkLines).
 //
-// Bank 7, after spinst.ac. Entered from the main bank at rowCan, by jsp i [rowCan:7], with the
-// item in rowItem; runs with the extend window open, reading the census (bank 6's rowHave) and
-// the master directory (bank 2's mLen) through their 16-bit addresses, and calls nothing.
+// Bank 9, after the constraint table. Entered from the main bank at rowCan, by jsp i
+// [rowCan:011], with the item in rowItem; runs with the extend window open, reading the census
+// (bank 11's rowHave) through its 16-bit address, and calls nothing.
 // Part of sketchpad.am1, included where it stands.
 
 // The item asked about, written by the main bank before it calls rowCan.
 rowItem, 0
 
-// The first items of the lists whose rows 0 to 3 are the master slots M1 to M4: those that act
-// only on a slot holding a master, then, last, Define's, whose row of an empty slot is drawn dim
-// and still acts.
-rnBases,
-    IINST
-    ICOPY
-    ICHANGE
-    IDEFINE
-
 // Whether item rowItem's row can act: every test its rowNeeds word names must be in the census;
-// then a master slot's row asks its slot. Inst's, Copy's and Change's M1 to M4 cannot act while
-// the slot is empty; Define's can, drawn dim.
-// Exit: AC positive when the row can act, 0 when it can but is drawn dim, negative when it cannot.
-// IO is preserved. Called via jsp i [rowCan:7].
+// a word of ROWLI, either of two.
+// Exit: AC positive when the row can act, negative when it cannot (0, drawn dim and acting, is
+// no longer given). IO is preserved. Called via jsp i [rowCan:011].
 rowCan,
-    local rnLoop, rnNext, rnYes, rnNo, rnRtn, rnP, rnK
+    local rnRtn, rnYes, rnNo, rnDim, rnP
     dac rnRtn
     lac rowItem
-    add [rowNeeds:7]
+    add [rowNeeds:011]
     dac rnP
-    lac i [rowHave:6]
+    lac i [rowHave:013]
     cma
     and i rnP
     sza                 // skip if every test the row needs is passed
     jmp rnNo
-    lac [rnBases:7]
-    dac rnP
-rnLoop,
-    lac rowItem
-    sub i rnP
-    spa                 // skip if at or past this list's first item
-    jmp rnNext
-    sub [NMASTER]
-    sma                 // skip if one of its master slots' rows
-    jmp rnNext
-    add [mLen:2 + NMASTER]
-    dac rnK
-    lac i rnK
-    sza                 // skip if the slot is empty
-    jmp rnYes
-    lac rnP
-    sas [rnBases:7 + 3] // skip if Define's: drawn dim, and it acts
-    jmp rnNo
-    cla
-    jmp i rnRtn
-rnNext,
-    idx rnP
-    sas [rnBases:7 + 4] // skip once every list is passed
-    jmp rnLoop
 rnYes,
     law 1
     jmp i rnRtn
 rnNo,
+    lac i rnP
+    sas [ROWLI]         // skip if two lines or an instance would do
+    jmp rnDim
+    lac i [rowHave:013]
+    and [ROWI | ROWL2]
+    sza                 // skip if neither
+    jmp rnYes
+rnDim,
     law i 1
     jmp i rnRtn
 rnRtn, 0
 rnP, 0
-rnK, 0
     endloc
 
 // Item number -> the census's tests its row needs (sketchpad.ah's ROWANY to ROWVIEW), 0 for a
 // row that always acts; in itemAct's order (sketchpad.am1). A row owning a sublist needs what
-// every row of its sublist needs in common, so it is disabled only when they all are. The
-// master slots' rule is rowCan's.
+// every row of its sublist needs in common, so it is disabled only when they all are.
 rowNeeds,
     0                   // Draw: Line
     0                   // Draw: Circle
@@ -87,34 +60,26 @@ rowNeeds,
     ROWANY              // Edit: Scale, as Move
     ROWM1               // Edit: Change >, as its Dwell and Seq
     ROWI                // Edit: Dismem
-    ROWLAI              // Picture: Define >
-    ROWM1               // Picture: Inst >, a master in some slot
-    ROWM1               // Picture: Copy >, likewise
+    ROWLI               // Edit: Keep >
+    ROWLAI              // Picture: Define, texts alone refused (defineMasterOv's DEFEMPTY)
+    ROWM1               // Picture: Inst, a master defined
+    ROWM1               // Picture: Copy, likewise
     0                   // Picture: Clear, always
     ROWP1               // Picture: Tie
     ROWP1               // Picture: Desig
+    ROWM1               // Picture: Name, a master defined
     ROWIT               // Size: x1
     ROWIT               // Size: x2
     ROWIT               // Size: x4
     ROWIT               // Size: x8
-    0                   // Inst: M1, its slot's rule
-    0                   // Inst: M2
-    0                   // Inst: M3
-    0                   // Inst: M4
-    0                   // Copy: M1, its slot's rule
-    0                   // Copy: M2
-    0                   // Copy: M3
-    0                   // Copy: M4
-    ROWLAI              // Define: M1, texts alone refused (defineMaster's DEFEMPTY)
-    ROWLAI              // Define: M2
-    ROWLAI              // Define: M3
-    ROWLAI              // Define: M4
     0                   // Misc: Save
     0                   // Misc: Load, only a tape read could tell
     0                   // Misc: Drive >
     0                   // Misc: Dir
     ROWDEL              // Misc: Del cons
     ROWUNF              // Misc: Unfix
+    0                   // Misc: Library >, its Load, Dir and Delete always acting
+    ROWANY              // Misc: Plot, a point, a text or an instance to draw
     0                   // Drive: D1
     0                   // Drive: D2
     0                   // Drive: D3
@@ -137,10 +102,7 @@ rowNeeds,
     ROWO | ROWL1        // Truss: Axis
     0                   // Truss: Forces
     ROWB                // Truss: Stiff
-    ROWI                // Change: M1, and its slot's rule
-    ROWI                // Change: M2
-    ROWI                // Change: M3
-    ROWI                // Change: M4
+    ROWI | ROWM1        // Change: Master
     ROWI | ROWM2        // Change: Cycle
     ROWM1               // Change: Dwell
     ROWM1               // Change: Seq
@@ -148,9 +110,21 @@ rowNeeds,
     ROWP2 | ROWN        // Dim: Dist
     ROWP2 | ROWN        // Dim: Change
     ROWP1 | ROWN        // Dim: Gap
+    ROWI | ROWN         // Dim: Size
     0                   // View: x1
     0                   // View: x2
     0                   // View: x4
     0                   // View: x8
     ROWVIEW             // View: Pan, nothing at x1
     ROWVIEW             // View: Center
+    0                   // Library: Load, only a tape read could tell
+    ROWM1               // Library: Save, a master defined
+    0                   // Library: Dir
+    0                   // Library: Delete, as Load
+    ROWLI               // Keep: x1/3
+    ROWLI               // Keep: x1/2
+    ROWLI               // Keep: x1
+    ROWLI               // Keep: x2
+    ROWLI               // Keep: x3
+    ROWI                // Keep: Full
+    ROWI                // Keep: Inch

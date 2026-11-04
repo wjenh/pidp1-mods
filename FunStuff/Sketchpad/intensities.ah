@@ -10,6 +10,8 @@
 #define NORMALINTENSITY 5
 #define SELECTINTENSITY 7
 #define DIMINTENSITY 3
+// The dotted leader from the lit row to OK, as dim as a row with nothing to act on.
+#define LEADINTENSITY DIMINTENSITY
 
 // The drawing's lines and arcs.
 #define DRAWINTENSITY 5

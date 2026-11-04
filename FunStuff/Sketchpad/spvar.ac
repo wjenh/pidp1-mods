@@ -1,0 +1,310 @@
+// spvar.ac -- the variants: a master's words at a code c, for instances off the powers of two. A
+// variant is a block in the master store, as long as its master, made from the record's words
+// (the overlay scale's vaWalkOv), called by a save from the instance's slot as a master is. An
+// instance with a c calls the variant of its master and c, found by them alone, so nothing is
+// kept for an instance and a removal has nothing to do: a variant no instance has stays until
+// room is wanted (vaSweep), and is never found again, since vaFind sweeps first, or a sweep came
+// before a hold (vaHold), and a master's words can change only while no instance calls it.
+//
+// Bank 9, after the constraint table. Entered by jsp i [X:011], runs with the extend window open,
+// reaching other banks' words through their 16-bit addresses. Root: vaBuild reads the drum, so
+// nothing here does while an overlay runs (vaOf answers MNOPOOL there), and the overlay scale
+// makes its own variants with vaFind and vaWalkOv.
+// Part of sketchpad.am1, included where it stands.
+
+// The master and code asked about; the offset vaFind found or chose, and whether its words are
+// yet to be written. vaHold, nonzero while vaSweep frees nothing: subBring's variants, which have
+// no instance yet, and the propagation's blocks and refusal, which read variants with the
+// instances emptied.
+vaK, 0
+vaCode, 0
+vaTo, 0
+vaNew, 0
+vaHold, 0
+
+// Instance i's words' offset in the master store, its master's or, with a c, its variant's, built
+// here if the instance has none yet (a load's rebuild).
+// Entry: vaOf = i. Exit: AC = the offset, or MNOPOOL when not there. IO is clobbered. Called by
+// dac i [vaOf:011] and jsp i [vaOf:011+1].
+vaOf, 0
+    local vfM, vfNo, vfRtnW, vfT
+    dac vfRtnW
+    lac vaOf
+    add [iMaster:012]
+    dac vfT
+    lac i vfT
+    dac vaK
+    lac vaOf
+    add [iScale:3]
+    dac vfT
+    lac i vfT
+    sar 2s
+    dac vaCode
+    sza i               // skip if a code c
+    jmp vfM
+    jsp vaSeek
+    sas [MNOPOOL]       // skip unless found
+    jmp i vfRtnW
+    lac i [ovActive:013]
+    sza                 // skip unless an overlay runs, which cannot read the drum
+    jmp vfNo
+    jsp vaBuild
+    jmp i vfRtnW
+vfNo,
+    lac [MNOPOOL]
+    jmp i vfRtnW
+vfM,
+    lac vaK
+    add [mStart:5]
+    dac vfT
+    lac i vfT
+    jmp i vfRtnW
+vfRtnW, 0
+vfT, 0
+    endloc
+
+// The variant of vaK and vaCode, in the store on return, its words written; for root code.
+// Entry: vaK, vaCode. Exit: AC = its offset, or MNOPOOL with no room. IO is clobbered. Called via
+// jsp.
+vaBuild,
+    local vbHave, vbRtnW
+    dac vbRtnW
+    jsp vaFind
+    sad [MNOPOOL]       // skip if it has a place
+    jmp i vbRtnW
+    lac vaNew
+    sza i               // skip if its words are yet to be written
+    jmp vbHave
+    lio vaK
+    jsp i [mrLoadX:7]
+    %%ovcall scale, vaWalkOv
+vbHave,
+    lac vaTo
+    jmp i vbRtnW
+vbRtnW, 0
+    endloc
+
+// vaBuild, for the instance module, answering as poolBring does. Under an overlay its words are
+// ready (scReady), and no instance has them yet for a sweep to spare, so they are only looked up.
+// Entry: vaK, vaCode. Exit: AC = 0, or 1 with no room. IO is clobbered. Called via jsp i
+// [vaBring:011].
+vaBring,
+    local bgSeek, bgAns, bgNo, bgRtnW
+    dac bgRtnW
+    lac i [ovActive:013]
+    sza                 // skip unless an overlay runs
+    jmp bgSeek
+    jsp vaBuild
+    jmp bgAns
+bgSeek,
+    jsp vaSeek
+bgAns,
+    sad [MNOPOOL]       // skip if it has a place
+    jmp bgNo
+    cla
+    jmp i bgRtnW
+bgNo,
+    law 1
+    jmp i bgRtnW
+bgRtnW, 0
+    endloc
+
+// The entry of vaK and vaCode, or a free one with room in the store for its master's words, its
+// words yet to be written (vaNew). The unused go first, so a stale entry is never found.
+// Entry: vaK, vaCode. Exit: AC = its offset, also in vaTo, or MNOPOOL with none. IO is clobbered.
+// Called via jsp, or jsp i [vaFind:011].
+vaFind,
+    local fdLoop, fdGot, fdNo, fdRtnW, fdP, fdE
+    dac fdRtnW
+    dzm vaNew
+    jsp vaSweep
+    jsp vaSeek
+    dac vaTo
+    sas [MNOPOOL]       // skip unless found
+    jmp i fdRtnW
+    lac [vaO:5]
+    dac fdE
+fdLoop,
+    lac i fdE
+    sad [MNOPOOL]       // skip unless free
+    jmp fdGot
+    idx fdE
+    sas [vaO:5 + NVARIANT] // skip once every entry is looked at
+    jmp fdLoop
+    jmp fdNo
+fdGot,
+    lac vaK
+    add [mLen:5]
+    dac fdP
+    lac i fdP
+    dac i [pbN:7]
+    jsp i [poolRoom:7]
+    spa                 // skip if a run holds the words
+    jmp fdNo
+    dac vaTo
+    dac i fdE
+    lac fdE
+    sub [NVARIANT]
+    dac fdP
+    lac vaCode
+    dac i fdP           // vaC, NVARIANT words before vaO
+    lac fdP
+    sub [NVARIANT]
+    dac fdP
+    lac vaK
+    dac i fdP           // vaM, NVARIANT words before vaC
+    law 1
+    dac vaNew
+    lac vaTo
+    jmp i fdRtnW
+fdNo,
+    lac [MNOPOOL]
+    dac vaTo
+    jmp i fdRtnW
+fdRtnW, 0
+fdP, 0
+fdE, 0
+    endloc
+
+// The entry of vaK and vaCode in the store.
+// Entry: vaK, vaCode. Exit: AC = its offset, or MNOPOOL. IO is clobbered. Called via jsp.
+vaSeek,
+    local skLoop, skNext, skRtn, skE, skT
+    dap skRtn
+    dzm skE
+skLoop,
+    lac skE
+    add [vaO:5]
+    dac skT
+    lac i skT
+    sad [MNOPOOL]       // skip unless free
+    jmp skNext
+    lac skE
+    add [vaM:5]
+    dac skT
+    lac i skT
+    sas vaK             // skip if its master
+    jmp skNext
+    lac skE
+    add [vaC:5]
+    dac skT
+    lac i skT
+    sas vaCode          // skip if its code
+    jmp skNext
+    lac skE
+    add [vaO:5]
+    dac skT
+    lac i skT
+    jmp skRtn
+skNext,
+    idx skE
+    sas [NVARIANT]      // skip once every entry is looked at
+    jmp skLoop
+    lac [MNOPOOL]
+skRtn, jmp .
+skE, 0
+skT, 0
+    endloc
+
+// The variants no instance has taken out of the store, but while held (vaHold), and but the
+// variant of the instance a dismember took apart while Undo would put it back.
+// AC and IO are clobbered. Called via jsp, or jsp i [vaSweep:011].
+vaSweep,
+    local swLoop, swIns, swNoI, swNext, swOut, swFree, swRtnW, swE, swI, swP, swM, swC
+    dac swRtnW
+    lac vaHold
+    sza                 // skip unless held
+    jmp i swRtnW
+    dzm swE
+swLoop,
+    lac swE
+    add [vaO:5]
+    dac swP
+    lac i swP
+    sad [MNOPOOL]       // skip unless free
+    jmp swNext
+    lac swE
+    add [vaM:5]
+    dac swP
+    lac i swP
+    dac swM
+    lac swE
+    add [vaC:5]
+    dac swP
+    lac i swP
+    dac swC
+    dzm swI
+swIns,
+    lac swI
+    sad i [instCount:012] // skip while instances remain
+    jmp swOut
+    add [iMaster:012]
+    dac swP
+    lac i swP
+    sas swM             // skip if the entry's master
+    jmp swNoI
+    lac swI
+    add [iScale:3]
+    dac swP
+    lac i swP
+    sar 2s
+    sad swC             // skip unless the entry's code
+    jmp swNext
+swNoI,
+    idx swI
+    jmp swIns
+swOut,
+    lac i [undoKind:4]
+    sas [UDISM]         // skip if Undo would put back a dismember's instance
+    jmp swFree
+    lac swM
+    sas i [dismMaster:7] // skip if its master
+    jmp swFree
+    lac i [dismScale:7]
+    sar 2s
+    sad swC             // skip unless its code
+    jmp swNext
+swFree,
+    lac swE
+    add [vaO:5]
+    dac swP
+    lac [MNOPOOL]
+    dac i swP
+swNext,
+    idx swE
+    sas [NVARIANT]      // skip once every entry is looked at
+    jmp swLoop
+    jmp i swRtnW
+swRtnW, 0
+swE, 0
+swI, 0
+swP, 0
+swM, 0
+swC, 0
+    endloc
+
+// Entry j of the store's list past the masters, vaO's word, MNOPOOL when free, and its length.
+// Entry: AC = j - NMASTER. Exit: vaInO, vaInL. IO is preserved. Called by dac i [vaIn:011] and jsp
+// i [vaIn:011+1], from pbIn and pbFit.
+vaIn, 0
+    local inRtnW, inP
+    dac inRtnW
+    lac vaIn
+    add [vaO:5]
+    dac inP
+    lac i inP
+    dac vaInO
+    lac vaIn
+    add [vaM:5]
+    dac inP
+    lac i inP
+    add [mLen:5]
+    dac inP
+    lac i inP
+    dac vaInL
+    jmp i inRtnW
+inRtnW, 0
+inP, 0
+    endloc
+vaInO, 0
+vaInL, 0

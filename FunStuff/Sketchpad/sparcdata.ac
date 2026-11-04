@@ -1,5 +1,6 @@
 // sparcdata.ac -- bank 2's storage: the arc being drawn, Copy's counts, the arc table and a
-// drag's arcs, and the sine table. The instance table is in bank 10 (sketchpad.am1).
+// drag's arcs, and the sine table. The instance table is in bank 10 and the master directory in
+// bank 5 (sketchpad.am1).
 //
 // Bank 2, after spdefine.ac.
 // Part of sketchpad.am1, included where it stands.
@@ -72,10 +73,11 @@ arcPostW,
 // Set by a change of view (arcView): the band's vectors are to be written again at its next
 // pass, by the view module's vaBand, whatever the scale.
 arcRebase, 0
-// Define's work: the slot, the main bank's lineCount, the pass (0 the box's, 1 the words'), the
-// box, the origin, where the beam is, the words written, their drawing time in half
-// microseconds and whether they ran past MWORDS; the next point's beam, on or off, and the move
-// to it.
+// Define's work: the slot, the main bank's lineCount, the pass (0 the box's, 1 the words'
+// counted, 2 the words' stored), the box, the origin, where the beam is, the words, their
+// drawing time in half microseconds and whether they ran past MPOOL1; the full address its words
+// go to (mrWords in its record, which instStore sets); the next point's beam, on or off, and the
+// move to it.
 dfK, 0
 dfNL, 0
 dfPass, 0
@@ -90,9 +92,69 @@ dfBY, 0
 dfN, 0
 dfT, 0
 dfOver, 0
+dfAt, 0
 dvVis, 0
 dmDX, 0
 dmDY, 0
+// The order defWalk takes the lines in, which the instance module's dkChain writes and bank
+// 12's loadLine reads, both through 16-bit addresses.
+dfOrd,
+    table CPLINES, 0
+// Define's instances kept as sub-instances: sbN blocks of DBW words (sketchpad.ah), which
+// Define's map (instMapOv) fills while the instances are on the canvas, for the composer in
+// defWalk and for instDefOv after the instance list is emptied; and on each pass the words'
+// count after the arcs, the master's own (dfOwnN), and before the crosses (dfDrawN).
+sbN, 0
+sbBlk,
+    table NSUB * DBW, 0
+dfOwnN, 0
+dfDrawN, 0
+// What defWalk walks: 0 for Define's drawing, nonzero for a master's own words and its
+// sub-instances (rwBuild); the 16-bit address of the blocks' count, sbN or rwSbN, which the
+// blocks follow; and of the crosses' visits' count, avN or rwAvN, which avX, avY and avV follow.
+dfSrc, 0
+dfSbA, 0
+dfAvA, 0
+// The propagation (rewriteOv), kept between its calls: the run (RWDEF, RWLIB, RWCOM) and the
+// step it takes up again (RWSINIT to RWSUNDO); the master redefined; the masters holding it at
+// any depth, those done, those another of them holds (stored in the trial), those whose new
+// words the store holds, and the masters it keeps there for Define (its blocks'), a bit each as in
+// mUses; the master in hand; a request's master and the stub's answer; the refusal and the
+// master it names; the masters' texts' count as the trial goes (the library sets it first to
+// the new count of the master loaded) and whether the master redefined has digits (the library
+// sets it); the instances emptied for the trial, Define's words' count, and whether the store
+// must be put back; the next master to bring or put back. Then the box Define counted (dfMinX
+// to dfMaxY), and each master's mLen, mDrawLen and mStart as the trial found them, and its
+// texts' count in the trial.
+rwOp, 0
+rwSt, 0
+rwK, 0
+rwSet, 0
+rwDone, 0
+rwMid, 0
+rwKeep, 0
+rwBase, 0
+rwJ, 0
+rwArg, 0
+rwRes, 0
+rwWhy, 0
+rwWho, 0
+rwTx, 0
+rwDig, 0
+rwIC, 0
+rwKN, 0
+rwCl, 0
+rwM, 0
+rwSvB,
+    table 4, 0
+rwSvL,
+    table NMASTER, 0
+rwSvD,
+    table NMASTER, 0
+rwSvS,
+    table NMASTER, 0
+rwTot,
+    table NMASTER, 0
 // Copy's work: the master, the point table's length before the copy, the master's arcs, a
 // count and two pointers; and moveWords' from, to, count and addend.
 cyK, 0
@@ -106,39 +168,6 @@ mwB, 0
 mwN, 0
 mwD, 0
 
-// The master directory: each master's length in words, 0 while its slot is empty, then its box
-// relative to its origin; NMASTER of each.
-mLen,
-    table NMASTER, 0
-mMinX,
-    table NMASTER, 0
-mMaxX,
-    table NMASTER, 0
-mMinY,
-    table NMASTER, 0
-mMaxY,
-    table NMASTER, 0
-
-// Copy's part of the directory, CBOXOFF words after the figure's box: the copy box, the
-// figure's box widened to take in every point, relative to the origin; then how many points,
-// lines and arcs Copy's store holds for each master.
-cMinX,
-    table NMASTER, 0
-cMaxX,
-    table NMASTER, 0
-cMinY,
-    table NMASTER, 0
-cMaxY,
-    table NMASTER, 0
-cpNP,
-    table NMASTER, 0
-cpNL,
-    table NMASTER, 0
-cpNA,
-    table NMASTER, 0
-
-// The master directory, mLen to cpNA, and the arc table after it stay together. A failed
-// load's wipe (sptape.ac's tlWipe) zeroes them as one run.
 // The arc table: arcCount arcs, each its center's, start's and end's point indices (a full
 // circle's end is its start), its direction, its whole steps and its radius in 32nds (for
 // delete mode's lock). NATAB tables, one after another (arcRemove). Then a drag's start, end

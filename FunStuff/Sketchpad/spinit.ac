@@ -1,17 +1,24 @@
-// spinit.ac -- start-up's display gates and the empty drawing list (initGates).
+// spinit.ac -- start-up's display gates and the empty drawing list (initGates), and the drum
+// overlay manager's start and its error hook (drumFail).
 //
-// Bank 6, after sptape.ac. Runs once, with the extend window open, between bank 12's initVars,
-// which jumps here, and the main bank's init, which it jumps to; nothing returns. It writes bank
-// 0's display words, bank 1's line slots and the main bank's shownCount through 16-bit addresses,
-// and calls nothing.
+// Bank 11, after sptape.ac, root. initGates runs once, with the extend window open, between bank
+// 12's initVars, which jumps here, and the main bank's init, which it jumps to; nothing returns.
+// It writes bank 0's display words, bank 1's line slots and the main bank's shownCount through
+// 16-bit addresses, and calls nothing but the manager's ovInit.
 // Part of sketchpad.am1, included where it stands.
 
 // The target at its start, every gate shut (no band, no marks, no lock mark) but INK's, and an
 // empty drawing list, written directly, since the display is parked (initVars). Its end jumps to
-// the arc list, which init writes before the display starts.
-// AC is clobbered, IO is preserved. Entered by jmp i [initGates:6]; leaves by jmp i [init:4].
+// the arc list, which init writes before the display starts. The overlay manager is made ready,
+// a failed load going to drumFail rather than to a halt, and the drum's breaks counted from 0.
+// AC is clobbered, IO is preserved. Entered by jmp i [initGates:013]; leaves by jmp i [init:4].
 initGates,
     local igPrm, igP
+    jsp ovInit          // no overlay running, no retry counted
+    lac [drumFail:013]
+    dac ovErrHook
+    dzm i [drumBreaks:0]
+    dzm drumFails
     lac [y(INITIALY) next(point)]
     dac i [trackY:0]
     lac [x(INITIALX) next(parameter)]
@@ -30,7 +37,7 @@ initGates,
     dac i [inkGate:0]   // INK shown until the target first is (writeCalls)
     dzm i [shownCount:4]
     dzm i [flipAt:0]
-    dzm scOn            // nothing Scale holds, its status block back under the bar
+    dzm i [scOn:6]      // nothing Scale holds, its status block back under the bar
     lac [y(STATY) next(point)]
     dac i [msgWord:0 + 1]
     lac [x(STATX) next(character)]
@@ -54,3 +61,100 @@ igPrm,
     jmp i [init:4]
 igP, 0
     endloc
+
+// The overlay manager's error hook (Docs/UsingOverlays.md, "Not halting: the error hook"): a
+// load that failed, the drum holding another build's overlays or none (OV_ERR_STAMP), or a
+// transfer that failed OV_TRIES times (OV_ERR_DRUM), never halts the program, since a valid run
+// can meet a drum not written. The status word shows DRUM under the bar until a menu hit or a
+// pick-up hides it, as the tape's results do, its name's line blank, lastMenuMs stamped as
+// tapeCall stamps it; the gesture under way ends and the program is left idle, as
+// tapeCall leaves it; tracking comes back if the pen keyboard's load failed (kbOpening) and
+// kbStart had turned it off; and the main loop goes on from its top. The call that failed is abandoned
+// with every return pending in it, which nothing keeps, since each routine returns by the address
+// its own entry saved; the user's next selection tries the load again. A failed load of the
+// truss, from its stub's call at the end of a main loop's pass (taLoading, sptruss.ac), ends no
+// gesture and leaves the mode: the main loop goes on, and the stub tries again after TAFAILMS
+// (taFailAt). A failed swap (OV_ERR_SWAP), a stop during an eviction of the truss, W's one
+// persistent overlay, leaves its track part new and part old, so its next call starts it again
+// (taReset); MW is twopass, so a master's record is never swapped, and a failed write-back
+// leaves it in core. drumErr keeps the error, drumFails counts them.
+// Entry: AC = the error, OV_ERR_NEST to OV_ERR_SWAP; IO = the failed %%ovcall's return; the
+// extend window open. Entered by jmp i ovErrHook, from the manager; leaves by jmp i [main:4].
+drumFail,
+    local dfCopy, dfPad, dfLoad, dfMode, dfMain, dfP, dfQ, dfN
+    dac drumErr
+    idx drumFails
+    lac [drumText:013]
+    dac dfP
+    lac [msgText:0]
+    dac dfQ
+    lac [0-4]
+    dac dfN
+dfCopy,
+    lac i dfP
+    dac i dfQ
+    idx dfP
+    idx dfQ
+    isp dfN
+    jmp dfCopy
+    lac [msgName:0]
+    dac dfQ
+    lac [1-NAMEW]
+    dac dfN
+dfPad,
+    lac [KBPAD]
+    dac i dfQ
+    idx dfQ
+    isp dfN
+    jmp dfPad
+    lac [KBBLANK]
+    dac i dfQ
+    lac [jump msgWord:0 next(parameter)]
+    dac i [statGate:0]
+    rck
+    dio i [lastMenuMs:4]
+    law 1
+    dac i [msgOn:4]
+    lac drumErr
+    sas [OV_ERR_SWAP]   // skip if a swap failed, the truss's track part new and part old
+    jmp dfLoad
+    law 1
+    dac taReset
+dfLoad,
+    lac taLoading
+    sza i               // skip if the truss's load failed
+    jmp dfMode
+    dzm taLoading
+    rck
+    dio taFailAt
+    jmp dfMain
+dfMode,
+    lio [MCJSP(endChain:4)]
+    jsp i [mainCall:4]
+    lac [NBAR]
+    dac i [newCol:4]
+    law MIDLE
+    dac i [mcA:4]
+    lio [MCJDA(setMode:4)]
+    jsp i [mainCall:4]
+    lac i [kbOpening:6]
+    sza i               // skip if the pen keyboard's load failed
+    jmp dfMain
+    dzm i [kbOpening:6]
+    lac i [kbTrk:4]
+    sza i               // skip if tracking was on when the keyboard was asked for
+    jmp dfMain
+    lio [MCJSP(trackOn:4)]
+    jsp i [mainCall:4]
+dfMain,
+    jmp i [main:4]
+dfP, 0
+dfQ, 0
+dfN, 0
+    endloc
+
+// The status word's text for a failed load, nine characters as the tape's are (sptape.ac,
+// tpMsgs); the last error, and the failures counted since the program's start.
+drumText, type340 "DRUM     "
+drumErr, 0
+drumFails, 0

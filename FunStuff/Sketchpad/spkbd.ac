@@ -1,15 +1,23 @@
 // spkbd.ac -- the pen keyboard: a service that replaces the frame with keys the light pen types
 // on, and gives the text typed back to its caller; and its display list. The same service shows
-// the directory's screen, the tape module's list in bank 6, on which Save and Load pick a
-// picture.
+// a screen of lines, the tape module's lists in bank 11: the directory's, on which Save and Load
+// pick a picture, and the masters' picker, on which Define, Inst, Copy and Change's Master and
+// Dwell pick a master.
 //
-// Bank 12, after spaux.ac. Every entry runs with the extend window open and is entered by
-// jsp i [X:014] from the main bank, kbInit at the start, kbOpen from the main bank's kbStart,
-// kbKey for the menu hits while the keyboard is open, and kbTick each pass while it is. Each
-// reaches bank 0's, the main bank's and the tape module's words through their 16-bit addresses,
-// returns by jmp i, and calls nothing outside bank 12. The lists, kbList here and the tape
-// module's dirList, are started by penISR's dla through frameGo; they hold no jump or save, and
-// each ends in a halt of its own.
+// Bank 6, after spscale.ac. The root part comes first: the four entries, each entered by
+// jsp i [X:6], kbInit from bank 12's initVars at the start, kbOpen from the main bank's kbStart,
+// kbKey for the menu hits while the keyboard is open, and kbTick each pass while it is; and the
+// words they share with the overlay. Then the overlay kbd, read into W from the drum when it is
+// called (Docs/UsingOverlays.md): the open, a key's action, the close, the tables, the text and
+// the list. The root calls the overlay through the drum overlay manager only at an open
+// (kbOpenOv), a press's first hit (kbKeyOv) and a flash's end (kbDarkOv), so a pass, or a hit of
+// a press under way, costs no call of the manager. Nothing takes W while the keyboard is open:
+// tracking is off, so no mode's target routine runs, and nothing else the main loop calls then
+// reaches another overlay. Everything runs with the extend window open, reaches bank 0's, the
+// main bank's and the callers' words through their 16-bit addresses, returns by jmp i, and
+// calls nothing outside W and bank 6's root. The lists, kbList in W and the tape module's
+// dirList in bank 11 and the masters' picker's mpkList in bank 5, are started by penISR's dla through frameGo; they hold no jump
+// or save, and each ends in a halt of its own.
 //
 // The text is kept a character a word in kbCh, its 340 code with KLOWER for a lower-case letter.
 // It is written as 340 text, three codes to a word, an upper shift first and a shift before each
@@ -26,17 +34,114 @@
 #define KBRY(r) (KBY0 - (r) * KBDY)
 
 // The keyboard closed, at the program's start. The frame restarts at frame, no press is under
-// way and no key is lit. AC is clobbered, IO preserved. Called via jsp i [kbInit:014].
+// way, no key is lit and no open's load is under way. It calls no overlay, so the start reads
+// nothing from the drum.
+// AC is clobbered, IO preserved. Called via jsp i [kbInit:6].
 kbInit,
     dac kiRtn
     lac [frame:0]
     dac i [frameGo:0]
     dzm i [kbOn:0]
+    dzm kbOpening
     dzm kbPress
     law NOKEY
     dac kbLit
     jmp i kiRtn
 kiRtn, 0
+
+// A menu hit while the keyboard is open (the overlay's kbKeyOv says what a press does). Every
+// hit keeps the press going (kbTick ends it); only a press's first goes to the overlay, so a pen
+// held on a key costs no call of the manager.
+// Entry: sMenuX, sMenuY (bank 0). Exit: AC = 0 while the keyboard is open; once it has closed,
+// AC = the caller's resume and IO = 1 for OK or a pick, 0 for Cancel. Called via jsp i
+// [kbKey:6], from onMenuHit.
+kbKey,
+    dac kyStubR
+    rck
+    dio kbHitAt
+    lac kbPress
+    sza                 // skip unless a press is under way
+    jmp kyHeld
+    law 1
+    dac kbPress
+    %%ovcall kbd, kbKeyOv
+    jmp i kyStubR
+kyHeld,
+    cla
+    jmp i kyStubR
+kyStubR, 0
+
+// The keyboard's tick, each pass of the main loop while it is open. A press with no hit for
+// KBGAPMS ends, the pen lifted or gone, so the next hit acts; a flash that has run KBFLASHMS
+// ends, the overlay putting the key out (kbDarkOv).
+// AC and IO are clobbered. Called via jsp i [kbTick:6].
+kbTick,
+    local ktRtn, ktFl, ktOut, ktNow
+    dac ktRtn
+    rck
+    dio ktNow
+    lac kbPress
+    sza i               // skip if a press is under way
+    jmp ktFl
+    lac ktNow
+    sub kbHitAt
+    spa                 // skip unless the clock wrapped since the last hit
+    add [CLOCKWRAP]
+    sub [KBGAPMS]
+    spa                 // skip once no hit has come for KBGAPMS
+    jmp ktFl
+    dzm kbPress
+ktFl,
+    lac kbLit
+    sad [NOKEY]         // skip if a key is lit
+    jmp ktOut
+    lac ktNow
+    sub kbLitAt
+    spa                 // skip unless the clock wrapped since the flash began
+    add [CLOCKWRAP]
+    sub [KBFLASHMS]
+    spa                 // skip once the flash has run its time
+    jmp ktOut
+    %%ovcall kbd, kbDarkOv
+ktOut,
+    jmp i ktRtn
+ktRtn, 0
+ktNow, 0
+    endloc
+
+// Open the keyboard: the root stub calling the overlay's kbOpenOv through the drum overlay
+// manager, which reads the overlay into W first if W holds another. kbOpening is set while the
+// call is under way, so that the manager's error hook, if the load fails, puts back the tracking
+// kbStart turned off (spinit.ac, drumFail). IO passes through to the entry.
+// Entry and exit as kbOpenOv's. Called via jsp i [kbOpen:6], from the main bank's kbStart.
+kbOpen,
+    dac koStubR
+    law 1
+    dac kbOpening
+    %%ovcall kbd, kbOpenOv
+    dzm kbOpening
+    jmp i koStubR
+koStubR, 0
+
+// The words the root shares with the overlay, which both reach directly in bank 6, or which a
+// caller reads after the close: whether a press is under way and its latest hit, the key lit
+// and the flash's start, the picture a directory's line picked or the master a picker's line
+// picked (KAPICK, 0 to NPICT - 1 or NMASTER - 1, read by the tape module's tapeStep and
+// libStep, the instance module's pkTake and instKbDone), and whether an open's load is under
+// way.
+kbPress, 0
+kbHitAt, 0
+kbLit, 0
+kbLitAt, 0
+kbPick, 0
+kbOpening, 0
+
+// The overlay kbd: the open, a press's action and a flash's end, with every routine they call,
+// the keyboard's state while it is open, its tables, its text and its list, read again from
+// the drum at each load. kbOpenOv sets every word the keyboard reads before it shows, so each
+// open starts from the overlay's assembled words.
+%%overlay kbd, W
+    export kbOpenOv, kbKeyOv, kbDarkOv
 
 // Open the keyboard on a caller's block of six words. They are the kind (KBTEXT, KBNUM, or KBDEC
 // for a number keyboard that has the point too), the limit in characters (at most KBMAX), and
@@ -44,10 +149,11 @@ kiRtn, 0
 // (340 text, the starting value and the text typed at OK) and of the resume, which onMenuHit
 // calls when the keyboard closes; then the buffer's run in codes, which OK pads the text to as
 // the field is padded, or 0 for a text ended at its end in KBBUFW words. A block of kind KBDIR
-// opens the directory's screen instead (the tape module's dirList, its lines and title written
-// by the tape module's directory read). Its limit is the number of the screen's keys it acts
-// on, 1 for Dir's OK alone, DIRKEYS for the picker's Cancel and lines, and its prompt the key's
-// text, three words.
+// opens a screen of lines instead: the directory's (the tape module's dirList, its lines and
+// title written by the tape module's directory read) or the masters' picker (mpkList, its lines
+// written by the instance module's mpkLines). Its limit is the number of the screen's keys it
+// acts on, 1 for Dir's OK alone, DIRKEYS or MPKEYS for a picker's Cancel and lines; its prompt
+// the key's text, three words; its buffer the screen's descriptor (dirScr, mpkScr).
 // The list is written whole before frameGo points the display at it; kbOn, set last, sends
 // penISR's hits here, once the display has reached the list (at most KBWAIT polls), the hits
 // the frame posted before it dropped, as kbClose drops the keyboard's. The open starts a press,
@@ -56,11 +162,11 @@ kiRtn, 0
 // Dwell does for each master, and nothing acts until it has been lifted. The open
 // also starts penISR's count of quiet frame ends again (the frames shown since the close are no
 // lift).
-// Entry: IO = the block's 16-bit address. AC and IO are clobbered. Called via
-// jsp i [kbOpen:014], from the main bank's kbStart, which turns tracking off first.
-kbOpen,
+// Entry: IO = the block's 16-bit address. AC and IO are clobbered. Called through the root
+// stub kbOpen, by the manager; the main bank's kbStart turns tracking off first.
+kbOpenOv,
     local koRtn, koLimOk, koRd, koLet, koSym, koPut, koNext, koDone, koPrm, koPrEnd, koShift, koP, \
-        koCh, koSt, koC, koDir, koDW, koGo, koQ, koN, koWait, koIn
+        koCh, koSt, koC, koDir, koDW, koGo, koQ, koN, koK, koL, koWait, koIn
     dac koRtn
     dio koP
     lac i koP
@@ -90,18 +196,18 @@ koLimOk,
     law NOKEY
     dac kbLit
     lac kbKind
-    sad [KBDIR]         // skip unless the directory
+    sad [KBDIR]         // skip unless a screen of lines
     jmp koDir
     and [KNUM]          // KBDEC's bit, as the point is a number key only on Stiff's keyboard
     ior [KCDOT]
     dac kbDot
-    lac [kbRec:014]
+    lac [kbRec:6]
     dac kbRecP
     law KBKEYS
     dac kbNK
-    lac [kbBlkT:014]
+    lac [kbBlkT:6]
     dac kbBlkP
-    lac [kbCode:014]
+    lac [kbCode:6]
     dac kbCodeP
 
     // The starting value: the buffer's codes up to its end, each shift changing the case, a
@@ -159,7 +265,7 @@ koNext,
 koDone,
 
     // The prompt, its codes up to its end or the run's last place, padded.
-    lac [kbPrm:014]
+    lac [kbPrm:6]
     jda kbPack
     lac kbPrP
     jda kbUnp
@@ -178,24 +284,37 @@ koPrEnd,
 
     jsp kbShow
     jsp kbKeys
-    lac [kbList:014]
+    lac [kbList:6]
     jmp koGo
 
-    // The directory's screen, its keys' tables from the tape module, as many keys as the limit
-    // says, the key's text from the block, its key unlit.
+    // A screen of lines, its keys' tables from its descriptor in the block's buffer word (the
+    // tape module's dirScr or mpkScr): the hit records, the keys' parameter words' addresses,
+    // the codes, the key's text, the key, and the list. As many keys as the limit says, the
+    // key's text from the block, its key unlit.
 koDir,
-    lac [dirRec:6]
+    lac kbBuf
+    dac koP
+    lac i koP
     dac kbRecP
+    idx koP
+    lac i koP
+    dac kbBlkP
+    idx koP
+    lac i koP
+    dac kbCodeP
+    idx koP
+    lac i koP
+    dac koQ
+    idx koP
+    lac i koP
+    dac koK
+    idx koP
+    lac i koP
+    dac koL
     lac kbLim
     dac kbNK
-    lac [dirBlkT:6]
-    dac kbBlkP
-    lac [dirCode:6]
-    dac kbCodeP
     lac kbPrP
     dac koP
-    lac [dirKTxt:6]
-    dac koQ
     law i 3
     dac koN
 koDW,
@@ -206,16 +325,16 @@ koDW,
     isp koN
     jmp koDW
     lac [KBKEY]
-    dac i [dirKey:6]
-    lac [dirList:6]
+    dac i koK
+    lac koL
 koGo,
     dac i [frameGo:0]
     and [0170000]
-    dac kbBank          // the list's bank, 12 or the directory's 6
+    dac kbBank          // the list's bank, 6 for both
     lac [0-KBWAIT]
     dac koN
 koWait,
-    dra
+    t340dra
     lai
     and [0170000]
     sad kbBank          // skip until the display is in the list's bank
@@ -241,22 +360,23 @@ koSt, 0
 koC, 0
 koQ, 0
 koN, 0
+koK, 0
+koL, 0
     endloc
 
-// A menu hit while the keyboard is open. The first hit of a press acts on the key under it at
-// once, and no other hit of that press acts, so a pen held on a key types once and a pen
-// dragged over the keys types nothing past the key it came down on. A press runs
-// until KBGAPMS with no hit (kbTick), the program's only sign of a lift; a press that begins off
-// the keys, or on a key this keyboard does not have, does nothing. A character key types its
-// character, in lower case for a letter while Shift is on, unless the text is at its limit;
-// Shift toggles the case; Back takes the last character off and Clear all of them; OK writes the
-// text into the caller's buffer and closes, Cancel closes. A key that acts flashes. On the
-// directory's screen OK is a Cancel, and a line closes it as an OK, its picture in kbPick
-// (KAPICK).
+// A press's first hit, from the root's kbKey, which has started the press; no other hit of that
+// press comes here, so a pen held on a key types once and a pen dragged over the keys types
+// nothing past the key it came down on. The press runs until KBGAPMS with no hit (kbTick), the
+// program's only sign of a lift; a press that begins off the keys, or on a key this keyboard
+// does not have, does nothing. A character key types its character, in lower case for a letter
+// while Shift is on, unless the text is at its limit; Shift toggles the case; Back takes the
+// last character off and Clear all of them; OK writes the text into the caller's buffer and
+// closes, Cancel closes. A key that acts flashes. On a screen of lines OK is a Cancel, and a
+// line closes it as an OK, its picture or master in kbPick (KAPICK).
 // Entry: sMenuX, sMenuY (bank 0). Exit: AC = 0 while the keyboard is open; once it has closed,
-// AC = the caller's resume and IO = 1 for OK or a pick, 0 for Cancel. Called via jsp i
-// [kbKey:014], from onMenuHit.
-kbKey,
+// AC = the caller's resume and IO = 1 for OK or a pick, 0 for Cancel. Called through the root's
+// kbKey, by the manager.
+kbKeyOv,
     local kyRtn, kyNone, kyPress, kyGo, kyChar, kySpec, kySpJ, kySpT, kyShift, \
         kyBack, kyClear, kyShow, kyOK, kyFlu, kyAns, kyCancel, kyPick, kyClose, kyBk, kyFl, kyK, \
         kyP, kyCode
@@ -265,14 +385,6 @@ kbKey,
     dac kbHX
     lac i [sMenuY:0]
     dac kbHY
-    // Every hit keeps the press going; only a press's first acts.
-    rck
-    dio kbHitAt
-    lac kbPress
-    sza                 // skip unless a press is under way
-    jmp kyNone
-    law 1
-    dac kbPress
     jsp kbFind
     dac kyK
     sad [NOKEY]         // skip unless no key is under the hit
@@ -286,7 +398,7 @@ kbKey,
     jmp kyGo
     lac kyCode
     and [KNUM]
-    sza i               // skip if the number keyboard, or the directory, has the key
+    sza i               // skip if the number keyboard, or a screen of lines, has the key
     jmp kyNone
 
 kyGo,
@@ -375,7 +487,7 @@ kyCancel,
 kyPick,
     law i 1
     add kyK
-    dac kbPick          // the picture, the directory's lines being its keys 1 to NPICT
+    dac kbPick          // the picture or master, the lines being the screen's keys from 1
     jmp kyAns
 kyClose,
     jsp kbClose
@@ -391,45 +503,16 @@ kyP, 0
 kyCode, 0
     endloc
 
-// The keyboard's tick, each pass of the main loop while it is open. A press with no hit for
-// KBGAPMS ends, the pen lifted or gone, so the next hit acts; a flash that has run KBFLASHMS
-// ends. AC and IO are clobbered. Called via jsp i [kbTick:014].
-kbTick,
-    local ktRtn, ktFl, ktOut, ktNow
-    dac ktRtn
-    rck
-    dio ktNow
-    lac kbPress
-    sza i               // skip if a press is under way
-    jmp ktFl
-    lac ktNow
-    sub kbHitAt
-    spa                 // skip unless the clock wrapped since the last hit
-    add [CLOCKWRAP]
-    sub [KBGAPMS]
-    spa                 // skip once no hit has come for KBGAPMS
-    jmp ktFl
-    dzm kbPress
-ktFl,
-    lac kbLit
-    sad [NOKEY]         // skip if a key is lit
-    jmp ktOut
-    lac ktNow
-    sub kbLitAt
-    spa                 // skip unless the clock wrapped since the flash began
-    add [CLOCKWRAP]
-    sub [KBFLASHMS]
-    spa                 // skip once the flash has run its time
-    jmp ktOut
+// A flash's end, from the root's kbTick once KBFLASHMS have passed: the key put out (kbDark).
+// AC is clobbered, IO preserved. Called through the root's kbTick, by the manager.
+kbDarkOv,
+    dac kdOvRtn
     jsp kbDark
-ktOut,
-    jmp i ktRtn
-ktRtn, 0
-ktNow, 0
-    endloc
+    jmp i kdOvRtn
+kdOvRtn, 0
 
 // Close the keyboard. The display goes back to the frame, and once it has left the keyboard's
-// list or the directory's (at its next frame end; at most KBWAIT polls), penISR's hits go back
+// list or a screen of lines (at its next frame end; at most KBWAIT polls), penISR's hits go back
 // to the menu and the canvas, and the hits it posted for the keyboard meanwhile are dropped, so
 // that none is taken for a press on the bar or a list. The caller's resume follows
 // (onMenuHit), after tracking comes back.
@@ -442,7 +525,7 @@ kbClose,
     lac [0-KBWAIT]
     dac kcN
 kcLoop,
-    dra
+    t340dra
     lai
     and [0170000]
     sas kbBank          // skip while the display is in the list's bank
@@ -517,9 +600,9 @@ kbKeys,
     local kkRtn, kkLoop, kkShow, kkUp, kkWord, kkBlank, kkPut, kkHide, kkTpl, kkNext, kkB, kkC, \
         kkK, kkN, kkP, kkT, kkW, kkCode
     dap kkRtn
-    lac [kbBlkT:014]
+    lac [kbBlkT:6]
     dac kkB
-    lac [kbCode:014]
+    lac [kbCode:6]
     dac kkC
     dzm kkK
     law NOKEY
@@ -577,13 +660,13 @@ kkHide,
     lac kkK
     sub [KSHIFTKEY]
     sza                 // skip if Shift
-    lac [kbSpT:014]
+    lac [kbSpT:6]
     sza i               // skip if Space
-    lac [kbShT:014]
+    lac [kbShT:6]
     dac kkW
     lac kbKind
     sza                 // skip unless the number keyboard
-    lac [kbBlT:014]
+    lac [kbBlT:6]
     sza i               // skip if the blank was chosen
     lac kkW
     dac kkW
@@ -606,7 +689,7 @@ kkNext,
     sza i               // skip if Shift is on
     jmp kkRtn
     lac [KBLIT]
-    dac i [kbK44:014]
+    dac i [kbK44:6]
 kkRtn, jmp .
 kkB, 0
 kkC, 0
@@ -623,7 +706,7 @@ kkCode, 0
 kbShow,
     local ksRtn
     dap ksRtn
-    lac [kbFld:014]
+    lac [kbFld:6]
     jda kbPack
     jsp kbText
     law KCLOW
@@ -649,7 +732,7 @@ kbText,
     jmp ktxDone
     cma
     dac ktxC
-    lac [kbCh:014]
+    lac [kbCh:6]
     dac ktxP
 ktxLoop,
     lac i ktxP
@@ -683,7 +766,7 @@ kbAdd, 0
     lac kbN
     sad kbLim           // skip unless the text is at its limit
     jmp kaRtn
-    add [kbCh:014]
+    add [kbCh:6]
     dac kaP
     lac kbAdd
     dac i kaP
@@ -856,9 +939,9 @@ kgRtn, jmp .
     endloc
 
 // The keyboard's state while it is open, the caller's block's words, the tables of the keys in
-// use (the keyboard's or the directory's) and their count, the text and its length, Shift,
-// whether a press is under way and its latest hit, and the key lit, with the flash's start, the
-// hit, the answer, and the packer's and the unpacker's words.
+// use (the keyboard's or a screen of lines') and their count, the text and its length, Shift,
+// the hit, the answer, and the packer's and the unpacker's words. The press, the key lit and the
+// line picked are the root's (kbPress to kbPick).
 kbKind, 0
 kbLim, 0
 kbPrP, 0
@@ -871,15 +954,10 @@ kbBlkP, 0
 kbCodeP, 0
 kbN, 0
 kbShift, 0
-kbPress, 0
-kbHitAt, 0
-kbLit, 0
-kbLitAt, 0
 kbHX, 0
 kbHY, 0
 kbAns, 0
-kbPick, 0               // the picture a directory's line picked (KAPICK), 0 to NPICT - 1
-kbBank, 0               // the bank of the list shown, bank 12's or the directory's (kbOpen)
+kbBank, 0               // the list's bank, 6 for the keyboard's, 11 for a screen of lines (kbOpenOv)
 kbCase, 0
 kpP, 0
 kpW, 0
@@ -901,56 +979,56 @@ kbBlT, KBPAD
 
 // Each key's block in the list, by key number, as its parameter word's 16-bit address.
 kbBlkT,
-    kbK0:014
-    kbK1:014
-    kbK2:014
-    kbK3:014
-    kbK4:014
-    kbK5:014
-    kbK6:014
-    kbK7:014
-    kbK8:014
-    kbK9:014
-    kbK10:014
-    kbK11:014
-    kbK12:014
-    kbK13:014
-    kbK14:014
-    kbK15:014
-    kbK16:014
-    kbK17:014
-    kbK18:014
-    kbK19:014
-    kbK20:014
-    kbK21:014
-    kbK22:014
-    kbK23:014
-    kbK24:014
-    kbK25:014
-    kbK26:014
-    kbK27:014
-    kbK28:014
-    kbK29:014
-    kbK30:014
-    kbK31:014
-    kbK32:014
-    kbK33:014
-    kbK34:014
-    kbK35:014
-    kbK36:014
-    kbK37:014
-    kbK38:014
-    kbK39:014
-    kbK40:014
-    kbK41:014
-    kbK42:014
-    kbK43:014
-    kbK44:014
-    kbK45:014
-    kbK46:014
-    kbK47:014
-    kbK48:014
-    kbK49:014
+    kbK0:6
+    kbK1:6
+    kbK2:6
+    kbK3:6
+    kbK4:6
+    kbK5:6
+    kbK6:6
+    kbK7:6
+    kbK8:6
+    kbK9:6
+    kbK10:6
+    kbK11:6
+    kbK12:6
+    kbK13:6
+    kbK14:6
+    kbK15:6
+    kbK16:6
+    kbK17:6
+    kbK18:6
+    kbK19:6
+    kbK20:6
+    kbK21:6
+    kbK22:6
+    kbK23:6
+    kbK24:6
+    kbK25:6
+    kbK26:6
+    kbK27:6
+    kbK28:6
+    kbK29:6
+    kbK30:6
+    kbK31:6
+    kbK32:6
+    kbK33:6
+    kbK34:6
+    kbK35:6
+    kbK36:6
+    kbK37:6
+    kbK38:6
+    kbK39:6
+    kbK40:6
+    kbK41:6
+    kbK42:6
+    kbK43:6
+    kbK44:6
+    kbK45:6
+    kbK46:6
+    kbK47:6
+    kbK48:6
+    kbK49:6
 
 // Each key's code, the 340 code it types, with KLET for a letter and KNUM for a key of the
 // number keyboard; or KSPEC and its action (KASHIFT to KACANCEL). KHIDE marks the keys whose
@@ -993,7 +1071,7 @@ kbCode,
     KLET | 02                    // B
     KLET | 016                   // N
     KLET | 015                   // M
-kbDot, 056                   // . (kbOpen sets KNUM for KBDEC)
+kbDot, 056                   // . (kbOpenOv sets KNUM for KBDEC)
     054                          // ,
     057                          // /
     050                          // (
@@ -1212,7 +1290,7 @@ kbRec,
     KBYB - KBR
     KBYB + KBH + KBR
 
-// The list. The prompt and the field are written at kbOpen; then the keys, each a parameter
+// The list. The prompt and the field are written at kbOpenOv; then the keys, each a parameter
 // word, its y and x and its text, the number keyboard's blanks and Shift's case written over
 // the text at run time; then the halt that ends the keyboard's frame.
 kbList,
@@ -1429,3 +1507,4 @@ kbK49, KBKEY
     x(KBXCANCEL) next(character)
     type340 "Cancel"
 kbHalt, lpoff halt interrupt
+%%endoverlay

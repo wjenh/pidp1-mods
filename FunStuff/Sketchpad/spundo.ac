@@ -124,7 +124,7 @@ auCons,
     jsp conShow
     jmp auFix
 auScale,
-    jsp i [scUndo:6]    // the scale module puts back the places, the size and the Length
+    jsp i [scUndo:6]    // the scale module puts back the places, the size and the lengths
     jmp auFix
 auStart,
     lac cenX
@@ -167,26 +167,28 @@ rtn, jmp .
 // list, as after a deletion), which the constraint module is told of (cTopo); the texts (the
 // text module's txUndo); then the arcs
 // (the arc module's arcUndo), whose respread covers the instances too. A dismember's instance
-// is put back first (the instance module's instUndism).
+// is put back after the instances past the count are removed (the instance module's
+// instUndism), into its slot, which the last instance the dismember added holds if it added any.
 // AC and IO are clobbered. Called via jsp.
 undoParts,
-    local rtn, upInst, upRest
+    local rtn, upInst, upDism, upRest
     dap rtn
-    lac undoKind
-    sas [UDISM]         // skip if a dismember
-    jmp upInst
-    lio [IEUNDISM]
-    jda instCall
 upInst,
     lac uInst
     sub i [instCount:012]
     sma                 // skip if instances lie past the count
-    jmp upRest
+    jmp upDism
     lac i [instCount:012]
     sub [1]
     lio [IEREMOVE]
     jda instCall
     jmp upInst
+upDism,
+    lac undoKind
+    sas [UDISM]         // skip if a dismember
+    jmp upRest
+    lio [IEUNDISM]
+    jda instCall
 upRest,
     lac uLines
     dac lineCount

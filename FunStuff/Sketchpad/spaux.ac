@@ -560,7 +560,8 @@ spK, 0
 // vector words, the last with the vector end. Each step is |dx|/K and |dy|/K rounded down, plus
 // a unit whenever the remainders summed so far reach another K, so every step ends within a
 // unit of the true line and the K steps sum to it exactly. The unit is added to the packed
-// word. Neither size exceeds 101, so it stays inside its 7-bit field. Each store goes through
+// word. Neither size exceeds STEPMAX, 127, so it stays inside its 7-bit field: a size rounded
+// down to 127 has no remainder to add. Each store goes through
 // the open window, so the area may be in any bank. Its callers are writeBand's writeSeg and
 // writeSlot.
 // Entry: emitArea = the area's full address; splitPlan's results, the main bank's splitDX,
@@ -813,24 +814,44 @@ wcR, 0
 wcKind, 0
     endloc
 
-// Line i's ends, from bank 3's tables, into the arc module's lnFrom to lnY1 (bank 2), their
-// point indices and coordinates. Its one caller is Define's walk (spdefine.ac's defWalk).
+// The i-th line Define draws, the line dfOrd's entry i names (the instance module's dkChain),
+// its ends from bank 3's tables into the arc module's lnFrom to lnY1 (bank 2), their point
+// indices and coordinates, swapped for a line drawn from its to end. Its one caller is Define's
+// walk (spdefword.ac's defWalk).
 // Entry: IO = i. AC is clobbered, IO preserved. Called via jsp i [loadLine:014].
 loadLine,
-    local rtn, llPtr, llFrom, llTo
+    local rtn, llPtr, llFrom, llTo, llRev, llEnds
     dac rtn
-    dio llFrom          // i, until its ends are read
+    dio llFrom          // i, until its line is read
     lac llFrom
+    add [dfOrd:2]
+    dac llPtr
+    lac i llPtr
+    dac llRev
+    and [0377777]
+    dac llFrom          // the line, until its ends are read
     add [lineTo:3]
     dac llPtr
     lac i llPtr
     dac llTo
-    dac i [lnTo:2]
     lac llFrom
     add [lineFrom:3]
     dac llPtr
     lac i llPtr
     dac llFrom
+    lac llRev
+    sma                 // skip if drawn from its to end
+    jmp llEnds
+    lac llTo
+    dac llPtr
+    lac llFrom
+    dac llTo
+    lac llPtr
+    dac llFrom
+llEnds,
+    lac llTo
+    dac i [lnTo:2]
+    lac llFrom
     dac i [lnFrom:2]
     add [pointX:3]
     dac llPtr
@@ -856,6 +877,7 @@ rtn, 0
 llPtr, 0
 llFrom, 0
 llTo, 0
+llRev, 0
     endloc
 
 // Show a list's Select box beside a row, or hide it beside row 0, by writing the box's y word
@@ -864,7 +886,9 @@ llTo, 0
 // the box at the row it is leaving. Every box is assembled beside row 0, so a hidden one's y is
 // as assembled whichever of the sublists sharing it hid it. Showing, the box's x word (three
 // after its gate) is written too, before the gate, from the descriptor's edge, since the lists
-// share one box, and a sublist's box takes the x it was assembled with.
+// share one box, and a sublist's box takes the x it was assembled with. So, before the gate,
+// is the leader's vector, leadVec, which every box shares, from leadTab by the class of the
+// row's label's length, which its descriptor word holds (LEADROW, spdispatch.ac).
 // Entry: AC = the row, counted from the list's first, NOROW to hide; the main bank's pbDesc = the
 // list's descriptor, pbFirst = the band its first row takes. AC and IO are clobbered. Called by
 // the main bank via dac i [placeBox:014]; jsp i [placeBox:014+1].
@@ -902,6 +926,17 @@ pbBand,
     idx pbPtr
     lac pbX
     dac i pbPtr
+    lac i [pbDesc:4]
+    add [DESCROWS]
+    add placeBox
+    dac pbPtr
+    lac i pbPtr         // the row's address, its label's class in bits 0 and 1
+    ral 2s
+    and [3]
+    add [leadTab:014]   // its full address: the window is open
+    dac pbPtr
+    lac i pbPtr
+    dac i [leadVec:0]
     lac pbGate
     add [1]
     ior [jump next(parameter)]
@@ -921,6 +956,12 @@ pbPtr, 0
 pbWord, 0
 pbGate, 0
 pbX, 0
+// The leader's vector by the class of the label's length (LEADROW): the longest length in each.
+leadTab,
+    deltax(LEADLEN(3)) deltay(0) left visible end
+    deltax(LEADLEN(5)) deltay(0) left visible end
+    deltax(LEADLEN(7)) deltay(0) left visible end
+    deltax(LEADLEN(0d8)) deltay(0) left visible end
     endloc
 
 // Move's drag of a whole line, its pick-up, each step's move and the arcs that follow it, and
@@ -1688,12 +1729,12 @@ linePicks, 0
 lineMerges, 0
 
 // Start-up, its first part. Every main-bank word the program depends on is set, the counts
-// cleared, the clock started; then it enters bank 6's initGates, which enters init's rest. Core
+// cleared, the clock started; then it enters bank 11's initGates, which enters init's rest. Core
 // persists across restarts, so every word is set here, each through its 16-bit address.
 // Entered from boot (bank 0) by jmp i [initVars:014], the window open. It does not return; AC
 // and IO are clobbered.
 initVars,
-    local ivItems, ivClock, ivPtr
+    local ivItems, ivClock, ivPtr, ivClr, ivCLp, ivCRtn, ivA
     lsm
 
     // A display left running by the program loaded before this one would read the lists
@@ -1701,81 +1742,12 @@ initVars,
     lio [parked:0]
     dla
     cbs
-    dzm i [frameTicks:0]
-    dzm i [menuHits:0]
-    dzm i [menuArmed:0]
-    dzm i [tgtHits:0]
-    dzm i [tracking:0]
-    dzm i [edgeCount:0]
-    dzm i [strayCount:0]
-    dzm i [lateCount:0]
-    dzm i [watchdogCount:4]
-    dzm i [frameTotal:4]
-    dzm i [fireCount:4]
-    dzm i [mode:4]
-    dzm i [flashOn:4]
-    dzm i [trackMiss:0]
-    dzm i [trackLost:4]
-    dzm i [dirty:4]
-    dzm i [staleN:4]
-    dzm i [pointCount:4]
-    dzm i [lineCount:4]
-    dzm i [listOpen:0]
-    jsp i [kbInit:014]  // the pen keyboard closed, so the display starts at the frame
+    lio [ivZero1:014]   // full addresses: ivClr reads them indirect, extend mode on
+    jsp ivClr
+    jsp i [kbInit:6]    // the pen keyboard closed, so the display starts at the frame
     jsp i [vwInit:014]  // the view at x1
-    dzm i [subDesc:4]
-    dzm i [frameMenuHits:0]
-    dzm i [trkSaved:4]
-    dzm i [multiFrames:0]
-    dzm i [selectCount:4]
-    dzm i [closeCount:4]
-    dzm i [strokeLive:4]
-    dzm i [vertexCount:4]
-    dzm i [fullCount:4]
-    dzm i [lostCount:4]
-    dzm i [dragMoved:4]
-    dzm i [dragN:4]
-    dzm i [dragFull:4]
-    dzm i [pickCount:4]
-    dzm i [dropCount:4]
-    dzm i [linePicks:014]
-    dzm i [lineMerges:014]
-    dzm i [mergeCount:4]
-    dzm i [deleteCount:4]
-    dzm i [horvCount:4]
-    dzm i [fixCount:4]
-    dzm i [consCount:4]
-    dzm i [consPick:4]
-    dzm i [showOn:4]    // before CEINIT writes the marks, and the first setMode
-    dzm i [forcesOn:4]
-    dzm i [marksAt:4]
-    dzm i [clearCount:4]
-    dzm i [delConsCount:4]
-    dzm i [unfixCount:4]
-    dzm i [rebuildMs:4]
-    dzm i [liveN:4]
-    dzm i [spreadG:4]
-    dzm i [spreadL:4]
-    dzm i [spreadA:4]
-    dzm i [spreadI:4]
-    dzm i [defineResult:4]
-    dzm i [defineCount:4]
-    dzm i [sizeResult:4]
-    dzm i [sizeCount:4]
-    dzm i [copyResult:4]
-    dzm i [copyCount:4]
-    dzm i [undoKind:4]  // before the labels are painted, so Undo's is dim
-    dzm i [undoChain:4]
-    dzm i [undoCount:4]
-    dzm i [uLk:4]
-    dzm i [aimMode:4]
-    dzm i [atLift:4]
-    dzm i [swOn:015]    // the line search holds no sweep from before a restart
-    dzm i [rsOK:015]
-    dzm i [tapeResult:4]
-    dzm i [tapeCount:4]
-    dzm i [msgOn:4]
-    dzm i [tapeDrive:4]
+    lio [ivZero2:014]
+    jsp ivClr
     lac [0-RATEDISCARD]
     dac i [rateFrames:4]
     law 1
@@ -1826,6 +1798,121 @@ ivClock,
     dio i [lastTick:4]
     dio i [lastHitAt:0]
     jsp i [txInit:012]  // the texts, after frameTotal, which its list's buffers count from
-    jmp i [initGates:6] // the gates and the empty drawing list, then the main bank's init
+    jmp i [initGates:013] // the gates and the empty drawing list, then the main bank's init
+
+    // Clear the words the table at IO lists by their full addresses, up to its 0.
+    // AC is clobbered. Called via jsp.
+ivClr,
+    dap ivCRtn
+    dio ivPtr
+ivCLp,
+    lac i ivPtr
+    sza i               // skip unless the table's end
+    jmp ivCRtn
+    dac ivA
+    dzm i ivA
+    idx ivPtr
+    jmp ivCLp
+ivCRtn, jmp .
 ivPtr, 0
+ivA, 0
+
+    // The words cleared before the keyboard and the view are made ready, then those after.
+ivZero1,
+    frameTicks:0
+    menuHits:0
+    menuArmed:0
+    tgtHits:0
+    tracking:0
+    edgeCount:0
+    strayCount:0
+    lateCount:0
+    watchdogCount:4
+    frameTotal:4
+    fireCount:4
+    mode:4
+    flashOn:4
+    trackMiss:0
+    trackLost:4
+    dirty:4
+    staleN:4
+    pointCount:4
+    lineCount:4
+    listOpen:0
+    0
+ivZero2,
+    subDesc:4
+    frameMenuHits:0
+    trkSaved:4
+    multiFrames:0
+    selectCount:4
+    closeCount:4
+    strokeLive:4
+    vertexCount:4
+    fullCount:4
+    lostCount:4
+    dragMoved:4
+    dragN:4
+    dragFull:4
+    pickCount:4
+    dropCount:4
+    linePicks:014
+    lineMerges:014
+    mergeCount:4
+    deleteCount:4
+    horvCount:4
+    fixCount:4
+    consCount:4
+    consPick:4
+    showOn:4        // before CEINIT writes the marks, and the first setMode
+    forcesOn:4
+    marksAt:4
+    clearCount:4
+    delConsCount:4
+    unfixCount:4
+    rebuildMs:4
+    liveN:4
+    spreadG:4
+    spreadL:4
+    spreadA:4
+    spreadI:4
+    defineResult:4
+    defineCount:4
+    sizeResult:4
+    sizeCount:4
+    copyResult:4
+    copyCount:4
+    undoKind:4      // before the labels are painted, so Undo's is dim
+    undoChain:4
+    undoCount:4
+    uLk:4
+    aimMode:4
+    atLift:4
+    swOn:015        // the line search holds no sweep from before a restart
+    rsOK:015
+    tapeResult:4
+    tapeCount:4
+    msgOn:4
+    tapeDrive:4
+    0
+    endloc
+
+// Inch's keyboard, the root's, as the keyboard takes the window W: opened from the main loop
+// (szRun), and its answer taken to the overlay scale (szKbOv).
+// szKbGo: AC and IO are clobbered. Called via jsp i [szKbGo:014]. szKbDone: Entry: IO = 1 for OK,
+// 0 for Cancel. AC and IO are clobbered. Called via jsp i, from onMenuHit.
+szKbGo,
+    local kdRtnW
+    dac kdRtnW
+    dzm i [szDirty:3]
+    lac [szBlk:3]
+    dac i [mcA:4]
+    lio [MCJDA(kbStart:4)]
+    jsp i [mainCall:4]
+    jmp i kdRtnW
+szKbDone,
+    dac kdRtnW
+    %%ovcall scale, szKbOv
+    jmp i kdRtnW
+kdRtnW, 0
     endloc

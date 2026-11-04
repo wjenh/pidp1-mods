@@ -5,11 +5,10 @@ CC = gcc
 endif
 CFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 
-../sketchplot: sketchplot.c
+sketchplot: sketchplot.c
 	$(CC) $(CFLAGS) -o sketchplot sketchplot.c -lm
-	mv sketchplot ..
 
 clean:
-	rm -f ../sketchplot
+	rm -f sketchplot
 
 .PHONY: clean

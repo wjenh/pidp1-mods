@@ -10,7 +10,8 @@
 // instance module, each by jsp i [X:012]; runs with the extend window open throughout, so every
 // indirect address is a 16-bit one. Each entry returns by jmp i, and the module calls nothing
 // outside bank 10. It reads the view module's words in bank 12, since every text is written
-// through the view (txView), and the instance module's iHid in bank 3.
+// through the view (txView), and the instance module's iHid in bank 3. The masters' texts are
+// in bank 11 (sketchpad.am1, for room), reached through their 16-bit addresses.
 // A text is kept as the pen keyboard writes it, TXRUN words of 340 text (an upper shift first, a
 // shift before each change of case, then the end code), with its origin, its first character's
 // lower left, its scale (0 to 3, x1 to x8), its characters, and its words up to its end. The
@@ -27,7 +28,7 @@
 // A master's digits keep their anchor's master index, value and fix (mtAn, mtVal, mtFix). Copy
 // and a dismember give each copy an anchor and scalar of its own (txParts), and an instance
 // shows the value at its scale (txSyDg).
-// The texts' list is two buffers in bank 3, txBufA and txBufB (placed by sketchpad.am1, to spare
+// The texts' list is two buffers in bank 12, txBufA and txBufB (placed by sketchpad.am1, to spare
 // this bank's room), reached through their 16-bit addresses. txSync writes the one not shown and
 // then shows it, by txGo, which penISR starts at the frame's closing halt. A buffer is written
 // only once two frames have ended since the other was shown, so the display never reads one
@@ -61,6 +62,7 @@ txEnTab,
     jda txUndo          // TXUNDO
     jsp txSync          // TXSYNC
     jsp txFresh         // TXFRESH
+    jda txSay           // TXSAY
 
 // A scale's shift, 0 to 3 places left, for xct.
 txShTab,
@@ -76,14 +78,19 @@ txShTab,
 txInit,
     dac txInRtn
     dzm mtN
-    dzm txMCost
-    dzm txMCost+1
-    dzm txMCost+2
-    dzm txMCost+3
+    lac [txMCost:012]
+    dac txInP
+    law i NMASTER
+    dac txInN
+txInLp,
+    dzm i txInP
+    idx txInP
+    isp txInN
+    jmp txInLp
     dzm i [txGo:0]
     lac [lpoff halt interrupt]
-    dac i [txBufA:3]
-    dac i [txBufB:3]
+    dac i [txBufA:014]
+    dac i [txBufB:014]
     dzm txBufSel
     lac i [frameTotal:4]
     sub [2]
@@ -91,6 +98,8 @@ txInit,
     jsp txClear
     jmp i txInRtn
 txInRtn, 0
+txInP, 0
+txInN, 0
 
 // Clear's texts (TXCLEAR). The canvas's are removed with their scalars, none lit or carried; the
 // masters' stay. At txFresh (TXFRESH), after a load wrote the tables (the main bank's
@@ -141,7 +150,7 @@ txClP, 0
 // AC and IO are clobbered. Called via jsp.
 txSync,
     local txSyRtn, txSyGo, txSyBufB, txSyCan, txSyInst, txSyIL, txSyTL, txSyTN, txSyIN, txSyEnd, \
-        txSySc, txSyPut, txSyHas, txSyShow, txSyShB, txSyBuf, txSyK, txSyI, txSyP, txSyM, txSyH, \
+        txSySc, txSyPut, txSyHas, txSyShow, txSyShB, txSyBuf, txSyK, txSyI, txSyP, txSyM, \
         txSyX, txSyY, txSyPl, txSyD, txSyVw
     dap txSyRtn
     lac i [cScChg:010]
@@ -160,10 +169,10 @@ txSync,
     lac txBufSel
     sza                 // skip if buffer A is next
     jmp txSyBufB
-    lac [txBufA:3]
+    lac [txBufA:014]
     jmp txSyGo
 txSyBufB,
-    lac [txBufB:3]
+    lac [txBufB:014]
 txSyGo,
     dac txPtW
     dac txSyBuf
@@ -212,11 +221,9 @@ txSyVw,
     add [iScale:3]
     dac txSyP
     lac i txSyP
+    dac txSyW
+    and [IKMASK]
     dac txSyS
-    add [txShTab:012]
-    dac txSyP
-    lac i txSyP
-    dac txSyH
     lac txSyI
     add [iX:3]
     dac txSyP
@@ -232,7 +239,7 @@ txSyTL,
     lac txSyT
     sad mtN             // skip while the masters' texts remain
     jmp txSyIN
-    add [mtM:012]
+    add [mtM:013]
     dac txSyP
     lac i txSyP
     sas txSyM           // skip if the instance's master's
@@ -241,7 +248,7 @@ txSyTL,
     jda mtLoad
     dzm txPtLit
     lac txSyT
-    add [mtAn:012]
+    add [mtAn:013]
     dac txSyP
     lac i txSyP
     dac txSyD
@@ -258,11 +265,15 @@ txSyTL,
     dac txPtY
 txSyPl,
     lac txPtX
-    xct txSyH
+    lio txSyW
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     add txSyX
     dac txPtX
     lac txPtY
-    xct txSyH
+    lio txSyW
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     add txSyY
     dac txPtY
     lac txPtSc
@@ -319,14 +330,14 @@ txSyT, 0
 txSyP, 0
 txSyM, 0
 txSyS, 0
-txSyH, 0
+txSyW, 0
 txSyX, 0
 txSyY, 0
 txSyD, 0
     endloc
 
-// txSync's copy of the masters' digits txSyT in an instance at scale txSyS. Their master's value
-// at that scale (txMag) is written into txIRun, never the keyboard's txKb, which may be open;
+// txSync's copy of the masters' digits txSyT in an instance at scale txSyS, its word txSyW. Their
+// master's value at that size, the code c's rounding, then the doublings (txMag), is written into txIRun, never the keyboard's txKb, which may be open;
 // their place is the lower left of a box centered on txPtX, txPtY, where txSync put their
 // center. Entry: txPtSc. Exit: txPtX, txPtY, txPtCh, txPtWn, txPtR.
 // AC and IO are clobbered. Called via jsp.
@@ -334,9 +345,15 @@ txSyDg,
     local txSdRtn, txSdP
     dap txSdRtn
     lac txSyT
-    add [mtVal:012]
+    add [mtVal:013]
     dac txSdP
     lac i txSdP
+    dac i [ieSize:7]
+    lac txSyW
+    and [0777777 - IKMASK]
+    dac txSdP
+    lio txSdP
+    jsp i [ieSize:7+1]
     lio txSyS
     jda txMag
     lio [txIRun:012]
@@ -615,33 +632,33 @@ mtLoad, 0
     local mtLdRtn, mtLdP
     dap mtLdRtn
     lac mtLoad
-    add [mtDX:012]
+    add [mtDX:013]
     dac mtLdP
     lac i mtLdP
     dac txPtX
     lac mtLoad
-    add [mtDY:012]
+    add [mtDY:013]
     dac mtLdP
     lac i mtLdP
     dac txPtY
     lac mtLoad
-    add [mtSc:012]
+    add [mtSc:013]
     dac mtLdP
     lac i mtLdP
     dac txPtSc
     lac mtLoad
-    add [mtCh:012]
+    add [mtCh:013]
     dac mtLdP
     lac i mtLdP
     dac txPtCh
     lac mtLoad
-    add [mtW:012]
+    add [mtW:013]
     dac mtLdP
     lac i mtLdP
     dac txPtWn
     lac mtLoad
     jda txRunOf
-    add [mtRun:012]
+    add [mtRun:013]
     dac txPtR
 mtLdRtn, jmp .
 mtLdP, 0
@@ -1339,17 +1356,24 @@ txIcP, 0
 // The largest master's texts' cost, a cycle's. Exit: AC = txMaxV = the cost. IO is preserved.
 // Called via jsp.
 txMaxM,
+    local txMmRtn, txMmLp, txMmP, txMmN
     dap txMmRtn
     dzm txMaxV
-    lac txMCost
+    lac [txMCost:012]
+    dac txMmP
+    law i NMASTER
+    dac txMmN
+txMmLp,
+    lac i txMmP
     jda txMaxOf
-    lac txMCost+1
-    jda txMaxOf
-    lac txMCost+2
-    jda txMaxOf
-    lac txMCost+3
-    jda txMaxOf
+    idx txMmP
+    isp txMmN
+    jmp txMmLp
+    lac txMaxV
 txMmRtn, jmp .
+txMmP, 0
+txMmN, 0
+    endloc
 
 // Whether the texts fit the budget with an instance's change, for the instance module, with
 // master txArg's texts added (none for NOPOINT; the largest master's for NMASTER, a cycle's), and
@@ -1474,8 +1498,10 @@ txUndo, 0
     dac txDirty
 txUnRtn, jmp .
 
-// Show status word n of txWords under the bar, as the tape's are shown, for MSGMS (the main bank's
-// onClock hides it), its name line blank. The words first, then the gate that shows them.
+// Show status word n of txWords under the bar, as the tape's are shown, until a menu hit or a
+// pick-up hides it (the main bank's msgHide), its name line blank. The words first, then the
+// gate that shows them; lastMenuMs is stamped, as tapeCall stamps it, so that the pen still on
+// the keyboard's OK does not hide the word.
 // Entry: AC = n. AC and IO are clobbered. Called via jda.
 txSay, 0
     local txSaRtn, txSaLp, txSaPd, txSaP, txSaQ, txSaN
@@ -1498,7 +1524,7 @@ txSaLp,
     // A blank name run, as the tape module's tpBlank, of pads with the end code in the last word
     // only. An end code in an earlier word returns the 340 to parameter mode there, and the run's
     // next word then reads as a parameter word. A pad's bits are a halt, which would end every
-    // frame at the status word for MSGMS, the list, the drawing and the target undrawn.
+    // frame at the status word while it shows, the list, the drawing and the target undrawn.
     lac [msgName:0]
     dac txSaQ
     law i NAMEW - 1
@@ -1514,7 +1540,7 @@ txSaPd,
     lac [jump msgWord:0 next(parameter)]
     dac i [statGate:0]
     lac i [now:4]
-    dac i [msgStart:4]
+    dac i [lastMenuMs:4]
     law 1
     dac i [msgOn:4]
 txSaRtn, jmp .
@@ -1524,20 +1550,23 @@ txSaN, 0
     endloc
 
 // Define's room, for the instance module's instMap. The masters' table must take the canvas's
-// texts, less master masterArg's, which they replace. Exit: AC = 0, or DEFTEXT. IO is
-// clobbered. Called via jsp i [txDefRoom:012], from bank 7.
+// texts, less master masterArg's, which they replace, and txDrMore more, the derived texts that
+// instMap counts and instDef writes. Exit: AC = 0, or DEFTEXT. IO is clobbered. Called via
+// jsp i [txDefRoom:012], from bank 7.
+txDrMore, 0
 txDefRoom,
     local txDrRtn, txDrLp, txDrNx, txDrChk, txDrOK, txDrK, txDrN, txDrP
     dac txDrRtn
     lac mtN
     add txN
+    add txDrMore
     dac txDrN
     dzm txDrK
 txDrLp,
     lac txDrK
     sad mtN             // skip while the masters' texts remain
     jmp txDrChk
-    add [mtM:012]
+    add [mtM:013]
     dac txDrP
     lac i txDrP
     sas i [masterArg:4] // skip if the master's
@@ -1568,12 +1597,14 @@ txDrP, 0
 // replaced by the canvas's, each kept relative to the master's origin (the arc module's dfCX,
 // dfCY), and the master's box (mMinX to mMaxY) widened to hold each at its size, so that an
 // instance's box, its lock and its refusals at the screen's edges take in its texts. txMCost is
-// the master's texts' characters and TXOWN each. Digits keep their anchor and scalar (mtAn,
-// mtVal, mtFix). The canvas is left with none. txDefRoom has checked for room.
+// the master's texts' characters and TXOWN each, and mTxOwn their count, its own texts, which
+// the instance module's dqTxt follows with its sub-instances' masters' copies. Digits keep their
+// anchor and scalar (mtAn, mtVal, mtFix). The canvas is left with none. txDefRoom has checked
+// for room.
 // AC and IO are clobbered. Called via jsp i [txDefine:012], from bank 7.
 txDefine,
-    local txDfRtn, txDfDrop, txDfKeep, txDfMoved, txDfDrNx, txDfDNx, txDfLp, txDfX1, txDfY0, \
-        txDfY1, txDfNxI, txDfNx, txDfCost, txDfK, txDfI, txDfJ, txDfP, txDfQ, txDfC, txDfV
+    local txDfRtn, txDfDrop, txDfKeep, txDfMoved, txDfDrNx, txDfDNx, txDfLp, txDfNx, txDfCost, \
+        txDfFt, txDfI, txDfJ, txDfP, txDfQ, txDfV
     dac txDfRtn
     lac i [dfK:2]
     dac txDfK
@@ -1585,7 +1616,7 @@ txDfDrop,
     lac txDfI
     sad mtN             // skip while the masters' texts remain
     jmp txDfDNx
-    add [mtM:012]
+    add [mtM:013]
     dac txDfP
     lac i txDfP
     sas txDfK           // skip if the master's, which goes
@@ -1615,7 +1646,7 @@ txDfLp,
     jmp txDfNx
     jda txLoad
     lac mtN
-    add [mtM:012]
+    add [mtM:013]
     dac txDfP
     lac txDfK
     dac i txDfP
@@ -1623,7 +1654,7 @@ txDfLp,
     sub i [dfCX:2]
     dac txPtX
     lac mtN
-    add [mtDX:012]
+    add [mtDX:013]
     dac txDfP
     lac txPtX
     dac i txDfP
@@ -1631,28 +1662,28 @@ txDfLp,
     sub i [dfCY:2]
     dac txPtY
     lac mtN
-    add [mtDY:012]
+    add [mtDY:013]
     dac txDfP
     lac txPtY
     dac i txDfP
     lac mtN
-    add [mtSc:012]
+    add [mtSc:013]
     dac txDfP
     lac txPtSc
     dac i txDfP
     lac mtN
-    add [mtCh:012]
+    add [mtCh:013]
     dac txDfP
     lac txPtCh
     dac i txDfP
     lac mtN
-    add [mtW:012]
+    add [mtW:013]
     dac txDfP
     lac txPtWn
     dac i txDfP
     lac mtN
     jda txRunOf
-    add [mtRun:012]
+    add [mtRun:013]
     dac txDfQ
     lio txDfQ
     lac txPtR
@@ -1662,7 +1693,7 @@ txDfLp,
     // and fix; their cost and box are taken at SCALDIG + 1 characters about their center, the
     // most an instance at any scale shows (txMag).
     lac mtN
-    add [mtAn:012]
+    add [mtAn:013]
     dac txDfP
     lac [NOPOINT]
     dac i txDfP         // plain, unless digits
@@ -1684,7 +1715,7 @@ txDfLp,
     add [scVal:3]
     dac txDfQ
     lac mtN
-    add [mtVal:012]
+    add [mtVal:013]
     dac txDfP
     lac i txDfQ
     dac i txDfP
@@ -1692,78 +1723,17 @@ txDfLp,
     add [scFix:3]
     dac txDfQ
     lac mtN
-    add [mtFix:012]
+    add [mtFix:013]
     dac txDfP
     lac i txDfQ
     dac i txDfP
-    jsp txOnScr
-    lac txOnW
-    sar 1s
-    add txPtX
-    dac txDfV           // their center
-    law SCALDIG+1
-    dac txPtCh
-    jsp txOnScr
-    lac txOnW
-    sar 1s
-    dac txDfQ
-    lac txDfV
-    sub txDfQ
-    dac txPtX
+    law 1
+    jmp txDfFt
 txDfCost,
-    lac txPtCh
-    add [TXOWN]
-    add txDfC
-    dac txDfC
+    cla
+txDfFt,
+    jda txDfFit
     idx mtN
-
-    // The box widened to the text's, txOnScr's width and height from its offset (whether the
-    // offset is on the screen does not matter).
-    jsp txOnScr
-    lac txDfK
-    add [mMinX:2]
-    dac txDfP
-    lac txPtX
-    sub i txDfP
-    sma                 // skip if left of the box
-    jmp txDfX1
-    lac txPtX
-    dac i txDfP
-txDfX1,
-    lac txDfK
-    add [mMaxX:2]
-    dac txDfP
-    lac txPtX
-    add txOnW
-    dac txDfV
-    sub i txDfP
-    spa                 // skip unless inside the box's right side
-    jmp txDfY0
-    lac txDfV
-    dac i txDfP
-txDfY0,
-    lac txDfK
-    add [mMinY:2]
-    dac txDfP
-    lac txPtY
-    sub i txDfP
-    sma                 // skip if below the box
-    jmp txDfY1
-    lac txPtY
-    dac i txDfP
-txDfY1,
-    lac txDfK
-    add [mMaxY:2]
-    dac txDfP
-    lac txPtY
-    add txOnH
-    dac txDfV
-    sub i txDfP
-    spa                 // skip unless inside the box's top
-    jmp txDfNxI
-    lac txDfV
-    dac i txDfP
-txDfNxI,
     idx txDfI
     jmp txDfLp
 txDfNx,
@@ -1772,16 +1742,196 @@ txDfNx,
     dac txDfP
     lac txDfC
     dac i txDfP
+    lac txDfK
+    add [mTxOwn:5]
+    dac txDfP
+    lac txN
+    dac i txDfP
     jsp txClear
     jmp i txDfRtn
 txDfRtn, 0
-txDfK, 0
 txDfI, 0
 txDfJ, 0
 txDfP, 0
 txDfQ, 0
-txDfC, 0
 txDfV, 0
+    endloc
+
+// A master's text, txPut's words (txPtX to txPtCh, its offset as its place), taken into master
+// txDfK's: its characters and TXOWN added to the cost (txDfC), and the master's box (mMinX to
+// mMaxY) widened to the text's, txOnScr's width and height from its offset (whether the offset
+// is on the screen does not matter). Digits are taken at SCALDIG + 1 characters about their
+// center, the most an instance at any scale shows (txMag). For txDefine and mtRecost.
+// Entry: AC = 1 for digits, 0 for a plain text. AC and IO are clobbered; txPtX and txPtCh are
+// changed for digits. Called via jda.
+txDfFit, 0
+    local txFtRtn, txFtCost, txFtX1, txFtY0, txFtY1, txFtP, txFtV, txFtQ
+    dap txFtRtn
+    lac txDfFit
+    sza i               // skip if digits
+    jmp txFtCost
+    jsp txOnScr
+    lac txOnW
+    sar 1s
+    add txPtX
+    dac txFtV           // their center
+    law SCALDIG+1
+    dac txPtCh
+    jsp txOnScr
+    lac txOnW
+    sar 1s
+    dac txFtQ
+    lac txFtV
+    sub txFtQ
+    dac txPtX
+txFtCost,
+    lac txPtCh
+    add [TXOWN]
+    add txDfC
+    dac txDfC
+    jsp txOnScr
+    lac txDfK
+    add [mMinX:5]
+    dac txFtP
+    lac txPtX
+    sub i txFtP
+    sma                 // skip if left of the box
+    jmp txFtX1
+    lac txPtX
+    dac i txFtP
+txFtX1,
+    lac txDfK
+    add [mMaxX:5]
+    dac txFtP
+    lac txPtX
+    add txOnW
+    dac txFtV
+    sub i txFtP
+    spa                 // skip unless inside the box's right side
+    jmp txFtY0
+    lac txFtV
+    dac i txFtP
+txFtY0,
+    lac txDfK
+    add [mMinY:5]
+    dac txFtP
+    lac txPtY
+    sub i txFtP
+    sma                 // skip if below the box
+    jmp txFtY1
+    lac txPtY
+    dac i txFtP
+txFtY1,
+    lac txDfK
+    add [mMaxY:5]
+    dac txFtP
+    lac txPtY
+    add txOnH
+    dac txFtV
+    sub i txFtP
+    spa                 // skip unless inside the box's top
+    jmp txFtRtn
+    lac txFtV
+    dac i txFtP
+txFtRtn, jmp .
+txFtP, 0
+txFtV, 0
+txFtQ, 0
+    endloc
+
+// The master txDefine or mtRecost takes texts into, and their cost so far (txDfFit).
+txDfK, 0
+txDfC, 0
+
+// Master rwJ's texts taken again for the propagation's commit (spdefword.ac, rwRedo): its texts
+// past its own, the first mTxOwn of its in the table's order, which are its sub-instances'
+// masters' copies, dropped, the rest closing up in order; then its own texts' cost into
+// txMCost, and the master's box, which rwRedo has set from the words, widened to each of them,
+// as txDefine takes them (txDfFit). The instance module's dqDer copies the derived texts in
+// again after.
+// AC and IO are clobbered. Called via jsp i [mtRecost:012], from defdism.
+mtRecost,
+    local txRcRtn, txRcLp, txRcKeep, txRcMoved, txRcNx, txRcFit, txRcFl, txRcPl, txRcF, \
+        txRcFn, txRcDone, txRcI, txRcJ, txRcO, txRcP
+    dac txRcRtn
+    lac i [rwJ:2]
+    dac txDfK
+    add [mTxOwn:5]
+    dac txRcP
+    lac i txRcP
+    dac txRcO
+    dzm txRcI
+    dzm txRcJ
+txRcLp,
+    lac txRcI
+    sad mtN             // skip while the masters' texts remain
+    jmp txRcFit
+    add [mtM:013]
+    dac txRcP
+    lac i txRcP
+    sas txDfK           // skip if the master's
+    jmp txRcKeep
+    lac txRcO
+    sza i               // skip while its own remain
+    jmp txRcNx
+    sub [1]
+    dac txRcO
+txRcKeep,
+    lac txRcI
+    sad txRcJ           // skip unless in place already
+    jmp txRcMoved
+    lio txRcJ
+    jda mtMove
+txRcMoved,
+    idx txRcJ
+txRcNx,
+    idx txRcI
+    jmp txRcLp
+
+    // Its own texts' cost and box.
+txRcFit,
+    lac txRcJ
+    dac mtN
+    dzm txDfC
+    dzm txRcI
+txRcFl,
+    lac txRcI
+    sad mtN             // skip while the masters' texts remain
+    jmp txRcDone
+    add [mtM:013]
+    dac txRcP
+    lac i txRcP
+    sas txDfK           // skip if the master's
+    jmp txRcFn
+    lac txRcI
+    jda mtLoad
+    lac txRcI
+    add [mtAn:013]
+    dac txRcP
+    lac i txRcP
+    sad [NOPOINT]       // skip if digits
+    jmp txRcPl
+    law 1
+    jmp txRcF
+txRcPl,
+    cla
+txRcF,
+    jda txDfFit
+txRcFn,
+    idx txRcI
+    jmp txRcFl
+txRcDone,
+    lac txDfK
+    add [txMCost:012]
+    dac txRcP
+    lac txDfC
+    dac i txRcP
+    jmp i txRcRtn
+txRcRtn, 0
+txRcI, 0
+txRcJ, 0
+txRcO, 0
+txRcP, 0
     endloc
 
 // Move the masters' text t into slot j, for txDefine's closing up, its digits' words with it.
@@ -1791,45 +1941,45 @@ mtMove, 0
     dap mtMvRtn
     dio mtMvJ
     lac mtMove
-    add [mtM:012]
+    add [mtM:013]
     dac mtMvP
     lac i mtMvP
     dac mtMvM
     lac mtMove
     jda mtLoad
     lac mtMvJ
-    add [mtM:012]
+    add [mtM:013]
     dac mtMvP
     lac mtMvM
     dac i mtMvP
     lac mtMvJ
-    add [mtDX:012]
+    add [mtDX:013]
     dac mtMvP
     lac txPtX
     dac i mtMvP
     lac mtMvJ
-    add [mtDY:012]
+    add [mtDY:013]
     dac mtMvP
     lac txPtY
     dac i mtMvP
     lac mtMvJ
-    add [mtSc:012]
+    add [mtSc:013]
     dac mtMvP
     lac txPtSc
     dac i mtMvP
     lac mtMvJ
-    add [mtCh:012]
+    add [mtCh:013]
     dac mtMvP
     lac txPtCh
     dac i mtMvP
     lac mtMvJ
-    add [mtW:012]
+    add [mtW:013]
     dac mtMvP
     lac txPtWn
     dac i mtMvP
     lac mtMvJ
     jda txRunOf
-    add [mtRun:012]
+    add [mtRun:013]
     dac mtMvP
     lio mtMvP
     lac txPtR
@@ -1837,10 +1987,10 @@ mtMove, 0
 
     // Its anchor, value and fix, three tables NMTEXT apart.
     lac mtMove
-    add [mtAn:012]
+    add [mtAn:013]
     dac mtMvP
     lac mtMvJ
-    add [mtAn:012]
+    add [mtAn:013]
     dac mtMvM
     law i 3
     dac mtMvJ
@@ -1861,31 +2011,19 @@ mtMvJ, 0
 mtMvM, 0
     endloc
 
-// Copy's room, for the instance module's copyRoom. The canvas must take master copyArg's texts,
-// and the scalars a scalar for each of its sets of digits.
+// Copy's room, for the instance module's copyRoom. The canvas must take master copyArg's own
+// texts (mTxOwn, those txParts places), and the scalars a scalar for each of its sets of digits,
+// which are all its own, since Define derives no digits.
 // Exit: AC = 0 if they fit, COPYROOM if not. IO is clobbered. Called via jsp i [txCopyRoom:012],
 // from bank 7.
 txCopyRoom,
-    local txCrRtn, txCrLp, txCrNx, txCrChk, txCrNo, txCrK, txCrN, txCrP
+    local txCrRtn, txCrNo, txCrP
     dac txCrRtn
-    lac txN
-    dac txCrN
-    dzm txCrK
-txCrLp,
-    lac txCrK
-    sad mtN             // skip while the masters' texts remain
-    jmp txCrChk
-    add [mtM:012]
+    lac i [copyArg:4]
+    add [mTxOwn:5]
     dac txCrP
     lac i txCrP
-    sas i [copyArg:4]   // skip if the master's
-    jmp txCrNx
-    idx txCrN
-txCrNx,
-    idx txCrK
-    jmp txCrLp
-txCrChk,
-    lac txCrN
+    add txN
     sub [NTEXT+1]
     sma                 // skip unless past NTEXT
     jmp txCrNo
@@ -1901,40 +2039,26 @@ txCrNo,
     law COPYROOM
     jmp i txCrRtn
 txCrRtn, 0
-txCrK, 0
-txCrN, 0
 txCrP, 0
     endloc
 
 // Define's room for its instances' texts, for the instance module's instNest. The canvas must
-// take every instance's master's texts at once, as Define takes the instances apart, and the
-// scalars a scalar for each of their sets of digits. Exit: AC = 0 if they fit, DEFNROOM if not.
+// take the own texts (mTxOwn, those txParts places) of every instance of the master being
+// defined (masterArg) at once, as Define takes those instances apart, and the scalars a scalar
+// for each of their sets of digits; the instances Define keeps, and those its dismembers add,
+// keep their texts. Exit: AC = 0 if they fit, DEFNROOM if not.
 // IO is clobbered. Called via jsp i [txNestRoom:012], from bank 7.
 txNestRoom,
-    local txNrRtn, txNrM, txNrI0, txNrI, txNrChk, txNrS, txNrSc, txNrNo, txNrK, txNrN, txNrP
+    local txNrRtn, txNrI, txNrINx, txNrChk, txNrS, txNrSNx, txNrSc, txNrNo, txNrK, txNrN, \
+        txNrP, txNrO
     dac txNrRtn
-
-    // Each master's count of texts.
-    dzm txNrC
-    dzm txNrC+1
-    dzm txNrC+2
-    dzm txNrC+3
-    dzm txNrK
-txNrM,
-    lac txNrK
-    sad mtN             // skip while the masters' texts remain
-    jmp txNrI0
-    add [mtM:012]
+    lac i [masterArg:4]
+    add [mTxOwn:5]
     dac txNrP
     lac i txNrP
-    add [txNrC:012]
-    dac txNrP
-    idx i txNrP
-    idx txNrK
-    jmp txNrM
+    dac txNrO
 
-    // The canvas's and every instance's master's.
-txNrI0,
+    // The canvas's and every instance of masterArg's.
     lac txN
     dac txNrN
     dzm txNrK
@@ -1945,11 +2069,12 @@ txNrI,
     add [iMaster:012]
     dac txNrP
     lac i txNrP
-    add [txNrC:012]
-    dac txNrP
-    lac i txNrP
+    sas i [masterArg:4] // skip if an instance of the master being defined
+    jmp txNrINx
+    lac txNrO
     add txNrN
     dac txNrN
+txNrINx,
     idx txNrK
     jmp txNrI
 txNrChk,
@@ -1958,7 +2083,7 @@ txNrChk,
     sma                 // skip unless past NTEXT
     jmp txNrNo
 
-    // The scalars, the canvas's and one for each set of digits of every instance's master.
+    // The scalars, the canvas's and one for each set of digits of every instance of masterArg.
     lac i [scN:3]
     dac txNrN
     dzm txNrK
@@ -1969,9 +2094,12 @@ txNrS,
     add [iMaster:012]
     dac txNrP
     lac i txNrP
+    sas i [masterArg:4] // skip if an instance of the master being defined
+    jmp txNrSNx
     jda mtDigs
     add txNrN
     dac txNrN
+txNrSNx,
     idx txNrK
     jmp txNrS
 txNrSc,
@@ -1988,44 +2116,38 @@ txNrRtn, 0
 txNrK, 0
 txNrN, 0
 txNrP, 0
-txNrC,
-    table NMASTER, 0
+txNrO, 0
     endloc
 
-// Copy's drop, its texts, for the instance module's copyParts. Master copyArg's texts are added
-// to the canvas at (copyX, copyY), each offset at a dismember's scale (dismShift, x1 for a copy),
-// at its scale plus that scale, at most x8, as an instance shows them; digits get a new anchor
-// and scalar. Run before copyParts adds the points. The caller has checked for room.
+// Copy's drop, its texts, for the instance module's copyParts. Master copyArg's own texts, the
+// first mTxOwn of its texts in the table's order, are added to the canvas at (copyX, copyY),
+// each offset at a dismember's scale word (dismShift, 0 for a copy), at its scale plus that word's
+// k, at most x8, as an instance shows them; digits get a new anchor and scalar. The copies of its
+// sub-instances' masters' texts that follow are left out, since the instances copyParts adds
+// for them show them. Run before copyParts adds the points. The caller has checked for room.
 // AC and IO are clobbered. Called via jsp i [txParts:012], from bank 7.
 txParts,
-    local txPaRtn, txPaFind, txPaNxS, txPaGo, txPaLp, txPaNx, txPaSc, txPaPut, txPaPl, txPaS, \
-        txPaK, txPaP, txPaQ, txPaH, txPaT, txPaV
+    local txPaRtn, txPaLp, txPaNx, txPaSc, txPaPut, txPaPl, txPaS, \
+        txPaK, txPaP, txPaQ, txPaH, txPaT, txPaV, txPaO
     dac txPaRtn
     lac i [dismShift:7]
     dac txPaH
-
-    // The scale whose shift dismShift is.
-    dzm txPaS
-txPaFind,
-    lac txPaS
-    add [txShTab:012]
+    and [IKMASK]
+    dac txPaS
+    lac i [copyArg:4]
+    add [mTxOwn:5]
     dac txPaP
     lac i txPaP
-    sas txPaH           // skip if the scale's shift
-    jmp txPaNxS
-    jmp txPaGo
-txPaNxS,
-    idx txPaS
-    sas [4]             // skip once every scale is tried
-    jmp txPaFind
-    dzm txPaS           // none, so x1
-txPaGo,
+    sza i               // skip if it has texts of its own
+    jmp i txPaRtn
+    cma
+    dac txPaO           // their count, negated, for isp
     dzm txPaK
 txPaLp,
     lac txPaK
     sad mtN             // skip while the masters' texts remain
     jmp i txPaRtn
-    add [mtM:012]
+    add [mtM:013]
     dac txPaP
     lac i txPaP
     sas i [copyArg:4]   // skip if the master's
@@ -2033,11 +2155,15 @@ txPaLp,
     lac txPaK
     jda mtLoad
     lac txPtX
-    xct txPaH
+    lio txPaH
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     add i [copyX:4]
     dac txPtX
     lac txPtY
-    xct txPaH
+    lio txPaH
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     add i [copyY:4]
     dac txPtY
     lac txPtSc
@@ -2093,7 +2219,7 @@ txPaPut,
     // they are written again from it before the list is (txDgSync), as their value shown is set
     // to -0, which no value is.
     lac txPaK
-    add [mtAn:012]
+    add [mtAn:013]
     dac txPaP
     lac i txPaP
     sad [NOPOINT]       // skip if digits
@@ -2114,7 +2240,7 @@ txPaPut,
     lac txPaV
     dac i txPaP
     lac txPaK
-    add [mtFix:012]
+    add [mtFix:013]
     dac txPaP
     lac txPaV
     add [scFix:3]
@@ -2122,12 +2248,17 @@ txPaPut,
     lac i txPaP
     dac i txPaQ
     lac txPaK
-    add [mtVal:012]
+    add [mtVal:013]
     dac txPaP
     lac txPaV
     add [scVal:3]
     dac txPaQ
+    lac txPaH
+    and [0777777 - IKMASK]
+    lia
     lac i txPaP
+    dac i [ieSize:7]
+    jsp i [ieSize:7+1]
     lio txPaS
     jda txMag
     dac i txPaQ
@@ -2141,6 +2272,9 @@ txPaPut,
 txPaPl,
     law 1
     dac txDirty
+    isp txPaO           // skip once its own texts are placed
+    jmp txPaNx
+    jmp i txPaRtn
 txPaNx,
     idx txPaK
     jmp txPaLp
@@ -2152,6 +2286,7 @@ txPaQ, 0
 txPaH, 0
 txPaT, 0
 txPaV, 0
+txPaO, 0
     endloc
 
 // Master m's sets of digits among the masters' texts, the scalars a copy of it adds.
@@ -2165,13 +2300,13 @@ mtDgLp,
     lac mtDgK
     sad mtN             // skip while the masters' texts remain
     jmp mtDgOut
-    add [mtM:012]
+    add [mtM:013]
     dac mtDgP
     lac i mtDgP
     sas mtDigs          // skip if the master's
     jmp mtDgNx
     lac mtDgK
-    add [mtAn:012]
+    add [mtAn:013]
     dac mtDgP
     lac i mtDgP
     sas [NOPOINT]       // skip unless digits
@@ -2785,6 +2920,8 @@ txNdNo,
 txNdFree,
     dzm i txNdPf
 txNdYes,
+    lac [SZNOSRC]       // a Z on it drives or reads anew too
+    dac i [szDirty:3]
     law 1
     dac i [cTopo:010]   // a D on the scalar drives or reads anew, the solver woken by the build
     dac i [conWake:4]
@@ -2946,19 +3083,20 @@ txTens,
     0d10
     1
 
-// The status words, four words of nine characters each, TXSFULL then TXSOFF.
+// The status words, four words of nine characters each, TXSFULL, TXSOFF, then TXSCONF.
 txWords,
     type340 "NO ROOM  "
     type340 "OFF EDGE "
+    type340 "CONFLICT "
 
 // Each canvas text's value as its digits were last written (txDgSet), for txDgSync; a plain
 // text's is never read.
 txDv,
     table NTEXT, 0
 
-// The texts' counts and costs, then their tables. In this order, txN to mtRun is one run of
-// words, which a picture's save writes and its load reads whole (sptape.ac, TPTEXTS), so that its
-// write changes runs once.
+// The texts' counts and costs, then the canvas's tables. In this order, txN to txRun is one run
+// of words, which a picture's save writes and its load reads whole (sptape.ac, TPTEXTS), the
+// masters' tables in bank 11 (sketchpad.am1) the run after it.
 txN, 0                  // the canvas's texts
 mtN, 0                  // the masters' texts
 txMCost,                // each master's texts' cost: their characters and TXOWN each
@@ -2977,33 +3115,6 @@ txW,
     table NTEXT, 0
 txRun,
     table NTEXT * TXRUN, 0
-
-// The masters' texts.
-mtM,
-    table NMTEXT, 0
-mtDX,
-    table NMTEXT, 0
-mtDY,
-    table NMTEXT, 0
-mtSc,
-    table NMTEXT, 0
-mtCh,
-    table NMTEXT, 0
-mtW,
-    table NMTEXT, 0
-mtRun,
-    table NMTEXT * TXRUN, 0
-
-// The masters' digits, past the texts' run, a separate run that a save writes in the digits'
-// block (sptape.ac, TPDIGITS). First each master's text's anchor, the master index of the point
-// at its center, NOPOINT for a plain text; then a set of digits' value and fix, its scalar's at
-// Define. Three tables NMTEXT apart, in this order (mtMove, TPDIGITS).
-mtAn,
-    table NMTEXT, NOPOINT
-mtVal,
-    table NMTEXT, 0
-mtFix,
-    table NMTEXT, 0
 
 // An instance's copy of digits, as txSyDg writes it.
 txIRun,

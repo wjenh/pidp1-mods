@@ -199,24 +199,20 @@ rtn, jmp .
 // Entry: AC = slot index, 0 to MAXLINES. Exit: AC = the address. IO is preserved.
 // Called via jda.
 slotAddr, 0
-    local rtn, saGroup, saT
+    local rtn, saT
     dap rtn
     lac slotAddr
     sar 2s
-    dac saGroup
-    sal 6s              // group * 64
-    sub saGroup
-    sub saGroup         // group * 62, GROUPWORDS
+    sal 1s              // 2 (i / 4), the target calls of the groups before
     dac saT
     lac slotAddr
-    and [3]
-    dac saGroup
     sal 4s
-    sub saGroup         // slot in group * 15, SLOTWORDS
-    add saT
+    sub slotAddr
+    sub slotAddr
+    sub slotAddr        // i * 13, SLOTWORDS
+    add saT             // group i / 4 of GROUPWORDS (54), slot i mod 4 of SLOTWORDS in it
     add [drawList:1]
 rtn, jmp .
-saGroup, 0
 saT, 0
     endloc
 

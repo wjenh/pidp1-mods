@@ -1,0 +1,113 @@
+// spsub.ac -- the words a dismember's or a copy's sub-instances will call brought into the master
+// store.
+//
+// Bank 12, after the view module. Entered by jsp i [X:014], runs with the extend window open,
+// reaching other banks' words through their 16-bit addresses.
+// Part of sketchpad.am1, included where it stands.
+
+// The words the instances for a master's sub-instances will call brought into the master store,
+// for a dismember of instance i, or a copy of master copyArg at x1 (i NOPOINT): each sub-instance's
+// master, or with a c its variant, not its master, at its word composed with the scale taken
+// apart at (ieComp). A word out of range is passed over, as dismAt refuses it next. The record is
+// read first, whole, since each variant made loads another; then one sweep and the rest held
+// (vaHold), since each variant has no instance yet and a sweep would free the last one made, and
+// the masters kept (pbKeep). The hold is put back as found, so instNest's stays over all its
+// instances. Nothing visible changes: only what nothing calls leaves the store. The caller loads
+// the master's record after.
+// Entry: subBring = i or NOPOINT. Exit: AC = 0, or 1 when the store or the variants' entries have
+// no room. IO is clobbered. Called by dac i [subBring:014] and jsp i [subBring:014+1].
+subBring, 0
+    local sbHave, sbGat, sbLoop, sbNext, sbEnd, sbRtnW, sbK, sbW, sbN, sbL, sbA, sbM, sbP, sbH
+    dac sbRtnW
+    dzm sbW
+    lac i [copyArg:4]
+    dac sbK
+    lac subBring
+    sad [NOPOINT]       // skip if an instance
+    jmp sbHave
+    add [iMaster:012]
+    dac sbP
+    lac i sbP
+    dac sbK
+    lac subBring
+    add [iScale:3]
+    dac sbP
+    lac i sbP
+    dac sbW
+sbHave,
+    lac sbK
+    add [mNSub:5]
+    dac sbP
+    lac i sbP
+    sza i               // skip if the master holds sub-instances
+    jmp i sbRtnW
+    cma
+    dac sbN
+    dac sbL
+    lio sbK
+    jsp i [mrLoadX:7]
+    lac [cpSub:5]
+    dac sbA
+    lac [svT:5]
+    dac sbM
+sbGat,
+    lac i sbA           // SBM
+    dac i sbM
+    idx sbM
+    lac sbA
+    add [SBS]
+    dac sbP
+    lio sbW
+    lac i sbP
+    dac i [ieComp:2]
+    jsp i [ieComp:2+1]
+    dac i sbM
+    idx sbM
+    lac sbA
+    add [SUBW]
+    dac sbA
+    isp sbL             // skip once every sub-instance is read
+    jmp sbGat
+    lac sbK
+    add [mUses:5]
+    dac sbP
+    lac i sbP
+    dac i [pbKeep:7]
+    jsp i [vaSweep:011]
+    lac i [vaHold:011]
+    dac sbH
+    law 1
+    dac i [vaHold:011]
+    lac [svT:5]
+    dac sbM
+sbLoop,
+    lac i sbM
+    dac i [poolFor:7]
+    idx sbM
+    lio i sbM
+    lac i sbM
+    spa                 // skip unless out of range
+    jmp sbNext
+    jsp i [poolFor:7+1]
+    sza                 // skip if brought
+    jmp sbEnd
+sbNext,
+    idx sbM
+    isp sbN             // skip once every sub-instance is brought
+    jmp sbLoop
+    cla
+sbEnd,
+    lio sbH
+    dio i [vaHold:011]
+    dzm i [pbKeep:7]
+    jmp i sbRtnW
+sbRtnW, 0
+sbK, 0
+sbW, 0
+sbN, 0
+sbL, 0
+sbA, 0
+sbM, 0
+sbP, 0
+sbH, 0
+    endloc

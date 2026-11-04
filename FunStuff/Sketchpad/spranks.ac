@@ -1,0 +1,266 @@
+// spranks.ac -- the overlay ranks: the marks' ranks, counted again after the constraint table
+// has changed, for bank 13's mkMarks, which calls it while mkRkOld is set.
+//
+// Included in bank 11 before the overlay table, every word of it in the overlay ranks in W, read
+// again from the drum at each load. It runs with the extend window open and reaches the
+// constraint table and cNPts in bank 9, bank 8's cEnd, the point tables and mkRank in bank 3, and
+// bank 13's cLnTab and mkRkOld through 16-bit addresses. It calls nothing outside itself.
+// Part of sketchpad.am1, included where it stands.
+
+%%overlay ranks, W
+    export rkRanksOv
+
+// The ranks, counted again into bank 3's mkRank, entry j's at word j, and mkRkOld cleared.
+// Counting costs each entry a walk of those before it, too dear for every writing of the marks.
+// Entry: AC = the return address, which carries bank 13. AC and IO are clobbered. Called via
+// %%ovcall ranks, rkRanksOv, from mkMarks.
+rkRanksOv,
+    local rsRtnW, rsLoop, rsP, rsQ
+    dac rsRtnW
+    dzm i [mkRkOld:015]
+    lac [cEntries:011]
+    dac rsP
+    lac [mkRank:3]
+    dac rsQ
+rsLoop,
+    lac rsP
+    sad i [cEnd:010]    // skip while entries remain
+    jmp i rsRtnW
+    jda rkOf
+    dac i rsQ
+    idx rsQ
+    lac rsP
+    add [CW]
+    dac rsP
+    jmp rsLoop
+rsRtnW, 0
+rsP, 0
+rsQ, 0
+    endloc
+
+// An entry's rank: on its line, how many entries before it in the table stand on one line with
+// the same ends, in either order, whatever their types; on its point, how many before it stand
+// on the same one point, whatever their types; for a two-line mark (E, P or R, an M being an E),
+// how many two-line marks before it stand at its place, their four points' sums within
+// 4 * MKSAME of its own on each axis, the page's, before the view (rkSum); 0 for any other mark.
+// Entry: AC = the entry's address. Exit: AC = the rank. IO is clobbered. Called via jda.
+rkOf, 0
+    local rtn, rkLoop, rkB, rkNext, rkPt, rkPLp, rkPNx, rkTwo, rkTLp, rkTNx, rkDone, rkP, rkT, \
+        rkH, rkR, rkE1, rkE2
+    dap rtn
+    dzm rkR
+    lac rkOf
+    jda rkLnOf
+    sza i               // skip if the mark stands on one line
+    jmp rkPt
+    dac rkT
+    lac i rkT
+    dac rkE1            // the line's first end
+    idx rkT
+    lac i rkT
+    dac rkE2            // and its second
+    lac [cEntries:011]
+    dac rkP
+rkLoop,
+    lac rkP
+    sad rkOf            // skip while entries remain before this one
+    jmp rkDone
+    jda rkLnOf
+    sza i               // skip if that entry's mark stands on one line
+    jmp rkNext
+    dac rkT
+    add [1]
+    dac rkH
+    lac i rkT
+    sas rkE1            // skip if its first end is this line's first
+    jmp rkB
+    lac i rkH
+    sad rkE2            // skip unless its second is this line's second
+    idx rkR
+    jmp rkNext
+rkB,
+    sas rkE2            // skip if its first end is this line's second
+    jmp rkNext
+    lac i rkH
+    sad rkE1            // skip unless its second is this line's first
+    idx rkR
+rkNext,
+    lac rkP
+    add [CW]
+    dac rkP
+    jmp rkLoop
+rkPt,
+    lac rkOf
+    jda rkPtOf
+    sza i               // skip if the mark stands on one point
+    jmp rkTwo
+    dac rkT
+    lac i rkT
+    dac rkE1            // the point
+    lac [cEntries:011]
+    dac rkP
+rkPLp,
+    lac rkP
+    sad rkOf            // skip while entries remain before this one
+    jmp rkDone
+    jda rkPtOf
+    sza i               // skip if that entry's mark stands on one point
+    jmp rkPNx
+    dac rkT
+    lac i rkT
+    sad rkE1            // skip unless on this point
+    idx rkR
+rkPNx,
+    lac rkP
+    add [CW]
+    dac rkP
+    jmp rkPLp
+rkTwo,
+    lac rkOf
+    jda rkSum
+    sza i               // skip if a two-line mark
+    jmp rkDone
+    lac rkSX
+    dac rkE1            // its points' sums
+    lac rkSY
+    dac rkE2
+    lac [cEntries:011]
+    dac rkP
+rkTLp,
+    lac rkP
+    sad rkOf            // skip while entries remain before this one
+    jmp rkDone
+    jda rkSum
+    sza i               // skip if that entry is a two-line mark
+    jmp rkTNx
+    lac rkSX
+    sub rkE1
+    spa                 // skip unless the difference is negative
+    cma
+    sub [4 * MKSAME + 1]
+    sma                 // skip if within 4 * MKSAME on x
+    jmp rkTNx
+    lac rkSY
+    sub rkE2
+    spa                 // skip unless the difference is negative
+    cma
+    sub [4 * MKSAME + 1]
+    spa                 // skip unless within 4 * MKSAME on y
+    idx rkR
+rkTNx,
+    lac rkP
+    add [CW]
+    dac rkP
+    jmp rkTLp
+rkDone,
+    lac rkR
+rtn, jmp .
+rkP, 0
+rkT, 0
+rkH, 0
+rkR, 0
+rkE1, 0
+rkE2, 0
+    endloc
+
+// The sums of a two-line mark's four points, from the point table: rkSX and rkSY.
+// Entry: AC = the entry's address. Exit: AC = 1 and the sums for a type with four points (E, P,
+// R), else AC = 0. IO is preserved. Called via jda.
+rkSum, 0
+    local rtn, smLoop, smNo, smP, smK, smT
+    dap rtn
+    lac i rkSum
+    and [CTMASK]
+    add [cNPts:011]
+    dac smT
+    lac i smT
+    sas [4]             // skip if the type names four points
+    jmp smNo
+    law i 4
+    dac smK
+    dzm rkSX
+    dzm rkSY
+    lac rkSum
+    dac smP
+smLoop,
+    idx smP
+    lac i smP
+    add [pointX:3]
+    dac smT
+    lac i smT
+    add rkSX
+    dac rkSX
+    lac i smP
+    add [pointY:3]
+    dac smT
+    lac i smT
+    add rkSY
+    dac rkSY
+    isp smK             // skip once the four are summed
+    jmp smLoop
+    law 1
+    jmp rtn
+smNo,
+    cla
+rtn, jmp .
+smP, 0
+smK, 0
+smT, 0
+    endloc
+rkSX, 0
+rkSY, 0
+
+// Where an entry names the line its mark stands on (bank 13's cLnTab), as the address of the
+// word holding the line's first end, the second in the word after it; 0 when it stands on no one
+// line. The overlay's copy of bank 13's mkLnOf.
+// Entry: AC = the entry's address. Exit: AC = that word's address or 0. IO is preserved. Called
+// via jda.
+rkLnOf, 0
+    local rtn, loT
+    dap rtn
+    lac i rkLnOf
+    and [CTMASK]
+    add [cLnTab:015]
+    dac loT
+    lac i loT
+    sza                 // skip unless on one line
+    add rkLnOf
+rtn, jmp .
+loT, 0
+    endloc
+
+// Where an entry names the one point its mark stands on, an F's, an A's, a designation's, or a
+// roller's point A, as the address of that word, the entry's next; 0 for every other mark, and
+// for a point past the point table. The overlay's copy of bank 13's mkPtOf.
+// Entry: AC = the entry's address. Exit: AC = that word's address or 0. IO is preserved. Called
+// via jda.
+rkPtOf, 0
+    local rtn, poYes, poNo, poT
+    dap rtn
+    lac i rkPtOf
+    sad [CTROLL]        // skip unless a roller
+    jmp poYes
+    and [CTMASK]
+    add [cNPts:011]
+    dac poT
+    lac i poT
+    sas [1]             // skip if the type names one point
+    jmp poNo
+poYes,
+    lac rkPtOf
+    add [1]
+    dac poT
+    lac i poT
+    spa                 // skip unless negative, NOPOINT among them
+    jmp poNo
+    sub [MAXPTS]
+    sma                 // skip if a point of the table
+    jmp poNo
+    lac poT
+    jmp rtn
+poNo,
+    cla
+rtn, jmp .
+poT, 0
+    endloc
+%%endoverlay

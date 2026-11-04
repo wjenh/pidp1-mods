@@ -15,43 +15,31 @@
     jmp penISR
 
 // Change's sublist, display words in bank 0's spare words 4 to 077, since the single-channel
-// break uses only 0 to 3 and the 340's jump reaches all of bank 0. Rows M1 to M4, Cycle, Dwell
-// and Seq beside Edit's Change row, ROWCHANGE, then its Select box, which Size's and Constr's
-// sublists share, assembled beside row 0 as every sublist's is.
+// break uses only 0 to 3 and the 340's jump reaches all of bank 0. Rows Master (the masters'
+// picker), Cycle, Dwell and Seq beside Edit's Change row, ROWCHANGE, then its Select box, which
+// Size's and Constr's sublists share, assembled beside row 0 as every sublist's is.
 4/
 listChange,
 ch0, LBLNORM
     y(ROWY0 - ROWCHANGE * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M1"
+    type340 "Master"
 ch1, LBLNORM
-    y(ROWY0 - (ROWCHANGE + 0d1) * ROWPITCH) next(point)
-    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M2"
-ch2, LBLNORM
-    y(ROWY0 - (ROWCHANGE + 0d2) * ROWPITCH) next(point)
-    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M3"
-ch3, LBLNORM
-    y(ROWY0 - (ROWCHANGE + 0d3) * ROWPITCH) next(point)
-    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M4"
-ch4, LBLNORM
     y(ROWY0 - (ROWCHANGE + CYCLEROW) * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
     type340 "Cycle"
-ch5, LBLNORM
-    y(ROWY0 - (ROWCHANGE + 0d5) * ROWPITCH) next(point)
+ch2, LBLNORM
+    y(ROWY0 - (ROWCHANGE + 0d2) * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
     type340 "Dwell"
-ch6, LBLNORM
-    y(ROWY0 - (ROWCHANGE + 0d6) * ROWPITCH) next(point)
+ch3, LBLNORM
+    y(ROWY0 - (ROWCHANGE + 0d3) * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
     type340 "Seq"
 chBox,
     BOXAT(CEDIT * COLPITCH + SUBDX + BOXDX, 0)
     lpoff next(subroutine)
-    jump menuEnd next(parameter)
+    jump okLead next(parameter)
 
 // The pick marks, in the spare words after Change's sublist, a cross on each point Dist,
 // Change or Gap has picked, entered from pickGate (spframe.ac) in point mode at
@@ -130,14 +118,16 @@ tgtNew,
 // readouts first), or an edge violation, and leaves a message for the main loop.
 // A hit resumes the display with drs: a held pen hits on every pass, so a restart at the hit
 // would loop there. The closing halt and an edge violation restart the frame with dla.
-// The main loop gets raw drc positions; the target goes where drp predicts the pen.
+// The main loop gets drc positions, which the emulator predicts; the target goes there too, from a
+// second drc, since the clock read takes IO.
 // The counts that must not depend on how far behind the main loop runs are kept here: frame
 // ends since the last menu hit, and presentations since the last target hit, with its time;
-// and each frame end's time, for the frame rate.
+// whether the last hit was the target's (lastTgt); and each frame end's time, for the frame
+// rate.
 // Entered from location 3; AC and IO are restored from locations 0 and 2.
 penISR,
     local isrX, isrY, isrPos, isrPoll, menuPost, canvas, held, resume, isrPost, notPen, notEdge, frameEnd, noFlag, lateStop, lsWait, lsNext, commit, isrDone, isrPX, isrPY, isrWX, isrWY, tgtMove, \
-        roFollow, txFollow, arFollow, inkHit
+        roFollow, txFollow, arFollow, inkHit, drumBreak
     dsp                // skip on a light pen hit
     jmp notPen
     drc
@@ -162,6 +152,7 @@ menuPost,
     dac menuY
     idx menuHits
     idx frameMenuHits
+    dzm lastTgt
     lac menuGap
     sub [REARM]
     spa                 // skip if the bar was quiet for REARM frame ends: a fresh press
@@ -175,7 +166,7 @@ held,
     // Canvas. With a list open, tracking is off and the drawing is lpoff, so the hit is on the
     // list or its Select box; with the pen keyboard open, on a key. Otherwise only the target
     // is pen-sensitive there, while tracking, and INK while not (inkHit). The clamps leave IO
-    // alone, so the drp word is still there for x.
+    // alone, so the drc word is still there for x.
 canvas,
     lac listOpen
     ior kbOn
@@ -190,9 +181,11 @@ canvas,
     dac tgtY
     idx tgtHits
     dzm trackMiss
+    law 1
+    dac lastTgt         // AC is taken again from the drc below
     rck
     dio lastHitAt
-    drp
+    drc
     lai
     and [0777]
     sal 1s
@@ -252,7 +245,7 @@ resume,
     // display stands, so that a pen-on word of a list, the keyboard or Dir's screen drawn just
     // after it closed is not taken for INK; any other is dropped.
 inkHit,
-    dra
+    t340dra
     lai
     sub [inkBlock]
     spa                 // skip if at or past INK's first word
@@ -272,24 +265,26 @@ notPen,
     idx edgeCount
     jmp commit
 notEdge,
-    dss                 // skip if the display stopped: the frame's closing halt, or a list's
+    t340dss             // skip if the display stopped: the frame's closing halt, or a list's
     jmp noFlag
 
     // While no list is open, as the drawing is hidden then, the constraints' arms, a list in
-    // bank 5, follow the frame's closing halt while arGo is set; then the texts' list, in bank 3,
+    // bank 5, follow the frame's closing halt while arGo is set; then the texts' list, in bank 12,
     // while txGo names it; then the truss's readouts, a list in bank 13, while roOn is set. The
-    // last list's halt ends the frame.
+    // last list's halt ends the frame. While the pen keyboard is open nothing follows its list or
+    // screen, whose halt might read as the arms' (the library's screen is in bank 5).
     lac listOpen
-    sza                 // skip unless a list is open
+    ior kbOn
+    sza                 // skip unless a list or the keyboard is open
     jmp frameEnd
-    dra
+    t340dra
     lai
     sad [frameHalt+1]   // skip unless at the frame's closing halt: the arms may follow it
     jmp arFollow
     and [0170000]
     sad [0050000]       // skip unless at the arms' halt, in bank 5: the texts may follow it
     jmp txFollow
-    sas [0030000]       // skip if at the texts' halt, in bank 3: the readouts may follow it
+    sas [0140000]       // skip if at the texts' halt, in bank 12: the readouts may follow it
     jmp frameEnd
 roFollow,
     lac roOn
@@ -351,29 +346,37 @@ isrDone,
     lac 0               // restore the pre-break AC -- must be last before DEBREAK
     jmp i 1
 
-    // A break with no display flag. None is expected; any that come are sorted and counted
-    // (strayCount, lateCount). If the display sits at the closing halt (dra reads frameHalt+1), or
-    // in the arms' list, the texts', the readouts', the pen keyboard's or the directory's, none of
-    // which holds a word but its halt that asks for a break, the stop flag is late; wait for it,
-    // so that the restart clears it, and end the frame. Otherwise the display is running and
-    // nothing asked for the break, so leave it alone. A late stop at the arms' or the texts' halt
-    // ends the frame here, so the lists after it do not follow it that frame.
+    // A break with no display flag. While the overlay manager is loading (its ovLoading, set
+    // from just before each transfer until after the transfer's break) it is the drum's, which
+    // asks for a break at the end of every transfer: counted apart (drumBreaks) and left, the
+    // display running. Otherwise none is expected; any
+    // that come are sorted and counted (strayCount, lateCount). If the display sits at the closing
+    // halt (dra reads frameHalt+1), or in the arms' list, the texts', the readouts', the pen
+    // keyboard's or the directory's, none of which holds a word but its halt that asks for a
+    // break, the stop flag is late; wait for it, so that the restart clears it, and end the
+    // frame. Otherwise the display is running and nothing asked for the break, so leave it alone.
+    // A late stop at the arms' or the texts' halt ends the frame here, so the lists after it do
+    // not follow it that frame.
 noFlag,
-    dra
+    eem                 // ovLoading is the manager's bank's; the debreak puts the window back
+    lac i [ovLoading:*]
+    sza                 // skip unless the manager is loading
+    jmp drumBreak
+    t340dra
     dio isrPos
     lac isrPos
     sad [frameHalt+1]   // skip unless the display sits at the closing halt
     jmp lateStop
     and [0170000]
-    sad [0030000]       // skip unless the display is in bank 3, the texts' list
+    sad [0140000]       // skip unless the display is in bank 12, the texts' list
     jmp lateStop
     sad [0050000]       // skip unless the display is in bank 5, the arms' list
     jmp lateStop
     sad [0150000]       // skip unless the display is in bank 13, the readouts' list
     jmp lateStop
-    sad [0140000]       // skip unless the display is in bank 12, the keyboard's list
+    sad [0060000]       // skip unless the display is in bank 6, the keyboard's list
     jmp lateStop
-    sad [0060000]       // skip unless the display is in bank 6, the directory's list
+    sad [0130000]       // skip unless the display is in bank 11, the directory's list
     jmp lateStop
     idx strayCount
     jmp isrDone
@@ -382,13 +385,16 @@ lateStop,
     lac [0-LATEPOLLS]
     dac isrPoll
 lsWait,
-    dss                 // skip once the stop flag shows
+    t340dss             // skip once the stop flag shows
     jmp lsNext
     jmp frameEnd
 lsNext,
     isp isrPoll         // skip when the polls are used up
     jmp lsWait
     jmp frameEnd
+drumBreak,
+    idx drumBreaks
+    jmp isrDone
 isrX, 0
 isrY, 0
 isrPos, 0

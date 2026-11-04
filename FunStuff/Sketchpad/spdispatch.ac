@@ -13,6 +13,13 @@
 #define SUBEDGE(bx) ((bx) - (BOXDX - BOXSLOP))
 #define LISTEDGE(c) ((c) * COLPITCH + BOXSLOP)
 
+// A descriptor's row word: the row's parameter word's address, and in bits 0 and 1, which an
+// indirect through it ignores (the window open), LEADROW(n), the class of its label's length n,
+// for the leader to the box (sketchpad.ah): 0 for 2 or 3 characters, 1 for 4 or 5, 2 for 6 or 7,
+// 3 for 8. placeBox reads it; prStore's indirect passes over it. n is the label's characters as
+// its type340 string spells them, which ok_leader.py checks.
+#define LEADROW(n) (((n) / 2 - 1) << 0d16)
+
 // Bar column -> address of its label's parameter word.
 barParamTab,
     bar0:0
@@ -198,54 +205,58 @@ descDraw,
     subsDraw:3
     listBox:0 + 1
     LISTEDGE(CDRAW)
-    dr0:0
-    dr1:0
-    dr2:0
-    dr3:0
-    dr4:0
+    dr0:0 + LEADROW(4)
+    dr1:0 + LEADROW(6)
+    dr2:0 + LEADROW(6)
+    dr3:0 + LEADROW(4)
+    dr4:0 + LEADROW(4)
 descEdit,
     listEdit:0
-    7
+    0d8
     5                   // after Draw's Dim row, item 4
     edTail:0
     subsEdit:3
     listBox:0 + 1
     LISTEDGE(CEDIT)
-    ed0:0
-    ed1:0
-    ed2:0
-    ed3:0
-    ed4:0
-    ed5:0
-    ed6:0
+    ed0:0 + LEADROW(4)
+    ed1:0 + LEADROW(6)
+    ed2:0 + LEADROW(7)
+    ed3:0 + LEADROW(6)
+    ed4:0 + LEADROW(5)
+    ed5:0 + LEADROW(7)
+    ed6:0 + LEADROW(6)
+    ed7:0 + LEADROW(6)
 descPicture,
     listPicture:0
-    6
-    IDISM + 1           // after Edit's Dismem row
+    7
+    IPICTURE            // after Edit's Keep row
     pcTail:0
     subsPicture:3
     listBox:0 + 1
     LISTEDGE(CPICTURE)
-    pc0:0
-    pc1:0
-    pc2:0
-    pc3:0
-    pc4:0
-    pc5:0
+    pc0:0 + LEADROW(6)
+    pc1:0 + LEADROW(4)
+    pc2:0 + LEADROW(4)
+    pc3:0 + LEADROW(5)
+    pc4:0 + LEADROW(3)
+    pc5:0 + LEADROW(5)
+    pc6:0 + LEADROW(4)
 descMisc,
     listMisc:0
-    6
+    0d8
     IMISC
     msTail:0
     subsMisc:3
     listBox:0 + 1
     LISTEDGE(CMISC)
-    ms0:0
-    ms1:0
-    ms2:0
-    ms3:0
-    ms4:0
-    ms5:0
+    ms0:0 + LEADROW(4)
+    ms1:0 + LEADROW(4)
+    ms2:0 + LEADROW(0d8)
+    ms3:0 + LEADROW(3)
+    ms4:0 + LEADROW(0d8)
+    ms5:0 + LEADROW(5)
+    ms6:0 + LEADROW(0d8)
+    ms7:0 + LEADROW(4)
 descView,
     listView:0
     6
@@ -254,12 +265,12 @@ descView,
     0
     listBox:0 + 1
     SUBEDGE(VIEWBOXX)
-    vi0:0
-    vi1:0
-    vi2:0
-    vi3:0
-    vi4:0
-    vi5:0
+    vi0:0 + LEADROW(2)
+    vi1:0 + LEADROW(2)
+    vi2:0 + LEADROW(2)
+    vi3:0 + LEADROW(2)
+    vi4:0 + LEADROW(3)
+    vi5:0 + LEADROW(6)
 
 // Sublist descriptors, each a list's, with no tail word and no sublists, and the edge from which
 // a hit right of the rows is on the box.
@@ -271,46 +282,10 @@ descSize,
     0
     chBox:0 + 1
     SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
-    sz0:0
-    sz1:0
-    sz2:0
-    sz3:0
-descInst,
-    listInst:0
-    4
-    IINST
-    0
-    0
-    miBox:0 + 1
-    SUBEDGE(CPICTURE * COLPITCH + SUBDX + BOXDX)
-    mi0:0
-    mi1:0
-    mi2:0
-    mi3:0
-descCopy,
-    listCopy:0
-    4
-    ICOPY
-    0
-    0
-    miBox:0 + 1
-    SUBEDGE(CPICTURE * COLPITCH + SUBDX + BOXDX)
-    mc0:0
-    mc1:0
-    mc2:0
-    mc3:0
-descDefine,
-    listDefine:0
-    4
-    IDEFINE
-    0
-    0
-    miBox:0 + 1
-    SUBEDGE(CPICTURE * COLPITCH + SUBDX + BOXDX)
-    md0:0
-    md1:0
-    md2:0
-    md3:0
+    sz0:0 + LEADROW(2)
+    sz1:0 + LEADROW(2)
+    sz2:0 + LEADROW(2)
+    sz3:0 + LEADROW(2)
 descConstr,
     listConstr:0
     SUBROWS
@@ -319,29 +294,26 @@ descConstr,
     0
     chBox:0 + 1
     SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
-    cn0:0
-    cn1:0
-    cn2:0
-    cn3:0
-    cn4:0
-    cn5:0
-    cn6:0
-    cn7:0
+    cn0:0 + LEADROW(4)
+    cn1:0 + LEADROW(5)
+    cn2:0 + LEADROW(5)
+    cn3:0 + LEADROW(4)
+    cn4:0 + LEADROW(6)
+    cn5:0 + LEADROW(3)
+    cn6:0 + LEADROW(3)
+    cn7:0 + LEADROW(4)
 descChange,
     listChange:0
-    7
+    4
     ICHANGE
     0
     0
     chBox:0 + 1
     SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
-    ch0:0
-    ch1:0
-    ch2:0
-    ch3:0
-    ch4:0
-    ch5:0
-    ch6:0
+    ch0:0 + LEADROW(6)
+    ch1:0 + LEADROW(5)
+    ch2:0 + LEADROW(5)
+    ch3:0 + LEADROW(3)
 descTruss,
     listTruss:0
     6
@@ -350,24 +322,40 @@ descTruss,
     0
     trBox:0 + 1
     SUBEDGE(CDRAW * COLPITCH + SUBDX + BOXDX)
-    tr0:0
-    tr1:0
-    tr2:0
-    tr3:0
-    tr4:0
-    tr5:0
+    tr0:0 + LEADROW(4)
+    tr1:0 + LEADROW(4)
+    tr2:0 + LEADROW(6)
+    tr3:0 + LEADROW(4)
+    tr4:0 + LEADROW(6)
+    tr5:0 + LEADROW(5)
 descDim,
     listDim:0
-    4
+    5
     IDIM
     0
     0
     trBox:0 + 1         // Truss's box, shared
     SUBEDGE(CDRAW * COLPITCH + SUBDX + BOXDX)
-    dm0:0
-    dm1:0
-    dm2:0
-    dm3:0
+    dm0:0 + LEADROW(6)
+    dm1:0 + LEADROW(4)
+    dm2:0 + LEADROW(6)
+    dm3:0 + LEADROW(3)
+    dm4:0 + LEADROW(4)
+descKeep,
+    listKeep:0
+    7
+    IKEEP
+    0
+    0
+    chBox:0 + 1         // Change's box, shared
+    SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
+    km0:0 + LEADROW(4)
+    km1:0 + LEADROW(4)
+    km2:0 + LEADROW(2)
+    km3:0 + LEADROW(2)
+    km4:0 + LEADROW(2)
+    km5:0 + LEADROW(4)
+    km6:0 + LEADROW(4)
 descDrive,
     listDrive:0
     SUBROWS
@@ -376,14 +364,26 @@ descDrive,
     0
     dvBox:0 + 1
     SUBEDGE(CMISC * COLPITCH + SUBDX + BOXDX)
-    dv0:0
-    dv1:0
-    dv2:0
-    dv3:0
-    dv4:0
-    dv5:0
-    dv6:0
-    dv7:0
+    dv0:0 + LEADROW(2)
+    dv1:0 + LEADROW(2)
+    dv2:0 + LEADROW(2)
+    dv3:0 + LEADROW(2)
+    dv4:0 + LEADROW(2)
+    dv5:0 + LEADROW(2)
+    dv6:0 + LEADROW(2)
+    dv7:0 + LEADROW(2)
+descLib,
+    listLib:0
+    4
+    ILIB
+    0
+    0
+    dvBox:0 + 1         // Drive's box, shared
+    SUBEDGE(CMISC * COLPITCH + SUBDX + BOXDX)
+    lb0:0 + LEADROW(4)
+    lb1:0 + LEADROW(4)
+    lb2:0 + LEADROW(3)
+    lb3:0 + LEADROW(6)
 
 // A list's row -> its sublist's descriptor, 0 for a row that owns none.
 subsDraw,
@@ -400,10 +400,12 @@ subsEdit,
     0
     descChange:3
     0
+    descKeep:3
 subsPicture,
-    descDefine:3
-    descInst:3
-    descCopy:3
+    0
+    0
+    0
+    0
     0
     0
     0
@@ -413,4 +415,6 @@ subsMisc,
     descDrive:3
     0
     0
+    0
+    descLib:3
     0

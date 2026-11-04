@@ -1,6 +1,6 @@
 // spmenus.ac -- the menus. A menu or list hit, the highlight and the Select box, opening,
 // painting and closing lists and sublists, a row's action, the bar's Stop and Locate, Misc's
-// Save, Load, Drive and Dir rows, and the pen keyboard's opening.
+// Save, Load, Drive and Dir rows and Library's, and the pen keyboard's opening.
 //
 // Bank 4, after spmain.ac. Needs sketchpad.ah's defines and spdispatch.ac's descriptors.
 // Part of sketchpad.am1, included where it stands.
@@ -13,11 +13,15 @@
 // While the pen keyboard is open every hit is its (kbKey); when it closes, tracking comes back
 // if it was on, and the caller's resume runs, IO 1 for OK or 0 for Cancel. Otherwise listFresh
 // says whether the hit begins a press, KBGAPMS having passed with no menu hit, for the Select
-// box (onListHit).
+// box (onListHit), and a press's first hit hides the status word (msgHide) before it acts, so
+// that a word the hit raises survives it. A pen resting on a label posts a hit every frame, so
+// only a fresh press hides; the word's writers stamp lastMenuMs, so that the hits of a pen
+// still resting where the word's command was given (a keyboard's OK, whose hits leave
+// lastMenuMs alone) are not one.
 // Entry: sMenuX, sMenuY = raw position of the latest hit; sMenuArmed; now = the clock. AC and
 // IO are clobbered. Called via jsp.
 onMenuHit,
-    local rtn, fire, bar, fresh, own, mhCol, mhPtr, mhCall, mhKey
+    local rtn, fire, bar, fresh, own, mhCol, mhPtr, mhCall, mhKey, mhGo
     dap rtn
     lac i [kbOn:0]
     sza                 // skip unless the pen keyboard is open
@@ -26,6 +30,10 @@ onMenuHit,
     jda elapsed
     sub [KBGAPMS]
     dac listFresh
+    spa                 // skip on a fresh press
+    jmp mhGo
+    jsp msgHide
+mhGo,
     lac now
     dac lastMenuMs
     lac i [sMenuY:0]
@@ -67,7 +75,7 @@ fire,
 mhCall, jsp .
     jmp rtn
 mhKey,
-    jsp i [kbKey:014]
+    jsp i [kbKey:6]
     sza i               // skip if the keyboard closed; AC is its caller's resume, IO the answer
     jmp rtn
     dac mhPtr
@@ -165,8 +173,8 @@ lhCan, 0
     dap lcRtn
     lac lhCan
     add lhRow
-    dac i [rowItem:7]
-    jsp i [rowCan:7]
+    dac i [rowItem:011]
+    jsp i [rowCan:011]
     lio lhRow
     spa                 // skip if the row can act
     lio [NOROW]
@@ -415,8 +423,8 @@ paintAny, 0
     dac prPtr
     lac i prPtr
     add paintAny
-    dac i [rowItem:7]
-    jsp i [rowCan:7]
+    dac i [rowItem:011]
+    jsp i [rowCan:011]
     sma                 // skip if the row cannot act
     sza i               // skip if it acts, drawn normal
     jmp prDim
@@ -452,7 +460,7 @@ prStore,
     add [DESCROWS]
     add paintAny
     dac prPtr
-    lac i prPtr
+    lac i prPtr         // the row's address; its bits 0 and 1 (LEADROW) the indirect ignores
     dac prPtr
     lac prWord
     dac i prPtr
@@ -485,7 +493,7 @@ actOpen,
     idx aoPtr
     lac i aoPtr
     dac openBase
-    jsp i [rowCensus:6] // what the rows act on, for this list and its sublists
+    jsp i [rowCensus:013] // what the rows act on, for this list and its sublists
 
     // Every row normal, or dim if it cannot act, since a list keeps its words from the last
     // time it was open.
@@ -555,11 +563,11 @@ srList,
     lac openBase
     add hiRow
 srItem,
-    dac i [rowItem:7]
-    jsp i [rowCan:7]
+    dac i [rowItem:011]
+    jsp i [rowCan:011]
     spa                 // skip if the row can act
     jmp rtn
-    lac i [rowItem:7]
+    lac i [rowItem:011]
     dac lastItem
     add [itemCount:3]
     dac srPtr
@@ -684,88 +692,51 @@ kbStart, 0
     dac kbTrk
     jsp trackOff
     lio kbStart
-    jsp i [kbOpen:014]
+    jsp i [kbOpen:6]
 ksRtn, jmp .
 kbTrk, 0
 
-// Misc's Save, Load and Dir rows. Read the tape's directory from the drive in use (TEDIR), then
-// open the directory's screen on the tape module's block for the row, Save's and Load's picker
-// (tpSvPick, tpLdPick), on which a line picks a picture, or Dir's (tpDirBlk), which only shows
-// them. Each opens nothing if the read fails, whose word tapeCall shows. AC and IO are
-// clobbered. Called via jsp.
-actSave,
-    local rtn, atOpen, atBlk
+// Misc's Save, Load and Dir rows, Library's Load, Save, Dir and Delete, and the resume of every
+// screen and keyboard they open. Each step is the tape module's (sptape.ac, tapeStep, in bank
+// 11's root), which answers with a block to open the keyboard on, a tape entry to run, or
+// nothing; an entry's result goes back to it at once, so one call may read the directory and
+// open its screen. The entry runs here, through tapeCall, since setMode inside it may call the
+// scale module, which calls this bank back through mainCall, and so may not itself be called
+// through mainCall.
+// Entry: lastItem = the row's item, at actTape; IO = 1 for OK or a pick, 0 for Cancel, at
+// tapeResume. AC and IO are clobbered. actTape is called via jsp; tapeResume via jsp i, from
+// onMenuHit.
+actTape,
+    local rtn, atStep, atKb
     dap rtn
-    lio [tpSvPick:6]
-    jmp atOpen
-actLoad,
+    lio [TSFRESH]
+    jmp atStep
+tapeResume,
     dap rtn
-    lio [tpLdPick:6]
-    jmp atOpen
-actDir,
-    dap rtn
-    lio [tpDirBlk:6]
-atOpen,
-    dio atBlk
-    law TEDIR
+atStep,
+    jsp i [tapeStep:013]
+    sma                 // skip if a tape entry, its number complemented
+    jmp atKb
+    cma
     jda tapeCall
-    lac tapeResult
-    sas [TSOPEN]        // skip if the read succeeded
-    jmp rtn
-    lac atBlk
+    lio tapeResult
+    jmp atStep
+atKb,
+    sza                 // skip if there is nothing to open
     jda kbStart
 rtn, jmp .
-atBlk, 0
     endloc
 
-// When Save's picker closes, a picture picked (the keyboard's kbPick) is the one saved; the tape
-// module writes its name from the directory into tpName as the keyboard's starting value
-// (tpPickName), and the keyboard opens on it (tpSvBlk), whose OK saves (svDone). Cancel does
-// nothing. When Load's picker closes, a picture picked is loaded (tapeCall); Cancel loads
-// nothing.
-// Entry: IO = 1 for a pick, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from
-// onMenuHit.
-svPick,
-    dap spRtn
-    lai
-    sza i               // skip if a picture was picked
-    jmp spRtn
-    lac i [kbPick:014]
-    dac tapePic
-    jsp i [tpPickName:6]
-    lac [tpSvBlk:6]
-    jda kbStart
-spRtn, jmp .
-ldPick,
-    dap lpRtn
-    lai
-    sza i               // skip if a picture was picked
-    jmp lpRtn
-    lac i [kbPick:014]
-    dac tapePic
-    law TELOAD
-    jda tapeCall
-lpRtn, jmp .
-
-// When Save's keyboard closes, OK saves the picture picked under the name typed, which the
-// keyboard wrote into the tape module's tpName; Cancel saves nothing.
-// Entry: IO = 1 for OK, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from onMenuHit.
-svDone,
-    dap sdRtn
-    lai
-    sza i               // skip if OK
-    jmp sdRtn
-    law TESAVE
-    jda tapeCall
-sdRtn, jmp .
-
-// Change's Dwell and Seq rows. Open the number keyboard on the block the instance module gives
-// for the row (instKbOpen), the mode staying. The keyboard's resume, ckDone, gives the instance
-// module the answer (instKbDone) and opens the keyboard again on the block it gives back,
-// Dwell's for the next master, or on none.
-// Entry: lastItem = the item; at ckDone, IO = 1 for OK, 0 for Cancel. AC and IO are clobbered.
-// actCyKb is called via jsp; ckDone via jsp i, from onMenuHit.
-actCyKb,
+// Picture's Define, Inst, Copy and Name rows and Change's Master, Dwell and Seq rows. Open the
+// pen keyboard on the block the instance module gives for the row (instKbOpen), the mode staying:
+// the masters' picker, its lines written for the row, or Seq's number keyboard. A picker's
+// resume is the row's action (actInst, actCopy, actChange), or for Dwell, Define and Name
+// ckDone. ckDone gives the instance module the answer (instKbDone) and opens the keyboard again
+// on the block it gives back, for the master picked: Dwell's number keyboard, or Define's or
+// Name's name keyboard (Define's resuming at actDefine, Name's at ckDone); or on none.
+// Entry: lastItem = the item; at ckDone, IO = 1 for OK or a pick, 0 for Cancel. AC and IO are
+// clobbered. actKb is called via jsp; ckDone via jsp i, from onMenuHit.
+actKb,
     dap ckRtn
     lac lastItem
     lio [IEKBOPEN]
@@ -796,17 +767,18 @@ stDone,
     jsp undoClear
 sdkRtn, jmp .
 
-// Run an entry of the tape module, TESAVE or TELOAD on picture tapePic (P1 to P16, set by the
+// Run an entry of the tape module, TESAVE or TELOAD on picture tapePic (P1 to P12, set by the
 // picker) of the drive in use, or TEDIR. The gesture under way ends and the program is left idle
 // first, as Clear leaves it, so a copy being placed is taken apart before the tape sees it. The
 // module turns the break system off and sets the display to WAIT, off the frame; after a load
 // that replaced the tables the display is written again from them (tapeRebuild) while WAIT still
 // shows, since an instance slot would call a master the load changed. Then the frame starts
 // again, its dla cutting WAIT's list off, any end pair still posted written first, the breaks
-// the tape's flags asked for are dropped, and the result's word is shown on the bar for MSGMS
-// (onClock hides it), except after the directory's read (TSOPEN), whose caller opens its screen.
-// The pass's clock reading, the watchdog's and the word's start are taken afresh, since the
-// transfer took seconds.
+// the tape's flags asked for are dropped, and the result's word is shown under the bar until a
+// menu hit or a pick-up hides it (msgHide), except after the directory's read (TSOPEN), whose
+// caller opens its screen. The pass's clock reading and the watchdog's are taken afresh, since
+// the transfer took seconds, and lastMenuMs with them, so that the pen still on the OK that
+// started the transfer does not hide the word (onMenuHit).
 // Entry: AC = TESAVE to TEDIR. Exit: tapeResult. AC and IO are clobbered. Called via jda.
 tapeCall, 0
     local rtn, tcCount
@@ -817,7 +789,7 @@ tapeCall, 0
     law MIDLE
     jda setMode
     lio tapeCall
-    jsp i [tapeEntry:6]
+    jsp i [tapeEntry:013]
     dac tapeResult
     sad [TSLOADED]      // skip unless the load replaced the tables
     jsp tapeRebuild
@@ -838,7 +810,7 @@ tapeCall, 0
     lac [jump msgWord:0 next(parameter)]
     dac i [statGate:0]
     lio now
-    dio msgStart
+    dio lastMenuMs
     law 1
     dac msgOn
 tcCount,

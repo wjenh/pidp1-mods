@@ -51,13 +51,12 @@ arcEntries,
     deleteLocked        // AEDELETE
     arcLock             // AELOCK
     conArcs             // AECONS
-    defineMaster        // AEDEFINE
+    arcView             // AEVIEW
     copyArcs            // AECOPY
     arcUndo             // AEUNDO
     arcCarry            // AECARRY
     arcOrphans          // AEORPHAN
     copyMerge           // AECMERGE
-    arcView             // AEVIEW
 
 // Undo's arcs. Those past the record's count are removed, the last first, each slot left unused
 // (arcRemove). AC and IO are clobbered. Called via jsp.
@@ -1148,7 +1147,7 @@ asW, 0
 
 // Write the full circle's NARC vector words backward, vertex NARC down to vertex 0, the last
 // with end, one vertex a word where arcStep takes two. Only vertices 0 to NQ-1 are computed
-// (arcVertex), their offsets kept in bank 7's arcOff; vertex k is the offset of vertex k mod NQ
+// (arcVertex), their offsets kept in bank 5's arcOff; vertex k is the offset of vertex k mod NQ
 // turned k / NQ quarter turns (afVert). That is arcVertex's offset bit for bit but a zero's
 // sign, since the table's sine of k + NQ is the cosine of k and its cosine the negated sine, mul
 // is symmetric in sign, and adding the center's 32nds (at least 16) clears a -0. Each store goes
@@ -1168,7 +1167,7 @@ arcFill, 0
     dac afFlip
     and [NARC+NQ-1]
     dac afBase
-    lac [arcOff:7]
+    lac [arcOff:5]
     dac afP
     dzm afK
 afTab,
@@ -1244,7 +1243,7 @@ afVert,
     lac afK
     and [NQ-1]
     sal 1s
-    add [arcOff:7]
+    add [arcOff:5]
     dac afP
     eem
     lio i afP           // v

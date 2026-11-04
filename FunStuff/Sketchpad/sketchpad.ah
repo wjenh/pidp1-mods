@@ -1,6 +1,6 @@
 // sketchpad.ah -- Sketchpad's constants: every #define of the program but the intensities'
-// (intensities.ah) and the macros only one file uses, which stand in that file. BOXAT is here
-// because two files use it. Included by sketchpad.am1 after intensities.ah and before
+// (intensities.ah) and the macros only one file uses, which stand in that file. BOXAT, MCJSP and
+// MCJDA are here because two files use each. Included by sketchpad.am1 after intensities.ah and before
 // TYPE340/trackingTarget.ah, which defaults TARGETARM and TARGETSCALE only if they are not
 // defined. A value is octal unless written 0dN.
 
@@ -46,11 +46,17 @@
 #define IENEST 35
 #define IENESTI 36
 #define IEVIEW 37
+#define IEDEFNO 40
+#define IESTORE 41
+#define IEWORDS 42
+#define IEWSTORE 43
 
 // Constraints. The constraint module in bank 8 holds a dense table of at most NCON entries of
 // CW words each, a type word, four point indices and a parameter word. CTHL holds two points at
 // one y, CTHP at one x (Horv's H, level or plumb), CTF one point still (Fix); CTEQ gives line A-B
-// the length of line C-D (Equal), CTLEN keeps line A-B at the parameter's length, in 32nds
+// the length of line C-D (Equal), or, its parameter CUNUSED ORed with k, 2 or 3, k times it, the
+// lines then keeping their order (Keep's ratios on two lines, the thesis's M, mark M), CTLEN
+// keeps line A-B at the parameter's length, in 32nds
 // (Length), CTPAR and CTPERP keep line A-B parallel or perpendicular to line C-D, and CTMID keeps
 // point A at the middle of line B-C (Mid). CTON keeps point A on the line through B and C, and
 // CTONC point A on the circle about B through C, an arc's center and start, each made by a point
@@ -70,7 +76,13 @@
 // set by a Y, read into a free one; CTCHG sets that scalar to line A-B's length less the
 // parameter, the length in 32nds when the entry was made with CUNUSED's sign bit set, and moves
 // nothing (Y); CTGAP keeps point A from the anchor B of a set of digits by a gap their scale
-// sets, its parameter as a Length's (O). A type's
+// sets, its parameter as a Length's (O). The sizes' types, past the numbers', CTSAME and up, name
+// instances, as MAXPTS + i, not points, and the solver passes them over: a size changes only at
+// a commit (spscale.ac, szSolveOv). CTSAME keeps instance A's overall size at a multiple of B's,
+// its parameter CUNUSED ORed with the ratio's index, 0 to 4, x1/3 to x3 (S); CTFULL keeps A at x1,
+// its master's size (U); CTINCH keeps A's overall size at the parameter, CUNUSED ORed with
+// thousandths of an inch (I); CTSZNUM ties A's overall size to the scalar of the digits whose
+// anchor is C, its B its A, driving it from a scalar set, read into a free one (Z). A type's
 // low bits (CTMASK) index the module's per-type tables (cNPts, cGlyph). Every arc whose points
 // share one with an entry keeps its start and end at one distance from its center too (the
 // thesis's implicit C). The solver works on its points in 32nds of a unit, in the main loop while
@@ -104,7 +116,11 @@
 #define CTDIST 0400020
 #define CTCHG 0400021
 #define CTGAP 0400022
-#define CTLAST CTGAP
+#define CTSAME 0400023
+#define CTFULL 0400024
+#define CTINCH 0400025
+#define CTSZNUM 0400026
+#define CTLAST CTSZNUM
 #define CTMASK 037
 #define CTNUM 020
 #define CTSTIFF 0400040
@@ -161,17 +177,18 @@
 #define CESTIFF 031
 #define CESTSET 032
 #define CESNAP 033
+#define CESZADD 034
 
-// The truss's analysis (sptruss.ac, bank 11). The main loop calls it every pass; it works only
-// while the solver sleeps, at most TRUSSMS on the clock a pass, comparing the truss with its
-// snapshot every TRUSSCHK. At most TANJ joints (more, with at most NCON members, is a mechanism
-// unless 18 or more are rollers), and TANI members at a joint. TANU is the most unknowns, two a
-// joint; TAPROF the most entries of the matrix's profile, three words each, which fill banks 14
-// and 15 after the unknowns' words and the members' directions. TAMAXF is the largest force the
-// readouts show. Then its states (taState), and why there is no answer (taWhy): a mechanism, a
-// load or force too large, a member of no length, too many joints or members at one, or a
-// profile past TAPROF. TASTIFF is no state but the readouts' writing for Stiff mode, the
-// members' stiffnesses in place of their forces.
+// The truss's analysis (sptruss.ac, the overlay truss). The main loop calls it every pass; it
+// works only while the solver sleeps, at most TRUSSMS on the clock a pass, comparing the truss
+// with its snapshot every TRUSSCHK. At most TANJ joints (more, with at most NCON members, is a
+// mechanism unless 18 or more are rollers), and TANI members at a joint. TANU is the most
+// unknowns, two a joint; TAPROF the most entries of the matrix's profile, three words each,
+// which fill banks 14 and 15 after the unknowns' words and the members' directions. TAMAXF is
+// the largest force the readouts show. Then its states (taState), and why there is no answer
+// (taWhy): a mechanism, a load or force too large, a member of no length, too many joints or
+// members at one, or a profile past TAPROF. TASTIFF is no state but the readouts' writing for
+// Stiff mode, the members' stiffnesses in place of their forces.
 #define TRUSSMS 0d40
 #define TRUSSCHK 0d250
 #define TANJ 0d40
@@ -188,6 +205,13 @@
 #define TAWLARGE 3
 #define TAWZERO 4
 #define TAWMANY 5
+// What the truss's root stub taTick has noted while it called nothing (taHeld), passed in IO to
+// the overlay's taTickOv: a check due at once (TAHDUE), as after taAway, and a change of the
+// view (TAHVIEW), which taRedo notes for the pass's call. After a failed load of the truss, the
+// stub calls nothing for TAFAILMS.
+#define TAHDUE 1
+#define TAHVIEW 2
+#define TAFAILMS 0d10000
 // The units between a readout and its line, above a flat line or right of a steep one.
 #define ROGAP 4
 
@@ -219,13 +243,27 @@
 // rollers' O in Roller mode).
 // The list is NCON slots of FIXWORDS (FSGATE the slot's gate), then an end slot always shut;
 // each glyph draws its circle, of radius FIXR, and its letter (H, E, L, P, R, X, F, N, C, A, and
-// the truss's B, W and O). A mark's center is kept MKEDGE inside the screen, where an edge would
-// halt the display; Delete with Show on locks onto a letter within FIXR of the target's center.
+// the truss's B, W and O). A mark on one line stands beside it, and a mark on one point (F, A, a
+// designation's digit, a roller's O) beside its point, in the clearest of eight directions on
+// the screen (spmarks.ac, cMkPos). A mark's center is kept MKEDGE inside the screen, where an
+// edge would halt the display; Delete with Show on locks onto a letter within FIXR of the
+// target's center.
 #define FIXWORDS 4
 #define FSGATE 2
 #define FIXR 0d10
-// The gap between a one-line mark's circle and its line, in screen units.
+// The gap between a one-line mark's circle and its line, in screen units, and a one-point mark's
+// and its point.
 #define MKGAP 2
+// Two two-line marks (E, P, R) stand at one place when their places, the page's averages of
+// their four points, lie within MKSAME of each other on each axis (the overlay ranks); each later
+// one goes a ring further out, MKRING a ring, above its place for an odd rank, below for an even
+// (cMkPos). MKRING is the one-line marks' ring, two radii and 2, so that no two circles meet.
+#define MKSAME 4
+#define MKRING (2 * FIXR + 2)
+// A one-point mark's diagonal offset on each axis, (FIXR + MKGAP) / sqrt(2) rounded: 8.49 to 8.
+#define PTDIAG (((FIXR + MKGAP) * 0d1414 + 0d1000) / 0d2000)
+// The eight candidates' rays together, rays 0, 2, 4 to 14 (cPtB).
+#define PTALL 052525
 // A mark's margin, FIXR + 9, a unit past a roller's ticks, the widest glyph's reach (FIXR + 8
 // along its axis), so that any glyph at any place a slot holds stays on the screen. A number,
 // not FIXR + 9, since a define is pasted as text into 0d1023 - MKEDGE.
@@ -326,23 +364,24 @@
 #endif
 #define ROWY0 (BARY - ROWPITCH)
 #define ROWSLOP 0d9
-#define MAXROWS 6
+#define MAXROWS 0d8
 #define NOROW 0d63
 #define BOXDX 0d144
 #define BOXSLOP 0d129
 #define BOXW 0d32
 #define LISTIDLEMS 0d4000
-#define NITEMS 0d79
+#define NITEMS 0d80
 
 // Each bar list's first item: Draw's Line, Edit's Move and Picture's Define (Misc's is IMISC,
 // View's IVIEW). Then each row of those lists, by its place in its list, row 0 at ROWY0. A
 // sublist stands beside the row that owns it, its first row level with that row: Truss's and
-// Dim's beside ROWTRUSS and ROWDIM, Constr's, Size's and Change's beside ROWCONSTR, ROWSIZE and
-// ROWCHANGE, Define's, Inst's and Copy's beside ROWDEFINE, ROWINST and ROWCOPY, and Drive's
-// beside ROWDRIVE. Edit's Scale row, ROWSCALE, stands after Size's.
+// Dim's beside ROWTRUSS and ROWDIM, Constr's, Size's, Change's and Keep's beside ROWCONSTR,
+// ROWSIZE, ROWCHANGE and ROWKEEP, and Drive's and Library's beside ROWDRIVE and ROWLIB. Edit's
+// Scale row, ROWSCALE, stands after Size's.
+// Picture's Define, Inst, Copy and Name rows own none: each opens the masters' picker.
 #define IDRAW 0
 #define IEDIT 5
-#define IPICTURE 0d12
+#define IPICTURE 0d13
 #define ROWLINE 0
 #define ROWCIRCLE 1
 #define ROWTRUSS 2
@@ -355,47 +394,66 @@
 #define ROWSCALE 4
 #define ROWCHANGE 5
 #define ROWDISMEM 6
+#define ROWKEEP 7
 #define ROWDEFINE 0
 #define ROWINST 1
 #define ROWCOPY 2
 #define ROWCLEAR 3
 #define ROWTIE 4
 #define ROWDESIG 5
+#define ROWNAME 6
 #define ROWSAVE 0
 #define ROWLOAD 1
 #define ROWDRIVE 2
 #define ROWDIR 3
 #define ROWDELCONS 4
 #define ROWUNFIX 5
+#define ROWLIB 6
+#define ROWPLOT 7
 
-// The item numbers of Size's x1, Inst's M1, Copy's M1, Define's M1, Misc's Save, Drive's D1,
-// Constr's Horv, Truss's Beam, Change's M1 and Dim's Number; the rest of each list or sublist
-// follows. Draw's rows are items 0 to 4 (Line, Circle, Truss, Text, Dim), Edit's 5 to 11 (Move,
-// Delete, Constr, Size, Scale, Change, Dismem; Scale item 9, ISCALE), Picture's 12
-// to 17 (Define, Inst, Copy, Clear, Tie, Desig), then Size's, Inst's, Copy's and Define's
-// sublists, Misc's rows from IMISC (Save, Load, Drive, Dir, Del cons, Unfix), Drive's D1 to D8,
-// Constr's eight rows, Truss's six (Beam, Load, Roller, Axis, Forces, Stiff), Change's seven, and
-// Dim's sublist (Number, Dist, Change and Gap); View's list comes last.
-// Change's sublist is M1 to M4, then Cycle, its row CYCLEROW, then Dwell and Seq, items IDWELL
-// and ISEQ. View's list is x1, x2, x4, x8, then Pan, its row VIEWPAN, and Center, its row
-// VIEWCENTER.
+// The item numbers of Picture's Define, Inst, Copy and Name rows, of Size's x1, Misc's Save,
+// Drive's D1, Constr's Horv, Truss's Beam, Change's Master, Dim's Number, View's x1 and Library's
+// Load; the rest of each list or sublist follows. Draw's rows are items 0 to 4 (Line, Circle,
+// Truss, Text, Dim), Edit's 5 to 12 (Move, Delete, Constr, Size, Scale, Change, Dismem, Keep;
+// Scale item 9, ISCALE), Picture's 13 to 19 (Define, Inst, Copy, Clear, Tie, Desig, Name), then Size's
+// sublist, Misc's rows from IMISC (Save, Load, Drive, Dir, Del cons, Unfix, Library, Plot, item
+// IPLOT), Drive's D1 to D8,
+// Constr's eight rows, Truss's six (Beam, Load, Roller, Axis, Forces, Stiff), Change's four,
+// Dim's sublist (Number, Dist, Change, Gap and Size, item IDSIZE), View's list, Library's
+// sublist, its rows LBRLOAD to LBRDEL (Load, Save, Dir and Delete), ILBLOAD and ILBSAVE the two
+// that open the masters' picker, and last Keep's seven (x1/3, x1/2, x1, x2, x3, Full and Inch).
+// Change's sublist is Master, then Cycle, its row CYCLEROW, then Dwell and Seq, items IDWELL and
+// ISEQ. Change's sizeArg is the master picked, or CYCLEARG for Cycle. View's list is x1, x2,
+// x4, x8, then Pan, its row VIEWPAN, and Center, its row VIEWCENTER.
 #define ISCALE (IEDIT + ROWSCALE)
 #define IDISM (IEDIT + ROWDISMEM)
-#define ISIZE 0d18
-#define IINST 0d22
-#define ICOPY 0d26
-#define IDEFINE 0d30
-#define IMISC 0d34
-#define IDRIVE 0d40
-#define ICONSTR 0d48
-#define ICHANGE 0d62
-#define IDIM 0d69
-#define IVIEW 0d73
+#define IDEFINE (IPICTURE + ROWDEFINE)
+#define IINST (IPICTURE + ROWINST)
+#define ICOPY (IPICTURE + ROWCOPY)
+#define INAME (IPICTURE + ROWNAME)
+#define ISIZE 0d20
+#define IMISC 0d24
+#define IPLOT (IMISC + ROWPLOT)
+#define IDRIVE 0d32
+#define ICONSTR 0d40
+#define ICHANGE 0d54
+#define IDIM 0d58
+#define IDSIZE (IDIM + 4)
+#define IVIEW 0d63
+#define ILIB 0d69
+#define IKEEP 0d73
+#define LBRLOAD 0
+#define LBRSAVE 1
+#define LBRDIR 2
+#define LBRDEL 3
+#define ILBLOAD (ILIB + LBRLOAD)
+#define ILBSAVE (ILIB + LBRSAVE)
 #define VIEWPAN 4
 #define VIEWCENTER 5
-#define CYCLEROW 4
-#define IDWELL (ICHANGE + 5)
-#define ISEQ (ICHANGE + 6)
+#define CYCLEROW 1
+#define CYCLEARG NMASTER
+#define IDWELL (ICHANGE + 2)
+#define ISEQ (ICHANGE + 3)
 
 // Constr's rows after Horv, ICONSTR + 1 to ICONSTR + 7, are Equal, Paral, Perp, Length and Mid
 // (each entering constraint mode for its type, rowCons), Fix, and Show, row SHOWROW. Truss's rows
@@ -414,7 +472,7 @@
 // 257, and the box starts at 288; every gap exceeds the aperture, so one pen position cannot hit
 // two of them. A hit right of a sublist's rows is on its box from its descriptor's edge word
 // (DESCEDGE) on, the box's left side less BOXSLOP - BOXDX (15 units), odd, as BOXSLOP is.
-// Drive's sublist has 8 rows, a list at most MAXROWS.
+// Drive's sublist has 8 rows, a list at most MAXROWS, Misc's.
 #define SUBDX 0d144
 #define SUBROWS 0d8
 
@@ -470,6 +528,9 @@
 #define ROWDEL 04
 #define ROWUNF 02
 #define ROWVIEW 01
+// No row needs both of these, so the pair names Keep's ratios' rows, which an instance or two
+// lines will do for (rowCan).
+#define ROWLI (ROWI | ROWVIEW)
 
 // A Select box, its left side at bx, beside row r (row 0 at ROWY0), is a square BOXW across, its
 // top BOXRISE above the row's baseline, with "OK" in it at the labels' size on the row's
@@ -498,6 +559,29 @@
     deltax(BOXTEXTDX) deltay(BOXRISE) right down end; \
     BOXLBL; \
     type340 "OK"
+
+// The leader, a dim dotted line from the lit row's label to its Select box. Without it the pen
+// sees nothing between the label and the box, and a slide slower than about 300 units/s over a
+// short label's blank passes KBGAPMS and reads as a lift, so OK acts on arrival. With it the
+// slide's hits never stop, and it arrives on OK in the same press. One block, okLead
+// (spframe.ac), entered by every open box's tail after "OK", draws it at LEADSCALE, a dot every
+// LEADSTEP units, so a pen anywhere along it is within the aperture's reach of a dot, LEADRISE
+// above the row's baseline (a whole step at LEADSCALE), in the row's band. LEADBACK steps lead
+// back from the end of "OK" (BOXTEXTDX and two LBLCHARW characters right of the box's left side)
+// to LEADEND left of the box. LEADLEN(n) is the leader's length in steps after a label of n
+// characters, ending LEADGAP right of it; a label's start is BOXDX - LABELMARGIN left of its
+// box. placeBox writes into okLead's vector the length for the row's class, LEADROW
+// (spdispatch.ac), from leadTab (spaux.ac). A class is two lengths, so with the steps' rounding
+// a label's gap to the leader is 12 to 26 units, the pen blind over at most the middle 6, and 7
+// less beside View's rows, which stand nearer their box (VIEWROWX): Pan's 5.
+#define LEADSCALE 2
+#define LEADSTEP 4
+#define LEADRISE 4
+#define LEADEND 3
+#define LEADGAP 0d10
+#define LBLCHARW 0d14
+#define LEADBACK ((BOXTEXTDX + 2 * LBLCHARW + LEADEND) / LEADSTEP)
+#define LEADLEN(n) ((BOXDX - LABELMARGIN - LEADEND - LEADGAP - (n) * LBLCHARW) / LEADSTEP)
 
 // A bar label's parameter word, normal and lit. Every label carries lpon, because drs leaves
 // the light pen off until the next lpon.
@@ -566,10 +650,11 @@
 // with more has the whole list rebuilt instead, which is slow.
 #define MAXDRAG 0d32
 
-// Scale. The slider, drawn in the band's words, in screen units, is a zigzag of one
-// vector a doubling, SCDOUBLE units long and SCZIG steps high at SLIDESCALE (x2, so a doubling
-// of up to 254 units is one vector word), its corners the ticks, at most SCSIDE doublings each
-// side and only whole ones inside the target's reach. It stands off the pick, so as not to lie
+// Scale. The slider, drawn in the band's words, in screen units, is a square wave read as a
+// ruler: a level run of SCDOUBLE units a doubling at SLIDESCALE (x2, so a doubling of up to 254
+// units is one vector word), the runs on its two lines by turns, joined by upright ticks SCZIG
+// steps high at the doublings; at most SCSIDE doublings each side and only whole ones inside
+// the target's reach. It stands off the pick, so as not to lie
 // on a level line, its upper line SCGAP below the dot, or, where its lower line would fall
 // under TRKYMIN, its lower line SCGAP above. The knob, the dot, rides at the pick's height.
 // The factor, in 1024ths (SCFRAC), is 2^k (1 + r/SCDOUBLE) at the pen's offset k doublings and
@@ -582,16 +667,49 @@
 #define SCGAP 0d32
 #define SCFRAC 0d1024
 #define SLIDESCALE 1
+// An instance's size on the slider's scale u, x1 at 0, from x1/4 at -SCUDOWN to x8 at SCUHI,
+// sizes lying every SCSNAP units, 32 to a doubling, so that the same digits are the same size and
+// two instances showing them share a variant. SCDBITS is SCDOUBLE's power of two.
+#define SCDBITS 7s
+#define SCUDOWN (2 * SCDOUBLE)
+#define SCUHI (3 * SCDOUBLE)
+#define SCSNAP 4
 #define SLIDEPARAM (scale(SLIDESCALE) | intensity(SLIDEINTENSITY) | lpoff | next(point))
 #define SCTEXTDX 0d10
 #define SCTEXTDY 0d12
 #define SCTEXTXMAX 0d896
 // What Scale has picked up (the scale module's scKind), a line, a circle or an arc, scaled
-// smoothly; or a text, digits or an instance, stepped through the sizes. The digits' x is the
-// lower-case letter's code, shifted to with KCLOW.
+// smoothly; a text or digits, stepped through the sizes; an instance, sized at the lift; or, on
+// a Keep row, the first thing of a constraint on size. The digits' x is the lower-case letter's
+// code, shifted to with KCLOW.
 #define SCKLINE 1
 #define SCKARC 2
 #define SCKSTEP 3
+#define SCKINST 4
+#define SCKKEEP 5
+
+// The constraints on size (spscale.ac and spsize.ac). szKind, in Scale mode, says what the row
+// makes: 0 Scale's own, 1 to 5 an S at its ratio's index plus 1 (or, on two lines, an E at that
+// ratio, SKX1 its x1), SKFULL a U, SKINCH an I, SKNUM a Z. A size is worked in 16ths of a screen unit (SZUNIT), an instance's scale in 4096ths (SZONE,
+// x1), from x1/4 (SZLOW) to x8 (SZHIGH), and an inch is SZINCHU screen units. Two sizes agree
+// within 1/SZTOLD of the larger. A new scale no further than 1/512 from the old is no change.
+// szDirty holds what asks for a solve: 0 nothing, instance i's change i + 1, SZNOSRC a change of
+// no one instance, SZKBOPEN Inch's keyboard to open. An unchanged word of szW and uSz is SZSAME.
+#define SKX1 3
+#define SKFULL 6
+#define SKINCH 7
+#define SKNUM 0d8
+#define SZUNIT 0d16
+#define SZONE 0d4096
+#define SZLOW 0d1024
+#define SZHIGH 0d32768
+#define SZINCHU 0d100
+#define SZTOLD 0d32
+#define SZNOSRC (MAXINST + 1)
+#define SZKBOPEN (MAXINST + 2)
+#define SZSAME 0777777
+#define SZMAXIN 0d10
+#define SZDIGS 6
 #define KCX 030
 
 // A change to the drawing marks the slots it changes stale, and the next rebuild writes only
@@ -601,9 +719,14 @@
 
 // A line, and the band, are drawn as the fewest steps of at most STEPMAX units on either axis,
 // each within a unit of the true line (emitVecs), so none exceeds STEPMAX and all stay inside
-// a vector's 127 units. NBAND steps reach across the screen, since 11 * 100 > 1023.
-#define STEPMAX 0d100
-#define NBAND 0d11
+// a vector's 127 units. NBAND steps reach across the screen, since 9 * 127 > 1023.
+#define STEPMAX 0d127
+#define NBAND 0d9
+
+// Scale's slider's vector words: a run a doubling and a tick between two, for the most whole
+// doublings the target's reach holds (7). The band's NBAND words are their last; slideVec holds
+// the rest, before them.
+#define NSLIDE (2 * ((TRKXMAX - TRKXMIN) / SCDOUBLE) - 1)
 
 // A line slot is the parameter word, the y word, the x word entering subroutine mode, the gate,
 // then NBAND vector words of which only the last carries end. The gate jumps into the last K of
@@ -616,7 +739,8 @@
 // 2-word call of the target, and 2 words at the end for the end-of-list jump when every slot is
 // in use. A call every 4 slots presents the target 100 times a second or more even when every
 // line spans the screen; a call every 16 gives about 40. Only as many of them call as PRESRATE
-// needs; the rest step over. slotAddr and rebuildDisplay depend on 4 slots per group.
+// needs; the rest step over. slotAddr and rebuildDisplay depend on 4 slots per group, and
+// slotAddr and bank 11's lkSlot on SLOTWORDS 13, their shifts making 13 i + 2 (i / 4).
 #define GROUPWORDS (4 * SLOTWORDS + 2)
 #define NGROUPS 0d66
 #define CALLOFFSET (4 * SLOTWORDS)
@@ -629,7 +753,8 @@
 // reason. A frame lasts from about 1.4 ms with no lines to about 15 ms with 64 short ones, 44 ms
 // with 192 short ones and about 0.3 s with 192 lines across the screen. What is for the eye is
 // timed on the 1 ms clock too; a pressed label stays lit FLASHMS, and the display is restarted
-// if no frame ends for WATCHDOGMS.
+// if no frame ends for WATCHDOGMS and its address stands still over two ticks of the clock (a
+// frame drawing for longer is left to end).
 #define LOSTMS 0d100
 #define LOSTMIN 0d4
 #define REARM 0d3
@@ -731,33 +856,56 @@
 #define AEDELETE 010
 #define AELOCK 011
 #define AECONS 012
-#define AEDEFINE 013
+#define AEVIEW 013
 #define AECOPY 014
 #define AEUNDO 015
 #define AECARRY 016
 #define AEORPHAN 017
 #define AECMERGE 020
-#define AEVIEW 021
 
-// Masters and instances. Master k is the drawing Define took, as a display subroutine of at
-// most MWORDS vector words relative to its origin, the center of its box; the last carries end,
-// so a save returns. NMASTER of them, each in a fixed part of a store in bank 0, since a save
-// reaches banks 0 and 1 only. Define refuses a master whose drawing would take more than MTIME,
-// in half microseconds, one presentation period, 5 ms, a word costing 5 us and 1.5 us a step,
+// Masters and instances. Master k is the drawing Define took, as a display subroutine of vector
+// words relative to its origin, the center of its box; the last carries end, so a save returns.
+// NMASTER of them share a store of two regions, since a save reaches banks 0 and 1 only: region
+// 0, MPOOL0 words in bank 0 (masters), and region 1, MPOOL1 in bank 1 (mpool1), the larger, so
+// MPOOL1 words is the most a master may have. A master lies wholly in one region, since a save
+// returns at its block's first escape and so cannot jump on from one to the other. Its place is
+// its offset in the two seen as one, 0 to MPOOL0-1 region 0, MPOOL0 on region 1 (mStart), so a
+// rebuild that moves either region leaves a saved picture good. Every master's words are kept in
+// its record (mrWords, Copy's store below); the store holds only those the drawing calls, an
+// instance's, a cycle's (every master while one cycles) and the master of the instance Undo
+// would put back, each brought in from its record when first called (the instance module's
+// poolBring) and left there until its room is wanted. mStart is MNOPOOL for a master not in
+// the store. Define empties the store, since it leaves no instance. Define refuses a master whose
+// drawing would take more than MTIME,
+// in half microseconds, 20 ms, the most that holds a pen at 1000 units/s, a word costing 5 us
+// and 1.5 us a step,
 // where a vector of major axis M and minor m takes M + min(m, M - m) steps (measured). Its
 // moves are split into vectors of at most MSTEP units on either axis.
-#define NMASTER 4
-#define MWORDS 0d128
-#define MTIME 0d10000
+#define NMASTER 0d16
+#define MPOOL0 0d422
+#define MPOOL1 0d530
+#define MNOPOOL 0777777
+// The variants at once: a block in the master store of a master's words at a code c
+// (spvar.ac), its length its master's, shared by the instances of that master and c.
+#define NVARIANT 0d16
+#define MTIME 0d40000
 #define MSTEP 0d127
 
-// Why Define refused: nothing drawn, too many words, too slow, more than NCPCON constraints among
-// its points, an instance cycling (a cycling instance may call any master at its next step);
-// and for the instances it takes apart, the tables short of room for their parts, a part off
-// the canvas, an arc too large (a dismember's DMOFF and DMARC, each 4 on); and the masters'
-// texts' table short of room for the canvas's. Code 2 is not used, since every instance goes
-// into the master.
+// Why Define refused: nothing drawn, the store too full for it beside the other masters (no
+// longer given, since Define empties the store; kept so that the codes after it stand), too
+// many words (more than a region, or more than CPLINES lines), too slow, more than NCPCON
+// constraints among its points, an instance cycling (a cycling instance may call any master at
+// its next step); and for the instances it takes apart, the tables, the instance list or the
+// master store short of room for their parts and their sub-instances' instances, a part off the
+// canvas, an arc too large (a dismember's DMOFF and DMARC, each 4 on); and the masters' texts'
+// table short of room for the canvas's; and for the instances it keeps as sub-instances, those
+// added for the sub-instances of the ones taken apart among them, more than NSUB of them, one
+// whose master calls the master being defined at any depth, or one whose master holds digits;
+// and a sub-instance's scale composed with the scale of the instance taken apart past x8 (a
+// dismember's DMSCALE). Each refusal's word under the bar is in bank 5 (sketchpad.am1, dnTab),
+// shown by the overlay defdism.
 #define DEFEMPTY 1
+#define DEFFULL 2
 #define DEFWORDS 3
 #define DEFTIME 4
 #define DEFCONS 5
@@ -766,12 +914,50 @@
 #define DEFNOFF 010
 #define DEFNARC 011
 #define DEFTEXT 012
+#define DEFNSUB 013
+#define DEFLOOP 014
+#define DEFNSCALE 015
+#define DEFDIGIT 016
+// And for the masters holding the master defined, at any depth, each recomposed with its new
+// words (defdism's rewriteOv): one past MPOOL1 words, one past MTIME, the master store or the
+// masters' texts' table short of room for them, or digits in the master defined, which a holder
+// would carry plain. The word under the bar names the master (rwWho).
+#define DEFPBIG 017
+#define DEFPSLOW 020
+#define DEFPROOM 021
+#define DEFPDIGIT 022
 
-// Copy's store. Define also keeps master k's parts in bank 5, for Copy to take apart, its
-// points relative to its origin, its lines and its arcs, as their tables hold them.
+// The propagation's runs (rwOp): Define's trial, Library > Load's trial, and the commit after
+// either; the steps rewriteOv takes up again after one of its requests (rwSt); and its requests
+// to the stub rwRun (bank 7), which an overlay cannot make: a master's record made resident, a
+// master brought into the store, a master's words put back at its old place in the store
+// (poolAt), the instance list emptied with its tie lists kept (instReslot). Each request is
+// above every answer of Define's and the library's.
+#define RWDEF 1
+#define RWLIB 2
+#define RWCOM 3
+#define RWSINIT 0
+#define RWSCLR 1
+#define RWSKST 2
+#define RWSBRUNG 3
+#define RWSCOMP 4
+#define RWSSTORE 5
+#define RWSUNDO 6
+#define RQLOAD 0100
+#define RQBRING 0101
+#define RQPUT 0102
+#define RQCLEAR 0103
+
+// Copy's store. Define also keeps master k's parts, for Copy to take apart, its points relative
+// to its origin, its lines and its arcs, as their tables hold them, and its constraints, in
+// master k's record on the drum: a persistent data overlay, mrec0 to mrec15, in the window MW at
+// bank 5's start, which the instance module's mrLoad makes resident. A record's words are at the
+// same addresses whichever master's it is (cpX to mrWords, sketchpad.am1), so the code reads
+// the resident one's as one master's tables. Its attachers stay in the root (cpAtt to cpNAtt),
+// since the solver and a carry read them at any time.
 // Room for every point and arc the canvas holds, CPPTS and CPARCS (powers of two, at least
-// MAXPTS and MAXARCS), and for CPLINES lines, as many as MWORDS words can draw, a line taking
-// one word at least; a drawing with more is refused as too many words (DEFWORDS). The
+// MAXPTS and MAXARCS), and for CPLINES lines; a drawing with more is refused as too many words
+// (DEFWORDS). MRECW is a record's words, the window MRECW + 2 with the overlay's header. The
 // directory's copy box, cMinX to cMaxY, lies CBOXOFF words after the figure's, mMinX to mMaxY.
 #define CPPTS 0d256
 #define CPPSHIFT 8s
@@ -782,15 +968,40 @@
 #define CBOXOFF (4 * NMASTER)
 // An arc's words in the store, arcTC to arcTK, the first three point indices.
 #define CPATAB 5
+// A master's sub-instances, the instances it holds (cpSub, after its words): NSUB of them, SUBW
+// words each, mNSub[k] used. Each is its master, its origin from the master's origin, its scale
+// (iScale's form), and NATT tie points, indices into the master's points (NOPOINT for none).
+#define NSUB 0d8
+#define SUBW (4 + NATT)
+#define SBM 0
+#define SBX 1
+#define SBY 2
+#define SBS 3
+#define SBT 4
+#define MRECW (2 * CPPTS + 2 * CPLINES + CPATAB * CPARCS + NCPCON * CW + MPOOL1 + NSUB * SUBW)
+// Define's blocks for the instances it keeps (sbBlk, sparcdata.ac), DBW words each: the master,
+// x and y on the canvas, the scale (0 to 3), its words' 16-bit address in the store and their
+// count (mDrawLen), then NATT ties, master point indices (NOPOINT for none).
+#define DBW (6 + NATT)
+#define DBM 0
+#define DBX 1
+#define DBY 2
+#define DBS 3
+#define DBA 4
+#define DBL 5
+#define DBT 6
 
-// Why Copy refused, at its selection: the tables have no room for the master's parts
-// (COPYROOM), or the instance list none for the figure carried while it is placed (COPYINST).
+// Why Copy refused, at its selection: the tables, the instance list or the master store have no
+// room for the master's parts and its sub-instances' instances (COPYROOM), or the instance list
+// none for the figure carried while it is placed beside those (COPYINST).
 // Why a dismember refused (sizeResult): COPYROOM, 2 with no instance locked as
-// Size, a part off the canvas (DMOFF), or an arc's radius at the scale past ARCRMAX (DMARC).
+// Size, a part off the canvas (DMOFF), an arc's radius at the scale past ARCRMAX (DMARC), or
+// a sub-instance's scale composed with the instance's outside x1/4 to x8 (DMSCALE).
 #define COPYROOM 1
 #define COPYINST 2
 #define DMOFF 4
 #define DMARC 5
+#define DMSCALE 6
 
 // An instance is a slot in the instance list, which the drawing enters after the arcs: the
 // parameter word (its scale, INSTINTENSITY, the drawing's, so that a figure built of instances
@@ -809,9 +1020,10 @@
 #define LITPARAM (scale(DRAWSCALE) | intensity(LINELITINTENSITY) | lpoff | next(point))
 
 // Change > Cycle. Every cycling instance steps to the next master in turn on the clock. Each
-// master is shown for its dwell (Change > Dwell), CYCLEMS at the start, DWELLMIN at least, and
-// at most DWELLDIG digits typed. Change > Seq sets the order, at most NSEQ masters, M1 to M4 in
-// turn with none.
+// master is shown for its dwell (Change > Dwell, the master picked on the masters' picker),
+// CYCLEMS at the start, DWELLMIN at least, and at most DWELLDIG digits typed. Change > Seq sets
+// the order, the masters' numbers typed with a point between them, at most NSEQ masters, every
+// master defined in turn with none.
 #define CYCLEMS 0d250
 #define DWELLMIN 0d50
 #define DWELLDIG 4
@@ -854,18 +1066,17 @@
 #define MKGATE2 0d14
 #define MKEND 0d15
 
-// Tape, Misc's first four rows. A picture, the drawing and the masters, is saved as P1 to P16
+// Tape, Misc's first four rows. A picture, the drawing and the masters, is saved as P1 to P12
 // on the Microtape drive the Drive row selects, D1 to D8, drive 1 at the start; the user mounts
 // the tapes, with mtp or microtapes.txt, and the program issues no mmt. While a transfer runs
 // the break system is off and the display runs waitList, WAIT at the screen's center on a list
-// that loops on itself; after it a word at (STATX, STATY) says how it went, for MSGMS on the
-// clock, then is hidden by its gate. The tape module's answer, TSSAVED to TSWIPED, picks its
+// that loops on itself; after it a word at (STATX, STATY) says how it went, until a fresh menu
+// hit or the target's pick-up hides it by its gate (msgHide). The tape module's answer, TSSAVED to TSWIPED, picks its
 // text (sptape.ac, tpMsgs), which it writes into the word (msgWord) itself. TSWIPED is a load
 // that failed after it began replacing the tables, which it leaves empty, and reads BAD BLOCK
 // too. TSOPEN is a read that succeeded, for Save's name or for Dir, after which no word is
 // shown and the keyboard or the directory opens. The Drive row's label holds the drive's digit
 // in the low 6 bits of its text's word DRVWORD, code 061 for drive 1.
-#define MSGMS 0d3000
 // The word stands under the bar at its right, ending by 886, left of View's column; no list or
 // box reaches x 718 to 886. The truss's UNSTABLE stands there too.
 #define STATX 0d760
@@ -879,6 +1090,49 @@
 #define TSNOFLAG 6
 #define TSWIPED 7
 #define TSOPEN 0d8
+// TSTOOBIG is a save refused before it wrote, the masters' entries too many blocks for the
+// picture's slot. TSMORE is the tape overlay's call for a master's record, which only its root
+// stub sees (sptape.ac, tapeEntry).
+#define TSTOOBIG 0d9
+#define TSMORE 0d10
+// The library's (splib.ac): TSLLOADED an entry loaded into a master, which leaves the canvas as
+// it was, so that tapeCall writes nothing again, and reads LOADED; TSNOROOM a load refused before
+// it changed anything, the entry's texts too many for the masters' texts' table.
+#define TSLLOADED 0d11
+#define TSNOROOM 0d12
+// Which tape: TSNOTLIB a library command refused on a picture tape, TSNOTPIC a picture command
+// refused on a library tape, each before it wrote. TSFULL a library save refused before it wrote,
+// no slot free or no run of blocks long enough; TSDELETED a library entry deleted.
+#define TSNOTLIB 0d13
+#define TSNOTPIC 0d14
+#define TSFULL 0d15
+#define TSDELETED 0d16
+// Plot's (spplot.ac): TSPLOTTED the page plotted, TSSTOPPED a plot ended by STOP, the pen taken
+// home, and TSNOPLOT no plotter, nothing drawn.
+#define TSPLOTTED 0d17
+#define TSSTOPPED 0d18
+#define TSNOPLOT 0d19
+// The library's again: TSNESTED a library save refused before it wrote, the master holding
+// sub-instances, which an entry cannot carry.
+#define TSNESTED 0d20
+// And for a load of a master others hold (libEntry), refused before it changed anything, a
+// holder named on the name's line: TSTOOBIG or TSSLOW for a holder past MPOOL1 words or MTIME,
+// TSNOROOM for the store or the masters' texts' table short of room, TSDIGIT for digits in the
+// entry. TSHELD is the library overlay's answer to the load's first call, which only its root
+// stub sees: the entry is read and judged, and others hold the master.
+#define TSSLOW 0d21
+#define TSDIGIT 0d22
+#define TSHELD 0d23
+// The calls of a load (lbPhase): a master nothing holds, in one call; the first call for a
+// master others hold, which stops at TSHELD; the second, after the trial, the entry read again
+// and loaded; and a call that only shows a refusal of the trial (lbRes, rwWho).
+#define LBPONE 0
+#define LBPFIRST 1
+#define LBPAGAIN 2
+#define LBPSHOW 3
+// Not an answer: what the main bank's actTape gives the tape module's tapeStep for a row's first
+// step (spmenus.ac), since every answer is a result above or 0 or 1 from the keyboard.
+#define TSFRESH 0777777
 #define DRVWORD 2
 #define DRVCODE1 061
 // A picture's name, up to NAMELEN characters, kept as a fixed run of NAMEW
@@ -898,6 +1152,19 @@
 #define WAITPARAM (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpoff | next(point))
 #define WAITX 0d456
 #define WAITY 0d500
+// The screen while Plot runs (plList): PLOT at WAIT's size and place, raised, with the light pen
+// off, and STOP under it, with the light pen on, the one place a hit ends the plot.
+#define PLOTPARAM (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpoff | next(point))
+#define PLSTOPPARAM (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpon | next(point))
+#define PLOTX WAITX
+#define PLOTY (WAITY + 0d40)
+#define PLSTOPY (WAITY - 0d40)
+// Plot's page, 0 to PLPAGE on each axis, a plotter step a unit; the time it gives the plotter to
+// come ready after its first command, the plugin loaded by it, before NO PLOT; and the words of
+// the view and the text list it saves while it writes the texts' list at x1 (plTexts).
+#define PLPAGE 0d1023
+#define PLSTARTMS 0d500
+#define PLTXWORDS 0d9
 // INK while the target is hidden, the thesis's inking-up (inkBlock): WAIT's size, but with the
 // light pen on, about centered on the middle as WAIT is; a hit on it is Locate. INKWORDS is the
 // block's words after its first. penISR's inkHit takes a hit whose display address is from
@@ -907,9 +1174,9 @@
 #define INKY 0d500
 #define INKWORDS 5
 
-// The pen keyboard (spkbd.ac, bank 12), a service a caller opens with a block of
-// six words (kind, limit, prompt, buffer, resume, run), which replaces the frame with its
-// list while it is open. A text is at most KBMAX characters; the caller's buffer is KBBUFW words
+// The pen keyboard (spkbd.ac, bank 6's root and the overlay kbd), a service a caller opens with
+// a block of six words (kind, limit, prompt, buffer, resume, run), which replaces the frame with
+// its list while it is open. A text is at most KBMAX characters; the caller's buffer is KBBUFW words
 // of 340 text, room for KBMAX characters with the upper shift that starts it, a shift before
 // each character and the end, 50 codes, or a fixed run of the block's sixth word's codes (a
 // name's, NAMEWC). The list's prompt is a run of KBPW words, its field of KBFW, room for the
@@ -959,12 +1226,12 @@
 #define KBFLASHMS 0d150
 #define KBGAPMS 0d250
 #define KBWAIT 0d12000
-// The directory's screen (sptape.ac, dirList) has sixteen lines, P1 to P8 from (DIRX0, DIRY0) down
-// by DIRDY, P9 to P16 beside them DIRCOLDX right; each line's parameter word, y, x, its label in
-// two words ("P1  " to "P16 ", KCP the P) and its name's run, DLWORDS words, the name DLNAME from
+// The directory's screen (sptape.ac, dirList) has twelve lines, P1 to P6 from (DIRX0, DIRY0) down
+// by DIRDY, P7 to P12 beside them DIRCOLDX right; each line's parameter word, y, x, its label in
+// two words ("P1  " to "P12 ", KCP the P) and its name's run, DLWORDS words, the name DLNAME from
 // the line's start; DIRCHARS characters a line. A hit answers a line from DIRRX left and right of
 // it and DIRRY below and above it, so the lines' records meet no other's. Its keys are the one
-// at the action keys' row, OK or Cancel, then the sixteen lines, DIRKEYS in all.
+// at the action keys' row, OK or Cancel, then the twelve lines, DIRKEYS in all.
 #define DIRX0 0d48
 #define DIRCOLDX 0d480
 #define DIRY0 0d800
@@ -974,13 +1241,46 @@
 #define DIRCHARS (4 + NAMELEN)
 #define DIRRX 0d12
 #define DIRRY 0d18
-#define DIRKEYS 0d17
+#define DIRKEYS 0d13
 #define KCP 020
+// A line of the directory's screen, at row r of column c, shared by the library's screen
+// (splibdir.ac). Its label's first word l1 (for a picture KCP and its digits, then a space for P1
+// to P9), its second DIRLBLX (a space, then upper shifts), and its name's run, blank until the
+// directory's read writes it.
+#define DIRLBLX (KCSPACE * 010000 + KCUP * 0100 + KCUP)
+#define DIRLINE(r, c, l1) \
+    KBKEY; \
+    y(DIRY0 - (r) * DIRDY) next(point); \
+    x(DIRX0 + (c) * DIRCOLDX) next(character); \
+    l1; \
+    DIRLBLX; \
+    KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; \
+    KBBLANK
+// The hit record of the line at row r of column c, in kbFind's order: left, right, bottom, top.
+#define DIRREC(r, c) \
+    DIRX0 + (c) * DIRCOLDX - DIRRX; \
+    DIRX0 + (c) * DIRCOLDX + DIRCHARS * KBADV + DIRRX; \
+    DIRY0 - (r) * DIRDY - DIRRY; \
+    DIRY0 - (r) * DIRDY + KBH + DIRRY
+// The masters' picker (sketchpad.am1's mpkList, in bank 5; its blocks in sptape.ac), the same
+// screen with sixteen lines, M1 to M8 down the left and M9 to M16 down the right, on the
+// directory's places; each line a directory's line (DIRLINE), its label "M1  " to "M16 " (KCM
+// the M) and a name's run, MPKWORDS words, the label MPKLABEL and the run MPKTAG from the line's
+// start, the run the master's name, "empty" while the master is not defined; MPKCHARS characters a line. A line the row cannot take is drawn
+// dim with the pen off (KBDIM), so it does nothing. Its keys are Cancel, then the sixteen lines,
+// MPKEYS in all.
+#define MPKWORDS DLWORDS
+#define MPKLABEL 3
+#define MPKTAG DLNAME
+#define MPKCHARS DIRCHARS
+#define MPKEYS (NMASTER + 1)
+#define KCM 015
 // The keyboard's parameter words, a key, a key lit, and the prompt and the field, with the light
 // pen off.
 #define KBKEY (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpon | next(point))
 #define KBLIT (charsets(2) | scale(2) | intensity(SELECTINTENSITY) | lpon | next(point))
 #define KBTXT (charsets(2) | scale(2) | intensity(NORMALINTENSITY) | lpoff | next(point))
+#define KBDIM (charsets(2) | scale(2) | intensity(DIMINTENSITY) | lpoff | next(point))
 // 340 codes: the shifts, the end, the digit 0 (set 1; 1 to 9 follow it), a point, a space and
 // the cursor (set 2's underline); a run's pad (three upper shifts) and its last word (two and
 // the end); an empty text.
@@ -1019,13 +1319,13 @@
 // lower-case character costing 5 words (3 and a run of two: upper shift, lower shift, the
 // letter, the end) for 3 of the budget, and the halt. A text is drawn with the light pen
 // off, at NORMALINTENSITY, or LITINTENSITY while locked (TXPAR, TXPARL, at x1). The status words
-// shown at a refusal are TXSFULL, NO ROOM, and TXSOFF, OFF EDGE. txCall's entries are TXINIT to
+// shown at a refusal are TXSFULL, NO ROOM, TXSOFF, OFF EDGE, and TXSCONF, CONFLICT. txCall's entries are TXINIT to
 // TXFRESH.
-#define NTEXT 0d32
-#define NMTEXT 0d32
+#define NTEXT 0d64
+#define NMTEXT 0d64
 #define TEXTLEN KBMAX
 #define TXRUN KBBUFW
-#define TEXTBUDGET 0d180
+#define TEXTBUDGET 0d360
 #define TXOWN 2
 #define TXSCALE 1
 #define TXADV 7
@@ -1038,6 +1338,7 @@
 #define TXPARL (charsets(2) | scale(0) | intensity(LITINTENSITY) | lpoff | next(point))
 #define TXSFULL 0
 #define TXSOFF 1
+#define TXSCONF 2
 #define TXINIT 0
 #define TXCLEAR 1
 #define TXOPEN 2
@@ -1047,6 +1348,7 @@
 #define TXUNDO 6
 #define TXSYNC 7
 #define TXFRESH 010
+#define TXSAY 011
 #define KAOK 3
 #define KACANCEL 4
 #define KAPICK 5
@@ -1056,7 +1358,7 @@
 // naming it, at most SCALDIG digits and a sign, placed by their anchor, a point at their center
 // that the pen never locks onto. KCMINUS is the minus sign's 340 code, in the upper case, as the
 // digits' are.
-#define NSCAL 0d32
+#define NSCAL 0d64
 #define SCALDIG 5
 #define KCMINUS 055
 // A scalar's units, MILSPERUNIT thousandths of an inch to a screen unit, so a length in the
@@ -1069,10 +1371,22 @@
 #define GAPMARGIN 0d8
 
 // The tape module's entries, called through tapeCall, a save, a load, and the directory's read
-// for Save's, Load's and Dir's screen.
+// for Save's, Load's and Dir's screen; and TEMORE, which the module's root stub calls to go on
+// with a save or a load once a master's record is resident.
 #define TESAVE 0
 #define TELOAD 1
 #define TEDIR 2
+#define TEMORE 3
+// The library's entries, run through tapeCall too: the root stub tapeEntry passes them to the
+// overlay library (splib.ac). A master saved as an entry, and an entry loaded into a master.
+#define TELSAVE 4
+#define TELLOAD 5
+// And the library's directory on the screen, a page of it, and an entry deleted.
+#define TELDIR 6
+#define TELDEL 7
+// And Plot's, run through tapeCall as well: the stub libEntry passes it to the overlay plot
+// (spplot.ac).
+#define TEPLOT 010
 
 // The view module's entries, called through vwEntry, View's x1 to x8 rows, Pan
 // mode's lift, Center mode's lift, and the note of Pan's stroke's start.
@@ -1090,56 +1404,83 @@
 #define AKEEPN 0d29
 
 // The tape module's constants (sptape.ac), its picture format, words, blocks and waits.
-// The tape's magic and its one format, 14, a picture as one stream in its slot, and the tape's
-// directory. A picture of any other format reads as EMPTY.
+// The tape's magic and its format, 19, a picture as a stream, the masters' entries, each with
+// its master's name and its sub-instances, and a closing block in its slot, and the tape's
+// directory. Formats 18 and 17, TPFORMAT18 and TPFORMAT17, are read too, with the same entries
+// and directory: 18's stream is 19's but for the masters' own texts' counts (mTxOwn, the
+// nesting's last NMASTER words, zeros in its pad), so a load counts each master's texts as its
+// own; 17's lacks the whole nesting (TPNESTW words) and its entries hold no sub-instances. A
+// picture of any other format reads as EMPTY.
 #define TPMAGIC 0525253
-#define TPFORMAT 016
+#define TPFORMAT 023
+#define TPFORMAT18 022
+#define TPFORMAT17 021
 // An instance's scale word on the tape. Its low two bits are the 340's scale k, 0 to 3, as
 // iScale holds it, and the sixteen above them a
 // multiplier code c, the instance's size 2^k times c / 2^15, c = 0 meaning exactly 2^k. A save
-// writes c = 0; a load keeps the bits TPKMASK keeps, so a later tape's c loads as 2^k.
-#define TPKMASK 3
-// The picture's runs' words (TPPICTURE), and the header's.
-#define TPWORDS 0d5586
-#define TPHDRWORDS 4
+// keeps the whole word; a load keeps the bits TPKMASK keeps, every c, the sign off, since a c is
+// under 2^15, and each is built again as its instance's gate is written (the variants, spvar.ac).
+#define TPKMASK 0377777
+// iScale's low two bits, the 340's scale k, the multiplier code c above them.
+#define IKMASK 3
+#define SCODEHALF 040000
+// The picture's runs' words (TPPICTURE), and the header's: the magic, the format, TPSTREAM, the
+// generation and the entries' blocks. TPWORDS is the runs' sum, written out: 2 * MAXPTS + 2 *
+// MAXLINES + 3 * MAXINST + TPATTWORDS + TPMDIRWORDS + TPINSTWORDS + TPARCWORDS + 2.
+#define TPWORDS 0d1798
+#define TPHDRWORDS 5
 // The tie lists' packed words.
 #define TPTIES (NATT * MAXINST / 2)
 // The cycle's settings' words, the dwells and the sequence's length, a run of the instance
-// module's, then the sequence, eight masters to a word, two bits each.
-#define TPSEQW (NSEQ / 010)
+// module's, then the sequence, four masters to a word, four bits each.
+#define TPSEQW (NSEQ / 4)
 #define TPCYC (NMASTER + 1 + TPSEQW)
-// The masters' constraints' words (cpCon, in bank 9), and each master's count.
-#define TPXCON (NMASTER * NCPCON * CW)
-#define TPXWORDS (TPXCON + NMASTER)
-// The texts' words (TPTEXTS).
-#define TPTWORDS (2 + NMASTER + NTEXT * (5 + TXRUN) + NMTEXT * (6 + TXRUN))
-// The digits' words, bank 3's run from txAn to scFix, then the text module's from mtAn to mtFix
+// The masters' constraints' counts (cpNCon, in bank 9); the constraints are in each master's
+// entry, from its record.
+#define TPXWORDS NMASTER
+// The masters' attachers' run, cpAtt to cpNAtt in bank 5.
+#define TPATTWORDS (3 * NMASTER * NATT + NMASTER)
+// A master's entry's tables, its record's (sptape.ac, tpRecT), the sub-instances' last.
+#define TPRECN 0d12
+// A library entry's tables (splib.ac, lbRecT): the tape's less the sub-instances, which an entry
+// never holds.
+#define LBRECN (TPRECN - 1)
+// The masters' nesting's words, mNSub to mTxOwn in bank 5, five tables of NMASTER.
+#define TPNESTW (5 * NMASTER)
+// The texts' words (TPTEXTS), the canvas's run and the masters'.
+#define TPTWCAN (2 + NMASTER + NTEXT * (5 + TXRUN))
+#define TPTWMAS (NMTEXT * (6 + TXRUN))
+#define TPTWORDS (TPTWCAN + TPTWMAS)
+// The digits' words, bank 3's run from txAn to scFix, then bank 11's from mtAn to mtFix
 // (TPDIGITS), TPSWORDS in all.
 #define TPSCAN (2 * NTEXT + 1 + 2 * NSCAL)
 #define TPSMAS (3 * NMTEXT)
 #define TPSWORDS (TPSCAN + TPSMAS)
 // A picture's stream is the header, the constraint table, the ties, the name, the cycle's
-// settings, the masters' constraints and counts, the texts, the digits and the picture's runs,
-// then TPPAD zeros and the header again as its last words; TPPBLOCKS blocks of the picture's
-// slot, TPSLOT blocks, the rest spare for a later part.
-#define TPSTREAM (2 * TPHDRWORDS + CONWORDS + TPTIES + NAMEW + TPCYC + TPXWORDS + TPTWORDS     + TPSWORDS + TPWORDS)
-#define TPPBLOCKS 0d32
-#define TPSLOT 0d35
+// settings, the masters' constraints' counts, the texts, the digits, the picture's runs and the
+// masters' nesting, then TPPAD zeros; TPPBLOCKS blocks of the picture's slot, TPSLOT blocks, the
+// rest for the masters' entries and the closing block. Format 17's stream is TPSTREAM17 words,
+// the nesting left out, and format 18's TPSTREAM18, its own texts' counts left out.
+#define TPSTREAM (TPHDRWORDS + CONWORDS + TPTIES + NAMEW + TPCYC + TPXWORDS + TPTWORDS + TPSWORDS + TPWORDS + TPNESTW)
+#define TPSTREAM18 (TPSTREAM - NMASTER)
+#define TPSTREAM17 (TPSTREAM - TPNESTW)
+#define TPPBLOCKS 0d23
+#define TPSLOT 0d47
 #define TPPAD (TPPBLOCKS * 0d256 - TPSTREAM)
-// The pictures, P1 to P16, are TPHALF slots from block 1, the tape's directory block, then the
+// The pictures, P1 to P12, are TPHALF slots from block 1, the tape's directory block, then the
 // other TPHALF.
-#define NPICT 0d16
-#define TPHALF 0d8
+#define NPICT 0d12
+#define TPHALF 6
 #define TPDIRBLK (1 + TPHALF * TPSLOT)
-// The tape's directory, each picture's entry, its format word (TPFORMAT, or anything else for
-// no picture) and its name's run; the entries' words, also the third word of the directory's
-// header, which tells it from a picture's.
+// The tape's directory, each picture's entry, its format word (TPFORMAT, TPFORMAT18 or
+// TPFORMAT17, or anything else for no picture) and its name's run; the entries' words, also the
+// third word of the directory's header, which tells it from a picture's.
 #define TPDENT (1 + NAMEW)
 #define TPDIRW (NPICT * TPDENT)
 // The directory's runs and their words, in the stream's order: the master directory, mLen to
-// cpNA in bank 2; the instance table, instCount and iMaster in bank 10; the arc table, arcCount
-// to arcTR in bank 2; TPDIRWORDS the three together. A failed second pass zeroes all three.
-#define TPMDIRWORDS (0d12 * NMASTER)
+// mStart in bank 5; the instance table, instCount and iMaster in bank 10; the arc table, arcCount
+// to arcTR in bank 2; TPDIRWORDS the three together. A failed load zeroes all three.
+#define TPMDIRWORDS (0d13 * NMASTER)
 #define TPINSTWORDS (1 + MAXINST)
 #define TPARCWORDS (1 + 6 * MAXARCS)
 #define TPDIRWORDS (TPMDIRWORDS + TPINSTWORDS + TPARCWORDS)
@@ -1147,3 +1488,85 @@
 #define TPSELMS 0d45
 // Idle polls of a seek before it gives up with no flag, about 3 s.
 #define TPTMO 0d70000
+
+// The library's constants (splib.ac), a master kept as an entry on a tape of its own. An entry
+// starts at a block's first word: the header, LBHDRW words, then each of the master's texts,
+// LBTXW words, then its record's tables as a picture's entry has them (sptape.ac, tpRecT), then
+// zeros to its last block's end. The header is the magic and the format, which mark an entry,
+// the entry's words without the zeros, a generation word from the clock, the name's run; then
+// the master's words held outside its record: its directory words, mLen to cpNA (LBDIRW, mStart
+// left out), its attachers (cpAtt, cpAX and cpAY, NATT each, and cpNAtt), its constraints'
+// count (cpNCon), its texts' count, and its texts' cost (txMCost). LBHNAME to LBHCOST are the
+// header's offsets.
+#define LBMAGIC 0434343
+#define LBFORMAT 1
+#define LBDIRW 0d12
+#define LBHWORDS 2
+#define LBHNAME 4
+#define LBHDIR (LBHNAME + NAMEW)
+#define LBHNATT (LBHDIR + LBDIRW + 3 * NATT)
+#define LBHNCON (LBHNATT + 1)
+#define LBHNTX (LBHNATT + 2)
+#define LBHCOST (LBHNATT + 3)
+#define LBHDRW (LBHCOST + 1)
+// The directory words' offsets in the header of the counts an entry's size is taken from: mLen,
+// cpNP, cpNL and cpNA (sketchpad.am1's master directory, in that order from mLen).
+#define LBHLEN LBHDIR
+#define LBHNP (LBHDIR + 0d9)
+#define LBHNL (LBHDIR + 0d10)
+#define LBHNA (LBHDIR + 0d11)
+// A text's words in an entry: its offset, scale, characters and words (mtDX to mtW), its run
+// (mtRun) and its digits' anchor, value and fix (mtAn to mtFix). The master is the entry's.
+#define LBTXW (5 + TXRUN + 3)
+// The entry buffer's blocks, the most an entry may take; a save of a master that would take more
+// is refused (TSTOOBIG).
+#define LBBLKS 0d10
+#define LBBUFW (LBBLKS * 0d256)
+// The library's directory: block LBDIRBLK, the header, where a picture tape keeps its directory,
+// then LBPAGES pages, page p naming slots LBLINES * p to LBLINES * p + LBLINES - 1, entries 1 to
+// LBSLOTS on the screen. The header is the magic, the format, LBDHW, which tells it from an
+// entry's header, and a zero; then each page's count of entries, from LBDCNT; then the map from
+// LBDMAP, a bit a block, bit b & 15 of word b >> 4, set while block b is taken, block 0 and the
+// directory's blocks always. A page is each slot's word, 0 while the slot is free, else its
+// entry's first block times 16 plus its blocks, then its name's run, LBDENT words a slot. A tape
+// is LBTBLOCKS blocks.
+#define LBDIRBLK TPDIRBLK
+#define LBPAGES 0d16
+#define LBLINES 0d16
+#define LBSLOTS (LBPAGES * LBLINES)
+#define LBTBLOCKS 0d576
+#define LBDCNT 4
+#define LBDMAP (LBDCNT + LBPAGES)
+#define LBMAPW (LBTBLOCKS / 0d16)
+#define LBDHW (LBDMAP + LBMAPW)
+#define LBDENT (1 + NAMEW)
+#define LBPGW (LBLINES * LBDENT)
+// The library's screen (splibdir.ac), the directory's screen made again for a page: Next at
+// Clear's place and Prev at Back's, then the sixteen lines on the masters' picker's places, each
+// the entry's number and its name, DLWORDS words; its keys the screen's key, OK or Cancel, Next,
+// Prev and the lines, LBKEYS in all, so Dir acts on the first LBDIRKEYS. kbPick is LBPNEXT or
+// LBPPREV for Next and Prev, LBPLINE and on for the lines. LBLABEL is a line's label word's
+// offset from the line's start.
+#define LBKEYS (LBLINES + 3)
+#define LBDIRKEYS 3
+#define LBPNEXT 0
+#define LBPPREV 1
+#define LBPLINE 2
+#define LBLABEL 3
+
+// A main-bank routine's call through its trampoline mainCall (spmain.ac), as the instruction word
+// mainCall runs, a jsp or a jda: the scale module's and the drum's error hook's (spinit.ac). MCJSP
+// is cPjTab's word too: a call that only runs in its target's bank, assembled in another.
+#define MCJSP(r) (0620000 | ((r) & 07777))
+#define MCJDA(r) (0170000 | ((r) & 07777))
+
+// The drum overlays' window W (Docs/UsingOverlays.md, PLAN.md 7), in bank 6 from OVWFIRST to
+// OVWLAST, 8 words longer than the longest of its overlays, tape (sptape.ac), library (splib.ac),
+// scale (spscale.ac), kbd (spkbd.ac), defdism (spinst.ac) and truss (sptruss.ac), each with its
+// two header words and its literals (the library's sets it), so a change that lengthens one by a
+// few words, or parts two literals pooled by value, still assembles; bank 6's root starts after
+// it. A test's patched copy whose overlay outgrows W assembles again with a larger OVWLAST.
+#define OVWFIRST 0
+#ifndef OVWLAST
+#define OVWLAST 07535
+#endif

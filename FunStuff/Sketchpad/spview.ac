@@ -4,13 +4,13 @@
 // the view's top, and the clipper and the sine table the arcs' code (spvarc.ac) uses; an arc's
 // cross placed through the view.
 //
-// Bank 12, after spkbd.ac. Every entry runs with the extend window open and is entered by
+// Bank 12, after spaux.ac. Every entry runs with the extend window open and is entered by
 // jsp i [X:014], vwEntry from the main bank's actView, panLost, centerLost, afMode and
 // panLocate, vwIn from its placeFind, vwInit from initVars and from the tape module's tpFresh
 // after a load, vwLine and vwEmit from its writeSlot, vwSeg from its writeSeg, vwClipX from the
 // arcs' code in bank 13 (spvarc.ac), vwBox from the instance module's instView in bank 7,
-// vwCross from the arc module's markAt in bank 2, and arBegin and arOne, the constraints' arms,
-// from the marks module's mkMarks in bank 13. clipLock (spaux.ac) calls vwDot to place the dot.
+// vwCross from the arc module's markAt in bank 2, and arOne, the constraints' arms, from the
+// marks module's mkMarks in bank 13. clipLock (spaux.ac) calls vwDot to place the dot.
 // Each reaches the other banks' words through their 16-bit addresses, returns by jmp i, and
 // calls nothing outside bank 12 but vwEntry, which enters the instance module (IEVIEW), the
 // constraint module (CEFMARK) and the truss module (taRedo). The text module reads vwS, vwOutX,
@@ -218,11 +218,15 @@ rtn, jmp .
 // (vwClip), then split as splitPlan does. A line of no length gets a 1-unit x delta, since a
 // (0,0) vector stops the 340; it goes toward the middle at x 1023, where +1 would pass the edge.
 // Entry: the main bank's fx, fy, tx, ty on the page. Exit: fx, fy, tx, ty on the screen and
-// splitPlan's results; vwHid set if none of the line is on the screen, when nothing is planned.
+// splitPlan's results; vwHid set if none of the line is on the screen, when nothing is planned;
+// the constraints' marks stale (bank 8's cMkDirty), since a one-point mark stands clear of its
+// point's lines, whose far ends need not be any entry's points.
 // AC is clobbered, IO preserved. Called via jsp i [vwLine:014].
 vwLine,
     local rtn, vlPlan
     dac rtn
+    law 1
+    dac i [cMkDirty:010]
     jsp vwClip
     lac vwHid
     sza                 // skip unless the line is off the screen
@@ -831,59 +835,10 @@ vwClipX,
 rtn, 0
     endloc
 
-// The constraints' arms, written with the marks, arBegin before mkMarks' walk and arOne for each
-// mark it reaches, from the last entry to the first. Bank 5's arList holds a slot for each E, P
+// The constraints' arms, written with the marks, the list shut by bank 13's arBegin before
+// mkMarks' walk and arOne for each mark it reaches, from the last entry to the first. Bank 5's arList holds a slot for each E, P
 // and R entry in the table with Show on, in the table's order, packed, the word after the last
 // used slot the list's halt; penISR starts the list while arGo is set.
-
-// Shut the arms' list after its last slot. The slots are counted, one for each E, P and R entry
-// with Show on, none with it off; arGo is cleared if none; the halt is written in the parameter
-// word's place after the last slot, first, as fixList's shut slot is, so that the display never
-// runs into the slots arOne writes next.
-// Exit: arK the slots' count. AC is clobbered, IO preserved. Called via jsp i [arBegin:014],
-// from the marks module's mkMarks.
-arBegin,
-    local rtn, abLoop, abCount, abNext, abShut, abHalt, abP
-    dac rtn
-    dzm arK
-    lac i [showOn:4]
-    sza i               // skip if Show is on
-    jmp abShut
-    lac [cEntries:011]
-    dac abP
-abLoop,
-    lac abP
-    sad i [cEnd:010]    // skip while entries remain
-    jmp abShut
-    lac i abP
-    sad [CTEQ]          // skip unless an Equal
-    jmp abCount
-    sad [CTPAR]         // skip unless a Paral
-    jmp abCount
-    sas [CTPERP]        // skip if a Perp
-    jmp abNext
-abCount,
-    idx arK
-abNext,
-    lac abP
-    add [CW]
-    dac abP
-    jmp abLoop
-abShut,
-    lac arK
-    sza                 // skip if no slot is used
-    jmp abHalt
-    dzm i [arGo:0]
-abHalt,
-    lac arK
-    jda arSlot
-    dac abP
-    lac [lpoff halt interrupt]
-    dac i abP
-    jmp i rtn
-rtn, 0
-abP, 0
-    endloc
 
 // An entry's arms. For an E, a P or an R it writes the next slot down, a run from its first
 // line's middle to its second's through the view, clipped to the screen under the view's top
@@ -894,12 +849,16 @@ abP, 0
 // part way through, then its words written last first, its parameter word last of all, so that
 // the display never draws a slot half old and half new (an old start with new vectors could
 // leave the screen, an edge violation that restarts the frame). Once slot 0 is written arGo is
-// set. Other types return at once.
-// Entry: IO = the entry's address; arK, cMkOff. AC and IO are clobbered. Called via
+// set. Other types return at once. A mark the marks module set on a ring off its place, one of
+// two or more at one place (cMkBent), has its run bent through it: the first vector from the
+// first middle to the mark, the second from that vector's drawn end to the second middle, each
+// part clipped and stepped alone, so that neither end leaves the screen.
+// Entry: IO = the entry's address; arK, cMkOff, cMkBent, and cMkX, cMkY the mark's place on the
+// screen, kept inside it. AC and IO are clobbered. Called via
 // jsp i [arOne:014], from the marks module's mkMarks.
 arOne,
     local rtn, aoArm, aoDark, aoPut, aoWait, aoGo, aoMid, aoMRtn, aoP, aoS, aoA, aoB, aoT, aoU, \
-        aoQX, aoQY, aoH1X, aoH1Y, aoV1, aoV2, aoN
+        aoQX, aoQY, aoH1X, aoH1Y, aoV1, aoV2, aoN, aoBent, aoStep, aoSRtn
     dac rtn
     dio aoP
     lac i aoP
@@ -927,32 +886,10 @@ aoArm,
     jsp aoMid
     dac vcX1
     dio vcY1
-    jsp vwClipS
-    lac vwHid
-    sza                 // skip unless the run is off the screen
-    jmp aoDark
-
-    // The steps on each axis, and their directions as the vector words' bits.
-    law 0d1023
-    dac arHi
-    lio vcX1
-    lac vcX0
-    jda arQ
-    dac aoQX
-    lac arNeg
-    sza                 // skip unless leftward
-    law 0200
-    dac arNX
-    lac vwTop
-    dac arHi
-    lio vcY1
-    lac vcY0
-    jda arQ
-    dac aoQY
-    lac arNeg
-    sza                 // skip unless downward
-    lac [0100000]
-    dac arNY
+    lac i [cMkBent:015]
+    sza                 // skip unless the mark stands on a ring, its run bent through it
+    jmp aoBent
+    jsp aoStep
 
     // The first vector half the steps, rounded down, the second the rest.
     lac aoQX
@@ -983,6 +920,46 @@ aoArm,
     lac vcY0
     ior [y(0) next(point)]
     jmp aoPut
+
+    // Bent: the first vector from the first middle to the mark (cMkX, cMkY, on the screen), the
+    // second from where the first ends to the second middle, each part clipped and stepped as a
+    // run is. The second middle is kept in aoA, aoT and the start's y word in aoH1X meanwhile.
+aoBent,
+    lac vcX1
+    dac aoA
+    lac vcY1
+    dac aoT
+    lac i [cMkX:015]
+    dac vcX1
+    lac i [cMkY:015]
+    dac vcY1
+    jsp aoStep
+    lac vcX0
+    ior [x(0) next(vector)]
+    dac aoU
+    lac vcY0
+    ior [y(0) next(point)]
+    dac aoH1X
+    lio aoQY
+    lac aoQX
+    jda arW
+    dac aoV1
+    lac aoH1Y
+    dac vcX0
+    lac arEnd
+    dac vcY0
+    lac aoA
+    dac vcX1
+    lac aoT
+    dac vcY1
+    jsp aoStep
+    lio aoQY
+    lac aoQX
+    jda arW
+    ior [end]
+    dac aoV2
+    lac aoH1X
+    jmp aoPut
 aoDark,
     lac [deltax(1) deltay(0) right]
     dac aoV1
@@ -1005,7 +982,7 @@ aoPut,
     law i ARMWAIT
     dac aoN
 aoWait,
-    dra                 // IO = the display's next fetch, a full address
+    t340dra             // IO = the display's next fetch, a full address
     dio aoA
     lac aoA
     sub aoS
@@ -1087,6 +1064,44 @@ aoMid,
     sub vwOutX
     lio aoU
 aoMRtn, jmp .
+
+    // A run from (vcX0, vcY0) to (vcX1, vcY1) clipped to the screen under the view's top
+    // (vwClipS), its steps on each axis (aoQX, aoQY), their directions as the vector words' bits
+    // (arNX, arNY), and where the steps end, x in aoH1Y, y in arEnd. It goes dark (aoDark) when the run is
+    // off the screen or its steps are (0,0). Called via jsp.
+aoStep,
+    dap aoSRtn
+    jsp vwClipS
+    lac vwHid
+    sza                 // skip unless the run is off the screen
+    jmp aoDark
+    law 0d1023
+    dac arHi
+    lio vcX1
+    lac vcX0
+    jda arQ
+    dac aoQX
+    lac arEnd
+    dac aoH1Y
+    lac arNeg
+    sza                 // skip unless leftward
+    law 0200
+    dac arNX
+    lac vwTop
+    dac arHi
+    lio vcY1
+    lac vcY0
+    jda arQ
+    dac aoQY
+    lac arNeg
+    sza                 // skip unless downward
+    lac [0100000]
+    dac arNY
+    lac aoQX
+    ior aoQY
+    sza i               // skip unless the steps are (0,0)
+    jmp aoDark
+aoSRtn, jmp .
 rtn, 0
 aoP, 0
 aoS, 0
@@ -1118,9 +1133,10 @@ rtn, jmp .
 // One axis of a run, its steps at ARMSCALE, |end - start| / 4 rounded, one fewer if that would
 // draw the run's end past the screen (0 to arHi), at most ARMSTEPS; and its direction.
 // Entry: AC = the start, IO = the end, both on the screen; arHi. Exit: AC = the steps; arNeg
-// set if the end is below the start. IO is clobbered. Called via jda.
+// set if the end is below the start; arEnd the drawn end, the start moved by the steps. IO is
+// clobbered. Called via jda.
 arQ, 0
-    local rtn, aqPos, aqNeg, aqLess, aqCap, aqMax, aqD, aqM
+    local rtn, aqPos, aqNeg, aqLess, aqCap, aqEnd, aqUp, aqOut, aqD, aqM
     dap rtn
     dzm arNeg
     dio aqD
@@ -1160,12 +1176,26 @@ aqLess,
 aqCap,
     lac aqM
     sub [ARMSTEPS + 1]
-    sma                 // skip if at most ARMSTEPS
-    jmp aqMax
-    lac aqM
-    jmp rtn
-aqMax,
+    spa                 // skip unless at most ARMSTEPS
+    jmp aqEnd
     law ARMSTEPS
+    dac aqM
+aqEnd,
+    lac aqM
+    sal 2s
+    dac aqD
+    lac arNeg
+    sza i               // skip if toward 0
+    jmp aqUp
+    lac arQ
+    sub aqD
+    jmp aqOut
+aqUp,
+    lac arQ
+    add aqD
+aqOut,
+    dac arEnd
+    lac aqM
 rtn, jmp .
 aqD, 0
 aqM, 0
@@ -1270,10 +1300,11 @@ vcY0, 0
 vcX1, 0
 vcY1, 0
 // The arms (arBegin, arOne), the slots left to write, the last written first; arQ's far bound
-// for the axis, its direction, and the directions' bits in a vector word.
+// for the axis, its direction, its drawn end, and the directions' bits in a vector word.
 arK, 0
 arHi, 0d1023
 arNeg, 0
+arEnd, 0
 arNX, 0
 arNY, 0
 // sin(j/512 of a turn), j 0 to 128, as 17-bit fractions, rounded as sinTab's, which is every

@@ -68,6 +68,14 @@ statGate, jump statEnd next(parameter)
 statEnd, lpoff next(subroutine)
 menuJmp, jump menuEnd next(parameter)
 
+// The leader from the lit row to its Select box (sketchpad.ah), entered by an open box's tail
+// after "OK", from which it moves back to the box and draws left; placeBox writes leadVec's
+// length. Its vector escapes into menuEnd's parameter word, and the tracker after it sets its
+// own scale, intensity and light pen.
+okLead, scale(LEADSCALE) intensity(LEADINTENSITY) lpon next(vector)
+    deltax(LEADBACK) deltay(LEADRISE / LEADSTEP) left up
+leadVec, deltax(0) deltay(0) left visible end
+
 // The frame-start target call; writeCalls makes it a call or a jump to the next word. Then the
 // drawing list, in bank 1; drawJmp goes to the frame's end instead while a list is open.
 menuEnd, next(subroutine)
@@ -91,9 +99,9 @@ drawJmp, jump drawList:1 next(parameter)
 // jumps back here for the radius, and goes straight to the dot in the other modes and while
 // draw mode waits for its start or circle mode for a center. bandStart is dotted for the radius
 // (RADPARAM). bandJmp enters the last K of the band's vectors, or goes straight to the dot for a
-// zero-length band. The dot's parameter word dims it while move mode waits for a point, and
-// lockGate draws the lock mark about it while it locks onto what a lift takes (showDot). All
-// written at run time.
+// zero-length band; for Scale's slider, of slideVec's and the band's together. The dot's
+// parameter word dims it while move mode waits for a point, and lockGate draws the lock mark
+// about it while it locks onto what a lift takes (showDot). All written at run time.
 drawEnd,
 instList,
     table MAXINST * INSTWORDS, 0
@@ -115,6 +123,8 @@ bandStart, DRAWPARAM
 bandY, y(INITIALY) next(point)
 bandX, x(INITIALX) next(subroutine)
 bandJmp, jump dotBlock next(parameter)
+slideVec,
+    table NSLIDE - NBAND, 0
 bandVec,
     deltax(1) deltay(0) right
     deltax(1) deltay(0) right
@@ -124,9 +134,8 @@ bandVec,
     deltax(1) deltay(0) right
     deltax(1) deltay(0) right
     deltax(1) deltay(0) right
-    deltax(1) deltay(0) right
-    deltax(1) deltay(0) right
     deltax(1) deltay(0) right end
+boxGate, jump dotBlock next(parameter)
 dotBlock, DOTPARAM
 dotY, y(INITIALY) next(point)
 dotX, x(INITIALX) show next(parameter)
@@ -144,6 +153,15 @@ frameHalt, lpoff halt interrupt
 // A halt that asks for no break, where init holds a display left running by an earlier program.
 parked, lpoff halt
 
+// Scale's box, the size an instance held will take at the lift, entered from boxGate after the
+// band while it is, at the scale the box's longer side needs (the scale module's scBoxDraw).
+boxBlock, scale(0) intensity(SLIDEINTENSITY) lpoff next(point)
+boxY, y(0) next(point)
+boxX, x(0) next(vector)
+boxVec,
+    table 4, 0
+    jump dotBlock next(parameter)
+
 // The constraints' marks, entered from showGate in Fix mode and while Show is on, the list then
 // jumping on to markGate. NCON slots, each the mark's y word, its x word, the gate, which calls
 // the constraint's glyph or, past the last mark, jumps to markGate, and a parameter word going
@@ -158,7 +176,8 @@ fixList,
 // The glyphs (GLYPH), each called from its slot with the beam on the mark's center. Each is the
 // circle of radius FIXR (gRing) and a letter 10 high inside it: H, F, E, L, P, R, X, N, C or A,
 // or the truss's B, W or O, or a designation's digit, 1 to 6, gD1 to gD6 in order, which the
-// constraint module's cDgTab names, or a number's D, Y or O, the O without a roller's ticks.
+// constraint module's cDgTab names, or a number's D, Y or O, the O without a roller's ticks, or
+// a size's S, U, I or Z, or M, an E at a ratio.
 // Each letter's strokes start where the circle ends, FIXR right of the center.
     GLYPH(gH, gHRet, lH)
     GLYPH(gF, gFRet, lF)
@@ -181,6 +200,11 @@ fixList,
     GLYPH(gD, gDRet, lD)
     GLYPH(gY, gYRet, lY)
     GLYPH(gO, gOPRet, lO)
+    GLYPH(gS, gSRet, lS)
+    GLYPH(gU, gURet, lU)
+    GLYPH(gI, gIRet, lI)
+    GLYPH(gZ, gZRet, lZ)
+    GLYPH(gM, gMRet, lM)
 
 // A roller's mark, the O with two dim ticks along its axis, FIXR + 2 to FIXR + 8 out on each
 // side of the center. gOk is the axis at k * 22.5 degrees counterclockwise from level (the
@@ -286,6 +310,27 @@ gRing, scale(DRAWSCALE) intensity(MARKINTENSITY) lpoff next(vector)
     deltax(1) deltay(4) right up visible end
 
 // The letters, in vector mode, from FIXR right of the center.
+lS, deltax(FIXR + 3) deltay(5) left down
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(5) up visible
+    deltax(6) deltay(0) left visible
+    deltax(0) deltay(5) up visible
+    deltax(6) deltay(0) right visible end
+lU, deltax(FIXR + 3) deltay(5) left up
+    deltax(0) deltay(0d10) down visible
+    deltax(6) deltay(0) right visible
+    deltax(0) deltay(0d10) up visible end
+lI, deltax(FIXR) deltay(5) left down
+    deltax(0) deltay(0d10) up visible end
+lZ, deltax(FIXR + 3) deltay(5) left up
+    deltax(6) deltay(0) right visible
+    deltax(6) deltay(0d10) left down visible
+    deltax(6) deltay(0) right visible end
+lM, deltax(FIXR + 3) deltay(5) left down
+    deltax(0) deltay(0d10) up visible
+    deltax(3) deltay(5) right down visible
+    deltax(3) deltay(5) right up visible
+    deltax(0) deltay(0d10) down visible end
 lH, deltax(FIXR + 3) deltay(5) left down
     deltax(0) deltay(0d10) up visible
     deltax(6) deltay(0) right
@@ -428,11 +473,11 @@ tgtVec,
     deltax(TARGETARM) deltay(TARGETARM) right up end
     halt
 
-// The drop-down lists, reached from menuJmp; each jumps back to menuEnd. Every row is a separate
+// The drop-down lists, reached from menuJmp; each ends at menuEnd. Every row is a separate
 // block, highlighted by patching its parameter word. A list's tail word jumps to the lists'
 // Select box, listBox, after Draw's list, which placeBox moves beside the open list, or to the
-// open sublist, which ends in its box, shared with the list's other sublists, and jumps back to
-// menuEnd. Define's label is cut to 7 characters, "Define>", to keep its gap to the list's
+// open sublist, which ends in its box, shared with the list's other sublists. A shut box's gate
+// jumps to menuEnd, an open one's tail to the leader, okLead, which falls into it. Define's label is cut to 7 characters, "Define>", to keep its gap to the list's
 // Select box, and Constr's likewise.
 listDraw,
 dr0, LBLNORM
@@ -460,7 +505,7 @@ drTail, jump listBox next(parameter)
 listBox,
     SELECTBOX(0)
     lpoff next(subroutine)
-    jump menuEnd next(parameter)
+    jump okLead next(parameter)
 
 listEdit,
 ed0, LBLNORM
@@ -491,6 +536,10 @@ ed6, LBLNORM
     y(ROWY0 - ROWDISMEM * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + LABELMARGIN) next(character)
     type340 "Dismem"
+ed7, LBLNORM
+    y(ROWY0 - ROWKEEP * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + LABELMARGIN) next(character)
+    type340 "Keep >"
     lpoff next(subroutine)
 edTail, jump listBox next(parameter)
 
@@ -498,15 +547,15 @@ listPicture,
 pc0, LBLNORM
     y(ROWY0 - ROWDEFINE * ROWPITCH) next(point)
     x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
-    type340 "Define>"
+    type340 "Define"
 pc1, LBLNORM
     y(ROWY0 - ROWINST * ROWPITCH) next(point)
     x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
-    type340 "Inst >"
+    type340 "Inst"
 pc2, LBLNORM
     y(ROWY0 - ROWCOPY * ROWPITCH) next(point)
     x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
-    type340 "Copy >"
+    type340 "Copy"
 pc3, LBLNORM
     y(ROWY0 - ROWCLEAR * ROWPITCH) next(point)
     x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
@@ -519,13 +568,17 @@ pc5, LBLNORM
     y(ROWY0 - ROWDESIG * ROWPITCH) next(point)
     x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
     type340 "Desig"
+pc6, LBLNORM
+    y(ROWY0 - ROWNAME * ROWPITCH) next(point)
+    x(CPICTURE * COLPITCH + LABELMARGIN) next(character)
+    type340 "Name"
     lpoff next(subroutine)
 pcTail, jump listBox next(parameter)
 
 // The sublists, reached from their lists' tail words, each beside the row that owns it. The
 // sublists of one list stand in one column and only one is open at a time, so they share one
 // Select box, to spare bank 0's room. Size's and Constr's jump to Change's, chBox, Copy's and
-// Define's to Inst's; Drive's, alone in Misc's column, has its own, dvBox. Each descriptor names
+// Define's to Inst's; Library's, in Misc's column, to Drive's, dvBox. Each descriptor names
 // the box its sublist uses. Every sublist's box is assembled beside row 0, where placeBox parks
 // a hidden one, so a closed list's box words stay as assembled whichever sublist used it.
 listSize,
@@ -616,10 +669,43 @@ tr5, LBLNORM
 trBox,
     BOXAT(CDRAW * COLPITCH + SUBDX + BOXDX, 0)
     lpoff next(subroutine)
-    jump menuEnd next(parameter)
+    jump okLead next(parameter)
 
-// Dim's rows, Number, Dist, Change and Gap, each a mode. The sublist shares Truss's box, as the
-// sublists of one list do.
+// Keep's rows, the constraints on size, each a mode. It shares Change's box, as Edit's sublists do.
+listKeep,
+km0, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d0) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x1/3"
+km1, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d1) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x1/2"
+km2, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d2) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x1"
+km3, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d3) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x2"
+km4, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d4) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "x3"
+km5, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d5) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Full"
+km6, LBLNORM
+    y(ROWY0 - (ROWKEEP + 0d6) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Inch"
+    lpoff next(subroutine)
+    jump chBox next(parameter)
+
+// Dim's rows, Number, Dist, Change, Gap and Size, each a mode. The sublist shares Truss's box, as
+// the sublists of one list do.
 listDim,
 dm0, LBLNORM
     y(ROWY0 - ROWDIM * ROWPITCH) next(point)
@@ -637,74 +723,18 @@ dm3, LBLNORM
     y(ROWY0 - (ROWDIM + 0d3) * ROWPITCH) next(point)
     x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
     type340 "Gap"
+dm4, LBLNORM
+    y(ROWY0 - (ROWDIM + 0d4) * ROWPITCH) next(point)
+    x(CDRAW * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Size"
     lpoff next(subroutine)
     jump trBox next(parameter)
 
-listInst,
-mi0, LBLNORM
-    y(ROWY0 - ROWINST * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M1"
-mi1, LBLNORM
-    y(ROWY0 - (ROWINST + 0d1) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M2"
-mi2, LBLNORM
-    y(ROWY0 - (ROWINST + 0d2) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M3"
-mi3, LBLNORM
-    y(ROWY0 - (ROWINST + 0d3) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M4"
-miBox,
-    BOXAT(CPICTURE * COLPITCH + SUBDX + BOXDX, 0)
-    lpoff next(subroutine)
-    jump menuEnd next(parameter)
-
-listCopy,
-mc0, LBLNORM
-    y(ROWY0 - ROWCOPY * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M1"
-mc1, LBLNORM
-    y(ROWY0 - (ROWCOPY + 0d1) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M2"
-mc2, LBLNORM
-    y(ROWY0 - (ROWCOPY + 0d2) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M3"
-mc3, LBLNORM
-    y(ROWY0 - (ROWCOPY + 0d3) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M4"
-    lpoff next(subroutine)
-    jump miBox next(parameter)
-
-listDefine,
-md0, LBLNORM
-    y(ROWY0 - ROWDEFINE * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M1"
-md1, LBLNORM
-    y(ROWY0 - (ROWDEFINE + 0d1) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M2"
-md2, LBLNORM
-    y(ROWY0 - (ROWDEFINE + 0d2) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M3"
-md3, LBLNORM
-    y(ROWY0 - (ROWDEFINE + 0d3) * ROWPITCH) next(point)
-    x(CPICTURE * COLPITCH + SUBDX + LABELMARGIN) next(character)
-    type340 "M4"
-    lpoff next(subroutine)
-    jump miBox next(parameter)
-
-// Misc's list. The tape's rows, Drive alone owning a sublist, then Del cons and Unfix. The Drive
-// row's label shows the drive in use, its digit in the text's word DRVWORD (drvLabel). Save,
-// Load (picking on the directory's screen), Dir, Del cons and Unfix act.
+// Misc's list. The tape's rows, Drive owning a sublist, then Del cons and Unfix, and last
+// Library, owning the library's sublist. The Drive row's label shows the drive in use, its digit
+// in the text's word DRVWORD (drvLabel). Save, Load (picking on the directory's screen), Dir,
+// Del cons and Unfix act. Library's label is eight characters, as Drive's, so that it ends 32
+// units from its sublist's labels, more than the aperture.
 listMisc,
 ms0, LBLNORM
     y(ROWY0 - ROWSAVE * ROWPITCH) next(point)
@@ -730,6 +760,14 @@ ms5, LBLNORM
     y(ROWY0 - ROWUNFIX * ROWPITCH) next(point)
     x(CMISC * COLPITCH + LABELMARGIN) next(character)
     type340 "Unfix"
+ms6, LBLNORM
+    y(ROWY0 - ROWLIB * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Library>"
+ms7, LBLNORM
+    y(ROWY0 - ROWPLOT * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + LABELMARGIN) next(character)
+    type340 "Plot"
     lpoff next(subroutine)
 msTail, jump listBox next(parameter)
 
@@ -763,6 +801,27 @@ vi5, LBLNORM
     type340 "Center"
     lpoff next(subroutine)
 viTail, jump listBox next(parameter)
+
+// Library's rows, the library of masters on its own tape: Load, Save, Dir and Delete.
+listLib,
+lb0, LBLNORM
+    y(ROWY0 - ROWLIB * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Load"
+lb1, LBLNORM
+    y(ROWY0 - (ROWLIB + 0d1) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Save"
+lb2, LBLNORM
+    y(ROWY0 - (ROWLIB + 0d2) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Dir"
+lb3, LBLNORM
+    y(ROWY0 - (ROWLIB + 0d3) * ROWPITCH) next(point)
+    x(CMISC * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Delete"
+    lpoff next(subroutine)
+    jump dvBox next(parameter)
 
 listDrive,
 dv0, LBLNORM
@@ -800,7 +859,7 @@ dv7, LBLNORM
 dvBox,
     BOXAT(CMISC * COLPITCH + SUBDX + BOXDX, 0)
     lpoff next(subroutine)
-    jump menuEnd next(parameter)
+    jump okLead next(parameter)
 
 // The status word, at the labels' size with the light pen off, from (STATX, STATY) under the
 // bar's right, jumping back to statEnd. Its four text words are written at run time, by the tape
@@ -830,10 +889,12 @@ arcList,
 arcBand,
     table ARCWORDS + 2, 0
 
-// The master store, master k's words from masters + k * MWORDS, written by Define. An instance's
-// gate calls one with save, so the store is in bank 0.
+// The master store's region 0, MPOOL0 words, master k's words from its offset mStart (bank 2)
+// when that is below MPOOL0; region 1 is mpool1, in bank 1. Written as a master is brought in
+// from its record (the instance module's poolBring). An instance's gate calls a master with
+// save, so both are in banks 0 and 1.
 masters,
-    table NMASTER * MWORDS, 0
+    table MPOOL0, 0
 
 // The screen during a transfer, a self-contained block started by the tape module and cut off by
 // tapeCall's dla of the frame. It draws WAIT, then eight invisible vectors out and back, then

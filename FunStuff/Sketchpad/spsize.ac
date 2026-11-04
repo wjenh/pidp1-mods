@@ -1,0 +1,65 @@
+// spsize.ac -- the constraints on size, their root code. Keep's rows and Dim's Size make the
+// entries (CTSAME to CTSZNUM) inside Scale mode, and the overlay scale works out and sets the
+// sizes (spscale.ac, szSolveOv); a size is set only there, since a variant is walked from a
+// master's record, far too slowly for a sweep. An overlay cannot bring a record, so the root
+// loop here does (szRun). The rename an instance's removal needs is bank 2's (spvar2.ac, szRm),
+// and Inch's keyboard's calls are bank 12's (spaux.ac, szKbGo, szKbDone).
+//
+// Bank 11, after the truss's root. Runs with the extend window open, reaching the other banks'
+// words through their 16-bit addresses.
+// Part of sketchpad.am1, included where it stands.
+
+// What szDirty asks for, every pass of the main loop while it is set. Inch's keyboard opens here,
+// the keyboard taking the window W, which a lift's overlay is running in. Otherwise, with no
+// constraint on size in the table nothing is loaded and szDirty is cleared; with one, the overlay
+// solves, and it answers 1 each time it wants instance vaRecI's master's record, called again
+// (szStepOv) with the record resident. Nothing runs while the pen keyboard is open, since it
+// holds W. szUnd is Undo's: the sizes a group's change moved go back the same way (szBackOv).
+// AC and IO are clobbered. Called via jsp, from taTick; szUnd via jsp i [szUnd:013], from scUndo.
+szRun,
+    local srScan, srHave, srGo, srOff, srKb, srRtnW, srP
+    dac srRtnW
+    lac i [kbOn:0]
+    sza                 // skip unless the pen keyboard is open
+    jmp i srRtnW
+    lac i [szDirty:3]
+    sad [SZKBOPEN]      // skip unless Inch's keyboard is to open
+    jmp srKb
+    lac [cEntries:011]
+    dac srP
+srScan,
+    lac srP
+    sad i [cEnd:010]    // skip while entries remain
+    jmp srOff
+    lac i srP
+    sub [CTSAME]
+    sma                 // skip unless a constraint on size
+    jmp srHave
+    lac srP
+    add [CW]
+    dac srP
+    jmp srScan
+srHave,
+    %%ovcall scale, szSolveOv
+srGo,
+    sza i               // skip if a master's record is wanted
+    jmp i srRtnW
+    jsp i [vaRec:2]
+    %%ovcall scale, szStepOv
+    jmp srGo
+srOff,
+    dzm i [szDirty:3]
+    jmp i srRtnW
+srKb,
+    jsp i [szKbGo:014]
+    jmp i srRtnW
+szUnd,
+    dac srRtnW
+    lac i [szUG:3]
+    sza i               // skip if the undone change moved a group
+    jmp srOff
+    %%ovcall scale, szBackOv
+    jmp srGo
+srRtnW, 0
+srP, 0
+    endloc

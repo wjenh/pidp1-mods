@@ -11,8 +11,10 @@
 
 // The open list: its bar column (NBAR when none), descriptor, row count, first item number
 // and highlighted row (NOROW when none); whether tracking was on when it opened; the clock's
-// reading at the latest menu hit; and, set at each menu hit, not negative when KBGAPMS had
-// passed since the one before, the pen lifted, so the hit begins a press.
+// reading at the latest menu hit, or at the status word's raising, which a hit that follows
+// within KBGAPMS continues (the pen still where the command was given, so it hides no word);
+// and, set at each menu hit, not negative when KBGAPMS had passed since the one before, the
+// pen lifted, so the hit begins a press.
 var openCol, openDesc, openRows, openBase, hiRow, trkSaved, lastMenuMs, listFresh
 
 // The open sublist: its descriptor (0 when none), row count, first item number and highlighted
@@ -33,6 +35,10 @@ var selectCount, closeCount, lastItem
 
 // The clock, read once per main pass, and its reading when the latest frame ended.
 var now, lastTick
+
+// The watchdog's first reading of the display's address (dra), and its wait between that and
+// the second: the clock as last read, as last seen to tick, and the ticks left.
+var wdAddr, wdNow, wdTick, wdN
 
 // mode and its lit bar column (NBAR when none); the flashing column, whether its flash is
 // running, and when it started.
@@ -181,8 +187,8 @@ var sPts, sLines, sArcs, sInst, sTx, undoCount
 
 // Tape: the picture a transfer acts on (0 to 3) and the drive in use (0 to 7, drive 1 to 8);
 // the tape module's answer to the last transfer (TSSAVED to TSWIPED) and, for inspection, the
-// transfers run; whether the status word is shown, and since when.
-var tapePic, tapeDrive, tapeResult, tapeCount, msgOn, msgStart
+// transfers run; whether the status word is shown.
+var tapePic, tapeDrive, tapeResult, tapeCount, msgOn
 
 // splitPlan's results (bank 12) and findNearPoint's scratch.
 var hitX, hitY, endPointIdx, scanidx, fnpx, fnpy, fnpBest, fnpDist
@@ -190,7 +196,7 @@ var splitDX, splitDY
 var splitK, splitRemX, splitRemY
 var stepAbsX, stepAbsY
 
-// Start-up, its last part, entered from bank 6's initGates, after bank 12's initVars, which sets
+// Start-up, its last part, entered from bank 11's initGates, after bank 12's initVars, which sets
 // every main-bank word the program depends on first (core persists across restarts), and
 // initGates, which writes the display's gates and the empty drawing list. Here the labels are
 // painted, the lists' gates written, and the modules started.
@@ -234,7 +240,7 @@ initTNext,
     jmp initTails
 initTDone,
 
-    // The target's start, the gates and the empty drawing list are bank 6's initGates, run
+    // The target's start, the gates and the empty drawing list are bank 11's initGates, run
     // between initVars and here; the arc list is written below, before the display starts.
     jsp trackOff
     jsp rebuildDisplay
@@ -280,7 +286,7 @@ main,
     jsp onClock
     lac i [kbOn:0]
     sza                 // skip unless the pen keyboard is open
-    jsp i [kbTick:014]
+    jsp i [kbTick:6]
     jsp onRate
     lac conWake
     sza
@@ -402,14 +408,33 @@ clNow, 0
 clTgt, 0
     endloc
 
+// Hide the status word if it is shown (msgOn). Scale's word, shown with msgOn 0 while a part is
+// held, is left alone. The truss's UNSTABLE, held off while msgOn is set, shows again at the
+// truss's next pass (roGate).
+// AC is clobbered, IO preserved. Called via jsp.
+msgHide,
+    dap mhdRtn
+    lac msgOn
+    sza i               // skip if the status word is shown
+    jmp mhdRtn
+    dzm msgOn
+    lac [jump statEnd:0 next(parameter)]
+    dac i [statGate:0]
+mhdRtn, jmp .
+
 // Work timed on the clock, every pass. While an instance cycles, run the instance module's step
-// (instCycle, which keeps the cycles' time); end a flash that has run FLASHMS, hide the status
-// word once it has been shown MSGMS, close a list that has had no menu hit for LISTIDLEMS, and
-// restart the display if no frame has ended for WATCHDOGMS (a lost break would otherwise stop
-// it for good).
+// (instCycle, which keeps the cycles' time); end a flash that has run FLASHMS, close a list that
+// has had no menu hit for LISTIDLEMS, and restart the display if no frame has ended for
+// WATCHDOGMS and it has stopped (a lost break would otherwise stop it for good). Stopped is its
+// address the same at two readings two clock ticks apart, 1 to 2 ms, where no display word takes
+// more than about 0.2 ms; readings further apart could meet at the same word by chance, a master
+// that every instance calls being drawn again and again. A frame that draws for longer than
+// WATCHDOGMS is still running and is left to end: restarted, it would start over from its first
+// word every time and never end. The status word is not timed: it stays until a menu hit or the
+// target's pick-up hides it (msgHide).
 // Entry: now = the clock. AC and IO are clobbered. Called via jsp.
 onClock,
-    local rtn, ocFlash, ocMsg, ocIdle, ocWatch
+    local rtn, ocFlash, ocIdle, ocWatch, ocTick, ocStart
     dap rtn
     lac cycN
     sza i               // skip if an instance cycles
@@ -419,27 +444,15 @@ onClock,
 ocFlash,
     lac flashOn
     sza i               // skip if a flash is running
-    jmp ocMsg
+    jmp ocIdle
     lac flashStart
     jda elapsed
     sub [FLASHMS]
     spa                 // skip once the flash has run its time
-    jmp ocMsg
+    jmp ocIdle
     dzm flashOn
     lac flashCol
     jda paintLabel
-ocMsg,
-    lac msgOn
-    sza i               // skip if the status word is shown
-    jmp ocIdle
-    lac msgStart
-    jda elapsed
-    sub [MSGMS]
-    spa                 // skip once it has been shown its time
-    jmp ocIdle
-    dzm msgOn
-    lac [jump statEnd:0 next(parameter)]
-    dac i [statGate:0]
 ocIdle,
     lac i [listOpen:0]
     sza i               // skip if a list is open
@@ -456,9 +469,31 @@ ocWatch,
     sub [WATCHDOGMS]
     spa                 // skip if no frame has ended for WATCHDOGMS
     jmp rtn
-    idx watchdogCount
     lac now
     dac lastTick
+    t340dra             // IO = the display's next fetch, a full address
+    dio wdAddr
+    law i 2
+    dac wdN
+    rck
+    dio wdTick
+ocTick,
+    rck
+    dio wdNow
+    lac wdNow
+    sad wdTick          // skip if the clock has ticked
+    jmp ocTick
+    dac wdTick
+    isp wdN             // skip once it has ticked twice
+    jmp ocTick
+    t340dra
+    dio wdNow
+    lac wdAddr
+    sad wdNow           // skip if the display has moved meanwhile
+    jmp ocStart
+    jmp rtn
+ocStart,
+    idx watchdogCount
     lsm
     jsp i [commitFlip:014]
     lio i [frameGo:0]     // no dcf; the dla clears the flags, as at penISR's commit
@@ -785,11 +820,13 @@ rtn, jmp .
     endloc
 
 // A hit on the target, so tracking is live. penISR has already moved the target and restarted
-// its miss count.
+// its miss count. The status word is hidden first: every word is raised at a lift or with the
+// target away, so this hit is a pick-up, and a word the mode's routine raises survives it.
 // Entry: sTgtX, sTgtY = raw hit position. AC and IO are clobbered. Called via jsp.
 onTargetHit,
     local rtn, tgCall, tgPtr
     dap rtn
+    jsp msgHide
     dzm trackLost
     lac mode
     add [modeTarget:3]

@@ -1,0 +1,261 @@
+// splibdir.ac -- the library's screen: a page of the library tape's directory, sixteen entries,
+// on which Dir shows them and a picker picks one, with Next and Prev, which turn the page; its
+// blocks and Save's keyboard's; and the directory's header and page as the library reads and
+// writes them.
+//
+// Bank 5, after akSave, since bank 11's room does not hold it, nor W's beside the overlay
+// library the directory's words. Data but for mCalled, the rule of Load's picker, last, here for
+// bank 7's room: the header and the page, which the overlay reads and writes within one call through their 16-bit addresses (splib.ac, lbRdHdr to lbRdSlot);
+// the blocks Library's rows give the keyboard service (splib.ac, libStep); the list, which
+// penISR's dla starts through frameGo once the keyboard service opens it on a block of kind
+// KBDIR (spkbd.ac); its descriptor and its keys' tables, which kbOpen and kbFind read through
+// their 16-bit addresses. The library's Dir (splib.ac, lbShow) writes each line's label and name
+// from the page it reads. The list holds no jump or save, as the keyboard's list does not, and
+// ends in its halt.
+// Part of sketchpad.am1, included where it stands.
+
+// The hit record of a key of n characters at x on the action keys' row, in kbFind's order.
+#define LBKREC(x, n) \
+    (x) - KBR; \
+    (x) + (n) * KBADV + KBRX; \
+    KBYB - KBR; \
+    KBYB + KBH + KBR
+
+// A line's label before Dir writes it: three spaces, where the entry's number goes.
+#define LBBLANKL (KCSPACE * 010000 + KCSPACE * 0100 + KCSPACE)
+
+// The directory's header and a page of it, as on tape (sketchpad.ah, the library's directory),
+// each set within the library's call that reads it.
+lbDHdr,
+    table LBDHW, 0
+lbDPage,
+    table LBPGW, 0
+
+// The screen's descriptor, as the tape module's dirScr: its keys' hit records, parameter words'
+// addresses and codes, the key's text, the key, and the list.
+lbsScr,
+    lbsRec:5
+    lbsBlkT:5
+    lbsCode:5
+    lbsKTxt:5
+    lbsKey:5
+    lbsList:5
+
+// The keys: the screen's key, OK or Cancel; Next and Prev, each a pick (KAPICK) answering
+// LBPNEXT and LBPPREV; then the lines, entries 1 to 16 of the page shown, each a pick answering
+// LBPLINE and on.
+lbsBlkT,
+    lbsKey:5
+    lbsNext:5
+    lbsPrev:5
+    lbsL:5 + 0 * DLWORDS
+    lbsL:5 + 1 * DLWORDS
+    lbsL:5 + 2 * DLWORDS
+    lbsL:5 + 3 * DLWORDS
+    lbsL:5 + 4 * DLWORDS
+    lbsL:5 + 5 * DLWORDS
+    lbsL:5 + 6 * DLWORDS
+    lbsL:5 + 7 * DLWORDS
+    lbsL:5 + 0d8 * DLWORDS
+    lbsL:5 + 0d9 * DLWORDS
+    lbsL:5 + 0d10 * DLWORDS
+    lbsL:5 + 0d11 * DLWORDS
+    lbsL:5 + 0d12 * DLWORDS
+    lbsL:5 + 0d13 * DLWORDS
+    lbsL:5 + 0d14 * DLWORDS
+    lbsL:5 + 0d15 * DLWORDS
+lbsCode,
+    KSPEC | KNUM | KACANCEL
+    table LBKEYS - 1, KSPEC | KNUM | KAPICK
+lbsRec,
+    LBKREC(KBXOK, 6)
+    LBKREC(KBXCLEAR, 4)
+    LBKREC(KBXBACK, 4)
+    DIRREC(0, 0)
+    DIRREC(1, 0)
+    DIRREC(2, 0)
+    DIRREC(3, 0)
+    DIRREC(4, 0)
+    DIRREC(5, 0)
+    DIRREC(6, 0)
+    DIRREC(7, 0)
+    DIRREC(0, 1)
+    DIRREC(1, 1)
+    DIRREC(2, 1)
+    DIRREC(3, 1)
+    DIRREC(4, 1)
+    DIRREC(5, 1)
+    DIRREC(6, 1)
+    DIRREC(7, 1)
+
+// The screen: its title; the sixteen lines, the page's first eight down the left and the next
+// eight down the right, on the masters' picker's places, each its label and its name, taking the
+// pen so that a picker's taps find them; Next and Prev; and the key, OK or Cancel, where the
+// keyboard's OK is; then its halt. Dir writes the labels and the names, kbOpen the key's text and
+// its parameter word, before frameGo points here.
+lbsList,
+    KBTXT
+    y(KBPY) next(point)
+    x(KBX0) next(character)
+    type340 "Library"
+lbsL,
+    DIRLINE(0, 0, LBBLANKL)
+    DIRLINE(1, 0, LBBLANKL)
+    DIRLINE(2, 0, LBBLANKL)
+    DIRLINE(3, 0, LBBLANKL)
+    DIRLINE(4, 0, LBBLANKL)
+    DIRLINE(5, 0, LBBLANKL)
+    DIRLINE(6, 0, LBBLANKL)
+    DIRLINE(7, 0, LBBLANKL)
+    DIRLINE(0, 1, LBBLANKL)
+    DIRLINE(1, 1, LBBLANKL)
+    DIRLINE(2, 1, LBBLANKL)
+    DIRLINE(3, 1, LBBLANKL)
+    DIRLINE(4, 1, LBBLANKL)
+    DIRLINE(5, 1, LBBLANKL)
+    DIRLINE(6, 1, LBBLANKL)
+    DIRLINE(7, 1, LBBLANKL)
+lbsNext, KBKEY
+    y(KBYB) next(point)
+    x(KBXCLEAR) next(character)
+    type340 "Next"
+lbsPrev, KBKEY
+    y(KBYB) next(point)
+    x(KBXBACK) next(character)
+    type340 "Prev"
+lbsKey, KBKEY
+    y(KBYB) next(point)
+    x(KBXOK) next(character)
+lbsKTxt,
+    017 * 010000 + 013 * 0100 + KCUP
+    KBPAD
+    KBBLANK
+lbsHalt, lpoff halt interrupt
+
+// The screen's blocks, Dir's, Load's and Delete's, which libStep gives the main bank's actTape.
+// Each holds the kind, KBDIR; the keys the screen acts on, LBDIRKEYS for Dir (OK, Next and
+// Prev), LBKEYS for a picker (Cancel, Next, Prev and the lines); the key's text; the screen's
+// descriptor (lbsScr) in the buffer's place; the resume, the main bank's tapeResume; and no run.
+lbDirBlk, KBDIR
+    LBDIRKEYS
+    tpOKTxt:013
+    lbsScr:5
+    tapeResume:4
+    0
+lbLdPick, KBDIR
+    LBKEYS
+    tpCanTxt:013
+    lbsScr:5
+    tapeResume:4
+    0
+lbDlPick, KBDIR
+    LBKEYS
+    tpCanTxt:013
+    lbsScr:5
+    tapeResume:4
+    0
+
+// Save's keyboard block (spkbd.ac, kbOpen): the text keyboard, NAMELEN characters, its prompt,
+// the name's run (splib.ac, lbName) as the buffer, the resume, and the run's codes. The prompt is
+// at most KBPWC - 1 codes.
+lbSvBlk, KBTEXT
+    NAMELEN
+    lbPrm:5
+    lbName:013
+    tapeResume:4
+    NAMEWC
+lbPrm, type340 "Lib name"
+
+// Whether the drawing calls master j, at any depth: while an instance cycles or pbSeq brings a
+// sequence (every master); while an instance's master, or the master of the instance Undo would
+// put back after a dismember, is j or holds j through the masters' sub-instances (mUses). mcR,
+// the masters that do, is found as Define's nsR is: j's bit, then each master that uses one in
+// it, until a pass over every master adds none, at most NMASTER passes. This is the loads' rule;
+// the master store's (pbDrop, its own loop) needs only the masters called directly, since a
+// master holding another draws its words composed.
+// Entry: mCalled = j. Exit: AC = 1 when called, 0 when not. IO is preserved. Called by
+// dac i [mCalled:5] and jsp i [mCalled:5+1].
+mCalled, 0
+    local rtnW, mcRch, mcRm, mcRmNx, mcUndo, mcIns, mcLoop, mcNo, mcYes, mcI, mcP, mcR, mcX, \
+        mcM, mcB, mcK
+    dac rtnW
+    lac i [cycN:4]
+    ior i [pbAll:7]
+    sza                 // skip unless every master is called
+    jmp mcYes
+    lac mCalled
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    dac mcR
+    law i NMASTER
+    dac mcK
+mcRch,
+    lac mcR
+    dac mcX
+    dzm mcM
+    law 1
+    dac mcB             // master m's bit, M1's first
+mcRm,
+    lac mcM
+    add [mUses:5]
+    dac mcP
+    lac i mcP
+    and mcR
+    sza i               // skip if master m uses one that calls j
+    jmp mcRmNx
+    lac mcB
+    ior mcR
+    dac mcR
+mcRmNx,
+    lac mcB
+    ral 1s
+    dac mcB
+    idx mcM
+    sas [NMASTER]       // skip once every master is looked at
+    jmp mcRm
+    lac mcR
+    sad mcX             // skip if the pass added one
+    jmp mcUndo
+    isp mcK             // skip after NMASTER passes
+    jmp mcRch
+mcUndo,
+    lac i [undoKind:4]
+    sas [UDISM]         // skip if Undo would put back a dismember's instance
+    jmp mcIns
+    lac i [dismMaster:7]
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    and mcR
+    sza                 // skip unless its master calls j
+    jmp mcYes
+mcIns,
+    dzm mcI
+mcLoop,
+    lac mcI
+    sad i [instCount:012] // skip while instances remain
+    jmp mcNo
+    add [iMaster:012]
+    dac mcP
+    lac i mcP
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    and mcR
+    sza                 // skip unless the instance's master calls j
+    jmp mcYes
+    idx mcI
+    jmp mcLoop
+mcNo,
+    cla
+    jmp i rtnW
+mcYes,
+    law 1
+    jmp i rtnW
+rtnW, 0
+mcI, 0
+mcP, 0
+mcR, 0
+mcX, 0
+mcM, 0
+mcB, 0
+mcK, 0
+    endloc

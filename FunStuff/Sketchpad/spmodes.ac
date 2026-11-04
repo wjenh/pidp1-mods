@@ -997,16 +997,19 @@ rtn, jmp .
 // on it (the arc module's deleteLocked); or an instance (instRemove), with each of its tie
 // points that nothing else is on (the arc module's arcOrphans); or, with Show on, a
 // constraint, by its mark (the constraint module's cDel). A loss with no target hit since the
-// selection or the last deletion does nothing, and so does one with nothing locked. The program
-// stays in delete mode. A deletion of parts wakes the constraint module while it has entries,
-// so that its next pass drops those the deletion spoiled, the N's and C's of a line or an arc
-// deleted among them (cGone).
+// selection or the last deletion does nothing, and so does one with nothing locked. So does a
+// loss after a menu hit that came since the target's last (penISR's lastTgt 0): the pen went to
+// the menu, Stop most likely, whose hit a long pass (the lines' search at 192) has not read yet.
+// The program stays in delete mode. A deletion of parts wakes the constraint module while it
+// has entries, so that its next pass drops those the deletion spoiled, the N's and C's of a line
+// or an arc deleted among them (cGone).
 // AC and IO are clobbered. Called via jsp.
 deleteLost,
     local rtn, dlParts, dlInst, dlDone
     dap rtn
     lac strokeLive
-    sza i               // skip if the target was hit since the selection or last deletion
+    and i [lastTgt:0]   // each 1 or 0
+    sza i               // skip if the target was hit since the selection, deletion and menu hit
     jmp rtn
     dzm strokeLive
     jsp placeLock
@@ -1724,31 +1727,42 @@ rtn, jmp .
 // after a target hit since the selection or the last lift (strokeLive), so the loss after the
 // trip to the menu does nothing. With tracking off, the target first goes to the middle, as
 // Locate does. Stop leaves it (leaveDraw).
-// Change's M1 to M4 and Cycle rows enter Change mode the same way (actChange), where a lift
-// gives the locked instance master sizeArg, or starts or stops its cycle (changeLost); and Edit's
-// Dismem row enters Dismember mode (actDism), where a lift takes the locked instance apart
-// (dismLost).
-// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+// Change's Master row, once a master is picked on the masters' picker (actChange, its resume),
+// and its Cycle row (actCycle) enter Change mode the same way, where a lift gives the locked
+// instance master sizeArg, or, sizeArg CYCLEARG, starts or stops its cycle (changeLost); and
+// Edit's Dismem row enters Dismember mode (actDism), where a lift takes the locked instance
+// apart (dismLost).
+// Entry: lastItem = the item; for actChange, IO = 1 for a pick, 0 for Cancel. AC and IO are
+// clobbered. Called via jsp, actChange via jsp i from onMenuHit.
 actSize,
-    local rtn, asGo, asJoin, asMode, asBase
+    local rtn, asGo, asJoin, asChg, asMode, asArg
     dap rtn
     law MSIZE
     dac asMode
-    law ISIZE
+    lac lastItem
+    sub [ISIZE]
     jmp asJoin
 actDism,
     dap rtn
     law MDISM
     dac asMode
-    law IDISM
+    cla
     jmp asJoin
+actCycle,
+    dap rtn
+    law CYCLEARG
+    jmp asChg
 actChange,
     dap rtn
+    jsp i [pkTake:7]
+    jmp rtn
+asChg,
+    dac asArg
     law MCHANGE
     dac asMode
-    law ICHANGE
+    lac asArg
 asJoin,
-    dac asBase
+    dac asArg
     lac i [tracking:0]
     sza                 // skip if tracking is off
     jmp asGo
@@ -1763,8 +1777,7 @@ asGo,
     dac newCol
     lac asMode
     jda setMode
-    lac lastItem
-    sub asBase
+    lac asArg
     dac sizeArg
     lac [HUNTPARAM]
     dac i [dotBlock:0]
@@ -1773,7 +1786,7 @@ asGo,
     dac i [bandGate:0]
 rtn, jmp .
 asMode, 0
-asBase, 0
+asArg, 0
     endloc
 
 // Size mode, a target hit. Arm the next lift and move the pseudo pen location.
@@ -1954,41 +1967,53 @@ actUnfix,
 rtn, jmp .
     endloc
 
-// Define's M1 to M4 rows make the drawing master k, and clear it from the canvas as Clear does.
-// Every instance on the canvas is part of the drawing. Each is taken apart first as Dismember
-// takes one apart (instNestAt, then takeParts), at its origin and scale, its attachers merged
-// into its tie points, and the instances themselves stay until the master is defined, when the
-// list is emptied. The parts are kept as one commit of parts for Undo's record, so that a
+// Define's master picked on the masters' picker becomes the drawing, master k, cleared from the
+// canvas as Clear clears it.
+// Every instance on the canvas is part of the drawing. One of master k itself is taken apart
+// first as Dismember takes one apart (instNestAt, then takeParts), at its origin and scale, its
+// attachers merged into its tie points, one level: its sub-instances become instances on the
+// canvas, which dfNest then reaches and keeps; every other the master keeps as a sub-instance
+// (the instance module's instMap). The instances themselves stay until the master is defined, when
+// the list is emptied. The parts are kept as one commit of parts for Undo's record, so that a
 // refusal after them takes them back (undoTake). Refused, nothing changed, with nothing drawn,
-// for a master over MWORDS words or MTIME of drawing (the arc module's defineMaster), with more
+// for a master over MPOOL1 words or MTIME of drawing, or too large for the store beside the
+// other masters (defineMasterOv, in defdism, which only counts its words), with more
 // than NCPCON constraints among its points (instMap), or with the instances unable to be taken
-// apart, as for one cycling, the tables short of room, a part off the canvas, an arc too large
-// (instNest). Either way any chain or drag ends, the program is left idle, as Clear leaves it,
+// apart or kept, as for one cycling, the tables short of room, a part off the canvas, an arc too
+// large, a scale past x8, too many kept, one that calls k (instNest); a refusal's word shows
+// under the bar until
+// a menu hit or a pick-up (the instance
+// module's IEDEFNO).
+// Either way any chain or drag ends, the program is left idle, as Clear leaves it,
 // and Undo has nothing to undo. The points a line or an arc is on are the master's, and its
-// attachers those of them designated, mapped first (instMap), so that defineMaster draws their
-// crosses; once it is defined, the instance module keeps the parts in Copy's store, with the
-// constraints among them (instDef). The constraint table is emptied with the canvas.
-// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+// attachers those of them designated, mapped first (instMap), so that defineMasterOv draws their
+// crosses. Once it passes, the instances are emptied, so that no gate calls a master while the
+// instance module empties the master store and makes the master's record resident (instStore)
+// and defineStoreOv stores its words there; then the instance module keeps the
+// parts in the record, with the constraints among them (instDef), which takes the points away.
+// The constraint table is
+// emptied with the canvas.
+// Entry: IO = 1 for a pick, its master kbPick, 0 for Cancel. AC and IO are clobbered. Called via
+// jsp i, from onMenuHit, as the masters' picker's resume (pkTake).
 actDefine,
     local rtn, dfNest, dfMap, dfNo, dfBack, dfDone, dfJ
     dap rtn
+    jsp i [pkTake:7]
+    jmp rtn
     jsp endChain
     lac [NBAR]
     dac newCol
     law MIDLE
     jda setMode
     jsp undoClear       // after a copy's drop, which setMode makes
-    lac lastItem
-    sub [IDEFINE]
-    dac masterArg
     lio [IENEST]
     jda instCall
-    sza                 // skip unless the instances cannot be taken apart
+    sza                 // skip unless the instances cannot be taken apart or kept
     jmp dfNo
     lac i [instCount:012]
     sza i               // skip if there are instances
     jmp dfMap
-    jsp undoSnap
+    jsp undoSnap        // a refusal's undoTake takes back none if none is taken apart
     law UPARTS
     jda undoKeep
     dzm dfJ
@@ -1996,22 +2021,27 @@ dfNest,
     lac dfJ
     lio [IENESTI]
     jda instCall
+    sza i               // skip unless kept, an instance of another master
     jsp takeParts
     idx dfJ
-    sas i [instCount:012] // skip once every instance is taken apart
+    sas i [instCount:012] // skip once every instance is taken apart or kept
     jmp dfNest
 dfMap,
     lio [IEMAP]
     jda instCall
     sza                 // skip unless too many constraints
     jmp dfNo
-    law AEDEFINE
-    jda arcCall
+    lio [IEWORDS]
+    jda instCall
 dfNo,
     dac defineResult
     sza                 // skip if the master is defined
     jmp dfBack
     lio [IECLEAR]       // every instance is in the master now
+    jda instCall
+    lio [IESTORE]
+    jda instCall
+    lio [IEWSTORE]
     jda instCall
     lio [IEDEF]
     jda instCall
@@ -2025,40 +2055,45 @@ dfNo,
     idx defineCount
     jmp dfDone
 dfBack,
+    lio [IEDEFNO]       // AC = the answer, shown as its word under the bar
+    jda instCall
     lac undoKind
     sza                 // skip unless instances were taken apart
     jsp undoTake
+    jsp respread        // the slots a refused trial wrote again (the instance module's rwRun)
 dfDone,
     jsp undoClear
 rtn, jmp .
 dfJ, 0
     endloc
 
-// Inst's M1 to M4 rows, reached only for a master that is defined, place an instance of master
-// k (placeInst). Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+// Inst's master picked, only one that is defined (the masters' picker, whose resume this is),
+// place an instance of it (placeInst).
+// Entry: IO = 1 for a pick, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from
+// onMenuHit (pkTake).
 actInst,
     dap aiRtn
-    lac lastItem
-    sub [IINST]
-    dac masterArg
+    jsp i [pkTake:7]
+    jmp aiRtn
     jsp placeInst
 aiRtn, jmp .
 
-// Copy's M1 to M4 rows, reached only for a master that is defined, place master k's figure as
+// Copy's master picked, only one that is defined (the masters' picker), placed as a figure as
 // Inst places an instance, carried as one, so there is one drag mechanism; at the drop it is
 // taken apart into ordinary points, lines and arcs (copyDrop), always at x1. Refused, the
 // program returning to Locate's mode, when the tables have no room for the master's parts
-// (COPYROOM) or the instance list none for the figure (COPYINST), so a copy is never cut short
-// at its drop. A copy still being placed goes down first, so the room
-// is counted with it.
-// Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
+// (COPYROOM) or the instance list none for the figure beside its sub-instances' instances
+// (COPYINST), so a copy is never cut short at its drop. A copy still being placed goes down
+// first, so the room is counted with it.
+// Entry: IO = 1 for a pick, 0 for Cancel. AC and IO are clobbered. Called via jsp i, from
+// onMenuHit (pkTake).
 actCopy,
-    local rtn, cyRoom, cyNo, cyGo
+    local rtn, cyRoom, cyNo, cyGo, cyP
     dap rtn
+    jsp i [pkTake:7]
+    jmp rtn
     jsp copyDrop
-    lac lastItem
-    sub [ICOPY]
-    dac masterArg
+    lac masterArg
     dac copyArg
     lio [IECROOM]
     jda instCall
@@ -2067,8 +2102,13 @@ actCopy,
     law COPYROOM
     jmp cyNo
 cyRoom,
-    lac i [instCount:012]
-    sas [MAXINST]       // skip if the instance list is full
+    lac copyArg
+    add [mNSub:5]
+    dac cyP
+    lac i cyP
+    add i [instCount:012]
+    sub [MAXINST]
+    spa                 // skip unless the list takes the figure and the sub-instances
     jmp cyGo
     law COPYINST
 cyNo,
@@ -2085,6 +2125,7 @@ cyGo,
     lio [IEPLACE]
     jda instCall
 rtn, jmp .
+cyP, 0
     endloc
 
 // Add an instance of master masterArg, its origin at the pseudo pen location, and enter place

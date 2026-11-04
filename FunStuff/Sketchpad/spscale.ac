@@ -1,29 +1,68 @@
 // spscale.ac -- the scale module, Edit's Scale row and Scale mode. A lift picks up the line,
 // the circle or arc, the text, the digits or the instance the pseudo pen location locks onto;
 // the pen's moves along a slider drawn below the pick scale it, a line about its midpoint or its
-// fixed end and an arc about its center smoothly, the others stepped through the sizes as Size
-// sets them; the next lift puts it down.
+// fixed end and an arc about its center smoothly, a text or digits stepped through the sizes as
+// Size sets them, and an instance, its box following, to any size from x1/4 to x8, which the
+// next lift applies; that lift puts it down. Keep's rows and Dim's Size make the constraints on
+// size in the same mode, and the sizes those ask for are worked out and set here (szSolveOv).
 //
-// Bank 6, after spcensus.ac. Entered from the main bank by jsp i [X:6], at scAct, scTarget,
-// scLost and scEnd from the mode's gates (spmodes.ac), at scDone from setMode, and at scUndo
-// from actUndo. Runs with the extend window open, reaching the other banks' words through their
-// 16-bit addresses. The main bank's routines, whose returns cannot leave bank 4, are called
-// through its trampoline mainCall (scMain); the constraint and instance modules' entries
-// directly (scCon, scIEnt); bank 12's linePick and lineApply and bank 11's lkOff by their own
-// jsp i.
+// Bank 6, after the overlay window W. The words Scale keeps outside a call (what is picked up,
+// the knob, Undo's record and the counts) are root, Undo's scUOld in bank 5; the rest is the
+// overlay scale, read into the window W from the drum when it is called (Docs/UsingOverlays.md),
+// which it holds while Scale is the mode, since every way out of the mode puts the part down
+// first (setMode, scDone). Entered from the main bank by jsp i [X:6] through the six root stubs
+// at the end of this file, which keep the entries' names and call the overlay's, Ov added:
+// scAct, scTarget, scLost and scEnd from the mode's gates (spmodes.ac), scDone from setMode, and
+// scUndo from actUndo; a seventh, vaWalkOv, is the variants' root code's (spvar.ac). Runs with the extend window open, reaching the other banks' words through
+// their 16-bit addresses. The main bank's routines, whose returns cannot leave bank 4, are
+// called through its trampoline mainCall (scMain); the constraint and instance modules' entries
+// directly (scCon, scIEnt); bank 12's linePick and lineApply and bank 11's lkOff by their own jsp
+// i. Inside the overlay a put down is a call of scDoneOv, never of the stub scDone, which would
+// reach the manager from inside the overlay (ovErrNest).
 // Part of sketchpad.am1, included where it stands.
 
-// A main-bank routine's call, as the instruction word mainCall runs, a jsp or a jda.
-#define MCJSP(r) (0620000 | ((r) & 07777))
-#define MCJDA(r) (0170000 | ((r) & 07777))
+// The slider's vector words at its scale: a doubling's level run, and the tick between two
+// runs, rising SCZIG steps; with down, falling.
+#define SCRUN (visible | deltay(0) | deltax(SCDOUBLE / (1 << SLIDESCALE)))
+#define SCTICK (visible | deltay(SCZIG) | deltax(0))
 
-// The slider's vector word, a doubling rising SCZIG steps at its scale; with down, falling.
-#define SCRISE (visible | deltay(SCZIG) | deltax(SCDOUBLE / (1 << SLIDESCALE)))
-
-// What is picked up. scOn nonzero while a part is, scKind what (SCKLINE, SCKARC, SCKSTEP); a
-// change made (scMoved), the places kept for Undo before it (scSnap).
+// The root's words. What is picked up: scOn nonzero while a part is, which the stub scDone
+// tests, scKind what (SCKLINE, SCKARC, SCKSTEP, SCKINST), for a text or digits the size now (0 to
+// 3, x1 to x8) and for an instance the word its size will take. The slider's dot at the pick (the knob's at a factor of 1), the pen's
+// offsets bounded to the doublings each side (scLo, scHi), and the offset and the factor applied
+// (scD, scFq, the factor in SCFRAC parts).
 scOn, 0
 scKind, 0
+scSize, 0
+scDotX, 0
+scDotY, 0
+scLo, 0
+scHi, 0
+scD, 0
+scFq, 0
+
+// Undo's record of the last scale that changed something (USCALE), what it picked up and its
+// size before; each constraint entry's value before, scUOld, is in bank 5 (sketchpad.am1).
+scUKind, 0
+scUInst, 0
+scUTx, 0
+scUSize, 0
+
+// Counts of parts picked up, picks refused, steps applied and held, and drops that changed
+// something.
+scalePicks, 0
+scaleRefused, 0
+scaleSteps, 0
+scaleHolds, 0
+scaleDrops, 0
+
+// The overlay scale: Edit's Scale row and Scale mode, with the words a pick sets before it
+// reads them, read again from the drum at each load.
+%%overlay scale, W
+    export scActOv, scTargetOv, scLostOv, scEndOv, scDoneOv, scUndoOv, vaWalkOv, szSolveOv, \
+        szStepOv, szBackOv, szKbOv
+
+// A change made (scMoved), the places kept for Undo before it (scSnap).
 scMoved, 0
 scSnap, 0
 
@@ -47,27 +86,30 @@ scOffX, 0
 scOffY, 0
 
 // A text, digits or an instance, penInst at the pick, the text (txPen) for a text or digits, and
-// the size at the pick and now (0 to 3, x1 to x8).
+// the size at the pick (scSize, the size now, is the root's).
 scInst, 0
 scTx, 0
 scSize0, 0
-scSize, 0
 
-// The slider, the dot's place at the pick (the knob's at a factor of 1), the target's x there,
-// the doublings each side (scNL, scNR) and at most how many (scMaxL, scMaxR), and the pen's
-// offsets bounded to them (scLo, scHi). The offset and the factor applied (scD, scFq, the factor
-// in SCFRAC parts), and a step's (scDTry, scFqN).
-scDotX, 0
-scDotY, 0
+// An instance's size, its place on the slider's scale at the pick and now, a step's word, and its
+// box on the page; whether the lift was refused, for the word it shows.
+scU0, 0
+scUNow, 0
+scBW, 0
+scBx0, 0
+scBx1, 0
+scBy0, 0
+scBy1, 0
+scNoRoom, 0
+
+// The slider, the target's x at the pick, the doublings each side (scNL, scNR) and at most how
+// many (scMaxL, scMaxR), and a step's offset and factor (scDTry, scFqN); the dot's place, the
+// bounds, and the offset and the factor applied are the root's.
 scPen0, 0
 scNL, 0
 scNR, 0
 scMaxL, 0
 scMaxR, 0
-scLo, 0
-scHi, 0
-scD, 0
-scFq, 0
 scDTry, 0
 scFqN, 0
 
@@ -87,23 +129,6 @@ scQ1, 0
 scW, 0
 scK, 0
 scQ, 0
-
-// Undo's record of the last scale that changed something (USCALE), what it picked up, its size
-// before, and each constraint entry's value before, 0 for one it did not change.
-scUKind, 0
-scUInst, 0
-scUTx, 0
-scUSize, 0
-scUOld,
-    table NCON, 0
-
-// Counts of parts picked up, picks refused, steps applied and held, and drops that changed
-// something.
-scalePicks, 0
-scaleRefused, 0
-scaleSteps, 0
-scaleHolds, 0
-scaleDrops, 0
 
 // The factor's powers of two, 2^k in SCFRAC parts for k doublings, k from -SCSIDE to SCSIDE
 // (SCSIDE 5).
@@ -130,13 +155,15 @@ scSizeD,
 // Edit's Scale row. Enter Scale mode, the pseudo pen location hunting the parts Scale takes
 // (scHunt), the dot dimmed while it locks onto none. Nothing is picked up at once; a lift does
 // that, so that the slider is never drawn under a pen still at the menu. A part picked up before
-// is put down first, here rather than by setMode's hook, which would call scDone from inside
-// mainCall. With tracking off, the target first goes to the middle, as Locate does.
-// AC and IO are clobbered. Called via jsp i [scAct:6], from the main bank's actScale.
-scAct,
+// is put down first (scDoneOv), here rather than by setMode's hook, which would call scDone from
+// inside mainCall; the hook's stub then finds none held and calls nothing, since a call from
+// inside the overlay would stop at the manager's ovErrNest. With tracking off, the target first
+// goes to the middle, as Locate does.
+// AC and IO are clobbered. Called through the root stub scAct, by the manager.
+scActOv,
     local rtn, saGo
     dac rtn
-    jsp scDone
+    jsp scDoneOv
     lac i [tracking:0]
     sza                 // skip if tracking is off
     jmp saGo
@@ -149,7 +176,7 @@ saGo,
     lac i [now:4]
     dac i [lastHitAt:0]
     dzm i [trackLost:4]
-    lac [CEDIT]
+    jsp szItem
     dac i [newCol:4]
     lio [MCJDA(setMode:4)]
     law MSCALE
@@ -163,12 +190,15 @@ rtn, 0
 
 // Scale mode, a target hit. Arm the next lift; scale the part picked up by the pen's move along
 // the slider (scStep), or with none hunt.
-// AC and IO are clobbered. Called via jsp i [scTarget:6], from the main bank's scaleTarget.
-scTarget,
+// AC and IO are clobbered. Called through the root stub scTarget, by the manager.
+scTargetOv,
     local rtn, stHunt
     dac rtn
     law 1
     dac i [strokeLive:4]
+    lac i [szKind:3]
+    sza                 // skip unless on a Keep row, whose first thing is only held
+    jmp stHunt
     lac scOn
     sza i               // skip if a part is picked up
     jmp stHunt
@@ -181,22 +211,28 @@ rtn, 0
     endloc
 
 // Scale mode, tracking lost (a lifted pen). Put down the part picked up, its scale finished
-// (scDone), and hunt again; or, with none, pick up what the pseudo pen location locks onto
+// (scDoneOv), and hunt again; or, with none, pick up what the pseudo pen location locks onto
 // (scPick), its lines searched whole however fast the pen moved (atLift). A loss with no target
 // hit since the selection or the last lift does nothing. The program stays in Scale mode.
-// AC and IO are clobbered. Called via jsp i [scLost:6], from the main bank's scaleLost.
-scLost,
-    local rtn, slPick
+// AC and IO are clobbered. Called through the root stub scLost, by the manager.
+scLostOv,
+    local rtn, slPick, slKeep
     dac rtn
     lac i [strokeLive:4]
     sza i               // skip if the target was hit since the selection or last lift
     jmp i rtn
     dzm i [strokeLive:4]
+    lac i [szKind:3]
+    sza                 // skip unless on a Keep row
+    jmp slKeep
     lac scOn
     sza i               // skip if a part is picked up
     jmp slPick
-    jsp scDone
+    jsp scDoneOv
     jsp scHunt
+    jmp i rtn
+slKeep,
+    jsp szLift
     jmp i rtn
 slPick,
     law 1
@@ -209,12 +245,12 @@ rtn, 0
 
 // Scale mode, Locate (modeLocate), and its dot after an Undo (modeDot). Put down the part
 // picked up, if any, and hunt again; the program stays in Scale mode.
-// AC and IO are clobbered. Called via jsp i [scEnd:6], from the main bank's scaleEnd.
-scEnd,
+// AC and IO are clobbered. Called through the root stub scEnd, by the manager.
+scEndOv,
     local rtn
     dac rtn
     dzm i [strokeLive:4]
-    jsp scDone
+    jsp scDoneOv
     jsp scHunt
     jmp i rtn
 rtn, 0
@@ -222,16 +258,25 @@ rtn, 0
 
 // Place the pseudo pen location for Scale mode, as placeLock, but onto no point alone (lineOnly,
 // as Horv's), so that at a line's end the line locks. It locks onto a line, an arc, an instance,
-// a text or digits, the dot bright on one and dim with none.
+// a text or digits, the dot bright on one and dim with none. On Full, Inch and Dim's Size, as
+// Size's, onto an instance or digits alone (lockInst).
 // Exit: penX, penY, penIdx, penLine, penArc, penInst. AC and IO are clobbered. Called via jsp.
 scHunt,
-    local rtn
+    local rtn, shKeep
     dap rtn
+    lac i [szKind:3]
+    sub [SKFULL]
+    sma                 // skip if Scale's own, or a ratio's row, which takes a line too
+    jmp shKeep
     law 1
     dac i [lineOnly:4]
     lio [MCJSP(placeLock:4)]
     jda scMain
     dzm i [lineOnly:4]
+    jmp rtn
+shKeep,
+    lio [MCJSP(lockInst:4)]
+    jda scMain
 rtn, jmp .
     endloc
 
@@ -472,23 +517,20 @@ paT, 0
 paC, 0
     endloc
 
-// Pick up instance, text or digits penInst, stepped through the sizes as Size sets them, its
-// size at the pick the instance's (bank 3's iScale) or the text's (txSc, the text txPen).
-// Exit: AC = 0, picked. IO is clobbered. Called via jsp.
+// Pick up instance, text or digits penInst, a text or digits stepped through the sizes as Size
+// sets them, its size at the pick the text's (txSc, the text txPen); an instance sized at the
+// lift (scPkInst).
+// Exit: AC = 0, picked, or 1 refused. IO is clobbered. Called via jsp.
 scPkStep,
-    local rtn, psText, psSize, psT
+    local rtn, psInst, psT
     dap rtn
     lac i [penInst:4]
     dac scInst
-    sad [TXINST]        // skip unless a text or digits
-    jmp psText
-    add [iScale:3]
-    jmp psSize
-psText,
+    sas [TXINST]        // skip if a text or digits
+    jmp psInst
     lac i [txPen:012]
     dac scTx
     add [txSc:012]
-psSize,
     dac psT
     lac i psT
     dac scSize0
@@ -496,9 +538,600 @@ psSize,
     law SCKSTEP
     dac scKind
     cla
+    jmp rtn
+psInst,
+    jsp scPkInst
 rtn, jmp .
 psT, 0
     endloc
+
+// Pick up instance scInst, refused while it cycles, which stays on the powers of two. Its word
+// and its place on the slider's scale are kept; the root's stub then makes its master's record
+// resident (vaRecI), which the lift's walk reads.
+// Exit: AC = 0, picked, or 1 refused. IO is clobbered. Called via jsp.
+scPkInst,
+    local rtn, pcNo, pcT
+    dap rtn
+    lac scInst
+    add [iCyc:3]
+    dac pcT
+    lac i pcT
+    sza                 // skip unless it cycles
+    jmp pcNo
+    lac scInst
+    add [iScale:3]
+    dac pcT
+    lac i pcT
+    dac scSize0
+    dac scSize
+    jda scUOf
+    dac scU0
+    dac scUNow
+    lac scInst
+    dac i [vaRecI:2]
+    law SCKINST
+    dac scKind
+    dzm scNoRoom
+    cla
+    jmp rtn
+pcNo,
+    law 1
+rtn, jmp .
+pcT, 0
+    endloc
+
+// Scale word w's place on the slider's scale, x1 at 0, SCDOUBLE a doubling. A code c from a tape
+// off the lattice falls to the place below it.
+// Entry: AC = w. Exit: AC = u. IO is clobbered. Called via jda.
+scUOf, 0
+    local rtn, uoLow, uoWhole, uoK, uoC
+    dap rtn
+    lac scUOf
+    sar 2s
+    dac uoC
+    lac scUOf
+    and [IKMASK]
+    sal SCDBITS
+    dac uoK             // k doublings
+    lac uoC
+    sza i               // skip if a code c
+    jmp uoWhole
+    sub [040000]
+    spa                 // skip unless under x1/2
+    jmp uoLow
+    sar 7s              // r, 2^7 of c a unit from x1/2 up
+    add uoK
+    sub [SCDOUBLE]
+    jmp rtn
+uoLow,
+    add [020000]
+    sar 6s              // r, 2^6 of c a unit under x1/2
+    sub [SCUDOWN]
+    jmp rtn
+uoWhole,
+    lac uoK
+rtn, jmp .
+uoK, 0
+uoC, 0
+    endloc
+
+// The scale word at place u on the slider's scale. Doubling d from x1/4, with r units past it:
+// d = 0 is k 0, c = 2^13 + r * 2^6; d = 1 is k 0, c = 2^14 + r * 2^7; above, a whole doubling is
+// k = d - 2 with no code, else k = d - 1, c = 2^14 + r * 2^7, the power of two rounded up.
+// Entry: AC = u, on the lattice. Exit: AC = the word. IO is clobbered. Called via jda.
+scWOf, 0
+    local rtn, woUp, woC, woD, woR, woT
+    dap rtn
+    lac scWOf
+    add [SCUDOWN]
+    dac woR
+    sar SCDBITS
+    dac woD
+    sal SCDBITS
+    dac woT
+    lac woR
+    sub woT
+    dac woR
+    lac woD
+    sza                 // skip if under x1/2
+    jmp woUp
+    lac woR
+    sal 6s
+    add [020000]
+    sal 2s
+    jmp rtn
+woUp,
+    sad [1]             // skip unless x1/2 to x1
+    jmp woC
+    lac woR
+    sza                 // skip if a whole doubling
+    jmp woC
+    lac woD
+    sub [2]
+    jmp rtn
+woC,
+    lac woR
+    sal 7s
+    add [040000]
+    sal 2s
+    dac woR
+    lac woD
+    sub [1]
+    add woR
+rtn, jmp .
+woD, 0
+woR, 0
+woT, 0
+    endloc
+
+// Instance scInst's box on the page at scale word scBW, each side its master's by the instance
+// module's rule (ieSize).
+// Exit: scBx0 to scBy1; AC = 0 with the box on the screen, 1 off it. IO is clobbered. Called via
+// jsp.
+scBoxOf,
+    local rtn, boNo, boM, boO
+    dap rtn
+    lac scInst
+    add [iMaster:012]
+    dac boM
+    lac i boM
+    dac boM
+    lac scInst
+    add [iX:3]
+    dac boO
+    lac i boO
+    dac boO
+    lac boM
+    add [mMinX:5]
+    jda scSide
+    add boO
+    dac scBx0
+    lac boM
+    add [mMaxX:5]
+    jda scSide
+    add boO
+    dac scBx1
+    lac scInst
+    add [iY:3]
+    dac boO
+    lac i boO
+    dac boO
+    lac boM
+    add [mMinY:5]
+    jda scSide
+    add boO
+    dac scBy0
+    lac boM
+    add [mMaxY:5]
+    jda scSide
+    add boO
+    dac scBy1
+    lac scBx0
+    ior scBy0
+    spa                 // skip unless off the left or the bottom
+    jmp boNo
+    lac [0d1023]
+    sub scBx1
+    spa                 // skip unless off the right
+    jmp boNo
+    lac [0d1023]
+    sub scBy1
+    spa                 // skip unless off the top
+    jmp boNo
+    cla
+    jmp rtn
+boNo,
+    law 1
+rtn, jmp .
+boM, 0
+boO, 0
+    endloc
+
+// The directory's word at full address a, at scale word scBW.
+// Entry: AC = a. Exit: AC = the value. IO is clobbered. Called via jda.
+scSide, 0
+    local rtn
+    dap rtn
+    lac i scSide
+    dac i [ieSize:7]
+    lio scBW
+    jsp i [ieSize:7+1]
+rtn, jmp .
+    endloc
+
+// The box scBx0 to scBy1 drawn through the view, at the smallest scale that reaches its longer
+// side in one vector, its sides rounded down to that scale, a preview only; dim and pen-blind.
+// A frame between the words draws a box a step out, harmless on the screen, since its sides are
+// kept on it.
+// AC and IO are clobbered. Called via jsp.
+scBoxDraw,
+    local rtn, bdWide, bdScale, bdFit, bdHave, bdX, bdY, bdW, bdH, bdMax, bdS
+    dap rtn
+    lac scBx0
+    jda scScrX
+    dac bdX
+    lac scBx1
+    jda scScrX
+    sub bdX
+    dac bdW
+    lac scBy0
+    jda scScrY
+    dac bdY
+    lac scBy1
+    jda scScrY
+    sub bdY
+    dac bdH
+    lac bdW
+    sub bdH
+    sma                 // skip unless the width is the longer
+    jmp bdWide
+    lac bdH
+    jmp bdScale
+bdWide,
+    lac bdW
+bdScale,
+    dac bdMax
+    dzm bdS
+bdFit,
+    lac bdMax
+    sub [0d128]
+    spa                 // skip while past a vector's reach
+    jmp bdHave
+    lac bdMax
+    sar 1s
+    dac bdMax
+    idx bdS
+    jmp bdFit
+bdHave,
+    lac bdS
+    add [bdShr:6]
+    dac bdMax
+    lac bdW
+    xct i bdMax
+    dac bdW
+    lac bdH
+    xct i bdMax
+    dac bdH
+    lac bdS
+    sal 4s
+    ior [scale(0) intensity(SLIDEINTENSITY) lpoff next(point)]
+    dac i [boxBlock:0]
+    lac bdY
+    ior [y(0) next(point)]
+    dac i [boxY:0]
+    lac bdX
+    ior [x(0) next(vector)]
+    dac i [boxX:0]
+    lac bdW
+    ior [visible]
+    dac i [boxVec:0]
+    lac bdH
+    sal 8s
+    ior [visible]
+    dac i [boxVec:0 + 1]
+    lac bdW
+    ior [visible | left]
+    dac i [boxVec:0 + 2]
+    lac bdH
+    sal 8s
+    ior [visible | down | end]
+    dac i [boxVec:0 + 3]
+    lac [jump boxBlock:0 next(parameter)]
+    dac i [boxGate:0]
+rtn, jmp .
+bdX, 0
+bdY, 0
+bdW, 0
+bdH, 0
+bdMax, 0
+bdS, 0
+    endloc
+
+// A scale's shift down, for scBoxDraw's sides.
+bdShr,
+    nop
+    sar 1s
+    sar 2s
+    sar 3s
+
+// A page coordinate's place on the screen, through the view, kept on it.
+// Entry: AC = x, or y. Exit: AC = the place. IO is clobbered. Called via jda.
+scScrX, 0
+    local rtn
+    dap rtn
+    lac scScrX
+    xct i [vwSal:014]
+    sub i [vwOutX:014]
+    jda scKeepS
+rtn, jmp .
+    endloc
+scScrY, 0
+    local rtn
+    dap rtn
+    lac scScrY
+    xct i [vwSal:014]
+    sub i [vwOutY:014]
+    jda scKeepS
+rtn, jmp .
+    endloc
+scKeepS, 0
+    local rtn, ksIn
+    dap rtn
+    lac scKeepS
+    spa                 // skip unless under the screen
+    cla
+    dac scKeepS
+    sub [0d1024]
+    spa                 // skip if past the screen
+    jmp ksIn
+    lac [0d1023]
+    jmp rtn
+ksIn,
+    lac scKeepS
+rtn, jmp .
+    endloc
+
+// An instance held, the pen's move along the slider. The size is the lattice's nearest, kept
+// from x1/4 to x8, and a size whose box leaves the screen is held, the knob staying. The knob
+// shows the size, the digits its factor from x1, the box where it will fall; the instance
+// changes at the lift (scApply).
+// AC and IO are clobbered. Called via jsp.
+scInstStep,
+    local rtn, isLo, isHi, isHold, isT
+    dap rtn
+    lac scU0
+    add scDTry
+    add [SCUDOWN]
+    sma                 // skip if under x1/4
+    jmp isLo
+    cla
+isLo,
+    dac isT
+    sub [SCUDOWN + SCUHI]
+    spa                 // skip if past x8
+    jmp isHi
+    lac [SCUDOWN + SCUHI]
+    dac isT
+isHi,
+    lac isT
+    add [SCSNAP / 2]
+    and [0777777 - (SCSNAP - 1)]
+    sub [SCUDOWN]
+    dac isT
+    sad scUNow          // skip unless the same size
+    jmp rtn
+    jda scWOf
+    dac scBW
+    jsp scBoxOf
+    sza                 // skip if the box stays on the screen
+    jmp isHold
+    lac scBW
+    dac scSize
+    lac isT
+    dac scUNow
+    dac scDTry
+    jsp scFactor
+    lac scFqN
+    dac scFq
+    lac scUNow
+    sub scU0
+    dac scD
+    idx scaleSteps
+    jsp scBoxDraw
+    jsp scKnob
+    jmp rtn
+isHold,
+    idx scaleHolds
+rtn, jmp .
+isT, 0
+    endloc
+
+// Master m's words at scale word scBW made ready in the store before an instance takes them: a
+// c's variant, found or walked, or the master itself, copied from the record here, since an
+// overlay cannot reach poolBring's drum read. The record is resident (a pick's or Undo's stub).
+// Entry: AC = m. Exit: AC = 0, or 1 with no room. IO is clobbered. Called via jda.
+scReady, 0
+    local rtn, reMast, reNo, reHave, reT
+    dap rtn
+    lac scReady
+    dac i [vaK:011]
+    lac scBW
+    sar 2s
+    dac i [vaCode:011]
+    sza i               // skip if a code c
+    jmp reMast
+    jsp i [vaFind:011]
+    sad [MNOPOOL]       // skip if it has a place
+    jmp reNo
+    lac i [vaNew:011]
+    sza                 // skip unless its words are yet to be written
+    jsp vaWalkOv
+    jmp reHave
+reMast,
+    lac scReady
+    add [mStart:5]
+    dac reT
+    lac i reT
+    sas [MNOPOOL]       // skip unless the master is in the store
+    jmp reHave
+    lac scReady
+    add [mLen:5]
+    dac reT
+    lac i reT
+    dac i [pbN:7]
+    jsp i [poolRoom:7]
+    spa                 // skip if a run holds the words
+    jmp reNo
+    dac i [vaTo:011]
+    jsp vaWalkOv
+    lac scReady
+    add [mStart:5]
+    dac reT
+    lac i [vaTo:011]
+    dac i reT
+reHave,
+    cla
+    jmp rtn
+reNo,
+    law 1
+rtn, jmp .
+reT, 0
+    endloc
+
+// The words of master vaK at code vaCode written at offset vaTo of the master store, from its
+// record, resident. One word for one: the master's place from the origin is kept, each new
+// place the instance module's rule at that code (ieSize), each word's move the difference of the
+// two, so that rounding never gathers and a figure's return lands where it began. Its beam and
+// end bits are kept. With code 0 the words are copied.
+// AC and IO are clobbered. Called by the manager (vaBuild) or via jsp.
+vaWalkOv,
+    local rtn, wkLoop, wkPlain, wkHave, wkA, wkB, wkN, wkV
+    dac rtn
+    lac i [vaTo:011]
+    dac i [msAddr:7]
+    jsp i [msAddr:7+1]
+    dac wkB
+    lac [mrWords:5]
+    dac wkA
+    lac i [vaK:011]
+    add [mLen:5]
+    dac wkN
+    lac i wkN
+    cma
+    dac wkN
+    lac i [vaCode:011]
+    sal 2s
+    dac wkW
+    dzm wkPX
+    dzm wkPY
+    dzm wkQX
+    dzm wkQY
+wkLoop,
+    lac i wkA
+    dac wkV
+    lac wkW
+    sza                 // skip with no code, a copy
+    jmp wkHave
+    lac wkV
+    jmp wkPlain
+wkHave,
+    lac wkV
+    and [visible | end]
+    dac wkOut
+
+    // x, then y, each signed from its magnitude and its direction.
+    lac wkV
+    and [0177]
+    dac wkAx
+    lac wkV
+    and [left]
+    dac wkSn
+    lac [wkPX:6]
+    dac wkPP
+    lac [wkQX:6]
+    dac wkQP
+    jsp wkAxis
+    ior wkOut
+    dac wkOut
+    lac wkMv
+    spa                 // skip unless the move is minus
+    jsp wkLeft
+    lac wkV
+    sar 8s
+    and [0177]
+    dac wkAx
+    lac wkV
+    and [down]
+    dac wkSn
+    lac [wkPY:6]
+    dac wkPP
+    lac [wkQY:6]
+    dac wkQP
+    jsp wkAxis
+    sal 8s
+    ior wkOut
+    dac wkOut
+    lac wkMv
+    spa                 // skip unless the move is minus
+    jsp wkDown
+    lac wkOut
+wkPlain,
+    dac i wkB
+    idx wkA
+    idx wkB
+    isp wkN             // skip once every word is written
+    jmp wkLoop
+    jmp i rtn
+rtn, 0
+wkA, 0
+wkB, 0
+wkN, 0
+wkV, 0
+    endloc
+
+// Set the left or the down bit of the word being made.
+// AC is clobbered. Called via jsp.
+wkLeft,
+    dap wlRtn
+    lac wkOut
+    ior [left]
+    dac wkOut
+wlRtn, jmp .
+wkDown,
+    dap wdRtn
+    lac wkOut
+    ior [down]
+    dac wkOut
+wdRtn, jmp .
+
+// One axis of a word: the master's place moved by wkAx, minus when wkSn is set, the new place by
+// ieSize, its move from the last place.
+// Entry: wkAx, wkSn, wkPP, wkQP, wkW. Exit: AC = the move's magnitude; wkMv its value. IO is
+// clobbered. Called via jsp.
+wkAxis,
+    local rtn, waPlus, waAdd, waMag, waT
+    dap rtn
+    lac wkSn
+    sza i               // skip if minus
+    jmp waPlus
+    lac wkAx
+    cma
+    jmp waAdd
+waPlus,
+    lac wkAx
+waAdd,
+    add i wkPP
+    dac i wkPP
+    dac i [ieSize:7]
+    lio wkW
+    jsp i [ieSize:7+1]
+    dac waT
+    sub i wkQP
+    dac wkMv
+    lac waT
+    dac i wkQP
+    lac wkMv
+    sma                 // skip if minus
+    jmp waMag
+    cma
+waMag,
+rtn, jmp .
+waT, 0
+    endloc
+
+// The walk's scale word at k 0, the word being made, wkAxis's words, the master's and the
+// variant's places, and the axis's pointers to them.
+wkW, 0
+wkOut, 0
+wkAx, 0
+wkSn, 0
+wkMv, 0
+wkPP, 0
+wkQP, 0
+wkPX, 0
+wkPY, 0
+wkQX, 0
+wkQY, 0
 
 // The part picked up is held. The lock is let go (no point, line or arc locked, none lit, no
 // lock mark; an instance or a text stays lit), the slider drawn below the dot (scSlide), at most
@@ -506,7 +1139,7 @@ psT, 0
 // word's block moved beside it showing the factor at the pick (scKnob), its name line blank.
 // Entry: the dot's words, the target's place. AC and IO are clobbered. Called via jsp.
 scGrab,
-    local rtn, gbSlide, gbPad, gbN, gbQ
+    local rtn, gbSlide, gbInst, gbPad, gbN, gbQ
     dap rtn
     lac [NOPOINT]
     dac i [penIdx:4]
@@ -532,6 +1165,8 @@ scGrab,
     dac scMaxL
     dac scMaxR
     lac scKind
+    sad [SCKINST]       // skip unless an instance, its sizes each side from x1/4 to x8
+    jmp gbInst
     sas [SCKSTEP]       // skip if stepped, for its size's factor and the sizes each side
     jmp gbSlide
     lac scSize0
@@ -544,6 +1179,25 @@ scGrab,
     dac gbQ
     lac i gbQ
     dac scFq
+    jmp gbSlide
+gbInst,
+    lac scU0
+    add [SCUDOWN + SCDOUBLE - 1]
+    sar SCDBITS
+    dac scMaxL
+    lac [SCUHI + SCDOUBLE - 1]
+    sub scU0
+    sar SCDBITS
+    dac scMaxR
+    lac scU0
+    dac scDTry
+    jsp scFactor
+    lac scFqN
+    dac scFq
+    lac scSize0
+    dac scBW
+    jsp scBoxOf
+    jsp scBoxDraw
 gbSlide,
     jsp scSlide
     lac [DOTPARAM]
@@ -574,18 +1228,19 @@ gbN, 0
 gbQ, 0
     endloc
 
-// Draw the slider under the dot, in the band's words, a zigzag of a vector a doubling,
-// SCDOUBLE screen units, its corners at the whole doublings, the pick's on its lower line; its
-// upper line SCGAP below the dot, or its lower line SCGAP above where it would fall under
-// TRKYMIN; at most scMaxL doublings to the left and scMaxR to the right, and only whole ones
-// inside the target's reach (scNL, scNR), the pen's offsets along it bounded to them (scLo,
-// scHi). The last K of the NBAND vector words are written, the last with end, then the start,
-// then the gate, so the display never enters a word not yet written. With no doubling either
-// side there is none.
+// Draw the slider under the dot, in the band's words, a square wave: a level run of SCDOUBLE
+// screen units a doubling, on its lower and upper lines by turns, joined by upright ticks at
+// the whole doublings, the run right of the pick on the lower line; its upper line SCGAP below
+// the dot, or its lower line SCGAP above where it would fall under TRKYMIN; at most scMaxL
+// doublings to the left and scMaxR to the right, and only whole ones inside the target's reach
+// (scNL, scNR), the pen's offsets along it bounded to them (scLo, scHi). N doublings are the
+// last 2N - 1 of slideVec's and the band's NSLIDE words, written first to last, the last with
+// end, then the start, then the gate, so the display never enters a word not yet written. With
+// no doubling either side there is none.
 // Entry: scDotX, scDotY, scMaxL, scMaxR. AC and IO are clobbered. Called via jsp.
 scSlide,
-    local rtn, slL, slR0, slR, slGo, slEven, slBase, slZSet, slVec, slPut, slEnd, slX, slY, slZ, \
-        slN, slP, slW, slFirst
+    local rtn, slL, slR0, slR, slGo, slBase, slZSet, slVec, slPut, slEnd, slX, slY, slZ, \
+        slN, slP, slFirst
     dap rtn
 
     // The whole doublings to the left, then to the right.
@@ -633,11 +1288,15 @@ slGo,
     add scNR
     sza i               // skip if the slider has a doubling
     jmp rtn
-    cma
     dac slN
-    add [bandVec:0 + NBAND]
+    add slN
+    cma
+    add [bandVec:0 + NBAND + 1] // the first of the last 2N - 1
     dac slP
     dac slFirst
+    lac slN
+    cma
+    dac slN
 
     // The lower line, its height and SCGAP below the dot, or SCGAP above where that is under
     // TRKYMIN.
@@ -652,8 +1311,8 @@ slGo,
     dac slY
 slBase,
 
-    // The first vector rises from the lower line, or falls from the upper one when the left end
-    // is an odd number of doublings from the pick.
+    // The first run is on the lower line, or on the upper one when the left end is an odd
+    // number of doublings from the pick; slZ is then down, the next tick's fall.
     lac scNL
     and [1]
     sza                 // skip if even
@@ -668,17 +1327,17 @@ slOdd,
 slZSet,
     dac slZ
 slVec,
-    lac slZ
-    ior [SCRISE]
-    dac slW
-    isp slN             // skip at the last word
+    isp slN             // skip at the last run
     jmp slPut
-    lac slW
-    ior [end]
+    lac [SCRUN | end]
     dac i slP
     jmp slEnd
 slPut,
-    lac slW
+    lac [SCRUN]
+    dac i slP
+    idx slP
+    lac slZ
+    ior [SCTICK]
     dac i slP
     idx slP
     lac slZ
@@ -708,7 +1367,6 @@ slY, 0
 slZ, 0
 slN, 0
 slP, 0
-slW, 0
 slFirst, 0
     endloc
 
@@ -872,6 +1530,8 @@ spHiOk,
     lac scKind
     sad [SCKSTEP]       // skip unless stepped
     jmp spStepped
+    sad [SCKINST]       // skip unless an instance
+    jmp spInst
     jsp scFactor
     lac scKind
     sad [SCKARC]        // skip unless an arc
@@ -895,6 +1555,9 @@ spHeld,
     jmp rtn
 spStepped,
     jsp scStepSize
+    jmp rtn
+spInst,
+    jsp scInstStep
 rtn, jmp .
     endloc
 
@@ -1307,7 +1970,8 @@ rtn, jmp .
 
 // Put down the part picked up, if any; its scale is finished. A line's Lengths (the constraint
 // table's L entries on its two ends) take its length at the factor applied, as Dismem's Length
-// takes a new size, their values before kept for Undo, and the solver wakes. The change is
+// takes a new size, and its Changes (Y) their reference lengths the same way, so a Change's
+// reading scales with the line; their values before kept for Undo, and the solver wakes. The change is
 // Undo's record (USCALE), kept with what scUndo needs; a pick whose only change was refused after
 // the places were kept (cSnap) has spoiled the record those places belonged to, which is cleared.
 // The drag's words are let go (dragIdx, bandIdx, dragLine), a line's ends staying held by the
@@ -1315,14 +1979,20 @@ rtn, jmp .
 // back under the bar, hidden, the slider is put away and the dot dimmed for the hunt. Every way
 // out of Scale mode comes here (setMode's hook), and a lift, Locate and Undo; with nothing
 // picked up it returns at once, and it clears scOn first, so that a call back finds none.
-// AC and IO are clobbered. Called via jsp, or via jsp i [scDone:6] from the main bank.
-scDone,
-    local rtn, sdKept, sdClr, sdLoop, sdNext, sdUnd, sdOff, sdDot, sdN, sdP, sdQ, sdT, sdI
+// AC and IO are clobbered. Called via jsp, or through the root stub scDone, by the manager.
+scDoneOv,
+    local rtn, sdNoSz, sdKept, sdClr, sdLoop, sdLen, sdNext, sdUnd, sdOff, sdDot, sdSaid, sdN, \
+        sdP, sdQ, sdT, sdI
     dac rtn
     lac scOn
     sza i               // skip if a part is picked up
     jmp i rtn
     dzm scOn
+    lac scKind
+    sas [SCKINST]       // skip if an instance, whose size applies now
+    jmp sdNoSz
+    jsp scApply
+sdNoSz,
     lac scMoved
     sza                 // skip unless it changed
     jmp sdKept
@@ -1333,6 +2003,7 @@ scDone,
     jda scMain
     jmp sdOff
 sdKept,
+    dzm i [szUG:3]      // the group's sizes this change moves, if any, follow (szSolveOv)
     lac scKind
     dac scUKind
     lac scInst
@@ -1341,7 +2012,7 @@ sdKept,
     dac scUTx
     lac scSize0
     dac scUSize
-    lac [scUOld:6]
+    lac [scUOld:5]
     dac sdQ
     law i NCON
     dac sdN
@@ -1362,12 +2033,15 @@ sdClr,
     dac sdN
     lac [cEntries:011]
     dac sdP
-    lac [scUOld:6]
+    lac [scUOld:5]
     dac sdQ
 sdLoop,
     lac i sdP
+    sad [CTCHG]         // skip unless a Change, whose reference length scales as a Length's
+    jmp sdLen
     sas [CTLEN]         // skip if a Length
     jmp sdNext
+sdLen,
     lac sdP
     add [1]
     dac sdT
@@ -1404,6 +2078,7 @@ sdUnd,
     jda scMain
     idx scaleDrops
 sdOff,
+    jsp i [pmOff:0d11]  // a Keep row's first thing's mark
     lac [NOPOINT]
     dac i [dragIdx:4]
     dac i [bandIdx:4]
@@ -1415,6 +2090,8 @@ sdOff,
     dac i [msgWord:0 + 2]
     lac [jump statEnd:0 next(parameter)]
     dac i [statGate:0]
+    lac [jump dotBlock:0 next(parameter)]
+    dac i [boxGate:0]
     lac i [bandGate:0]
     sas [jump bandStart:0 next(parameter)] // skip if the slider is shown
     jmp sdDot
@@ -1423,6 +2100,12 @@ sdOff,
 sdDot,
     lac [HUNTPARAM]
     dac i [dotBlock:0]
+    lac scNoRoom
+    sza i               // skip if the lift was refused
+    jmp sdSaid
+    dzm scNoRoom
+    jsp scSayRoom
+sdSaid,
     jmp i rtn
 rtn, 0
 sdN, 0
@@ -1432,16 +2115,83 @@ sdT, 0
 sdI, 0
     endloc
 
+// The lift of an instance held: its words at the new size made ready (scReady), then the size set
+// as Size sets it (the instance module's instSize), the places kept for Undo first; its tie
+// points move, the arcs on them following, the size taken back (IESZBACK) if one cannot. With no
+// room nothing changes, and the put down says so.
+// AC and IO are clobbered. Called via jsp.
+scApply,
+    local rtn, apSet, apMoved, apHeld, apNo, apT
+    dap rtn
+    lac scSize
+    sad scSize0         // skip if a new size
+    jmp rtn
+    dac scBW
+    lac scInst
+    add [iMaster:012]
+    dac apT
+    lac i apT
+    jda scReady
+    sza                 // skip if its words are in the store
+    jmp apNo
+    jsp scKeep
+    lac scInst
+    dac i [penInst:4]
+    lac scSize
+    dac i [sizeArg:4]
+    lio [IESIZE]
+    jda scIEnt
+    sas [3]             // skip if its tie points moved
+    jmp apSet
+    lio [MCJDA(arcCall:4)]
+    law AECARRY
+    jda scMain
+    sza i               // skip if an arc could not follow
+    jmp apMoved
+    lio [IESZBACK]
+    jda scIEnt
+    jmp apHeld
+apSet,
+    sza                 // skip if the size is set
+    jmp apHeld
+apMoved,
+    law 1
+    dac scMoved
+    jmp rtn
+apNo,
+    law 1
+    dac scNoRoom
+apHeld,
+    idx scaleHolds
+rtn, jmp .
+apT, 0
+    endloc
+
+// NO ROOM, the text module's word, under the bar.
+// AC and IO are clobbered. Called via jsp.
+scSayRoom,
+    local rtn
+    dap rtn
+    law TXSFULL
+    dac i [txCall:4]
+    lio [TXSAY]
+    jsp i [txEntry:012]
+rtn, jmp .
+    endloc
+
 // Undo of a scale (actUndo's USCALE). A text's, digits' or an instance's size put back as Size
-// sets it (instSize), the arcs on an instance's tie points following (arcCarry); every point's
+// sets it (instSize), an instance's words made ready first, refused whole with NO ROOM; the arcs
+// on an instance's tie points following (arcCarry); every point's
 // and origin's place put back (the constraint module's cUndo, which marks what moved and wakes
-// the solver), and the Lengths' values before; then the moved lines are redrawn (the main bank's
-// conShow).
-// AC and IO are clobbered. Called via jsp i [scUndo:6], from the main bank's actUndo.
-scUndo,
-    local rtn, suNoTx, suLens, suLoop, suNext, suCon, suN, suP, suQ
+// the solver), and the Lengths' and Changes' values before; then the moved lines are redrawn
+// (the main bank's conShow).
+// AC and IO are clobbered. Called through the root stub scUndo, by the manager.
+scUndoOv,
+    local rtn, suNoTx, suLens, suLoop, suNext, suCon, suInst, suN, suP, suQ
     dac rtn
     lac scUKind
+    sad [SCKINST]       // skip unless an instance
+    jmp suInst
     sas [SCKSTEP]       // skip if stepped
     jmp suLens
     lac scUInst
@@ -1450,6 +2200,20 @@ scUndo,
     jmp suNoTx
     lac scUTx
     dac i [txPen:012]
+    jmp suNoTx
+suInst,
+    lac scUSize
+    dac scBW
+    lac scUInst
+    dac i [penInst:4]
+    add [iMaster:012]
+    dac suP
+    lac i suP
+    jda scReady
+    sza i               // skip if refused
+    jmp suNoTx
+    jsp scSayRoom
+    jmp i rtn
 suNoTx,
     lac scUSize
     dac i [sizeArg:4]
@@ -1468,7 +2232,7 @@ suLens,
     dac suN
     lac [cEntries:011 + 5]
     dac suP
-    lac [scUOld:6]
+    lac [scUOld:5]
     dac suQ
 suLoop,
     lac i suQ
@@ -1570,6 +2334,1286 @@ scAbs, 0
 rtn, jmp .
     endloc
 
+// Which row entered Scale mode, kept in szKind for the lifts that follow.
+// Entry: lastItem. Exit: AC = the row's list's column. IO is clobbered. Called via jsp.
+szItem,
+    local rtn, siDim
+    dap rtn
+    lac i [lastItem:4]
+    sad [IDSIZE]        // skip unless Dim's Size
+    jmp siDim
+    sub [IKEEP]
+    spa                 // skip if a Keep row, the last items of all
+    law i 1
+    add [1]
+    dac i [szKind:3]
+    lac [CEDIT]
+    jmp rtn
+siDim,
+    law SKNUM
+    dac i [szKind:3]
+    lac [CDRAW]
+rtn, jmp .
+    endloc
+
+// A lift on a Keep row or Dim's Size. A line on a ratio's row is szLine's. Otherwise the first
+// takes an instance, its origin marked, and an S or a Z then waits for the second, an instance or
+// digits; Full commits at once, and Inch asks for its number, Keep opening the keyboard from the
+// root (szRun). A cycling instance, one of an empty master, a second that is the first, an
+// instance after a line, or anything else, is refused, and a first thing held is put down. With
+// nothing locked, nothing happens.
+// Entry: scOn nonzero with a first thing held, consL1 then the first thing, a line or MAXPTS plus
+// an instance. AC and IO are clobbered. Called via jsp.
+szLift,
+    local rtn, lfRatio, lfInst, lfFirst, lfDig, lfFull, lfInch, lfNo, lfPen, lfT
+    dap rtn
+    lac i [szKind:3]
+    sub [SKFULL]
+    spa                 // skip unless a ratio's row
+    jmp lfRatio
+    jsp scHunt
+    jmp lfInst
+lfRatio,
+    law 1
+    dac i [atLift:4]
+    jsp scHunt
+    lac i [penLine:4]
+    sad [NOPOINT]       // skip if it locks onto a line
+    jmp lfInst
+    jsp szLine
+    jmp rtn
+lfInst,
+    lac i [penInst:4]
+    sad [NOPOINT]       // skip if it locks onto something
+    jmp rtn
+    dac lfPen
+    lac scOn
+    sza i               // skip if the first thing is held
+    jmp lfFirst
+    lac i [szKind:3]
+    sad [SKNUM]         // skip unless Dim's Size, which takes digits second
+    jmp lfDig
+    lac i [consL1:4]
+    sub [MAXPTS]
+    spa                 // skip if the first thing is an instance
+    jmp lfNo
+    lac lfPen
+    jda szFit
+    sza                 // skip if it can be constrained
+    jmp lfNo
+    lac lfPen
+    sad i [szA:3]       // skip unless the first again
+    jmp lfNo
+    lac [CTSAME]
+    jda szEnt
+    lac lfPen
+    add [MAXPTS]
+    dac i [szTy:3 + 2]
+    lac i [szKind:3]
+    sub [1]
+    ior [CUNUSED]
+    dac i [szTy:3 + 5]
+    lac lfPen
+    add [1]             // the second stands, and the first takes its size from it
+    jda szAdd
+    jmp rtn
+lfDig,
+    lac lfPen
+    sas [TXINST]        // skip if a text
+    jmp lfNo
+    lac i [txPen:012]
+    add [txAn:3]
+    dac lfT
+    lac i lfT
+    sad [NOPOINT]       // skip if digits
+    jmp lfNo
+    dac i [szTy:3 + 3]
+    lac [CTSZNUM]
+    jda szEnt2
+    lac i [szTy:3 + 1]
+    dac i [szTy:3 + 2]
+    lac [SZNOSRC]
+    jda szAdd
+    jmp rtn
+lfFirst,
+    dzm scMoved
+    dzm scSnap
+    lac lfPen
+    jda szFit
+    sza                 // skip if it can be constrained
+    jmp lfNo
+    lac lfPen
+    dac i [szA:3]
+    lac i [szKind:3]
+    sad [SKFULL]        // skip unless Full
+    jmp lfFull
+    sad [SKINCH]        // skip unless Inch
+    jmp lfInch
+    law SCKKEEP
+    dac scKind
+    law 1
+    dac scOn
+    dac i [consPick:4]
+    lac lfPen
+    add [MAXPTS]
+    dac i [consL1:4]
+    jsp i [pmShow:0d11]
+    jmp rtn
+lfFull,
+    lac [CTFULL]
+    jda szEnt
+    lac [SZNOSRC]
+    jda szAdd
+    jmp rtn
+lfInch,
+    lac [KCEND * 010000]
+    dac i [cyBuf:7]
+    lac [SZKBOPEN]
+    dac i [szDirty:3]
+    jmp rtn
+lfNo,
+    idx scaleRefused
+    jsp scDoneOv
+rtn, jmp .
+lfPen, 0
+lfT, 0
+    endloc
+
+// A lift on line penLine on a ratio's row: the thesis's M, an E at a ratio. The first is lit and
+// held; the second, another line, makes the entry, the first that many times the second. The
+// longer of the two is the entry's A-B and the parameter's low bits k, x1 being a plain E, which
+// is why x1/3 and x1/2 give their lines the other way round (cProjM). Undo is as an Equal's. A
+// line after an instance, the first again, a repeat or a full table is refused, as szLift's.
+// Entry: penLine, scOn, consL1. AC and IO are clobbered. Called via jsp.
+szLine,
+    local rtn, lnTwo, lnLong, lnEnds, lnNo, lnA, lnP, lnT
+    dap rtn
+    lac scOn
+    sza                 // skip if the first line is still to pick
+    jmp lnTwo
+    dzm scMoved
+    dzm scSnap
+    law SCKKEEP
+    dac scKind
+    law 1
+    dac scOn
+    dac i [consPick:4]
+    lac i [penLine:4]
+    dac i [consL1:4]
+    lio [MCJSP(pickShow:4)]
+    jda scMain
+    jmp rtn
+lnTwo,
+    lac i [consL1:4]
+    sub [MAXPTS]
+    sma                 // skip if the first thing is a line
+    jmp lnNo
+    lac i [penLine:4]
+    sad i [consL1:4]    // skip unless the first again
+    jmp lnNo
+    lac i [szKind:3]
+    sub [SKX1]
+    sma                 // skip if the first is the shorter
+    jmp lnLong
+    lac i [penLine:4]
+    lio i [consL1:4]
+    jmp lnEnds
+lnLong,
+    lac i [consL1:4]
+    lio i [penLine:4]
+lnEnds,
+    dio lnT
+    dac lnA
+    add [lineFrom:3]
+    dac lnP
+    lac i lnP
+    dac i [szTy:3 + 1]
+    lac lnA
+    add [lineTo:3]
+    dac lnP
+    lac i lnP
+    dac i [szTy:3 + 2]
+    lac lnT
+    add [lineFrom:3]
+    dac lnP
+    lac i lnP
+    dac i [szTy:3 + 3]
+    lac lnT
+    add [lineTo:3]
+    dac lnP
+    lac i lnP
+    dac i [szTy:3 + 4]
+    lac [CTEQ]
+    dac i [szTy:3]
+    lac i [szKind:3]
+    add [szKOf:6 - 1]
+    dac lnP
+    lac i lnP
+    ior [CUNUSED]
+    dac i [szTy:3 + 5]
+    lio [CESZADD]
+    jda scCon
+    sza                 // skip if added
+    jmp lnNo
+    lio [MCJDA(undoKeep:4)]
+    law UCONS
+    jda scMain
+    idx i [consCount:4]
+    jsp scDoneOv
+    jmp rtn
+lnNo,
+    idx scaleRefused
+    jsp scDoneOv
+rtn, jmp .
+lnA, 0
+lnP, 0
+lnT, 0
+    endloc
+
+// An E's parameter's low bits, k, by szKind less 1: x1/3, x1/2, x1, x2, x3.
+szKOf,
+    3
+    2
+    0
+    2
+    3
+
+// Whether what penInst locks onto can take a constraint on size: an instance, not cycling, whose
+// master has a size.
+// Entry: AC = penInst. Exit: AC = 0 if so. IO is clobbered. Called via jda.
+szFit, 0
+    local rtn, ftNo, ftT
+    dap rtn
+    lac szFit
+    sad [TXINST]        // skip unless a text
+    jmp ftNo
+    add [iCyc:3]
+    dac ftT
+    lac i ftT
+    sza                 // skip unless it cycles
+    jmp ftNo
+    lac szFit
+    jda szSide
+    sza i               // skip if its master has a size
+    jmp ftNo
+    cla
+    jmp rtn
+ftNo,
+    law 1
+rtn, jmp .
+ftT, 0
+    endloc
+
+// A new entry's words in szTy: its type, A the first thing picked, the rest unused.
+// Entry: AC = the type; for szEnt2, szTy's C is kept. AC and IO are clobbered. Called via jda.
+szEnt, 0
+    local rtn, enT
+    dap rtn
+    lac [CUNUSED]
+    dac i [szTy:3 + 3]
+    lac szEnt
+    jmp enT
+szEnt2, 0
+    dap rtn
+    lac szEnt2
+enT,
+    dac i [szTy:3]
+    lac i [szA:3]
+    add [MAXPTS]
+    dac i [szTy:3 + 1]
+    lac [CUNUSED]
+    dac i [szTy:3 + 2]
+    dac i [szTy:3 + 4]
+    dac i [szTy:3 + 5]
+rtn, jmp .
+    endloc
+
+// The entry in szTy into the table (the constraint module's CESZADD, which keeps the places for
+// Undo first), then its sizes asked for, the change put down as Undo's record (scDoneOv); a repeat
+// or a full table is refused, and a first thing held put down.
+// Entry: AC = szDirty's new value. AC and IO are clobbered. Called via jda.
+szAdd, 0
+    local rtn, adNo
+    dap rtn
+    lio [CESZADD]
+    jda scCon
+    sza                 // skip if added
+    jmp adNo
+    law 1
+    dac scSnap
+    dac scMoved
+    dac scOn
+    dac i [szNew:3]
+    lac szAdd
+    dac i [szDirty:3]
+    lac [NOPOINT]
+    dac i [szPrev:3]
+    law SCKKEEP
+    dac scKind
+    jsp scDoneOv
+    jmp rtn
+adNo,
+    idx scaleRefused
+    jsp scDoneOv
+rtn, jmp .
+    endloc
+
+// Inch's keyboard closed. Cancel takes nothing; OK the number, 0.001 to SZMAXIN inches, digits
+// past the third after the point ignored; anything else is refused, as a lift is.
+// Entry: IO = 1 for OK, 0 for Cancel. AC and IO are clobbered. Called through the root stub
+// szKbDone, by the manager.
+szKbOv,
+    local rtn, kbLoop, kbDot, kbEnd, kbBad, kbP, kbW, kbN, kbV, kbF, kbM, kbD, kbSeen, kbGet, \
+        kbGRtn, kbWord, kbNext, kbLow, kbFrac
+    dac rtn
+    dio kbV
+    lac kbV
+    sza i               // skip if OK
+    jmp i rtn
+    lac [cyBuf:7]
+    dac kbP
+    dzm kbN
+    dzm kbV
+    dzm kbM
+    dzm kbF
+    dzm kbSeen
+kbLoop,
+    jsp kbGet
+    sad [KCEND]         // skip unless the text's end
+    jmp kbEnd
+    sad [KCDOT]         // skip unless the point
+    jmp kbDot
+    sub [KCZERO]
+    spa                 // skip unless below 0
+    jmp kbBad
+    dac kbD
+    sub [0d10]
+    sma                 // skip if a digit
+    jmp kbBad
+    law 1
+    dac kbSeen
+    lac kbF
+    sza i               // skip if past the point
+    jmp kbLow
+kbFrac,
+    lac kbD
+    mul kbF
+    div [1]
+    cla                 // no skip means overflow, which three digits cannot make
+    add kbM
+    dac kbM
+    lac kbF
+    mul [1]
+    div [0d10]
+    cla                 // no skip means overflow, which a division by 10 cannot make
+    dac kbF
+    sza                 // skip after the third digit past the point
+    jmp kbLoop
+    lac [0777777]       // a place below any, so that later digits count nothing
+    dac kbF
+    jmp kbLoop
+kbLow,
+    lac kbV
+    sal 2s
+    add kbV
+    sal 1s              // ten times
+    add kbD
+    dac kbV
+    sub [SZMAXIN + 1]
+    sma                 // skip if in range
+    jmp kbBad
+    jmp kbLoop
+kbDot,
+    lac kbF
+    sza                 // skip unless a second point
+    jmp kbBad
+    law 0d100
+    dac kbF
+    jmp kbLoop
+kbEnd,
+    lac kbSeen
+    sza i               // skip if a digit came
+    jmp kbBad
+    lac kbV
+    mul [0d1000]
+    div [1]
+    cla                 // no skip means overflow, which SZMAXIN inches cannot make
+    add kbM
+    dac kbM
+    sza i               // skip if some size
+    jmp kbBad
+    sub [SZMAXIN * 0d1000 + 1]
+    sma                 // skip if at most SZMAXIN inches
+    jmp kbBad
+    lac [CTINCH]
+    jda szEnt
+    lac kbM
+    ior [CUNUSED]
+    dac i [szTy:3 + 5]
+    lac [SZNOSRC]
+    jda szAdd
+    jmp i rtn
+kbBad,
+    idx scaleRefused
+    jmp i rtn
+kbGet,
+    dap kbGRtn
+kbWord,
+    lac kbN
+    sza                 // skip if the word is used up
+    jmp kbNext
+    lac i kbP
+    dac kbW
+    idx kbP
+    law 3
+    dac kbN
+kbNext,
+    law i 1
+    add kbN
+    dac kbN
+    lac kbW
+    ral 6s
+    dac kbW
+    and [077]
+    sad [KCUP]          // skip unless an upper shift
+    jmp kbWord
+    sad [KCLOW]         // skip unless a lower shift
+    jmp kbWord
+kbGRtn, jmp .
+rtn, 0
+kbP, 0
+kbW, 0
+kbN, 0
+kbV, 0
+kbF, 0
+kbM, 0
+kbD, 0
+kbSeen, 0
+    endloc
+
+// An instance's overall size at x1, its master's longer side.
+// Entry: AC = i. Exit: AC = the side. IO is clobbered. Called via jda.
+szSide, 0
+    local rtn, sdA, sdM, sdT, sdWide
+    dap rtn
+    lac szSide
+    add [iMaster:012]
+    dac sdT
+    lac i sdT
+    dac sdM
+    add [mMinX:5]
+    dac sdT
+    lac i sdT
+    cma
+    dac sdA
+    lac sdM
+    add [mMaxX:5]
+    dac sdT
+    lac i sdT
+    add sdA
+    dac sdA
+    lac sdM
+    add [mMinY:5]
+    dac sdT
+    lac i sdT
+    cma
+    dac sdT
+    lac sdM
+    add [mMaxY:5]
+    dac sdM
+    lac i sdM
+    add sdT
+    dac sdT
+    sub sdA
+    spa                 // skip if the height is the longer
+    jmp sdWide
+    lac sdT
+    jmp rtn
+sdWide,
+    lac sdA
+rtn, jmp .
+sdA, 0
+sdM, 0
+sdT, 0
+    endloc
+
+// Scale word w as a size in 4096ths of x1.
+// Entry: AC = w. Exit: AC = the size. IO is clobbered. Called via jda.
+szSOf, 0
+    local rtn, soCode, soLoop, soK, soV
+    dap rtn
+    lac szSOf
+    and [IKMASK]
+    dac soK
+    lac szSOf
+    sar 2s
+    sza                 // skip if exactly a power of two
+    jmp soCode
+    lac [SZONE]
+    dac soV
+    jmp soLoop
+soCode,
+    sar 3s
+    dac soV
+soLoop,
+    lac soK
+    sza i               // skip while k remains
+    jmp soEnd
+    law i 1
+    add soK
+    dac soK
+    lac soV
+    sal 1s
+    dac soV
+    jmp soLoop
+soEnd,
+    lac soV
+rtn, jmp .
+soK, 0
+soV, 0
+    endloc
+
+// The scale word of a size in 4096ths of x1, k the smallest whose power of two reaches it.
+// Entry: AC = the size, SZLOW to SZHIGH. Exit: AC = the word. IO is clobbered. Called via jda.
+szWOf, 0
+    local rtn, woK, woFit, woCode, woPow, woN, woExact, woPut, woK3
+    dap rtn
+    dzm woN
+    lac [SZONE]
+    dac woPow
+woK,
+    lac szWOf
+    sub woPow
+    spa                 // skip if the power of two is short of it
+    jmp woCode
+    sza i               // skip unless exact
+    jmp woExact
+    idx woN
+    lac woPow
+    sal 1s
+    dac woPow
+    jmp woK
+woExact,
+    lac woN
+    jmp rtn
+woCode,
+    lac woN
+    sub [3]
+    dac woK3
+woFit,
+    lac woK3
+    sza i               // skip while a doubling remains
+    jmp woPut
+    law 1
+    add woK3
+    dac woK3
+    lac szWOf
+    sal 1s
+    dac szWOf
+    jmp woFit
+woPut,
+    lac szWOf
+    sal 2s
+    ior woN
+rtn, jmp .
+woPow, 0
+woN, 0
+woK3, 0
+    endloc
+
+// Value szVal for instance szWho's size: taken, or, where the size is known, checked against it
+// to within 1/SZTOLD, szBad set if it differs or the value is none.
+// AC and IO are clobbered. Called via jsp.
+szPut,
+    local rtn, ptNew, ptBad, ptP, ptD
+    dap rtn
+    lac szVal
+    sza i               // skip if a value
+    jmp ptBad
+    lac szWho
+    add [szV:6]
+    dac ptP
+    lac i ptP
+    sza i               // skip if known already
+    jmp ptNew
+    sub szVal
+    jda scAbs
+    dac ptD
+    lac i ptP
+    mul [1]
+    div [SZTOLD]
+    cla
+    sub ptD
+    sma                 // skip if they differ by more than the tolerance
+    jmp rtn
+ptBad,
+    law 1
+    dac szBad
+    jmp rtn
+ptNew,
+    lac szVal
+    dac i ptP
+    law 1
+    dac rxCh
+rtn, jmp .
+ptP, 0
+ptD, 0
+    endloc
+
+// Instance szWho's present overall size, in 16ths of a unit: its longer side, doubled by its
+// scale; 0 for a master of no size.
+// Exit: AC = the size. IO is clobbered. Called via jsp.
+szCur,
+    local rtn, cuA, cuT
+    dap rtn
+    lac szWho
+    jda szSide
+    dac cuA
+    lac szWho
+    add [iScale:3]
+    dac cuT
+    lac i cuT
+    jda szSOf
+    dac cuT
+    lac cuA
+    mul cuT
+    div [SZONE / SZUNIT]
+    cla                 // no skip means overflow, which x8 of the screen's width cannot make
+rtn, jmp .
+cuA, 0
+cuT, 0
+    endloc
+
+// Instance szWho's size, if none is known yet, its present one, which the S entries then carry.
+// AC and IO are clobbered. Called via jsp.
+szKnown,
+    local rtn, knT
+    dap rtn
+    lac szWho
+    add [szV:6]
+    dac knT
+    lac i knT
+    sza                 // skip unless known
+    jmp rtn
+    jsp szCur
+    sza i               // skip if it has a size
+    jmp rtn
+    dac szVal
+    jsp szPut
+    jsp szRelax
+rtn, jmp .
+knT, 0
+    endloc
+
+// Passes over the S entries until none tells a new size, each one known end telling the other,
+// two known ends checked (szPut).
+// AC and IO are clobbered. Called via jsp.
+szRelax,
+    local rtn, rxPass, rxLoop, rxNext, rxNoB, rxA, rxB, rxN, rxD, rxE, rxT
+    dap rtn
+rxPass,
+    dzm rxCh
+    lac [cEntries:011]
+    dac rxE
+rxLoop,
+    lac rxE
+    sad i [cEnd:010]    // skip while entries remain
+    jmp rxEnd
+    lac i rxE
+    sas [CTSAME]        // skip if an S
+    jmp rxNext
+    lac rxE
+    add [1]
+    dac rxT
+    lac i rxT
+    sad [NOPOINT]       // skip unless its instance is gone
+    jmp rxNext
+    sub [MAXPTS]
+    dac rxA
+    idx rxT
+    lac i rxT
+    sad [NOPOINT]       // skip unless its instance is gone
+    jmp rxNext
+    sub [MAXPTS]
+    dac rxB
+    lac rxE
+    add [5]
+    dac rxT
+    lac i rxT
+    and [7]
+    dac rxT
+    add [szNum:6]
+    dac rxN
+    lac i rxN
+    dac rxN
+    lac rxT
+    add [szDen:6]
+    dac rxD
+    lac i rxD
+    dac rxD
+    lac rxB
+    add [szV:6]
+    dac rxT
+    lac i rxT
+    sza i               // skip if B is known
+    jmp rxNoB
+    mul rxN
+    div rxD
+    cla                 // no skip means overflow, which szPut refuses as no value
+    dac szVal
+    lac rxA
+    dac szWho
+    jsp szPut
+    jmp rxNext
+rxNoB,
+    lac rxA
+    add [szV:6]
+    dac rxT
+    lac i rxT
+    sza i               // skip if A is known
+    jmp rxNext
+    mul rxD
+    div rxN
+    cla                 // no skip means overflow, which szPut refuses as no value
+    dac szVal
+    lac rxB
+    dac szWho
+    jsp szPut
+rxNext,
+    lac rxE
+    add [CW]
+    dac rxE
+    jmp rxLoop
+rxEnd,
+    lac rxCh
+    sza                 // skip if a pass told nothing new
+    jmp rxPass
+rtn, jmp .
+rxA, 0
+rxB, 0
+rxN, 0
+rxD, 0
+rxE, 0
+rxT, 0
+    endloc
+
+// The scalar of a Z entry's digits, found by its anchor; cScOf may not be built yet for a new one.
+// Entry: AC = the entry's address. Exit: AC = the scalar, NOPOINT for none. IO is clobbered.
+// Called via jda.
+szScOf, 0
+    local rtn, scLoop, scHas, scNone, scA, scE, scT
+    dap rtn
+    lac szScOf
+    add [3]
+    dac scT
+    lac i scT
+    dac scA
+    lac [txAn:3]
+    dac scT
+    add i [txN:012]
+    dac scE
+scLoop,
+    lac scT
+    sad scE             // skip while texts remain
+    jmp scNone
+    lac i scT
+    sad scA             // skip unless the anchor
+    jmp scHas
+    idx scT
+    jmp scLoop
+scHas,
+    lac scT
+    sub [txAn:3]
+    add [txSv:3]
+    dac scT
+    lac i scT
+    jmp rtn
+scNone,
+    lac [NOPOINT]
+rtn, jmp .
+scA, 0
+scE, 0
+scT, 0
+    endloc
+
+// The sizes the table asks for, each in szV, in 16ths of a unit, 0 unknown. What the table fixes
+// first (a U, an I, a Z whose scalar is set), then the source, then each entry's instance not yet
+// known at its present size, the S entries carrying each (szRelax); so a group holding something
+// fixed is held by it, and a change on one of its instances goes back. Two that disagree are a
+// conflict. Each known size then gives a scale; one no different is left (szW SZSAME); a scale
+// out of range or a box off the screen is refused. A free Z's scalar reads its instance's size.
+// szStepOv makes each new scale's words ready, its master's record resident each time, and then
+// sets them all, keeping the words before in uSz; refused, each instance goes back, the source
+// to szPrev (szDirty) and a new entry out of the table (szNew), the word why shown. Going back
+// is not refused in turn (szRet). szBackOv puts uSz back for Undo. The sizes are set as scApply
+// sets one; sizeArg, which Size mode's next lift reads, is kept.
+// Entry: szDirty, szPrev, szNew. Exit: AC = 0 done, 1 with vaRecI's record wanted, szStepOv to be
+// called next. IO is clobbered. Called through the root's szRun, by the manager.
+szSolveOv,
+    local rtn, soClr, soAbs, soAN, soF, soI, soMil, soSet, soRel, soRest, soRN, soAgain, soWd, \
+        soWN, soFree, soFN, soStart, soOff, soCon, soE, soT, soS, soV, soN, soP, soQ, soR, sfSeek, \
+        sfHave, sfAll, sfLoop, sfNext, sfEnd, sfDone, sfNoGo, sfNo, sfSay, sfCopy, sfNoSrc, sfGo, \
+        sfBad, sfRoom, sfI
+    dac rtn
+    dzm i [szRet:3]
+    dzm szBad
+    lac i [sizeArg:4]
+    dac i [szArg:3]
+    lac i [szDirty:3]   // the sets below move it, each noting itself the source (szMark)
+    dac sfSrc
+    lac i [szPrev:3]
+    dac sfPrv
+    lac [szV:6]
+    dac soP
+    lac [szW:3]
+    dac soQ
+    lac [uSz:3]
+    dac soR
+    law i MAXINST
+    dac soN
+soClr,
+    dzm i soP
+    lac [SZSAME]
+    dac i soQ
+    dac i soR
+    idx soP
+    idx soQ
+    idx soR
+    isp soN             // skip once every word is cleared
+    jmp soClr
+    lac [cEntries:011]
+    dac soE
+soAbs,
+    lac soE
+    sad i [cEnd:010]    // skip while entries remain
+    jmp soRel
+    lac i soE
+    sub [CTFULL]
+    spa                 // skip if a U, an I or a Z
+    jmp soAN
+    lac soE
+    add [1]
+    dac soT
+    lac i soT
+    sad [NOPOINT]       // skip unless its instance is gone
+    jmp soAN
+    sub [MAXPTS]
+    dac szWho
+    lac i soE
+    sad [CTFULL]        // skip unless a U
+    jmp soF
+    sad [CTINCH]        // skip unless an I
+    jmp soI
+    lac soE
+    jda szScOf
+    sad [NOPOINT]       // skip if it has a scalar
+    jmp soAN
+    dac soS
+    add [scFix:3]
+    dac soT
+    lac i soT
+    sza i               // skip if set
+    jmp soAN
+    lac soS
+    add [scVal:3]
+    dac soT
+    lac i soT
+    jmp soMil
+soI,
+    lac soE
+    add [5]
+    dac soT
+    lac i soT
+    and [0377777]       // the thousandths, CUNUSED's sign bit cleared
+soMil,
+    mul [SZUNIT * SZINCHU]
+    div [0d1000]
+    cla                 // no skip means overflow, which szPut refuses as no value
+    jmp soSet
+soF,
+    lac szWho
+    jda szSide
+    sal 4s              // SZUNIT
+soSet,
+    dac szVal
+    jsp szPut
+soAN,
+    lac soE
+    add [CW]
+    dac soE
+    jmp soAbs
+soRel,
+    jsp szRelax
+    lac i [szDirty:3]
+    sub [1]
+    dac szWho
+    sub [MAXINST]
+    sma                 // skip if an instance is the source
+    jmp soRest
+    jsp szKnown
+soRest,
+    lac [cEntries:011]
+    dac soE
+soAgain,
+    lac soE
+    sad i [cEnd:010]    // skip while entries remain
+    jmp soWd
+    lac i soE
+    sub [CTSAME]
+    spa                 // skip if a constraint on size
+    jmp soRN
+    lac soE
+    add [1]
+    dac soT
+    lac i soT
+    sad [NOPOINT]       // skip unless its instance is gone
+    jmp soRN
+    sub [MAXPTS]
+    dac szWho
+    jsp szKnown
+soRN,
+    lac soE
+    add [CW]
+    dac soE
+    jmp soAgain
+soWd,
+    lac szBad
+    sza                 // skip unless two sizes disagree
+    jmp soCon
+    dzm szWho
+    lac i [instCount:012]
+    sza i               // skip if there are instances
+    jmp soFree
+    cma
+    dac soN
+soWLoop,
+    lac szWho
+    add [szV:6]
+    dac soT
+    lac i soT
+    sza i               // skip if its size is known
+    jmp soWN
+    dac soV
+    lac szWho
+    add [iCyc:3]
+    dac soT
+    lac i soT
+    sza                 // skip unless it cycles, on the powers of two
+    jmp soWN
+    lac szWho
+    jda szSide
+    sza i               // skip if its master has a size
+    jmp soWN
+    dac soS
+    lac soV
+    mul [SZONE / SZUNIT]
+    div soS
+    jmp soOff           // no skip means overflow
+    dac soV
+    sub [SZLOW]
+    spa                 // skip unless below x1/4
+    jmp soOff
+    lac [SZHIGH]
+    sub soV
+    spa                 // skip unless above x8
+    jmp soOff
+    lac szWho
+    add [iScale:3]
+    dac soT
+    lac i soT
+    jda szSOf
+    sub soV
+    jda scAbs
+    dac soT
+    lac soV
+    sar 9s
+    sub soT
+    sma                 // skip if a change
+    jmp soWN
+    lac soV
+    jda szWOf
+    dac soS
+    lac szWho
+    add [szW:3]
+    dac soT
+    lac soS
+    dac i soT
+    lac szWho
+    dac scInst
+    lac soS
+    dac scBW
+    jsp scBoxOf
+    sza                 // skip if its box is on the screen
+    jmp soOff
+soWN,
+    idx szWho
+    isp soN             // skip once every instance is looked at
+    jmp soWLoop
+soFree,
+    lac [cEntries:011]
+    dac soE
+soFLoop,
+    lac soE
+    sad i [cEnd:010]    // skip while entries remain
+    jmp soStart
+    lac i soE
+    sas [CTSZNUM]       // skip if a Z
+    jmp soFN
+    lac soE
+    add [1]
+    dac soT
+    lac i soT
+    sad [NOPOINT]       // skip unless its instance is gone
+    jmp soFN
+    sub [MAXPTS]
+    add [szV:6]
+    dac soT
+    lac i soT
+    sza i               // skip if its size is known
+    jmp soFN
+    dac soV
+    lac soE
+    jda szScOf
+    sad [NOPOINT]       // skip if it has a scalar
+    jmp soFN
+    dac soS
+    add [scFix:3]
+    dac soT
+    lac i soT
+    sza                 // skip unless set
+    jmp soFN
+    lac soS
+    add [scVal:3]
+    dac soT
+    lac soV
+    mul [0d1000]
+    div [SZUNIT * SZINCHU]
+    cla                 // no skip means overflow, which a size on the screen cannot make
+    sad i soT           // skip if it changed
+    jmp soFN
+    dac i soT
+    law 1
+    dac i [cScChg:010]
+soFN,
+    lac soE
+    add [CW]
+    dac soE
+    jmp soFLoop
+soStart,
+    law 1
+    dac i [vaHold:011]
+    dzm i [szIdx:3]
+    jmp sfSeek
+soOff,
+    law TXSOFF
+    jmp sfNo
+soCon,
+    law TXSCONF
+    jmp sfNo
+
+// The next instance whose words are wanted; with none left, every size is set.
+sfSeek,
+    lac i [szIdx:3]
+    sad i [instCount:012] // skip while instances remain
+    jmp sfAll
+    add [szW:3]
+    dac soT
+    lac i soT
+    sas [SZSAME]        // skip unless a new word
+    jmp sfHave
+    idx i [szIdx:3]
+    jmp sfSeek
+sfHave,
+    lac i [szIdx:3]
+    dac i [vaRecI:2]
+    law 1
+    jmp i rtn
+
+// With instance szIdx's record resident, its words made ready.
+szStepOv,
+    dac rtn
+    lac i [szIdx:3]
+    add [szW:3]
+    dac soT
+    lac i soT
+    dac scBW
+    lac i [szIdx:3]
+    add [iMaster:012]
+    dac soT
+    lac i soT
+    jda scReady
+    sza                 // skip if its words are in the store
+    jmp sfRoom
+    idx i [szIdx:3]
+    jmp sfSeek
+sfRoom,
+    law TXSFULL
+    jmp sfNo
+
+sfAll,
+    dzm sfI
+    lac i [instCount:012]
+    sza i               // skip if there are instances
+    jmp sfEnd
+    cma
+    dac soN
+sfLoop,
+    lac sfI
+    add [szW:3]
+    dac soT
+    lac i soT
+    sad [SZSAME]        // skip if a new word
+    jmp sfNext
+    dac i [sizeArg:4]
+    lac sfI
+    dac i [penInst:4]
+    add [iScale:3]
+    dac soT
+    lac sfI
+    add [uSz:3]
+    dac soS
+    lac i soT
+    dac i soS
+    lio [IESIZE]
+    jda scIEnt
+    sas [3]             // skip if its tie points moved
+    jmp sfBad
+    lio [MCJDA(arcCall:4)]
+    law AECARRY
+    jda scMain
+    sza i               // skip if an arc could not follow
+    jmp sfNext
+    lio [IESZBACK]
+    jda scIEnt
+sfBad,
+    sza                 // skip if the size is set
+    jmp soCon
+sfNext,
+    idx sfI
+    isp soN             // skip once every instance is looked at
+    jmp sfLoop
+sfEnd,
+    lac i [szRet:3]
+    sza                 // skip unless this was a going back
+    jmp sfDone
+    law 1
+    dac i [szUG:3]
+sfDone,
+    dzm i [vaHold:011]
+    lac i [szArg:3]
+    dac i [sizeArg:4]
+    dzm i [szDirty:3]
+    dzm i [szNew:3]
+    dzm i [szRet:3]
+    cla
+    jmp i rtn
+
+    // A refusal: AC = the word to show.
+sfNo,
+    dac soS
+    lac i [szRet:3]
+    sza                 // skip unless this was a going back
+    jmp sfDone
+    lac soS
+    dac i [txCall:4]
+    lio [TXSAY]
+    jsp i [txEntry:012]
+    jsp sfCopy
+    lac sfSrc
+    sub [1]
+    dac soT
+    sub [MAXINST]
+    sma                 // skip if an instance is the source
+    jmp sfNoSrc
+    lac sfPrv
+    sad [NOPOINT]       // skip if it has a size to go back to
+    jmp sfNoSrc
+    dac soS
+    lac soT
+    add [szW:3]
+    dac soT
+    lac soS
+    dac i soT
+sfNoSrc,
+    lac i [szNew:3]
+    sza i               // skip if a new entry is refused
+    jmp sfGo
+    lio [CEUNDO]
+    jda scCon
+    lio [MCJSP(undoClear:4)]
+    jda scMain
+    lio [MCJSP(conShow:4)]
+    jda scMain
+sfGo,
+    jmp sfSeek
+
+// Undo of a group's change: the words before go back.
+szBackOv,
+    dac rtn
+    lac i [sizeArg:4]
+    dac i [szArg:3]
+    jsp sfCopy
+    jmp sfSeek
+
+    // szW from uSz, uSz cleared, for a going back from the first instance.
+sfCopy,
+    dap sfCpR
+    lac [szW:3]
+    dac soP
+    lac [uSz:3]
+    dac soQ
+    law i MAXINST
+    dac soN
+sfCpL,
+    lac i soQ
+    dac i soP
+    lac [SZSAME]
+    dac i soQ
+    idx soP
+    idx soQ
+    isp soN             // skip once every word is copied
+    jmp sfCpL
+    law 1
+    dac i [szRet:3]
+    dac i [vaHold:011]
+    dzm i [szIdx:3]
+sfCpR, jmp .
+rtn, 0
+soE, 0
+soT, 0
+soS, 0
+soV, 0
+soN, 0
+soP, 0
+soQ, 0
+soR, 0
+sfI, 0
+sfSrc, 0
+sfPrv, 0
+    endloc
+
+// The ratios of an S, by its index: A is B times szNum / szDen. Then the working words: the sizes
+// known, szV, the instance and value szPut takes, whether a pass told anything, whether two sizes
+// disagree.
+szNum,
+    1
+    1
+    1
+    2
+    3
+szDen,
+    3
+    2
+    1
+    1
+    1
+szVal, 0
+szWho, 0
+rxCh, 0
+szBad, 0
+szV,
+    table MAXINST, 0
+
 // Call a main-bank routine through its trampoline mainCall, given the routine's call, a jsp or
 // a jda, as an instruction word (MCJSP, MCJDA), and AC a; mainCall's mcI, the IO it is called with,
 // is left as the last caller set it, since nothing here calls a routine that reads IO.
@@ -1607,3 +3651,50 @@ scIEnt, 0
     jsp i [instEntry:7]
 rtn, jmp .
     endloc
+%%endoverlay
+
+// The main bank's six entries, root stubs calling the overlay's (scActOv to scUndoOv) through
+// the drum overlay manager, which reads the overlay into W first if W holds another. IO passes
+// through to the entry and AC comes back from it. scDone calls nothing with
+// no part held, so a mode change loads nothing, and the one call of it from inside the overlay,
+// when scActOv's call of setMode reaches setMode's hook, finds scOn 0, put down by scActOv, and
+// returns; it has its own return word, since it then runs inside scAct's call.
+// Entry and exit as the overlay's entry. Called via jsp i [X:6], from the main bank.
+scAct,
+    dac saStubR
+    %%ovcall scale, scActOv
+    jmp i saStubR
+scTarget,
+    dac saStubR
+    %%ovcall scale, scTargetOv
+    jmp i saStubR
+scLost,
+    dac saStubR
+    %%ovcall scale, scLostOv
+    jsp i [vaRec:2]   // the record of an instance just picked up
+    jmp i saStubR
+scEnd,
+    dac saStubR
+    %%ovcall scale, scEndOv
+    jmp i saStubR
+scUndo,
+    dac saStubR
+    lac scUKind
+    sas [SCKINST]       // skip if an instance's size goes back
+    jmp suStub
+    lac scUInst
+    dac i [vaRecI:2]
+    jsp i [vaRec:2]
+suStub,
+    %%ovcall scale, scUndoOv
+    jsp i [szUnd:013]   // the sizes of a group it moved
+    jmp i saStubR
+scDone,
+    dac sdStubR
+    lac scOn
+    sza i               // skip if a part is picked up
+    jmp i sdStubR
+    %%ovcall scale, scDoneOv
+    jmp i sdStubR
+saStubR, 0
+sdStubR, 0

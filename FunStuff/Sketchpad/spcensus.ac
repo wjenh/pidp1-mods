@@ -1,8 +1,8 @@
 // spcensus.ac -- the menu's census, what the drawing holds that a list's rows act on, as one
 // bit a test, for sprows.ac's rowCan.
 //
-// Bank 6, after spinit.ac. Entered from the main bank's actOpen at rowCensus, by jsp i
-// [rowCensus:6]; runs with the extend window open, reading the counts in banks 2, 3, 4, 9, 10
+// Bank 11, after spinit.ac. Entered from the main bank's actOpen at rowCensus, by jsp i
+// [rowCensus:013]; runs with the extend window open, reading the counts in banks 2, 3, 4, 9, 10
 // and 12 through their 16-bit addresses, and calls nothing.
 // Part of sketchpad.am1, included where it stands.
 
@@ -24,11 +24,11 @@ rcD, 0
 // of equal values gives +0), its sign rotated into IO by rcl, so the first test lands in the
 // sign bit. The constraint table is counted by type first: attachers, members, loads, rollers
 // and designations, a fix counted with the designations (Unfix's count wants only their sum).
-// AC and IO are clobbered. Called via jsp i [rowCensus:6].
+// AC and IO are clobbered. Called via jsp i [rowCensus:013].
 rowCensus,
     local rcClr, rcScan, rcNext, rcMast, rcMLoop, rcRtn, rcN, rcP, rcT, rcM
     dac rcRtn
-    lac [rcA:6]
+    lac [rcA:013]
     dac rcP
     law i 5
     dac rcN
@@ -55,7 +55,7 @@ rcScan,
     sub [5]
     sma                 // skip if an attacher to a designation
     jmp rcNext
-    add [rcA:6 + 5]
+    add [rcA:013 + 5]
     dac rcT
     idx i rcT
 rcNext,
@@ -68,14 +68,14 @@ rcNext,
     // The masters defined, from the arc module's directory.
 rcMast,
     dzm rcM
-    lac [mLen:2]
+    lac [mLen:5]
     dac rcP
 rcMLoop,
     lac i rcP
     sza                 // skip if the slot is empty
     idx rcM
     idx rcP
-    sas [mLen:2 + NMASTER]  // skip if past the last slot
+    sas [mLen:5 + NMASTER]  // skip if past the last slot
     jmp rcMLoop
 
     // The conditions, ROWANY first. P, the points the dot can take, is pointCount less scN, since each

@@ -1,0 +1,1100 @@
+// Life's menu and the light pen's actions, included by life.am1 in bank 0.
+// The bar, its lists, the Select box, the borders and the lattice are display words here, the
+// frame's second half, in bank 1. The main loop hands each hit the break routine posted to
+// oneHit. Uses life.am1's field routines and words, and runs, as all of it does, with extend
+// mode on.
+//
+// The menu acts only on hits, never on their absence, except for a list's idle close and a held
+// pattern's drop, since the pen reports no lift. A press is hits with no gap of PRESSGAP ms. The
+// Select box acts only on a press's first hit, so a pen slid onto it does nothing. A bar item
+// acts once, and again only after REARM frames with no menu hit. PATTERN opens the library's
+// screen, in lifelib.ac, which takes the hits while it is open.
+
+#define BARY        0d988               // the bar's baseline, the counter's too
+#define BARTHR      0d976               // a hit at or above this y is on the bar
+#define ROWY1       0d952               // a list's row k is ROWPITCH * (k - 1) below row 1
+#define ROWPITCH    0d36
+#define ROWTOP      0d940               // row 1's band of hits starts here, 12 below it
+#define BOXDX       0d120               // the box's left side, right of its list's column
+#define BOXHIT      0d110               // a list's hit this far right of its column is the box's
+#define LATWORDS    (0d2*ROWS+0d12)    // up to 3 phases of 4 words besides the rows
+
+// One bar item, or one row of a list, before its text, as its parameter word, then its place.
+#define ITEM(YY, XX) intensity(LBLI) next(point); y(YY) next(point); x(XX) next(character)
+
+// Takes every hit the break routine posted, in order, then posts the field's list once if a
+// hit changed the field. Called via jsp. AC and IO are clobbered.
+hits,   dap hix
+hsA,    lac rIdx
+        SKIP_NEXT_IF_DIFFERENT wIdx
+        jmp hiDone
+        lac i rPtr
+        dac hDrc
+        idx rPtr
+        lac i rPtr
+        dac hMs
+        idx rPtr
+        lac i rPtr
+        dac hFr
+        idx rPtr
+// The slot is free once rIdx moves past it.
+        lac rIdx
+        add [1]
+        and [RINGN-1]
+        dac rIdx
+        SKIP_NEXT_IF_AC_ZERO
+        jmp hsB
+        law ring
+        dac rPtr
+hsB,    jsp oneHit
+        jmp hsA
+hiDone, lac dirty
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp hix
+        dzm dirty
+        jsp post
+hix,    jmp .
+
+// Acts on the hit hDrc, taken at hMs on the clock in frame hFr, on the bar, the open list or
+// the lattice, by where it is. Called via jsp. AC and IO are clobbered.
+oneHit, dap ohx
+// x and y, each with the low bit drc drops restored as 0.
+        lio hDrc
+        lai
+        and [0777]
+        sal 1s
+        dac hy
+        lai
+        sar 9s
+        and [0777]
+        sal 1s
+        dac hx
+// fresh is set when the hit starts a press.
+        law 1
+        dac fresh
+        lac anyHit
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp oh1
+        lac hMs
+        sub lastMs
+        MSWRAP
+        sub [PRESSGAP]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        dzm fresh
+oh1,    lac hMs
+        dac lastMs
+        law 1
+        dac anyHit
+        lac scrGo
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp oh5
+        jsp i [libHit:3]
+        jmp ohx
+oh5,    lac hy
+        sub [BARTHR]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp ohMenu
+        lac listOn
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ohMenu
+        lac running
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ohx                         // a lattice hit from before a run began
+        jsp cellHit
+        jmp ohx
+
+// armed is set after REARM frames or more with no menu hit, mFresh after PRESSGAP ms with none.
+ohMenu, dzm lastOk                      // a stroke ends at the menu
+        dzm i [plDown:3]                // and a held pattern drops nothing
+        law 1
+        dac armed
+        dac mFresh
+        lac anyMenu
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp oh2
+        lac hFr
+        sub lastMFr
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp oh4
+        add [0377777]                   // frames wrapped, so add 2^17 in two steps
+        add [1]
+oh4,    sub [REARM+1]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        dzm armed
+        lac hMs
+        sub lastMMs
+        MSWRAP
+        sub [PRESSGAP]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        dzm mFresh
+oh2,    lac hFr
+        dac lastMFr
+        lac hMs
+        dac lastMMs
+        law 1
+        dac anyMenu
+        lac hy
+        sub [BARTHR]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp oh3
+        jsp listHit
+        jmp ohx
+oh3,    jsp barHit
+ohx,    jmp .
+
+// A hit on the bar. The item under it acts, when armed. RUN or STOP starts or stops the run,
+// STEP makes one generation while stopped, PATTERN opens the library's screen, and an item with
+// a list opens it, or closes it when it is open. Any of them closes a list open under another
+// item, and ends place mode. Called via jsp. AC and IO are clobbered.
+barHit, dap bhx
+        lac armed
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp bhx
+        jsp i [libEnd:3]
+        law 1
+        dac needFresh
+        lac hx
+        add [0d16]                      // a label's left reach belongs to it
+        sar 7s
+        dac col
+        sub [6]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp bhx
+        lac col
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp bhRun
+        sub [1]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp bhStep
+        sub [2]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp bhLib
+        lac col
+        SKIP_NEXT_IF_DIFFERENT listOn
+        jmp bhClose
+        jsp openList
+        jmp bhx
+bhClose, jsp closeList
+        jmp bhx
+bhLib,  jsp closeList
+        jsp stopRun
+        jsp i [libOpen:3]
+        jmp bhx
+bhRun,  jsp closeList
+        idx nRun
+        lac running
+        SKIP_NEXT_IF_AC_ZERO
+        jmp bhStop
+        jsp startRun
+        jmp bhx
+bhStop, jsp stopRun
+        jmp bhx
+bhStep, jsp closeList
+        lac running
+        SKIP_NEXT_IF_AC_ZERO
+        jmp bhx                         // dim while running, and inert
+        idx nStep
+        dzm undoOk
+        jsp kernel
+        idx gen
+        jsp bumpDig
+        law 1
+        dac dirty
+bhx,    jmp .
+
+// A hit below the bar while a list is open. A row lights, and the box, on a fresh press, acts
+// on the lit row and closes the list. Called via jsp. AC and IO are clobbered.
+listHit, dap lhx
+        lac listOn
+        sal 7s
+        dac lx
+        lac hx
+        sub lx
+        sub [BOXHIT]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lhBox
+// The row, by bands of ROWPITCH from ROWTOP down.
+        lac hy
+        sub [ROWTOP]
+        dac lt
+        law 1
+        dac rowK
+lh1,    lac lt
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lh2
+        add [ROWPITCH]
+        dac lt
+        idx rowK
+        jmp lh1
+lh2,    lac listOn
+        add [lsNT-2]
+        dap lh3
+lh3,    lac .
+        sub rowK
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp lhx                         // below the last row
+        jsp lightRow
+        jmp lhx
+lhBox,  lac mFresh
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lhx
+        lac litRow
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lhx
+        lac listOn
+        add [lsActT-2]
+        dap lh4
+lh4,    lac .
+        dap lh5
+lh5,    jsp .
+        jsp closeList
+lhx,    jmp .
+
+// Opens column col's list, with the speed's or the size's row lit for those two, and FIELD's
+// edge in force lit too (edgeLook), and lights its bar item. The list's words are set before
+// the jump that shows them. Called via jsp. AC and IO are clobbered.
+openList, dap olx
+        jsp closeList
+        lac col
+        dac listOn
+        lac col
+        sub [4]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ol1
+        lac speedSel
+        jmp ol2
+ol1,    sub [1]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ol3
+        lac sizeSel
+ol2,    add [1]
+        dac rowK
+        jsp lightRow
+        jsp i [edgeLook:3]
+ol3,    lac listOn
+        add [lsBlkT-2]
+        dap ol4
+ol4,    lac .
+        ior [jump next(parameter)]
+        dac i [menuJmp:1]
+        jsp setLook
+olx,    jmp .
+
+// Closes the open list, if any. The jump past it is set first, then its lit row and box put out.
+// Called via jsp. AC and IO are clobbered.
+closeList, dap clx
+        lac listOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp clx
+        lac [jump latJmp:1 next(subroutine)]
+        dac i [menuJmp:1]
+        lac [jump listEnd:1 next(parameter)]
+        dac i [boxJmp:1]
+        jsp unlight
+        dzm listOn
+        law 1
+        dac needFresh
+        jsp setLook
+clx,    jmp .
+
+// Lights row rowK of the open list, puts out the row lit before, and puts the box beside it.
+// Called via jsp. AC and IO are clobbered.
+lightRow, dap lrx
+        lac rowK
+        SKIP_NEXT_IF_DIFFERENT litRow
+        jmp lrx
+        jsp unlight
+        lac rowK
+        dac litRow
+        dac raK
+        jsp rowAddr
+        dac pa
+        lac [intensity(LITI) next(point)]
+        dac i pa
+        lac rowK
+        add [rowYT-1]
+        dap lrY
+lrY,    lac .
+        sub [6]
+        ior [y(0) next(point)]
+        dac i [boxY:1]
+        lac listOn
+        sal 7s
+        add [BOXDX]
+        ior [x(0) next(vector)]
+        dac i [boxX:1]
+        lac [jump boxBody:1 next(parameter)]
+        dac i [boxJmp:1]
+lrx,    jmp .
+
+// Puts out the lit row of the open list, if any; FIELD's edge in force stays lit (edgeLook).
+// Called via jsp. AC and IO are clobbered.
+unlight, dap ulx
+        lac litRow
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp ulx
+        dac raK
+        jsp rowAddr
+        dac pa
+        lac [intensity(LBLI) next(point)]
+        dac i pa
+        dzm litRow
+        jsp i [edgeLook:3]
+ulx,    jmp .
+
+// The address of row raK's parameter word in the open list.
+// Called via jsp. AC is the address, IO is preserved.
+rowAddr, dap rax
+        lac listOn
+        add [lsRowT-2]
+        dap ra1
+ra1,    lac .
+        add raK
+        sub [1]
+        dap ra2
+ra2,    lac .
+rax,    jmp .
+
+// The lists' actions, on the lit row litRow. Each called via jsp. AC and IO are clobbered.
+// EDIT's action. PAINT and ERASE set the pen's mode, CLEAR empties the field, UNDO takes back
+// the last edit. Each stops a run.
+actEdit, dap aex
+        jsp stopRun
+        lac litRow
+        sub [3]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp aeClr
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp aeUndo
+        lac litRow
+        sub [1]
+        dac penMode                     // 0 paint, 1 erase
+        jmp aex
+aeUndo, jsp i [libUndo:3]
+        jmp aex
+aeClr,  jsp i [libSnap:3]
+        jsp clrField
+        jsp zeroGen
+        law 1
+        dac dirty
+aex,    jmp .
+
+// SPEED's action sets the speed at once.
+actSpd, dap asx
+        lac litRow
+        sub [1]
+        dac speedSel
+asx,    jmp .
+
+// FIELD's action. Rows 1 to 4 set the size at once, and what falls outside it is cleared. Rows
+// 5 to 8 set the edge at once (lifefield.ac's edgePick). Either ends UNDO.
+actSize, dap azx
+        lac litRow
+        sub [5]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp azE
+        add [4]
+        dac sizeSel
+        jsp i [sizeSet:3]
+        dzm undoOk
+        law 1
+        dac dirty
+        jmp azx
+azE,    lia
+        jsp i [edgePick:3]
+azx,    jmp .
+
+// A hit on the lattice, while stopped with no list open. The pen's mode is applied to the cell
+// under it, and to the line from the last cell when the press goes on, UNDO's copy taken as a
+// stroke starts. With a pattern held, its ghost moves to the cell instead (libMove). After a
+// menu action the lattice waits for a fresh press, so a pen still down from the menu does not
+// draw.
+// Called via jsp. AC and IO are clobbered.
+cellHit, dap chx
+        lac needFresh
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp cht1
+        lac fresh
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp chx
+        dzm needFresh
+cht1,    lac hx
+        sub [4]
+        sar 3s
+        dac ccol
+        law FTOPY+4
+        sub hy
+        sar 3s
+        dac crow
+        jsp inSize
+        SKIP_NEXT_IF_AC_ZERO
+        jmp chOut
+        lac stampP
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp chPen
+        jsp i [libMove:3]
+        jmp chx
+chPen,  lac lastOk
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp cht2
+        lac fresh
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp chJoin
+cht2,    jsp i [libSnap:3]
+        jsp penCell
+        jmp chSave
+chJoin, jsp line
+chSave, lac crow
+        dac lastR
+        lac ccol
+        dac lastC
+        law 1
+        dac lastOk
+        jmp chx                         // penCell marks the field dirty if it changed it
+chOut,  dzm lastOk
+chx,    jmp .
+
+// Sets cell (crow, ccol) for PAINT, clears it for ERASE, if it is not so already. A cell it
+// changes marks the field dirty, and a painted one goes to the current paint list, to show
+// before the rebuilt list has it. Called via jsp. AC and IO are clobbered.
+penCell, dap pcx
+        jsp cellAt
+        and i ca                        // the cell as it is
+        lio penMode
+        SKIP_NEXT_IF_IO_IS_ZERO
+        jmp pc1
+        SKIP_NEXT_IF_AC_ZERO
+        jmp pcx                         // set already
+        jsp setCell
+        jsp ovAdd
+        jmp pc2
+pc1,    SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp pcx                         // clear already
+        jsp clrCell
+pc2,    law 1
+        dac dirty
+pcx,    jmp .
+
+// Adds cell (crow, ccol) to the current paint list, unless it is full. The entry's three words
+// go past the list's last, its jump on (the list's end) first, then the one word that links it
+// in, so the display never reads a half-written entry. Called via jsp. AC and IO are clobbered.
+ovAdd,  dap oax
+        lac ovCN
+        sub [OVCAP]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp oax                         // full, so the rebuild shows the cell
+        lac ovCN
+        sal 1s
+        add ovCN
+        add ovCB
+        dac oq                          // the entry's first word
+        dac oe
+        lac crow
+        sal 3s
+        dac ot
+        law FTOPY
+        sub ot
+        ior [y(0) next(point)]
+        dac i oq
+        idx oq
+        lac ccol
+        add [1]
+        sal 3s
+        ior [show next(subroutine)]
+        dac i oq
+        idx oq
+        lac ovCE
+        dac i oq
+        lac oe
+        ior [jump next(point)]
+        dac ot                          // the link to the entry
+        lac ovCN
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp oa1
+        lac oe
+        sub [1]                         // the last entry's jump
+        jmp oa2
+oa1,    lac ovCH
+oa2,    dac oq
+        lac ot
+        dac i oq
+        idx ovCN
+oax,    jmp .
+
+// Empties the pending paint list once the list it was built into is shown, ready zero.
+// Called via jsp. AC is clobbered, IO is preserved.
+ovDrain, dap odx
+        lac ready
+        SKIP_NEXT_IF_AC_ZERO
+        jmp odx
+        lac ovPE
+        dac i ovPH
+        dzm ovPN
+odx,    jmp .
+
+// Called from post, once the list posted before is shown. Empties the pending paint list, then
+// swaps the two, since the current one's cells are all in the list post is about to build.
+// Called via jsp. AC and IO are clobbered.
+ovTurn, dap otx
+        jsp ovDrain
+        law i 4
+        dac ot
+        law ovCB
+        dac oq
+        law ovPB
+        dac oe
+ot1,    lac i oq
+        lio i oe
+        dac i oe
+        dio i oq
+        idx oq
+        idx oe
+        isp ot
+        jmp ot1
+otx,    jmp .
+
+// Applies the pen's mode to every cell of the line from (lastR, lastC) to (crow, ccol), ends
+// included, by Bresenham's one error term over column and row, in the standard form that steps
+// the column when 2 * err >= dy and the row when 2 * err <= dx, dy taken negative.
+// Called via jsp. AC and IO are clobbered; crow and ccol are left at the far end.
+line,   dap lnx
+        lac crow
+        dac lnR1
+        lac ccol
+        dac lnC1
+        lac lastR
+        dac lnR
+        lac lastC
+        dac lnC
+        lac lnC1
+        sub lnC
+        dac lnDx
+        law 1
+        dac lnSx
+        lac lnDx
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp ln1
+        cma                             // not zero, so no minus zero
+        dac lnDx
+        law i 1
+        dac lnSx
+ln1,    lac lnR1
+        sub lnR
+        dac lnDy
+        law 1
+        dac lnSy
+        lac lnDy
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp ln2
+        law i 1
+        dac lnSy
+        lac lnDy                        // already -|dy|
+        jmp ln3
+ln2,    cla
+        sub lnDy                        // +0 when dy is 0
+ln3,    dac lnDy
+        add lnDx
+        dac lnErr
+lnLoop, lac lnR
+        dac crow
+        lac lnC
+        dac ccol
+        jsp penCell
+        lac lnC
+        SKIP_NEXT_IF_DIFFERENT lnC1
+        jmp ln4
+        jmp ln5
+ln4,    lac lnR
+        SKIP_NEXT_IF_DIFFERENT lnR1
+        jmp lnx
+ln5,    lac lnErr
+        add lnErr
+        dac lnE2
+        sub lnDy
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp ln6
+        lac lnErr
+        add lnDy
+        dac lnErr
+        lac lnC
+        add lnSx
+        dac lnC
+ln6,    lac lnDx
+        sub lnE2
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp lnLoop
+        lac lnErr
+        add lnDx
+        dac lnErr
+        lac lnR
+        add lnSy
+        dac lnR
+        jmp lnLoop
+lnx,    jmp .
+
+// Starts and stops the run. Each called via jsp. AC and IO are clobbered.
+startRun, dap sux
+        law 1
+        dac running
+        dzm undoOk
+        jsp setLook
+sux,    jmp .
+
+stopRun, dap spx
+        dzm running
+        jsp setLook
+spx,    jmp .
+
+// Brings the display words to the state. The lattice is drawn, with the small aperture that
+// picks its cells, only while stopped with no list or screen open; it is put on after the
+// aperture and taken off before it. The first item reads the action it would take, STEP is dim
+// while running, UNDO with no copy to put back, and the item whose list is open is lit.
+// Called via jsp. AC and IO are clobbered.
+setLook, dap slx
+        lac [intensity(DIMI) next(point)]
+        lio undoOk
+        SKIP_NEXT_IF_IO_IS_ZERO
+        lac [intensity(LBLI) next(point)]
+        dac i [rE4:1]
+        lac running
+        SKIP_NEXT_IF_AC_ZERO
+        jmp sl1
+        lac listOn
+        ior scrGo
+        SKIP_NEXT_IF_AC_ZERO
+        jmp sl2
+        lio [BOARDAPERTURE]
+        jsp setAp
+        lac [jump latSel next(subroutine)]     // subroutine mode, as latSel is itself a jump
+        dac i [latJmp:1]
+        jmp sl3
+sl1,    lac [jump ovPar:1 next(parameter)]
+        dac i [latJmp:1]
+sl2,    lio [MENUAPERTURE]
+        jsp setAp
+sl3,    lac running
+        SKIP_NEXT_IF_AC_ZERO
+        jmp sl4
+        lac txRun
+        dac i [barT0:1]
+        lac txRun+1
+        dac i [barT1:1]
+        lac [intensity(LBLI) next(point)]
+        dac i [barP1:1]
+        jmp sl5
+sl4,    lac txStop
+        dac i [barT0:1]
+        lac txStop+1
+        dac i [barT1:1]
+        lac [intensity(DIMI) next(point)]
+        dac i [barP1:1]
+sl5,    lac [intensity(LBLI) next(point)]
+        dac i [barP2:1]
+        dac i [barP3:1]
+        dac i [barP4:1]
+        dac i [barP5:1]
+        lac listOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp slx
+        add [barPT]
+        dap sl6
+sl6,    lac .
+        dac pa
+        lac [intensity(LITI) next(point)]
+        dac i pa
+slx,    jmp .
+
+// Sets the light pen's aperture to IO's, if it is not that already.
+// Called via jsp. AC is clobbered, IO is preserved.
+setAp,  dap sax
+        dio apWant
+        lac apWant
+        SKIP_NEXT_IF_DIFFERENT apCur
+        jmp sax
+        dac apCur
+        dpy-i LIGHTPEN
+sax,    jmp .
+
+// The menu's housekeeping, each pass of the main loop. A held pattern is dropped on the pen's
+// lift, and a list idle for LISTIDLEMS ms is closed. Called via jsp. AC and IO are clobbered.
+tidy,   dap tyx
+        jsp ovDrain
+        lac stampP
+        SKIP_NEXT_IF_AC_ZERO
+        jsp i [libTidy:3]
+        lac listOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tyx
+        rck
+        dio tyNow
+        lac tyNow
+        sub lastMMs
+        MSWRAP
+        sub [LISTIDLEMS]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jsp closeList
+tyx,    jmp .
+
+// Waits until the display ends a frame. Called via jsp. AC is clobbered, IO is preserved.
+waitFrame, dap wfx
+        lac frames
+        dac wfAt
+wf1,    lac frames
+        SKIP_NEXT_IF_DIFFERENT wfAt
+        jmp wf1
+wfx,    jmp .
+
+// Writes the size's lattice, a dim dot at each cell's place, pen on, as szLatK phases. Phase p
+// holds the size's rows p, p+K, ..., and the break routine points latSel at one phase a frame, so
+// a large size's frame stays inside t30dpy's 33 ms render. Each phase's rows run left to right
+// and back, each one visible vector and a diagonal hop K rows down to the next. With the display
+// running, it waits two frames first, so none still draws the old lattice, and one after, so a
+// frame's halt has put a whole phase in latSel before the lattice can be drawn again.
+// Called via jsp. AC and IO are clobbered.
+#define LEMIT dac i lq; idx lq
+latWrite, dap lwx
+        lac dispOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lw1
+        jsp waitFrame
+        jsp waitFrame
+// latPh is zeroed first, since the break routine's step resets any phase at or past the new latK.
+lw1,    dzm latPh
+        lac sizeSel
+        add [szLatK]
+        dap lw0
+lw0,    lac .
+        dac latK
+        add [lwHopR-1]
+        dap lw5
+lw5,    lac .
+        dac lwHR                        // the hop K rows down, rightward
+        ior [left]
+        dac lwHL
+        lac [latt:1]
+        dac lq
+        dzm lwP
+// A phase is its jump word, its parameter word, its first row's place, then its rows.
+lw2,    lac lwP
+        add [latJw]
+        dap lw6
+        lac lq
+        ior [jump next(parameter)]
+lw6,    dac .
+        lac [scale(3) intensity(LATI) next(point)]
+        LEMIT
+        lac sR0
+        add lwP
+        sal 3s
+        dac lwRun
+        law FTOPY
+        sub lwRun
+        ior [y(0) next(point)]
+        LEMIT
+        lac sC0
+        sal 3s                          // one pitch left of the first column
+        ior [x(0) next(vector)]
+        LEMIT
+        lac lwP
+        dac lwR                         // the row, from the size's first
+        dzm lwOdd
+// A row is its visible run, then, but in the phase's last row, the hop to the next row's far end.
+lw3,    lac sCN
+        ior [visible]
+        lio lwOdd
+        SKIP_NEXT_IF_IO_IS_ZERO
+        ior [left]
+        dac lwRun
+        lac lwR
+        add latK
+        dac lwR
+        sub sRN
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lw4
+        lac lwRun
+        LEMIT
+        lac lwHR
+        lio lwOdd
+        SKIP_NEXT_IF_IO_IS_ZERO
+        lac lwHL
+        LEMIT
+        lac lwOdd
+        xor [1]
+        dac lwOdd
+        jmp lw3
+lw4,    lac lwRun
+        ior [end]
+        LEMIT
+        lac [next(subroutine)]
+        LEMIT
+        lac [jump ovPar:1 next(parameter)]
+        LEMIT
+        idx lwP
+        sub latK
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp lw2
+        lac latJw
+        dac latSel
+        lac dispOn
+        SKIP_NEXT_IF_AC_ZERO
+        jsp waitFrame
+lwx,    jmp .
+
+bank 1
+0/
+// The frame's second half, in bank 1, reached by the jump that ends the cells' list. It draws a
+// border below the largest size, then the pen's part, the bar and the open list or the lattice,
+// then the paint lists and the tail.
+// The program changes only whole words of it while the display runs.
+
+// The borders, 4 units outside the outer cells at scale 1, so that none of their dots, 2 apart,
+// is at a cell's place. Each starts at its bottom left and goes round clockwise.
+bord1,  scale(1) intensity(BORDI) next(point)
+        y(0d124) next(point)
+        x(0d148) next(vector)
+        up deltay(0d120) visible
+        up deltay(0d120) visible
+        up deltay(0d120) visible
+        right deltax(0d120) visible
+        right deltax(0d120) visible
+        right deltax(0d120) visible
+        down deltay(0d120) visible
+        down deltay(0d120) visible
+        down deltay(0d120) visible
+        left deltax(0d120) visible
+        left deltax(0d120) visible
+        left deltax(0d120) visible end
+        next(subroutine)
+        jump penHead:1 next(parameter)
+bord2,  scale(1) intensity(BORDI) next(point)
+        y(0d244) next(point)
+        x(0d268) next(vector)
+        up deltay(0d120) visible
+        up deltay(0d120) visible
+        right deltax(0d120) visible
+        right deltax(0d120) visible
+        down deltay(0d120) visible
+        down deltay(0d120) visible
+        left deltax(0d120) visible
+        left deltax(0d120) visible end
+        next(subroutine)
+        jump penHead:1 next(parameter)
+bord3,  scale(1) intensity(BORDI) next(point)
+        y(0d356) next(point)
+        x(0d380) next(vector)
+        up deltay(0d64) visible
+        up deltay(0d64) visible
+        right deltax(0d64) visible
+        right deltax(0d64) visible
+        down deltay(0d64) visible
+        down deltay(0d64) visible
+        left deltax(0d64) visible
+        left deltax(0d64) visible end
+
+// The one pen-on word of the frame, so one hit a frame, the display resumed with the pen off.
+penHead, scale(1) intensity(LBLI) lpon next(point)
+
+// The bar, six items on a 128-unit pitch.
+barP0,  ITEM(BARY, 0)
+barT0,  0                               // RUN or STOP, from txRun or txStop
+barT1,  0
+barP1,  ITEM(BARY, 0d128)
+        type340 "\USTEP"
+barP2,  ITEM(BARY, 0d256)
+        type340 "\UEDIT"
+barP3,  ITEM(BARY, 0d384)
+        type340 "\UPATTERN"
+barP4,  ITEM(BARY, 0d512)
+        type340 "\USPEED"
+barP5,  ITEM(BARY, 0d640)
+        type340 "\UFIELD"
+        next(subroutine)
+menuJmp, jump latJmp:1 next(subroutine)   // to the open list's first word, or on
+latJmp, jump ovPar:1 next(parameter)      // to the lattice while stopped, or on
+
+// The lists, each row's words lit in place, each list ending at the box's jump.
+lsEdit,
+rE1,    ITEM(ROWY1, 0d256)
+        type340 "\UPAINT"
+rE2,    ITEM(ROWY1-ROWPITCH, 0d256)
+        type340 "\UERASE"
+rE3,    ITEM(ROWY1-0d2*ROWPITCH, 0d256)
+        type340 "\UCLEAR"
+rE4,    ITEM(ROWY1-0d3*ROWPITCH, 0d256)
+        type340 "\UUNDO"
+        next(subroutine)
+        jump boxJmp:1 next(subroutine)
+lsSpd,
+rS1,    ITEM(ROWY1, 0d512)
+        type340 "\UFAST"
+rS2,    ITEM(ROWY1-ROWPITCH, 0d512)
+        type340 "\U8/S"
+rS3,    ITEM(ROWY1-0d2*ROWPITCH, 0d512)
+        type340 "\U4/S"
+rS4,    ITEM(ROWY1-0d3*ROWPITCH, 0d512)
+        type340 "\U2/S"
+rS5,    ITEM(ROWY1-0d4*ROWPITCH, 0d512)
+        type340 "\U1/S"
+rS6,    ITEM(ROWY1-0d5*ROWPITCH, 0d512)
+        type340 "\U1/2 S"
+        next(subroutine)
+        jump boxJmp:1 next(subroutine)
+lsSize,
+rZ1,    ITEM(ROWY1, 0d640)
+        type340 "\U126X120"
+rZ2,    ITEM(ROWY1-ROWPITCH, 0d640)
+        type340 "\U90X90"
+rZ3,    ITEM(ROWY1-0d2*ROWPITCH, 0d640)
+        type340 "\U60X60"
+rZ4,    ITEM(ROWY1-0d3*ROWPITCH, 0d640)
+        type340 "\U32X32"
+rZ5,    ITEM(ROWY1-0d4*ROWPITCH, 0d640)
+        type340 "\UDEAD"
+rZ6,    ITEM(ROWY1-0d5*ROWPITCH, 0d640)
+        type340 "\UMIRROR"
+rZ7,    ITEM(ROWY1-0d6*ROWPITCH, 0d640)
+        type340 "\UTORUS"
+rZ8,    ITEM(ROWY1-0d7*ROWPITCH, 0d640)
+        type340 "\UOPEN"
+        next(subroutine)
+        jump boxJmp:1 next(subroutine)
+
+// The Select box, beside the lit row, is a square of 24 units with its diagonals, so a pen
+// anywhere in it is within reach of a line. Shown by its jump, placed by its y and x words.
+boxJmp, jump listEnd:1 next(parameter)
+boxBody, intensity(LBLI) next(point)
+boxY,   y(0) next(point)
+boxX,   x(0) next(vector)
+        up deltay(0d12) visible
+        right deltax(0d12) visible
+        down deltay(0d12) visible
+        left deltax(0d12) visible
+        up deltay(0d12) right deltax(0d12) visible
+        left deltax(0d12)
+        down deltay(0d12) right deltax(0d12) visible end
+listEnd, next(subroutine)
+        jump ovPar:1 next(parameter)
+
+// The paint lists, drawn every frame after the lattice or the open list and before the held
+// pattern's ghost (lifelib.ac's ghJmp) and the tail. They show cells just painted before the
+// rebuilt list has them (ovAdd, ovTurn). An entry is a y point, an x point shown, and a jump
+// on. A head jumps to its first entry, or on when empty.
+ovPar,  intensity(CELLI) lpoff next(subroutine)
+ovH0,   jump ovH1:1 next(subroutine)
+ovH1,   jump ghJmp:1 next(subroutine)
+ovE0,
+        table (0d3*OVCAP)
+ovE1,
+        table (0d3*OVCAP)
+
+// The lattice's phases, written by latWrite; latSel, in bank 0, jumps to one a frame.
+latt,
+        table LATWORDS
+
+// scanRow's runs of a 6-cell chunk, by its value, the 040 bit its first cell. Each run is 6
+// bits from the high end, its first place plus 1, then its last place plus 2, and 0 ends them.
+runTab,
+        0; 0670000; 0560000; 0570000; 0450000; 0456700; 0460000; 0470000
+        0340000; 0346700; 0345600; 0345700; 0350000; 0356700; 0360000; 0370000
+        0230000; 0236700; 0235600; 0235700; 0234500; 0234567; 0234600; 0234700
+        0240000; 0246700; 0245600; 0245700; 0250000; 0256700; 0260000; 0270000
+        0120000; 0126700; 0125600; 0125700; 0124500; 0124567; 0124600; 0124700
+        0123400; 0123467; 0123456; 0123457; 0123500; 0123567; 0123600; 0123700
+        0130000; 0136700; 0135600; 0135700; 0134500; 0134567; 0134600; 0134700
+        0140000; 0146700; 0145600; 0145700; 0150000; 0156700; 0160000; 0170000
+
+bank 0
+
+// The texts the first item takes, two words each.
+txRun,  type340 "\URUN "
+txStop, type340 "\USTOP"
+
+// By list, from EDIT's column 2, its first word, its rows, its rows' parameter words, its action.
+// PATTERN, column 3, opens the library's screen instead, and has no list.
+lsBlkT, lsEdit:1; 0; lsSpd:1; lsSize:1
+lsNT,   4; 0; 6; 0d8
+lsRowT, rtEdit; 0; rtSpd; rtSize
+lsActT, actEdit; 0; actSpd; actSize
+rtEdit, rE1:1; rE2:1; rE3:1; rE4:1
+rtSpd,  rS1:1; rS2:1; rS3:1; rS4:1; rS5:1; rS6:1
+rtSize, rZ1:1; rZ2:1; rZ3:1; rZ4:1; rZ5:1; rZ6:1; rZ7:1; rZ8:1
+barPT,  barP0:1; barP1:1; barP2:1; barP3:1; barP4:1; barP5:1
+rowYT,  ROWY1; ROWY1-ROWPITCH; ROWY1-0d2*ROWPITCH; ROWY1-0d3*ROWPITCH
+        ROWY1-0d4*ROWPITCH; ROWY1-0d5*ROWPITCH; ROWY1-0d6*ROWPITCH; ROWY1-0d7*ROWPITCH
+
+// The menu's state. lifelib.ac's startOver zeroes listOn to lastC as one block.
+listOn, 0                               // the open list's column, 2 to 5, or 0
+litRow, 0                               // its lit row, from 1, or 0
+penMode, 0                              // 0 PAINT, 1 ERASE
+stampP, 0                               // the held pattern's library entry plus 1, or 0
+dirty,  0                               // a hit changed the field, so post its list
+needFresh, 0                            // the lattice waits for a fresh press
+apCur,  0                               // the aperture set
+apWant, 0
+nRun,   0                               // RUN and STOP's actions, counted
+nStep,  0                               // STEP's
+
+// The hit being taken, and what is kept between hits.
+hDrc,   0
+hMs,    0
+hFr,    0
+hx,     0
+hy,     0
+fresh,  0
+armed,  0
+mFresh, 0
+anyHit, 0
+lastMs, 0
+anyMenu, 0
+lastMFr, 0
+lastMMs, 0
+lastOk, 0                               // lastR and lastC hold the press's last cell
+lastR,  0
+lastC,  0
+
+// Working words.
+col,    0
+lx,     0
+lt,     0
+rowK,   0
+raK,    0
+pa,     0
+lnR,    0
+lnC,    0
+lnR1,   0
+lnC1,   0
+lnDx,   0
+lnDy,   0
+lnSx,   0
+lnSy,   0
+lnErr,  0
+lnE2,   0
+tyNow,  0
+wfAt,   0
+lq,     0
+lwP,    0                               // the phase being written
+lwR,    0
+lwHR,   0
+lwHL,   0
+lwOdd,  0
+lwRun,  0
+
+// The hop K rows down to a phase's next row, rightward, by K.
+lwHopR, right deltax(1) down deltay(1)
+        right deltax(1) down deltay(2)
+        right deltax(1) down deltay(3)
+
+// The paint lists, the current one, which ovAdd adds to, and the pending one, whose cells are
+// in the list last built. Each has its entries' address, its head's, its empty head (its jump
+// on) and its count, in that order, which ovTurn swaps.
+ovCB,   ovE0:1
+ovCH,   ovH0:1
+ovCE,   jump ovH1:1 next(subroutine)
+ovCN,   0
+ovPB,   ovE1:1
+ovPH,   ovH1:1
+ovPE,   jump ghJmp:1 next(subroutine)
+ovPN,   0
+oq,     0
+oe,     0
+ot,     0

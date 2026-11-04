@@ -1,0 +1,43 @@
+// Life's settings, included by life.am1 before its code.
+// Each may be changed without changing how the program works, within the limit its comment
+// states.
+
+// The light pen's apertures (LIGHTPEN/lightpen.ah).
+// The lattice needs a reach under half the cells' pitch of 8, or drc can name a neighbor.
+// The menu's labels take a larger one.
+#define BOARDAPERTURE APERTURE100       // the lattice, while stopped with no list or screen open
+#define MENUAPERTURE  APERTURE200       // the bar, its lists and the library's screen
+
+// Intensities, 0 to 7.
+#define CELLI       6                   // the cells, the counter and the library's previews
+#define LBLI        4                   // a label
+#define LITI        7                   // a highlighted label
+#define DIMI        3                   // a dim label
+#define BORDI       2                   // a smaller size's border
+#define LATI        0                   // the lattice; the emulator's pen sees intensity 0
+#define GHI         3                   // a held pattern's ghost
+
+// The pen's timing.
+#define PRESSGAP    0d250               // ms with no hit that end a press
+#define REARM       3                   // frames with no menu hit before a bar item acts again
+#define LISTIDLEMS  0d4000              // ms with no menu hit that close a list
+
+// Milliseconds between generations for SPEED's rows 2 to 6.
+// Row 1, FAST, waits for none.
+// Their labels in SPEED's list, in lifemenu.ac, are text, so a changed period needs its label
+// changed.
+#define SPEEDMS1    0d125               // 8/S
+#define SPEEDMS2    0d250               // 4/S
+#define SPEEDMS3    0d500               // 2/S
+#define SPEEDMS4    0d1000              // 1/S
+#define SPEEDMS5    0d2000              // 1/2 S
+
+// Capacities.
+// Each buffer is in bank 1 but the ring, which is in bank 0, where few words are free.
+#define RINGN       0d16                // pen hits the break routine's ring holds, 3 words each;
+                                        // a power of two, and a full ring drops hits
+#define OVCAP       0d32                // cells each paint list holds, 3 words each; past it, a
+                                        // painted cell shows only once the list is rebuilt
+#define PVCAP       0d160               // cells a preview shows, 2 words each in two buffers; the
+                                        // largest entry, GUNS, has 144
+#define GHCAP       0d64                // runs a ghost shows, 2 words each in two buffers

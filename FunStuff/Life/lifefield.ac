@@ -1,0 +1,478 @@
+// lifefield.ac -- the field's size and its edges, included by life.am1 in bank 3 after
+// lifelib.ac. FIELD's list chooses both. Its rows 1 to 4 set the size, sizeSel, and its rows 5
+// to 8 the edge, edgeSel, 0 DEAD, 1 MIRROR, 2 TORUS, 3 OPEN.
+//
+// The kernel works on a row at a time in a slot, a copy of the row with a zero word each side
+// (life.am1). DEAD leaves every place beyond the size dead. MIRROR and TORUS feed those places.
+// The rows beyond the first and the last are wrap rows, field rows the kernel reads but never
+// writes, filled before each generation by wrapIn and cleared after it by wrapOut. The columns
+// beyond the first and the last are set in each slot as it is loaded, by life.am1's colWrap, at
+// the four places edgeSet writes into colP. A mirror lies between the edge cell and the place
+// beyond it, so that place holds the edge cell's state; a torus's holds the far edge's.
+// OPEN, at the three smaller sizes only, runs the kernel over the whole field while the
+// display, the pen and the clip keep to the size. What leaves the size moves on, out of sight,
+// in the band around it, and is cleared when the size or the edge next changes.
+//
+// Needs bank 3. Bank 0 calls the entries below by jsp i to their full address, with the return
+// in AC, and each returns by jmp i. This code calls bank 0's routines through far and reaches
+// bank 0's words by their full addresses.
+
+// Sets the size sizeSel, with its bounds, its masks, where the build starts, the jump that ends
+// the cells' list, the edge for it and the lattice, then clears every cell outside it. Under
+// OPEN the band is cleared at the size in force first.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+sizeSet, dac ssR
+        lac i [edgeSel:0]
+        sas [3]
+        jmp fs0
+        FAR(clipField)
+fs0,    lac i [sizeSel:0]
+        and [3]
+        dac i [sizeSel:0]
+        dac zs
+        add [szR0]
+        dap fs1
+fs1,    lac .
+        dac i [sR0:0]
+        dac zr0
+        lac zs
+        add [szRN]
+        dap fs2
+fs2,    lac .
+        dac i [sRN:0]
+        dac zrn
+        lac zs
+        add [szC0]
+        dap fs3
+fs3,    lac .
+        dac i [sC0:0]
+        lac zs
+        add [szCN]
+        dap fs4
+fs4,    lac .
+        dac i [sCN:0]
+        lac zs
+        add [szBord]
+        dap fs5
+fs5,    lac .
+        dac i [bordJw:0]
+// The size's masks, 7 a size, for the clip and the build.
+        lac zs
+        sal 3s
+        sub zs
+        add [szMask:3]
+        dac fpp
+        lac [dm:0]
+        dac fmp
+        jsp cp7
+// Where the build starts, as the size's first row, its flag, its y and minus its rows.
+        lac zr0
+        sal 3s
+        sub zr0
+        add [field:4]
+        dac i [dRow0:0]
+        lac zr0
+        add [rowFlag:4]
+        dac i [dFlg0:0]
+        lac zr0
+        sal 3s
+        dac zt
+        lac [y(FTOPY) next(point)]
+        sub zt
+        dac i [dY0:0]
+        cla
+        sub zrn
+        dac i [dNeg:0]
+        jsp edgeSet
+        FAR(clipField)
+        FAR(latWrite)
+        jmp i ssR
+
+// Sets the edge in IO, 0 to 3, at once, for FIELD's rows 5 to 8. OPEN at 126x120 does nothing.
+// Under OPEN, a change, or OPEN chosen again, clears the band first. It ends UNDO.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+edgePick, dac epR
+        dio epE
+        lac epE
+        sas [3]
+        jmp ep1
+        lac i [sizeSel:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i epR
+ep1,    lac i [edgeSel:0]
+        sas [3]
+        jmp ep2
+        FAR(clipField)
+ep2,    lac epE
+        dac i [edgeSel:0]
+        jsp edgeSet
+        dzm i [undoOk:0]
+        law 1
+        dac i [dirty:0]
+        jmp i epR
+
+// Sets the edge edgeSel for the size in force, with the kernel's first row, its flag, its rows
+// and its masks, and the wrap rows and the column wrap's places, or no wrap. OPEN at 126x120
+// becomes DEAD.
+// Called via jsp. AC and IO are clobbered.
+edgeSet, dap esx
+        lac i [edgeSel:0]
+        and [3]
+        dac ze
+        sas [3]
+        jmp es1
+        lac i [sizeSel:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        dzm ze
+es1,    lac ze
+        dac i [edgeSel:0]
+// The kernel's rows and masks are the size's, or under OPEN the whole field's.
+        lac i [sR0:0]
+        dac kr0
+        lac i [sRN:0]
+        dac krn
+        lac [dm:0]
+        dac fpp
+        lac ze
+        sas [3]
+        jmp es2
+        dzm kr0
+        lac [ROWS]
+        dac krn
+        lac [szMask:3]                  // 126x120's, every column
+        dac fpp
+es2,    lac [cm:0]
+        dac fmp
+        jsp cp7
+        lac kr0
+        sal 3s
+        sub kr0
+        add [field:4]
+        dac i [fRow0:0]
+        dac zf
+        lac kr0
+        add [live:4]
+        dac i [lRow0:0]
+        dac zl
+        cla
+        sub krn
+        dac i [rowNeg:0]
+        lac ze
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp esD
+        sas [3]
+        jmp esW
+// DEAD and OPEN have no wrap, and the slots' zero words are cleared of any bit a wrap left.
+esD,    dzm wrapOn
+        lac [jmp colNone:0]
+        dac i [colJ:0]
+        lac [slots:0]
+        dac fpp
+        law i 3
+        dac zn
+esZ,    dzm i fpp
+        lac fpp
+        add [0d8]
+        dac fpp
+        dzm i fpp
+        add [0d16]
+        dac fpp
+        isp zn
+        jmp esZ
+        jmp esx
+// MIRROR and TORUS. The wrap rows are the row above the first and the row below the last, with
+// their flags. MIRROR copies the first and last rows into them, TORUS the last and first.
+esW,    law 1
+        dac wrapOn
+        lac zf
+        sub [7]
+        dac wAd
+        lac krn
+        sal 3s
+        sub krn
+        add zf
+        dac wBd
+        sub [7]
+        dac zlr
+        lac zl
+        dac fAd
+        add krn
+        dac zlf
+        add [1]
+        dac fBd
+        lac zl
+        add [1]
+        dac zff
+        lac zf
+        dac wAs
+        lac zff
+        dac fAs
+        lac zlr
+        dac wBs
+        lac zlf
+        dac fBs
+        lac ze
+        sas [2]
+        jmp esC
+        lac zlr
+        dac wAs
+        lac zlf
+        dac fAs
+        lac zf
+        dac wBs
+        lac zff
+        dac fBs
+// The column wrap's places, in colP's order. The place before the first column takes the
+// first's state (MIRROR) or the last's (TORUS), the place after the last the last's or the
+// first's. Each source is an offset in the slot and its bit, each place those and its bit's
+// complement.
+esC,    lac i [sC0:0]
+        dac zc0
+        add i [sCN:0]
+        sub [1]
+        dac zcl
+        lac zc0
+        dac zsl
+        lac zcl
+        dac zsr
+        lac ze
+        sas [2]
+        jmp esP
+        lac zcl
+        dac zsl
+        lac zc0
+        dac zsr
+esP,    lac [colP:0]
+        dac fmp
+        lac zsl
+        dac pCol
+        jsp place
+        jsp putS
+        lac zc0
+        sub [1]
+        dac pCol
+        jsp place
+        jsp putD
+        lac zsr
+        dac pCol
+        jsp place
+        jsp putS
+        lac zcl
+        add [1]
+        dac pCol
+        jsp place
+        jsp putD
+        lac [jmp colWrap:0]
+        dac i [colJ:0]
+esx,    jmp .
+
+// Finds column pCol, -1 to 126, in a slot. The column is passed in pCol, not in AC, which jsp
+// overwrites with the return. Returns in pOff its word's offset from the slot's start, which
+// holds the zero word before the row, and in pBit its bit.
+// Called via jsp. AC is clobbered, IO is preserved.
+place,  dap plx
+        lac pCol
+        add [0d18]
+        dac zp
+        dzm pOff
+pl1,    lac zp
+        sub [0d18]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp pl2
+        dac zp
+        idx pOff
+        jmp pl1
+pl2,    lac zp
+        add [bitTab:0]
+        dac zq
+        lac i zq
+        dac pBit
+plx,    jmp .
+
+// Stores a source's offset and bit at fmp, and moves fmp past them.
+// Called via jsp. AC is clobbered, IO is preserved.
+putS,   dap psx
+        lac pOff
+        dac i fmp
+        idx fmp
+        lac pBit
+        dac i fmp
+        idx fmp
+psx,    jmp .
+
+// Stores a place's offset, bit and the bit's complement at fmp, and moves fmp past them.
+// Called via jsp. AC is clobbered, IO is preserved.
+putD,   dap pdx
+        lac pOff
+        dac i fmp
+        idx fmp
+        lac pBit
+        dac i fmp
+        idx fmp
+        lac pBit
+        cma
+        dac i fmp
+        idx fmp
+pdx,    jmp .
+
+// Copies 7 words from fpp to fmp, and moves both past them.
+// Called via jsp. AC is clobbered, IO is preserved.
+cp7,    dap c7x
+        law i 7
+        dac zn
+c71,    lac i fpp
+        dac i fmp
+        idx fpp
+        idx fmp
+        isp zn
+        jmp c71
+c7x,    jmp .
+
+// Fills the wrap rows and their flags under MIRROR and TORUS, from the kernel before a
+// generation. Both are copied before the field is rewritten in place, so the row below the last
+// holds the first row's state as it was.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+wrapIn, dac wiR
+        lac wrapOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i wiR
+        lac wAs
+        dac fpp
+        lac wAd
+        dac fmp
+        jsp cp7
+        lac wBs
+        dac fpp
+        lac wBd
+        dac fmp
+        jsp cp7
+        lac i fAs
+        dac i fAd
+        lac i fBs
+        dac i fBd
+        jmp i wiR
+
+// Clears the wrap rows and their flags again, from the kernel after a generation, so every
+// cell outside the size is dead between generations.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+wrapOut, dac woR
+        lac wrapOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i woR
+        lac wAd
+        dac fmp
+        jsp z7
+        lac wBd
+        dac fmp
+        jsp z7
+        dzm i fAd
+        dzm i fBd
+        jmp i woR
+
+// Zeroes 7 words from fmp. Called via jsp. AC is clobbered, IO is preserved.
+z7,     dap z7x
+        law i 7
+        dac zn
+z71,    dzm i fmp
+        idx fmp
+        isp zn
+        jmp z71
+z7x,    jmp .
+
+// Lights the edge in force while FIELD's list is open, with OPEN dim at 126x120 and the other
+// edges at a label's intensity. From openList, and from unlight once it has put a row out.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+edgeLook, dac elR
+        lac i [listOn:0]
+        sas [5]
+        jmp i elR
+        lac [rtSize:0]
+        add [4]
+        dac fpp
+        dzm zk
+el1,    lac i fpp
+        dac fmp
+        lac [intensity(LBLI) next(point)]
+        dac zw
+        lac zk
+        sas [3]
+        jmp el2
+        lac i [sizeSel:0]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp el2
+        lac [intensity(DIMI) next(point)]
+        dac zw
+el2,    lac i [edgeSel:0]
+        sas zk
+        jmp el3
+        lac [intensity(LITI) next(point)]
+        dac zw
+el3,    lac zw
+        dac i fmp
+        idx fpp
+        idx zk
+        sas [4]
+        jmp el1
+        jmp i elR
+
+// The sizes, by sizeSel, as first row, rows, first column, columns, the jump that ends the
+// cells' list, and 7 column masks each. Each is centered at the same pitch, about half the one before;
+// the smaller three are square. The lattice's phases, szLatK, are in bank 0, for latWrite.
+szR0,   0; 0d15; 0d30; 0d44
+szRN,   0d120; 0d90; 0d60; 0d32
+szC0,   0; 0d18; 0d33; 0d47
+szCN,   0d126; 0d90; 0d60; 0d32
+szBord, jump penHead:1 next(parameter)
+        jump bord1:1 next(parameter)
+        jump bord2:1 next(parameter)
+        jump bord3:1 next(parameter)
+szMask, 0777777; 0777777; 0777777; 0777777; 0777777; 0777777; 0777777
+        0; 0777777; 0777777; 0777777; 0777777; 0777777; 0
+        0; 07; 0777777; 0777777; 0777777; 0700000; 0
+        0; 0; 0177; 0777777; 0774000; 0; 0
+
+// The wrap rows, as edgeSet left them. These are the full addresses of the rows and flags
+// copied into them (s) and of the wrap rows themselves (d), above (A) and below (B) the size.
+wrapOn, 0                               // 1 under MIRROR and TORUS
+wAs,    0
+wAd,    0
+wBs,    0
+wBd,    0
+fAs,    0
+fAd,    0
+fBs,    0
+fBd,    0
+
+// Returns, and working words.
+ssR,    0
+epR,    0
+epE,    0
+wiR,    0
+woR,    0
+elR,    0
+fpp,    0
+fmp,    0
+zs,     0
+ze,     0
+zr0,    0
+zrn,    0
+zt,     0
+zn,     0
+kr0,    0
+krn,    0
+zf,     0
+zl,     0
+zlr,    0
+zlf,    0
+zff,    0
+zc0,    0
+zcl,    0
+zsl,    0
+zsr,    0
+zp,     0
+zq,     0
+zk,     0
+zw,     0
+pCol,   0
+pOff,   0
+pBit,   0

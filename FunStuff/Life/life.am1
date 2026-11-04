@@ -1,0 +1,1176 @@
+Conway's Game of Life on the Type 340
+// Life on a field of up to 126 columns by 120 rows, with dead, mirror, torus or open edges.
+// It is shown on the Type 340 one dot a cell, 8 units apart, under a menu bar with a 7-digit
+// generation counter at the top right.
+// The light pen works the menu and, while stopped, paints and erases cells on a dim lattice.
+// lifemenu.ac has the menu and the pen's actions, lifelib.ac the pattern library and the placing
+// of its patterns, and lifefield.ac the field's size and edges.
+// life.ah has the settings, such as the pen's apertures, the intensities and the speeds.
+// It starts running the four guns at the largest size with dead edges and the fastest speed.
+//
+// A debugger may set these words before starting at go.
+// patSel is the whole field, 0 the guns, 1 the ALGOL 68 program's opening, 2 a third pattern.
+// speedSel is SPEED's row less 1, 0 to 5.
+// sizeSel is FIELD's row less 1, 0 to 3, and edgeSel FIELD's row less 5, 0 to 3.
+// stopAt stops the run after that generation, and done is set once that generation is shown.
+// A build that defines LIFE_TESTPATTERN takes the third pattern from lifetest.ah.
+// A start at go after a run keeps those four words, so the size, edge, speed and whole field
+// last chosen stay, and that field is loaded again.
+// The pen and the menu go back to how a load leaves them (lifelib.ac's startOver).
+//
+// Needs a PDP-1D (lia), the BBN clock, the Type 340 on SBS channel 0, and banks 0 to 5.
+// Bank 0 holds the code and the break routine.
+// Bank 1 holds the menu's display words, the lattice and the library's screen and ghost, which
+// the display reaches by jump.
+// Banks 5 and 2 hold the two lists of the cells, one shown while the other is built.
+// Bank 3 holds the library, its code and patterns, and the code that sets the size and edges.
+// Bank 4 holds the field, with a spare row before and after it, its row flags and UNDO's copy.
+// Extend mode is on throughout, so every pointer holds a full address.
+//
+// 03-Nov-2026 Claude: the engine and the display.
+// 03-Nov-2026 Claude: the menu, the pen and the field sizes, with lifemenu.ac.
+// 04-Nov-2026 Claude: comments of every file cleaned for release, no code changed.
+
+#include <TYPE340/type340defs.ah>
+#include <CLOCK/clockdefs.ah>
+#include <AIDS/skipmacros.ah>
+#include <LIGHTPEN/lightpen.ah>
+#include "life.ah"
+
+#define ROWS        0d120
+#define FIELDWORDS  0d840               // 7 words a row, 18 cells a word, the high bit leftmost
+#define LIVEWORDS   0d122               // a flag a row, with a zero row above and below
+#define FIELDSPAN   (FIELDWORDS+0d7+LIVEWORDS)  // the field, the spare row after it, the flags
+#define SLOTWORDS   0d72                // three slots of xb (9), lo (7), hi (7) and mk (1)
+#define PITCH       0d8                 // units between cells, one step of a scale 3 vector
+#define FTOPY       0d960               // y of row 0; row 119 is at 8
+#define CNTX        0d760
+#define CNTY        0d988
+#define BUFA        050000              // the two lists of the cells, a bank each
+#define BUFB        020000
+#define LISTCAP     (0d4096-0d2-0d129)  // a row is at most 129 words, the list's end 2
+#define RAWMARK     0400001             // a pattern's first word when a field image follows
+#define PATEND      0400000             // a cell list's end
+
+// List word to the next free place of the list being built.
+#define EMIT dac i lpp; idx lpp
+
+// A difference of two clock readings, in AC, brought into 0 to 59,999, where the clock wraps.
+#define MSWRAP SKIP_NEXT_IF_AC_NOT_NEGATIVE; add [0d60000]
+
+0/
+    0                   // the break saves AC here
+    0                   // and the PC, which jmp i 1 returns through
+    0                   // and IO
+    jmp brk
+
+100/
+go,     lem
+        lsm
+        jsp type340halt
+        cbs
+        lac [clsena]
+        cls
+        eem
+
+        dzm gen
+        dzm ready
+        dzm done
+        dzm frames
+        dzm shown
+        dzm dispOn
+        law 1
+        dac running
+        jsp clrState
+        jsp i [sizeSet:3]
+        jsp i [libLoad:3]
+        jsp i [startOver:3]             // the pen and the menu as a load leaves them
+        jsp setLook
+
+// Generation 0 goes straight into list A, and the display starts on it.
+// Arming the pen can latch a break request, so it is dropped before breaks are enabled.
+        lac [BUFA]
+        dac bbase
+        jsp build
+        rck
+        dio tLast
+        dio tFirst
+        cbs
+        esm
+        lio [BUFA]
+        dla
+        law 1
+        dac dispOn
+
+// Stopped, the loop takes the pen's hits and does the menu's housekeeping, nothing else.
+main,   jsp hits
+        jsp tidy
+        lac running
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp main
+        lac stopAt
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp mPace
+        SKIP_NEXT_IF_DIFFERENT gen
+        jmp mStop
+
+// Running, the loop waits for the speed's period, taking the hits meanwhile.
+// The period is read again each pass, so a new speed acts at once.
+// Then it runs a generation and posts its list.
+mPace,  jsp hits
+        jsp tidy
+        lac running
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp main
+        lac speedSel
+        and [7]
+        add [periods]
+        dap mp1
+mp1,    lac .
+        dac period
+        rck
+        dio tNow
+        lac tNow
+        sub tLast
+        MSWRAP
+        sub period
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp mGo
+        jmp mPace
+mGo,    lac tNow
+        dac tLast
+        lac gen
+        SKIP_NEXT_IF_AC_ZERO
+        jmp mKern
+        lac tNow
+        dac tFirst
+
+mKern,  jsp kernel
+        idx gen
+        jsp bumpDig
+        jsp post
+        jmp main
+
+// At stopAt, stop, wait until the last list is shown, set done, and leave the display running.
+mStop,  jsp stopRun
+        dzm stopAt
+mS1,    lac ready
+        SKIP_NEXT_IF_AC_ZERO
+        jmp mS1
+        law 1
+        dac done
+        jmp main
+
+// The break routine.
+// A pen hit is posted to the ring with the clock and the frame count, and the display resumed.
+// The main loop does the rest.
+// Any other break is the frame's halt.
+// A posted list is taken up there, between frames, and the display restarted on the list shown.
+// The ring's slot is written before wIdx moves past it, so the main loop never reads a slot
+// being written.
+brk,    dsp
+        jmp brFrm
+        lac wIdx
+        add [1]
+        and [RINGN-1]
+        SKIP_NEXT_IF_DIFFERENT rIdx
+        jmp brDrop                      // the ring is full
+        dac wNext
+        drc
+        dio i wPtr
+        idx wPtr
+        rck
+        dio i wPtr
+        idx wPtr
+        lac frames
+        dac i wPtr
+        idx wPtr
+        lac wNext
+        SKIP_NEXT_IF_AC_ZERO
+        jmp brW
+        law ring
+        dac wPtr
+brW,    lac wNext
+        dac wIdx
+        jmp brRes
+brDrop, idx hitDrop
+brRes,  drs
+        lio 2
+        lac 0                           // must be last before the return
+        jmp i 1
+
+brFrm,  lac ready
+        SKIP_NEXT_IF_AC_ZERO
+        jmp brSwap
+// One phase of the lattice a frame.
+// latSel, the display word the lattice is reached through, is made the jump to the next
+// phase's list.
+// It is in bank 0, so this is a direct store.
+// The step resets on latPh+1 >= latK, so a latK lowered by latWrite meanwhile cannot run it
+// past latJw.
+brGo,   lac latPh
+        add [1]
+        dac latPh
+        sub latK
+        SKIP_NEXT_IF_AC_NEGATIVE
+        dzm latPh
+        lac latPh
+        add [latJw]
+        dap brL1
+brL1,   lac .
+        dac latSel
+        lio [BUFA]
+        lac shown
+        SKIP_NEXT_IF_AC_ZERO
+        lio [BUFB]
+        lac scrGo                       // the library's screen, while it is open
+        SKIP_NEXT_IF_AC_ZERO
+        lia
+        dla
+// frames counts to 0377777 and wraps to 0, so a difference of two counts is easily mended.
+        lac frames
+        add [1]
+        and [0377777]
+        dac frames
+        lio 2
+        lac 0                           // must be last before the return
+        jmp i 1
+brSwap, lac shown
+        xor [1]
+        dac shown
+        dzm ready
+        jmp brGo
+
+// Builds the field's list into the buffer not shown, once the list posted before is taken up,
+// and posts it.
+// The paint lists are turned first (ovTurn).
+// Called via jsp. AC and IO are clobbered.
+post,   dap pox
+po1,    lac ready
+        SKIP_NEXT_IF_AC_ZERO
+        jmp po1
+        jsp ovTurn                      // the paint lists, the list before being shown
+        lac shown
+        xor [1]                         // the buffer not shown
+        add [bufTab]
+        dap po2
+po2,    lac .
+        dac bbase
+        jsp build
+        law 1
+        dac ready
+pox,    jmp .
+
+// Zeroes the row-sum slots, pads included, and the counter's digits.
+// Called via jsp. AC is clobbered, IO is preserved.
+clrState, dap csx
+        law slots
+        dac pp
+        law i SLOTWORDS
+        dac pcnt
+cs1,    dzm i pp
+        idx pp
+        isp pcnt
+        jmp cs1
+        jsp zeroGen
+csx,    jmp .
+
+// Sets the generation and the counter's digits to 0.
+// Called via jsp. AC is clobbered, IO is preserved.
+zeroGen, dap zgx
+        dzm gen
+        law dig
+        dac pp
+        law i 7
+        dac pcnt
+zg1,    dzm i pp
+        idx pp
+        isp pcnt
+        jmp zg1
+zgx,    jmp .
+
+// Clears the field and the row flags.
+// Called via jsp. AC is clobbered, IO is preserved.
+clrField, dap cfdx
+        lac [field:4]
+        dac ca
+        law i FIELDSPAN                 // the spare row and the row flags follow the field
+        dac pcnt
+cfd1,   dzm i ca
+        idx ca
+        isp pcnt
+        jmp cfd1
+cfdx,   jmp .
+
+// Calls the bank 0 routine at farTo for code in another bank.
+// The routine returns by dap into this bank, and far returns through farRet, the caller's
+// full address.
+// Called via jsp i, the return in AC. AC and IO are as the routine leaves them.
+far,    dac farRet
+        jsp i farTo
+        jmp i farRet
+
+// Clears every cell outside the size, and sets each row's flag to the OR of its words.
+// Called via jsp. AC and IO are clobbered.
+clipField, dap cpx
+        lac [field:4]
+        dac ca
+        lac [rowFlag:4]
+        dac la
+        dzm crow
+cp1,    dzm cw
+        law dm
+        dac mp
+        law i 7
+        dac pw
+        lac crow
+        sub sR0
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp cpOut
+        sub sRN
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp cpOut
+cpIn,   lac i ca
+        and i mp
+        dac i ca
+        ior cw
+        dac cw
+        idx ca
+        idx mp
+        isp pw
+        jmp cpIn
+        jmp cpFlag
+cpOut,  dzm i ca
+        idx ca
+        isp pw
+        jmp cpOut
+cpFlag, lac cw
+        dac i la
+        idx la
+        idx crow
+        sub [ROWS]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp cp1
+cpx,    jmp .
+
+// AC = 0 when cell (crow, ccol) is inside the size, else 1.
+// Called via jsp. AC is the answer, IO is preserved.
+inSize, dap isx
+        lac crow
+        sub sR0
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp isOut
+        sub sRN
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp isOut
+        lac ccol
+        sub sC0
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp isOut
+        sub sCN
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp isOut
+        cla
+        jmp isx
+isOut,  law 1
+isx,    jmp .
+
+// Puts the address of the word of cell (crow, ccol) into ca, and its bit into AC.
+// The word is field + 7 * row + column / 18, the bit 0400000 >> column % 18.
+// Called via jsp. AC is the bit, IO is preserved.
+cellAt, dap cax
+        lac crow
+        sal 3s
+        sub crow
+        add [field:4]
+        dac ca
+        lac ccol
+caDiv,  sub [0d18]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp caBit
+        dac crem
+        idx ca
+        lac crem
+        jmp caDiv
+caBit,  add [0d18+bitTab]
+        dap cab1
+cab1,   lac .
+cax,    jmp .
+
+// Sets cell (crow, ccol), when it is inside the size, and keeps its row's flag the OR of the
+// row's words.
+// Called via jsp. AC is clobbered, IO is preserved.
+setCell, dap scx
+        jsp inSize
+        SKIP_NEXT_IF_AC_ZERO
+        jmp scx
+        jsp cellAt
+        dac cbit
+        ior i ca
+        dac i ca
+        lac crow
+        add [rowFlag:4]
+        dac la
+        lac cbit
+        ior i la
+        dac i la
+scx,    jmp .
+
+// Clears cell (crow, ccol), when it is inside the size, and sets its row's flag again.
+// Called via jsp. AC is clobbered, IO is preserved.
+clrCell, dap ccx
+        jsp inSize
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ccx
+        jsp cellAt
+        cma
+        and i ca
+        dac i ca
+        lac crow
+        sal 3s
+        sub crow
+        add [field:4]
+        dac ca
+        lac crow
+        add [rowFlag:4]
+        dac la
+        dzm cw
+        law i 7
+        dac pw
+cc1,    lac i ca
+        ior cw
+        dac cw
+        idx ca
+        isp pw
+        jmp cc1
+        lac cw
+        dac i la
+ccx,    jmp .
+
+// Adds one to the decimal counter dig, least significant digit first, 9,999,999 wrapping to 0.
+// Called via jsp. AC is clobbered, IO is preserved.
+bumpDig, dap bdgx
+        law dig
+        dac pp
+        law i 7
+        dac pcnt
+bdg1,   idx i pp
+        SKIP_NEXT_IF_DIFFERENT [0d10]
+        jmp bdg2
+        jmp bdgx
+bdg2,   dzm i pp
+        idx pp
+        isp pcnt
+        jmp bdg1
+bdgx,   jmp .
+
+// The generation, over the kernel's rows, the size's or, under OPEN, the whole field's
+// (lifefield.ac's edgeSet).
+// Each row's next state comes from the row sums of the rows above, itself and below.
+// A row sum is, per cell, its state plus its left and right neighbors', as two bit planes lo
+// and hi.
+// A row's sums are made once, when it is loaded, into one of three slots that rotate, and serve
+// three rows.
+// The row above the first is loaded first, and the row below the last is loaded for the last.
+// Under MIRROR and TORUS these are the wrap rows, filled by wrapIn before the generation and
+// cleared by wrapOut after it; otherwise they are dead.
+// The field is rewritten in place, a row after the next one is loaded.
+// A row whose neighborhood is dead is skipped whole.
+// Within a row, IO holds the mask of words whose row sums are not all zero, one bit a word from
+// 0200000 down.
+// A word outside the mask is skipped, since its neighborhood is dead, so it stays dead.
+// Each new word is ANDed with the kernel's column mask, so no cell outside its bounds ever
+// lives, and the rows outside them, never written, stay dead with their flags zero.
+// Called via jsp. AC and IO are clobbered.
+
+// One word of row sums for slot S.
+// Its mk bit is set when the sums are not zero, which is when a cell of the word or a neighbor
+// across its edge is alive.
+// tL and tR are the row shifted to bring each cell's left and right neighbors under it, rcr and
+// rcl carrying a bit across from the next word.
+// A word whose neighborhood words are all dead is not shifted at all.
+#define TRIPLE(S, W, BIT) \
+    lac xb##S+W+1; ior xb##S+W; ior xb##S+W+2; SKIP_NEXT_IF_AC_NOT_ZERO; jmp tz##S##W; \
+    lio xb##S+W; lac xb##S+W+1; rcr 1s; dac tL; \
+    lio xb##S+W+2; lac xb##S+W+1; rcl 1s; dac tR; \
+    xor tL; dac tT; xor xb##S+W+1; dac lo##S+W; \
+    lac tT; and xb##S+W+1; dac tT; lac tL; and tR; ior tT; dac hi##S+W; \
+    ior lo##S+W; SKIP_NEXT_IF_AC_NOT_ZERO; jmp tn##S##W; \
+    lac [BIT]; ior mk##S; dac mk##S; jmp tn##S##W; \
+tz##S##W, dzm lo##S+W; dzm hi##S+W; \
+tn##S##W,
+
+// One word of the next state, for phase K, from the sums of slots SA (above), SB (this row) and
+// SC (below).
+// The 3x3 total T is s + 2u, where s is the lo sum's low bit and u counts the hi bits and lo's
+// carry.
+// With p, g the xor and the and of the top two hi bits, and q, h those of the third and the
+// carry, u = 1 is (p ^ q) & ~(g | h), and u = 2 is ~(p ^ q) & (p | (g ^ h)).
+// A cell lives when T = 3, or when T = 4 and it was alive, and only if its column is inside the
+// kernel's bounds.
+#define COMBINE(K, SA, SB, SC, W) \
+    ril 1s; SKIP_NEXT_IF_IO_NEGATIVE; jmp cz##K##W; \
+    lac lo##SA+W; xor lo##SB+W; dac tT; xor lo##SC+W; dac tS; \
+    lac tT; and lo##SC+W; dac tU; lac lo##SA+W; and lo##SB+W; ior tU; dac tC; \
+    lac hi##SA+W; xor hi##SB+W; dac tP; lac hi##SA+W; and hi##SB+W; dac tG; \
+    lac hi##SC+W; xor tC; dac tQ; lac hi##SC+W; and tC; dac tH; \
+    lac tP; xor tQ; dac tT; \
+    lac tG; ior tH; cma; and tT; and tS; dac tR; \
+    lac tG; xor tH; ior tP; and xb##SB+W+1; dac tU; \
+    lac tT; ior tS; cma; and tU; ior tR; \
+    and cm+W; dac i fw; ior rowOr; dac rowOr; \
+cz##K##W, idx fw
+
+// A row's start, which skips the row whole when no slot has a live word, else puts the mask
+// into IO.
+#define ROWHEAD(K, SA, SB, SC) \
+    lac mk##SA; ior mk##SB; ior mk##SC; SKIP_NEXT_IF_AC_NOT_ZERO; jmp rs##K; \
+    lia; dzm rowOr
+
+// A row's end, which writes its flag for the next generation or, for a skipped row, moves the
+// field pointer past it.
+// A skipped row was dead and its flag is already zero.
+#define ROWTAIL(K, NEXT) \
+    lac rowOr; dac i lw; idx lw; jmp re##K; \
+rs##K, lac fw; add [7]; dac fw; idx lw; \
+re##K, isp rc; jmp ph##NEXT; jmp kx
+
+#define COPYW(S, W) lac i fr; dac xb##S+W+1; idx fr
+
+#define CLEARSLOT(S) \
+    dzm xb##S+1; dzm xb##S+2; dzm xb##S+3; dzm xb##S+4; dzm xb##S+5; dzm xb##S+6; dzm xb##S+7; \
+    dzm lo##S+0; dzm lo##S+1; dzm lo##S+2; dzm lo##S+3; dzm lo##S+4; dzm lo##S+5; dzm lo##S+6; \
+    dzm hi##S+0; dzm hi##S+1; dzm hi##S+2; dzm hi##S+3; dzm hi##S+4; dzm hi##S+5; dzm hi##S+6; \
+    dzm mk##S
+
+// Loads the row whose flag follows lp into slot S, sets the places beyond its first and last
+// columns (colJ), and makes its sums.
+// An empty row only clears the slot, if it is not clear already.
+// A slot with mk zero holds no live cell, so every slot starts a generation clear or is loaded
+// whole.
+// Called via jsp. AC and IO are clobbered.
+#define LOAD(S) \
+load##S, dap lr##S; idx lp; lac i lp; SKIP_NEXT_IF_AC_NOT_ZERO; jmp le##S; \
+    COPYW(S,0); COPYW(S,1); COPYW(S,2); COPYW(S,3); COPYW(S,4); COPYW(S,5); COPYW(S,6); \
+    law xb##S; lia; jsp colJ; \
+    dzm mk##S; \
+    TRIPLE(S,0,0200000); TRIPLE(S,1,0100000); TRIPLE(S,2,040000); TRIPLE(S,3,020000); \
+    TRIPLE(S,4,010000); TRIPLE(S,5,04000); TRIPLE(S,6,02000); \
+lr##S, jmp .; \
+le##S, lac fr; add [7]; dac fr; \
+    lac mk##S; SKIP_NEXT_IF_AC_ZERO; jmp zb##S; jmp lr##S; \
+zb##S, CLEARSLOT(S); jmp lr##S
+
+kernel, dap kxr
+        jsp i [wrapIn:3]
+        lac fRow0
+        dac fw
+        sub [7]                         // the row above the first
+        dac fr
+        lac lRow0
+        add [1]
+        dac lw
+        sub [2]
+        dac lp
+        lac rowNeg
+        dac rc
+        jsp load0
+        jsp load1
+ph0,    jsp load2
+        ROWHEAD(0, 0, 1, 2)
+        COMBINE(0, 0, 1, 2, 0)
+        COMBINE(0, 0, 1, 2, 1)
+        COMBINE(0, 0, 1, 2, 2)
+        COMBINE(0, 0, 1, 2, 3)
+        COMBINE(0, 0, 1, 2, 4)
+        COMBINE(0, 0, 1, 2, 5)
+        COMBINE(0, 0, 1, 2, 6)
+        ROWTAIL(0, 1)
+ph1,    jsp load0
+        ROWHEAD(1, 1, 2, 0)
+        COMBINE(1, 1, 2, 0, 0)
+        COMBINE(1, 1, 2, 0, 1)
+        COMBINE(1, 1, 2, 0, 2)
+        COMBINE(1, 1, 2, 0, 3)
+        COMBINE(1, 1, 2, 0, 4)
+        COMBINE(1, 1, 2, 0, 5)
+        COMBINE(1, 1, 2, 0, 6)
+        ROWTAIL(1, 2)
+ph2,    jsp load1
+        ROWHEAD(2, 2, 0, 1)
+        COMBINE(2, 2, 0, 1, 0)
+        COMBINE(2, 2, 0, 1, 1)
+        COMBINE(2, 2, 0, 1, 2)
+        COMBINE(2, 2, 0, 1, 3)
+        COMBINE(2, 2, 0, 1, 4)
+        COMBINE(2, 2, 0, 1, 5)
+        COMBINE(2, 2, 0, 1, 6)
+        ROWTAIL(2, 0)
+kx,     jsp i [wrapOut:3]
+kxr,    jmp .
+
+        LOAD(0)
+        LOAD(1)
+        LOAD(2)
+
+// Under MIRROR and TORUS, sets the place before the row's first column and the place after its
+// last, in the slot at IO, to the states edgeSet chose by colP.
+// Under DEAD and OPEN colJ is a bare return.
+// A place is written as (word AND NOT bit) OR bit when its source is alive, so a zero word
+// beside the row never keeps an earlier row's bit.
+// Called via jsp colJ. AC and IO are clobbered.
+#define CWPLACE(O, L) \
+    lac colB; add colP+O; dap L##s; \
+    lac colB; add colP+O+2; dap L##d; dap L##w; \
+L##s, lac .; and colP+O+1; SKIP_NEXT_IF_AC_ZERO; lac colP+O+3; dac colT; \
+L##d, lac .; and colP+O+4; ior colT; \
+L##w, dac .
+
+colJ,   jmp colNone                     // or colWrap, written by edgeSet
+colNone, dap colNx
+colNx,  jmp .
+colWrap, dap colX
+        dio colB
+        CWPLACE(0, colL)
+        CWPLACE(5, colR)
+colX,   jmp .
+
+// Builds the list of the size's cells into the buffer at bbase.
+// The list is the counter, then a parameter word, a y point and the row's vectors for each live
+// row of the size, then a jump to the frame's second half, bordJw.
+// Only the size's rows are visited and only its columns drawn (scanRow), so OPEN's band never
+// shows.
+// A row that could pass the buffer's cap is not drawn, nor any after it, and FULL is lit.
+// Called via jsp. AC and IO are clobbered.
+build,  dap bdx
+        lac bbase
+        dac lpp
+        add [LISTCAP]
+        dac lpLim
+        lac [scale(1) intensity(CELLI) lpoff next(point)]
+        EMIT
+        lac [y(CNTY) next(point)]
+        EMIT
+        lac [x(CNTX) next(character)]
+        EMIT
+        lac lpp
+        dac cntp
+        add [5]                         // the counter's words, written last
+        dac lpp
+        lac [scale(3) intensity(CELLI)]
+        EMIT
+        dzm full
+        lac dRow0
+        dac rp
+        lac dFlg0
+        dac rl
+        lac dY0
+        dac ycur
+        lac dNeg
+        dac rr
+bRow,   lac i rl
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp bNext
+        lac lpp
+        sub lpLim
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp bFull
+        lac [next(point)]
+        EMIT
+        lac ycur
+        EMIT
+        jsp scanRow
+bNext,  lac rp
+        add [7]
+        dac rp
+        idx rl
+        lac ycur
+        sub [PITCH]
+        dac ycur
+        isp rr
+        jmp bRow
+        jmp bEnd
+bFull,  law 1
+        dac full
+bEnd,   lac [next(subroutine)]
+        EMIT
+        lac bordJw
+        EMIT
+        jsp cntWr
+bdx,    jmp .
+
+// Emits the runs of live cells of the row at rp.
+// The first run starts with a point one pitch to its left, each later one with an invisible hop
+// from the run before.
+// Each run is then one visible vector, which lights each step's end.
+// The row's last word gets the end bit.
+// A row with no run left once each word is ANDed with the size's mask (dm), as one live only in
+// OPEN's band is, takes back the parameter word and y point build wrote for it.
+// A dead word is passed whole.
+// A live one is taken a chunk of 6 cells at a time, rotated into wv's low bits.
+// A dead chunk is passed, and a live one's runs come from runTab.
+// A run that starts at nxt, the column after the run held (prs to nxt - 1), extends it.
+// Any other emits the one held and is held in its place.
+// The row's last run is emitted at its end.
+// wbm is the column before the word's first cell, cbm before the chunk's.
+// Called via jsp. AC and IO are clobbered.
+scanRow, dap srx
+        lac rp
+        sub [1]
+        dac sp
+        lac lpp
+        dac lp0
+        law emNone                      // nothing held yet
+        dap emJ
+        law i 1
+        dac nxt                         // -1, where no run starts
+        dac wbm
+        law i 7
+        dac wc
+        law dm
+        dac smp
+srW,    idx sp
+        lac i sp
+        and i smp
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp srN                         // a dead word
+        dac wv
+        ral 6s
+        dac wv
+        and [077]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp srA
+        add [runTab:1]
+        dac tp
+        lio i tp
+        lac wbm
+        dac cbm
+        jsp runs
+srA,    lac wv
+        ral 6s
+        dac wv
+        and [077]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp srB
+        add [runTab:1]
+        dac tp
+        lio i tp
+        lac wbm
+        add [6]
+        dac cbm
+        jsp runs
+srB,    lac wv
+        ral 6s
+        and [077]                       // wv is not needed again
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp srN
+        add [runTab:1]
+        dac tp
+        lio i tp
+        lac wbm
+        add [0d12]
+        dac cbm
+        jsp runs
+srN,    idx smp
+        lac wbm
+        add [0d18]
+        dac wbm
+        isp wc
+        jmp srW
+        jsp emJ                         // the run still held
+        lac lpp
+        sad lp0
+        jmp srNo                        // no run, so nothing to end
+        sub [1]
+        dac tp
+        lac i tp
+        ior [end]
+        dac i tp
+        jmp srx
+srNo,   sub [2]                         // the row's parameter word and y point taken back
+        dac lpp
+srx,    jmp .
+
+// Takes the runs of a chunk from runTab's word in IO, each in 6 bits from the high end.
+// A run's first 3 bits are its first place in the chunk plus 1, the next 3 its last place plus
+// 2, so cbm added makes its first column and the column after its last.
+// A field of 0, or IO emptied, ends them.
+// Called via jsp. AC and IO are clobbered.
+runs,   dap rnx
+rnR,    cla
+        rcl 3s
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp rnx
+        add cbm
+        sad nxt
+        jmp rnE                         // it follows the run held, so extend that
+        dac ncs
+        jsp emJ                         // IO is preserved
+        lac ncs
+        dac prs
+rnE,    cla
+        rcl 3s
+        add cbm
+        dac nxt
+        jmp rnR
+rnx,    jmp .
+
+// Emits the run held, prs to nxt - 1, by the routine emJ names.
+// That is none before the row's first run, then the first's point, then the hops of the rest.
+// Called via jsp. AC is clobbered, IO is preserved.
+emJ,    jmp .
+emNone, dap enx
+        law emFirst
+        dap emJ
+        jmp enx
+emFirst, dap enx
+        law emNext
+        dap emJ
+        lac prs
+        ral 3s                          // x(8 * prs), one pitch left of the first cell
+        ior [next(vector)]
+        jmp emVis
+emNext, dap enx
+        lac prs
+        sub pnx                         // an invisible hop right, to the pitch before prs
+emVis,  EMIT
+        lac nxt
+        dac pnx
+        sub prs
+        ior [visible]
+        EMIT
+enx,    jmp .
+
+// Writes the five counter words at cntp.
+// They hold an upper shift, the seven digits, then FULL or four blanks, and the end character.
+// Called via jsp. AC and IO are clobbered.
+#define DIGCH(n) lac dig+n; add [060]
+#define EMITC dac i cntp; idx cntp
+cntWr,  dap cwx
+        law 035
+        ral 6s
+        dac tWord
+        DIGCH(6)
+        ior tWord
+        ral 6s
+        dac tWord
+        DIGCH(5)
+        ior tWord
+        EMITC
+        DIGCH(4)
+        ral 6s
+        dac tWord
+        DIGCH(3)
+        ior tWord
+        ral 6s
+        dac tWord
+        DIGCH(2)
+        ior tWord
+        EMITC
+        DIGCH(1)
+        ral 6s
+        dac tWord
+        DIGCH(0)
+        ior tWord
+        ral 6s
+        ior [040]
+        EMITC
+        lac full
+        SKIP_NEXT_IF_AC_ZERO
+        jmp cwFull
+        lac [0404040]                   // blanks
+        EMITC
+        lac [0403737]                   // a blank, then the end
+        EMITC
+        jmp cwx
+cwFull, lac [0062514]                   // F U L
+        EMITC
+        lac [0143737]                   // L, then the end
+        EMITC
+cwx,    jmp .
+
+#include <TYPE340/type340halt.ac>
+
+#include "lifemenu.ac"
+
+// Every frame ends here, in bank 0.
+// 64 invisible vectors of 190 us each keep a small list from refreshing, and stealing cycles,
+// faster than about 70 times a second.
+// Then the halt's break restarts the display.
+#define PAD2 right deltax(0d127); left deltax(0d127)
+#define PAD8 PAD2; PAD2; PAD2; PAD2
+tail,   scale(0) lpoff next(point)
+        x(0) next(vector)
+        PAD8; PAD8; PAD8; PAD8; PAD8; PAD8; PAD8
+        PAD2; PAD2; PAD2
+        right deltax(0d127)
+        left deltax(0d127) end
+        halt interrupt
+
+// The lattice's entry, from latJmp, is the jump to the phase this frame draws.
+// The break routine sets it, and latWrite writes it first.
+latSel, jump tail next(parameter)
+
+// Controls and status, which the file's header describes.
+// gen counts generations.
+// tFirst and tLast are the clock at the start of generation 1 and of the latest one.
+patSel, 0
+speedSel, 0
+sizeSel, 0
+stopAt, 0
+done,   0
+gen,    0
+tFirst, 0
+tLast,  0
+running, 0                              // 1 while generations run
+frames, 0                               // frames shown, counted by the break routine
+shown,  0                               // the list shown, 0 A or 1 B
+ready,  0                               // a list is built and waits to be shown
+full,   0                               // the list being built reached its cap
+dispOn, 0                               // the display has been started
+hitDrop, 0                              // pen hits dropped on a full ring
+latK,   1                               // the lattice's phases, the size's szLatK
+latPh,  0                               // the phase the frame draws
+latJw,  0; 0; 0                         // the jump to each phase's list, written by latWrite
+scrGo,  0                               // the library's screen's list while it is open, or 0
+undoOk, 0                               // UNDO's copy is of the field as it now stands but the last edit
+farTo,  0                               // far's routine and its caller
+farRet, 0
+
+// Milliseconds between generations, by speedSel.
+periods, 0
+        SPEEDMS1
+        SPEEDMS2
+        SPEEDMS3
+        SPEEDMS4
+        SPEEDMS5
+        0
+        0
+
+bufTab, BUFA
+        BUFB
+
+// A cell's bit in its word, by column % 18.
+bitTab, 0400000
+        0200000
+        0100000
+        040000
+        020000
+        010000
+        04000
+        02000
+        01000
+        0400
+        0200
+        0100
+        040
+        020
+        010
+        04
+        02
+        01
+
+// The lattice's phases by sizeSel, a frame drawing one row in that many.
+// The sizes' other tables are in lifefield.ac.
+szLatK, 3; 2; 1; 1
+
+// The size and edge in force, as lifefield.ac's sizeSet and edgeSet left them.
+edgeSel, 0                              // 0 DEAD, 1 MIRROR, 2 TORUS, 3 OPEN
+sR0,    0
+sRN,    0
+sC0,    0
+sCN,    0
+bordJw, 0
+dRow0,  0                               // the size's first row in the field, for build
+dFlg0,  0                               // its flag
+dY0,    0                               // its y point
+dNeg,   0                               // minus the size's rows
+dm,                                     // the size's column masks, for clipField and scanRow
+        table 7
+fRow0,  0                               // the kernel's first row in the field
+lRow0,  0                               // the flag before that row's
+rowNeg, 0                               // minus the kernel's rows
+cm,                                     // the kernel's column masks
+        table 7
+// The column wrap's places (colWrap), before the first column, then after the last.
+// Each is its source's offset in the slot and bit, then its offset, bit and the bit's complement.
+colP,
+        table 0d10
+colB,   0                               // the slot
+colT,   0
+
+// The ring of pen hits.
+// The break routine writes at wPtr, slot wIdx, and the main loop reads at rPtr, slot rIdx.
+// Equal indexes mean empty.
+ring,
+        table (0d3*RINGN)
+wPtr,   ring
+wIdx,   0
+wNext,  0
+rPtr,   ring
+rIdx,   0
+
+// Working words.
+period, 0
+tNow,   0
+bbase,  0
+pp,     0
+pcnt,   0
+mp,     0
+ca,     0
+la,     0
+cw,     0
+pw,     0
+ccol,   0
+crow,   0
+crem,   0
+cbit,   0
+fr,     0
+fw,     0
+lp,     0
+lw,     0
+rc,     0
+rowOr,  0
+tL,     0
+tR,     0
+tT,     0
+tS,     0
+tU,     0
+tC,     0
+tP,     0
+tG,     0
+tQ,     0
+tH,     0
+lpp,    0
+lpLim,  0
+cntp,   0
+rp,     0
+rl,     0
+rr,     0
+ycur,   0
+sp,     0
+wc,     0
+wv,     0
+smp,    0
+wbm,    0
+cbm,    0
+prs,    0
+nxt,    0
+ncs,    0
+pnx,    0
+lp0,    0
+tp,     0
+tWord,  0
+dig,                                    // the counter, least significant digit first
+        table 7
+
+// The row-sum slots.
+// xb is a row with a zero word each side, lo and hi its sums, mk its mask.
+slots,
+xb0,
+        table 0d9
+lo0,
+        table 7
+hi0,
+        table 7
+mk0,    0
+xb1,
+        table 0d9
+lo1,
+        table 7
+hi1,
+        table 7
+mk1,    0
+xb2,
+        table 0d9
+lo2,
+        table 7
+hi2,
+        table 7
+mk2,    0
+
+        constants
+
+// The whole fields' patterns and the library, in bank 3.
+bank 3
+0/
+// Four Gosper guns, one in each corner, each turned a quarter from the last.
+patGuns,
+    0d495; 0d496; 0d623; 0d624; 0d798; 0d924; 0d926; 0d1042
+    0d1043; 0d1050; 0d1051; 0d1064; 0d1065; 0d1169; 0d1173; 0d1178
+    0d1179; 0d1192; 0d1193; 0d1286; 0d1287; 0d1296; 0d1302; 0d1306
+    0d1307; 0d1414; 0d1415; 0d1424; 0d1428; 0d1430; 0d1431; 0d1436
+    0d1438; 0d1552; 0d1558; 0d1566; 0d1681; 0d1685; 0d1774; 0d1775
+    0d1776; 0d1810; 0d1811; 0d1901; 0d1905; 0d2028; 0d2034; 0d2156
+    0d2162; 0d2287; 0d2413; 0d2417; 0d2542; 0d2543; 0d2544; 0d2671
+    0d3056; 0d3057; 0d3058; 0d3184; 0d3185; 0d3186; 0d3311; 0d3315
+    0d3566; 0d3567; 0d3571; 0d3572; 0d4849; 0d4850; 0d4977; 0d4978
+    0d10379; 0d10380; 0d10507; 0d10508; 0d11785; 0d11786; 0d11790; 0d11791
+    0d12042; 0d12046; 0d12171; 0d12172; 0d12173; 0d12299; 0d12300; 0d12301
+    0d12686; 0d12813; 0d12814; 0d12815; 0d12940; 0d12944; 0d13070; 0d13195
+    0d13201; 0d13323; 0d13329; 0d13452; 0d13456; 0d13546; 0d13547; 0d13581
+    0d13582; 0d13583; 0d13672; 0d13676; 0d13791; 0d13799; 0d13805; 0d13919
+    0d13921; 0d13926; 0d13927; 0d13929; 0d13933; 0d13942; 0d13943; 0d14050
+    0d14051; 0d14055; 0d14061; 0d14070; 0d14071; 0d14164; 0d14165; 0d14178
+    0d14179; 0d14184; 0d14188; 0d14292; 0d14293; 0d14306; 0d14307; 0d14314
+    0d14315; 0d14431; 0d14433; 0d14559; 0d14733; 0d14734; 0d14861; 0d14862
+    PATEND
+
+// The ALGOL 68 program's opening, at the field's top left, six gliders and a Gosper gun.
+patAlg,
+    0d536; 0d662; 0d664; 0d780; 0d781; 0d788; 0d789; 0d802
+    0d803; 0d907; 0d911; 0d916; 0d917; 0d930; 0d931; 0d1024
+    0d1025; 0d1034; 0d1040; 0d1044; 0d1045; 0d1152; 0d1153; 0d1162
+    0d1166; 0d1168; 0d1169; 0d1174; 0d1176; 0d1290; 0d1296; 0d1304
+    0d1419; 0d1423; 0d1548; 0d1549; 0d2853; 0d2982; 0d3108; 0d3109
+    0d3110; 0d3489; 0d3618; 0d3744; 0d3745; 0d3746; 0d4124; 0d4253
+    0d4379; 0d4380; 0d4381; 0d4760; 0d4889; 0d5015; 0d5016; 0d5017
+    0d5395; 0d5524; 0d5650; 0d5651; 0d5652; 0d6031; 0d6160; 0d6286
+    0d6287; 0d6288
+    PATEND
+
+#ifdef LIFE_TESTPATTERN
+patTest,
+#include "lifetest.ah"
+#endif
+
+// The whole fields, by patSel, as libLoad reads them.
+patTab, patGuns:3
+        patAlg:3
+#ifdef LIFE_TESTPATTERN
+        patTest:3
+#else
+        patGuns:3
+#endif
+        patGuns:3
+
+#include "lifelib.ac"
+#include "lifefield.ac"
+
+        constants
+
+// The field and its row flags, in bank 4.
+// live is the zero row above row 0's flag, and a zero follows row 119's.
+// The spare rows before and after the field are 126x120's wrap rows, the row above row 0 and
+// the row below row 119.
+// Each is zero but during a generation.
+bank 4
+0/
+fPre,
+        table 7
+field,
+        table FIELDWORDS
+fPost,
+        table 7
+live,   0
+rowFlag,
+        table ROWS
+        0
+
+// UNDO's copy of the field, the spare row after it and its row flags, written by lifelib.ac.
+fldU,
+        table FIELDSPAN
+
+bank 0
+
+start go

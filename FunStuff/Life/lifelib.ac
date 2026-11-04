@@ -1,0 +1,1293 @@
+// lifelib.ac -- Life's pattern library, included by life.am1 in bank 3. PATTERN opens its
+// screen, a page of names with a preview of the lit one and six keys along the bottom. PLACE
+// puts a pattern in the pen's hand, or replaces the field with a whole one. A held pattern
+// follows the pen across the lattice as a dim ghost, and the pen's lift drops it there. UNDO's
+// copy of the field is kept here too.
+//
+// The code and its words are in bank 3, beside the patterns. The screen and the ghost are
+// display words in bank 1, which the frame reaches by jump. Bank 0 calls the entries below by
+// jsp i to their full address, with the return in AC, and each returns by jmp i. This code
+// calls bank 0's routines through far, since they return by dap into bank 0, and reaches bank
+// 0's words by their full addresses. Extend mode is on throughout.
+//
+// While the screen is open, scrGo holds its list's address and the break routine starts every
+// frame there, so the field, the bar and the lattice are not shown. A row lights on any hit. A
+// key acts only on a press's first hit, so a pen slid onto one does nothing.
+
+#define KEYY        0d40                // the keys' baseline
+#define KEYTHR      0d64                // a hit below this y is on the keys
+#define SROWY1      0d940               // the first row's baseline; a row's hits are 12 below it to 24 above
+#define NAMEX2      0d256               // a hit at or right of this x is on the second column
+#define PREVX       0d496               // a hit at or right of this x is on the preview
+#define PVX         0d760               // a pattern's center in the preview
+#define PVY         0d560
+#define PVFX        0d512               // a whole field's row 0, column 0 in the preview, pitch 4
+#define PVFY        0d900
+#define PVTX        0d528               // the preview's text
+#define INFOY       0d100
+#define PVWORDS     (0d1+0d2*PVCAP+0d2)
+#define GHWORDS     (0d4+0d2*GHCAP+0d2)
+// The library's size.
+#define LIBN        0d29                // entries
+#define LIBPAGES    0d2                 // pages of up to 16
+
+// A call to bank 0's routine R, through far. AC is R's answer, IO as R leaves it.
+#define FAR(R) lac [R:0]; dac i [farTo:0]; jsp i [far:0]
+
+// A display word to the next place of the buffer being written.
+#define PEMIT dac i pq; idx pq
+
+// Clears the field, then places pattern patSel at the size's top left, clipped to the size. A
+// pattern is a list of cells, row * 128 + column, ended by PATEND, or RAWMARK and a whole
+// field's image. Every row's flag is then the OR of its words.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+libLoad, dac llR
+        FAR(clrField)
+        lac i [patSel:0]
+        and [3]
+        add [patTab:3]
+        dac pp3
+        lac i pp3
+        dac pp3
+        lac i pp3
+        SKIP_NEXT_IF_DIFFERENT [RAWMARK]
+        jmp llRaw
+llCell, lac i pp3
+        SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+        jmp llClip
+        dac lw
+        and [0177]
+        add i [sC0:0]
+        dac i [ccol:0]
+        lac lw
+        sar 7s
+        and [0177]
+        add i [sR0:0]
+        dac i [crow:0]
+        FAR(setCell)
+        idx pp3
+        jmp llCell
+llRaw,  idx pp3
+        lac [field:4]
+        dac pq
+        law i FIELDWORDS
+        dac lcnt
+llR1,   lac i pp3
+        dac i pq
+        idx pp3
+        idx pq
+        isp lcnt
+        jmp llR1
+llClip, FAR(clipField)
+        jmp i llR
+
+// Opens the screen on the page last shown, no row lit; the caller has stopped the run and
+// closed any list. Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+libOpen, dac loR
+        jsp lUnlit
+        lac [jump tail:0 next(parameter)]
+        dac i [scrPv:1]
+        jsp lPage
+        lac [scrList:1]
+        dac i [scrGo:0]
+        FAR(setLook)
+        jmp i loR
+
+// Takes a hit at (hx, hy) while the screen is open. A key acts on a fresh press. A row lights
+// and shows its preview. Called via jsp i, the return in AC; returns by jmp i. AC and IO are
+// clobbered.
+libHit, dac lhR
+        lac i [hy:0]
+        sub [KEYTHR]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp lhKey
+        lac i [hx:0]
+        sub [PREVX]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp i lhR                       // on the preview
+// The row, in bands of ROWPITCH down from the first row's, eight a column.
+        lac i [hy:0]
+        sub [SROWY1-0d12]
+        dac lt3
+        sub [ROWPITCH]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp i lhR                       // above the first row
+        dzm lk
+lh1,    lac lt3
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lh2
+        add [ROWPITCH]
+        dac lt3
+        idx lk
+        jmp lh1
+lh2,    lac lk
+        sub [0d8]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp i lhR                       // below the last row
+        lac i [hx:0]
+        sub [NAMEX2]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp lh3
+        lac lk
+        add [0d8]
+        dac lk
+lh3,    lac lPg
+        sal 4s
+        add lk
+        dac lk                          // the entry
+        sub [LIBN]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp i lhR                       // past the last entry
+        lac lk
+        add [1]
+        SKIP_NEXT_IF_DIFFERENT lLit
+        jmp i lhR                       // lit already
+        jsp lLight
+        jmp i lhR
+lhKey,  lac i [fresh:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i lhR
+        lac i [hx:0]
+        add [0d16]                      // a label's left reach belongs to it
+        sar 7s
+        dac lk
+        sub [6]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp i lhR
+        lac lk
+        add [keyT]
+        dap lhK1
+lhK1,   lac .
+        dap lhK2
+lhK2,   jsp .
+        jmp i lhR
+
+// The keys, each called via jsp. AC and IO are clobbered.
+// PREV and NEXT turn to the page before or after, round the pages, with no row lit.
+kPrev,  dap kpx
+        lac lPg
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        law LIBPAGES
+        sub [1]
+        dac lPg
+        jmp kn1
+kNext,  dap kpx
+        idx lPg
+        sub [LIBPAGES]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        dzm lPg
+kn1,    jsp lUnlit
+        lac [jump tail:0 next(parameter)]
+        dac i [scrPv:1]
+        jsp lPage
+kpx,    jmp .
+
+// TURN turns the lit pattern a quarter turn clockwise, and FLIP swaps its left for right.
+// A cell's place is (nr ? - : +)(sw ? c : r), (nc ? - : +)(sw ? r : c), so a turn, (r, c) to
+// (c, -r) after the rest, swaps the two and takes nr from nc and nc from the opposite of nr.
+// Neither acts on a whole field.
+kTurn,  dap ktx
+        jsp lIsPat
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp ktx
+        lac oSw
+        xor [1]
+        dac oSw
+        lac oNr
+        lio oNc
+        xor [1]
+        dac oNc
+        dio oNr
+        jsp lPreview
+ktx,    jmp .
+
+kFlip,  dap kfx
+        jsp lIsPat
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp kfx
+        lac oNc
+        xor [1]
+        dac oNc
+        jsp lPreview
+kfx,    jmp .
+
+// PLACE puts a lit pattern into the pen's hand, or a lit whole field in place of the field
+// with the counter at 0. Either closes the screen.
+kPlace, dap kcx
+        lac lLit
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp kcx
+        jsp lIsPat
+        SKIP_NEXT_IF_AC_ZERO
+        jmp kc1
+        jsp lSnap
+        lac lLit
+        add [libData-1]
+        dap kc2
+kc2,    lac .
+        dac i [patSel:0]
+        jsp libLoad
+        FAR(zeroGen)
+        law 1
+        dac i [dirty:0]
+        jmp kc3
+kc1,    lac lLit
+        dac i [stampP:0]
+        dzm plDown
+        dzm ghOn
+kc3,    jsp lClose
+kcx,    jmp .
+
+// CANCEL closes the screen and changes nothing.
+kCancel, dap kxx
+        jsp lClose
+kxx,    jmp .
+
+// Closes the screen. The frame goes back to the field, and the lattice waits for a fresh press,
+// so the pen still on the key does not draw. Called via jsp. AC and IO are clobbered.
+lClose, dap lcx
+        jsp lUnlit
+        dzm i [scrGo:0]
+        law 1
+        dac i [needFresh:0]
+        FAR(setLook)
+lcx,    jmp .
+
+// AC = 1 when the lit entry is a pattern, 0 when it is a whole field or none is lit.
+// Called via jsp. AC is the answer, IO is preserved.
+lIsPat, dap lix
+        lac lLit
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lix
+        add [libKind-1]
+        dap li1
+li1,    lac .
+        xor [1]
+lix,    jmp .
+
+// Shows page lPg's names. Called via jsp. AC is clobbered, IO is preserved.
+lPage,  dap lpgx
+        lac lPg
+        add [pgTab]
+        dap lpg1
+lpg1,   lac .
+        ior [jump next(parameter)]
+        dac i [scrPg:1]
+lpgx,   jmp .
+
+// Lights entry lk's row, putting out the one lit before, and shows its preview.
+// Called via jsp. AC and IO are clobbered.
+lLight, dap llgx
+        jsp lUnlit
+        lac lk
+        add [1]
+        dac lLit
+        lac lk
+        add [libRow]
+        dap llg1
+llg1,   lac .
+        dac pq
+        lac [intensity(LITI) next(point)]
+        dac i pq
+        jsp lPreview
+llgx,   jmp .
+
+// Puts out the lit row, if any, and its preview. Called via jsp. AC is clobbered, IO is preserved.
+lUnlit, dap lux
+        lac lLit
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lux
+        add [libRow-1]
+        dap lu1
+lu1,    lac .
+        dac pq
+        lac [intensity(LBLI) next(point)]
+        dac i pq
+        dzm lLit
+        lac [jump tail:0 next(parameter)]
+        dac i [scrPv:1]
+lux,    jmp .
+
+// Writes the lit entry's preview into the buffer not shown, then shows it. A pattern is drawn
+// at pitch 8 about its center, turned as the keys left it, and a whole field at pitch 4 from its
+// top left. The entry's text follows. A frame ends first, after the last switch, so that the
+// display is not still in the buffer written. Called via jsp. AC and IO are clobbered.
+lPreview, dap lpvx
+        lac lLit
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lpvx
+        lac i [frames:0]
+        sub pvFr
+        SKIP_NEXT_IF_AC_ZERO
+        jmp lpv0
+        FAR(waitFrame)
+lpv0,   lac [pvB:1]
+        lio pvShown
+        SKIP_NEXT_IF_IO_IS_ZERO
+        lac [pvA:1]
+        dac pvBuf
+        dac pq
+        lac [intensity(CELLI) lpoff next(point)]
+        PEMIT
+        law i PVCAP
+        dac lcnt
+        lac lLit
+        add [libData-1]
+        dap lpv1
+lpv1,   lac .
+        dac pp3
+        jsp lIsPat
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lpvF
+// Each of a pattern's cells turned, then placed at pitch 8 about the preview's center.
+lpv2,   lac i pp3
+        SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+        jmp lpvE
+        dac lw
+        jsp lXform
+        lac tR
+        sal 3s
+        dac t8
+        law PVY+0d512
+        sub t8
+        ior [y(0) next(point)]
+        PEMIT
+        lac tC
+        sal 3s
+        add [PVX-0d512]
+        ior [show next(point)]
+        PEMIT
+        idx pp3
+        isp lcnt
+        jmp lpv2
+        jmp lpvE
+// A whole field's cells, row * 128 + column as the loader reads them, at pitch 4.
+lpvF,   lac pp3
+        add [patTab]
+        dap lpv3
+lpv3,   lac .
+        dac pp3
+        lac i pp3
+        SKIP_NEXT_IF_DIFFERENT [RAWMARK]
+        jmp lpvE                        // an image, not shown
+lpv4,   lac i pp3
+        SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+        jmp lpvE
+        dac lw
+        sar 7s
+        and [0177]
+        sal 2s
+        dac t8
+        law PVFY
+        sub t8
+        ior [y(0) next(point)]
+        PEMIT
+        lac lw
+        and [0177]
+        sal 2s
+        add [PVFX]
+        ior [show next(point)]
+        PEMIT
+        idx pp3
+        isp lcnt
+        jmp lpv4
+lpvE,   lac [y(0) next(subroutine)]
+        PEMIT
+        lac lLit
+        add [libInfo-1]
+        dap lpv5
+lpv5,   lac .
+        ior [jump next(parameter)]
+        PEMIT
+        lac pvBuf
+        ior [jump next(parameter)]
+        dac i [scrPv:1]
+        lac pvShown
+        xor [1]
+        dac pvShown
+        lac i [frames:0]
+        dac pvFr
+lpvx,   jmp .
+
+// lw's cell, (row + 64) * 128 + column + 64, turned as oSw, oNr and oNc say, into tR and tC,
+// each still with its 64 added. Called via jsp. AC and IO are clobbered.
+lXform, dap lxx
+        lac lw
+        and [0177]
+        dac tC
+        lac lw
+        sar 7s
+        and [0177]
+        dac tR
+        lac oSw
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lx1
+        lac tR
+        lio tC
+        dac tC
+        dio tR
+lx1,    lac oNr
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lx2
+        law 0d128
+        sub tR
+        dac tR
+lx2,    lac oNc
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lxx
+        law 0d128
+        sub tC
+        dac tC
+lxx,    jmp .
+
+// Cell (tR, tC) about the held pattern's place (gR, gC) into bank 0's crow and ccol.
+// Called via jsp. AC is clobbered, IO is preserved.
+lAt,    dap lax
+        lac tR
+        add gR
+        sub [0d64]
+        dac i [crow:0]
+        lac tC
+        add gC
+        sub [0d64]
+        dac i [ccol:0]
+lax,    jmp .
+
+// The held pattern's cell list into pp3. Called via jsp. AC is clobbered, IO is preserved.
+lHeld,  dap lhdx
+        lac i [stampP:0]
+        add [libData-1]
+        dap lhd1
+lhd1,   lac .
+        dac pp3
+lhdx,   jmp .
+
+// Moves the ghost to a lattice hit inside the size while a pattern is held, unless it is there
+// already. The hit's cell is in crow and ccol. Called via jsp i, the return in AC; returns by
+// jmp i. AC and IO are clobbered.
+libMove, dac lmR
+        law 1
+        dac plDown
+        lac ghOn
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lm1
+        lac i [crow:0]
+        SKIP_NEXT_IF_DIFFERENT gR
+        jmp lm2
+        jmp lm1
+lm2,    lac i [ccol:0]
+        SKIP_NEXT_IF_DIFFERENT gC
+        jmp i lmR                       // a pen held still
+lm1,    lac i [crow:0]
+        dac gR
+        lac i [ccol:0]
+        dac gC
+        jsp lGhost
+        jmp i lmR
+
+// Writes the ghost, the held pattern at (gR, gC) clipped to the size, into the buffer not
+// shown, then shows it, a frame ending first as for the preview. It is drawn in scale 3 vectors,
+// as the paint lists are. The first cell is a point one pitch left of it and a visible step onto
+// it. Each later cell is an invisible hop from the last to one pitch left of it and a visible
+// step onto it, but a cell just right of the last adds a step to the last's vector instead.
+// Called via jsp. AC and IO are clobbered.
+lGhost, dap lgx
+        lac i [frames:0]
+        sub ghFr
+        SKIP_NEXT_IF_AC_ZERO
+        jmp lg0
+        FAR(waitFrame)
+lg0,    lac [ghB:1]
+        lio ghShown
+        SKIP_NEXT_IF_IO_IS_ZERO
+        lac [ghA:1]
+        dac ghBuf
+        dac pq
+        lac [scale(3) intensity(GHI) lpoff]
+        PEMIT
+        law 1
+        dac lFst
+        law i GHCAP
+        dac lcnt
+        jsp lHeld
+lg1,    lac i pp3
+        SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+        jmp lg2
+        dac lw
+        jsp lXform
+        jsp lAt
+        FAR(inSize)
+        SKIP_NEXT_IF_AC_ZERO
+        jmp lg3                         // outside the size
+        lac lFst
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lg4
+        dzm lFst                        // the first, a point one pitch left of it
+        lac [next(point)]
+        PEMIT
+        lac i [crow:0]
+        sal 3s
+        dac t8
+        law FTOPY
+        sub t8
+        ior [y(0) next(point)]
+        PEMIT
+        lac i [ccol:0]
+        sal 3s
+        ior [next(vector)]
+        PEMIT
+        jmp lg6
+lg4,    lac i [ccol:0]                  // a later one, the hop's steps right and down
+        sub gLC
+        sub [1]
+        dac hX
+        lac i [crow:0]
+        sub gLR
+        dac hY
+        ior hX
+        SKIP_NEXT_IF_AC_ZERO
+        jmp lg7
+        lac pq                          // just right of the last, one more step
+        sub [1]
+        dac t8
+        idx i t8
+        jmp lg5
+lg7,    lac hX
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lg8
+        cma
+        ior [left]
+lg8,    dac t8
+        lac hY
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lg9
+        cma                             // a row above
+        sal 4s
+        sal 4s
+        jmp lg10
+lg9,    sal 4s
+        sal 4s
+        ior [down]
+lg10,   ior t8
+        PEMIT
+lg6,    lac [right deltax(1) visible]
+        PEMIT
+        isp lcnt
+        jmp lg5
+        jmp lg2                         // the cap
+lg5,    lac i [crow:0]
+        dac gLR
+        lac i [ccol:0]
+        dac gLC
+lg3,    idx pp3
+        jmp lg1
+lg2,    lac lFst
+        SKIP_NEXT_IF_AC_ZERO
+        jmp lg11                        // no cell, so still in parameter mode
+        lac pq
+        sub [1]
+        dac t8
+        lac i t8
+        ior [end]
+        dac i t8
+lg11,   lac [next(subroutine)]
+        PEMIT
+        lac [jump tail:0 next(parameter)]
+        PEMIT
+        lac ghBuf
+        ior [jump next(parameter)]
+        dac i [ghJmp:1]
+        lac ghShown
+        xor [1]
+        dac ghShown
+        lac i [frames:0]
+        dac ghFr
+        law 1
+        dac ghOn
+lgx,    jmp .
+
+// Drops the held pattern when the pen lifts, run each pass of the main loop while one is held.
+// Once a press has moved the ghost and PRESSGAP ms pass with no hit, the pen has lifted, and the
+// pattern is ORed into the field at the ghost's place, clipped to the size. Called via jsp i,
+// the return in AC; returns by jmp i. AC and IO are clobbered.
+libTidy, dac ltR
+        lac plDown
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i ltR
+        rck
+        dio lt3
+        lac lt3
+        sub i [lastMs:0]
+        MSWRAP
+        sub [PRESSGAP]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp i ltR
+        dzm plDown
+        jsp lSnap
+        jsp lHeld
+ld1,    lac i pp3
+        SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+        jmp ld2
+        dac lw
+        jsp lXform
+        jsp lAt
+        FAR(setCell)
+        idx pp3
+        jmp ld1
+ld2,    law 1
+        dac i [dirty:0]
+        jmp i ltR
+
+// Ends place mode, if on, putting out the ghost and dropping nothing. Called via jsp i, the
+// return in AC; returns by jmp i. AC is clobbered, IO is preserved.
+libEnd, dac leR
+        dzm i [stampP:0]
+        dzm plDown
+        dzm ghOn
+        lac [jump tail:0 next(parameter)]
+        dac i [ghJmp:1]
+        jmp i leR
+
+// Puts the pen's and the menu's state back as a load leaves it, for a start at go after a run.
+// An open list is closed, the library's screen and a held pattern put away, the first page
+// shown with no turn, both paint lists and the ring of hits emptied, UNDO's copy dropped, and
+// the menu's words listOn to lastC zeroed (lifemenu.ac), so the pen paints and the aperture is
+// set again. The size, edge, speed and whole field chosen are kept, as a debugger sets them.
+// Breaks must be off and the display halted. Called via jsp i, the return in AC; returns by
+// jmp i. AC and IO are clobbered.
+startOver, dac soR
+        FAR(closeList)
+        lac i [scrGo:0]
+        SKIP_NEXT_IF_AC_ZERO
+        jsp lClose
+        jsp libEnd
+        dzm lPg
+        dzm oSw
+        dzm oNr
+        dzm oNc
+        lac i [ovCH:0]                  // each paint list's head its empty jump
+        dac pq
+        lac i [ovCE:0]
+        dac i pq
+        dzm i [ovCN:0]
+        lac i [ovPH:0]
+        dac pq
+        lac i [ovPE:0]
+        dac i pq
+        dzm i [ovPN:0]
+        dzm i [undoOk:0]
+        dzm i [hitDrop:0]
+        dzm i [wIdx:0]
+        dzm i [rIdx:0]
+        lac [ring:0]
+        dac i [wPtr:0]
+        dac i [rPtr:0]
+        lac [listOn:0]
+        dac pq
+        lac [-(lastC:0-listOn:0+1)]
+        dac lcnt
+so1,    dzm i pq
+        idx pq
+        isp lcnt
+        jmp so1
+        jmp i soR
+
+// Takes UNDO's copy of the field, its row flags, the generation and the counter's digits,
+// before an edit. Called via jsp i, the return in AC; returns by jmp i. lSnap is the same
+// routine called via jsp. AC is clobbered, IO is preserved.
+libSnap, dac lsR
+        jsp lSnap
+        jmp i lsR
+
+lSnap,  dap lsx
+        lac [field:4]
+        dac pp3
+        lac [fldU:4]
+        dac pq
+        law i FIELDSPAN
+        dac lcnt
+ls1,    lac i pp3
+        dac i pq
+        idx pp3
+        idx pq
+        isp lcnt
+        jmp ls1
+        lac [dig:0]
+        dac pp3
+        lac [uDig:3]
+        dac pq
+        law i 7
+        dac lcnt
+ls2,    lac i pp3
+        dac i pq
+        idx pp3
+        idx pq
+        isp lcnt
+        jmp ls2
+        lac i [gen:0]
+        dac uGen
+        law 1
+        dac i [undoOk:0]
+lsx,    jmp .
+
+// UNDO swaps the field, its flags, the generation and the counter with the copy, so a second
+// UNDO puts back the first's. It does nothing with no copy. Called via jsp i, the return in AC;
+// returns by jmp i. AC and IO are clobbered.
+libUndo, dac luR
+        lac i [undoOk:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i luR
+        lac [field:4]
+        dac pp3
+        lac [fldU:4]
+        dac pq
+        law i FIELDSPAN
+        dac lcnt
+lu2,    lac i pp3
+        lio i pq
+        dac i pq
+        dio i pp3
+        idx pp3
+        idx pq
+        isp lcnt
+        jmp lu2
+        lac [dig:0]
+        dac pp3
+        lac [uDig:3]
+        dac pq
+        law i 7
+        dac lcnt
+lu3,    lac i pp3
+        lio i pq
+        dac i pq
+        dio i pp3
+        idx pp3
+        idx pq
+        isp lcnt
+        jmp lu3
+        lac i [gen:0]
+        lio uGen
+        dac uGen
+        dio i [gen:0]
+        law 1
+        dac i [dirty:0]
+        jmp i luR
+
+// The keys' actions, by key from the left.
+keyT,   kPrev; kNext; kTurn; kFlip; kPlace; kCancel
+
+// The library's state. lPg is the page shown, lLit the lit entry plus 1, or 0; oSw, oNr and oNc
+// the turn the keys left. The ghost's place is (gR, gC); plDown is set by a press that moves it
+// and cleared by the lift's drop.
+lPg,    0
+lLit,   0
+oSw,    0
+oNr,    0
+oNc,    0
+pvShown, 0                              // the preview buffer shown, 0 A or 1 B
+pvFr,   0                               // frames when it was switched
+pvBuf,  0
+ghShown, 0
+ghFr,   0
+ghBuf,  0
+ghOn,   0                               // a ghost is shown
+gR,     0
+gC,     0
+plDown, 0
+uGen,   0                               // UNDO's copy of the generation and the digits
+uDig,
+        table 7
+
+// Returns, and working words.
+llR,    0
+loR,    0
+lhR,    0
+lmR,    0
+ltR,    0
+leR,    0
+lsR,    0
+luR,    0
+soR,    0
+pp3,    0
+pq,     0
+lw,     0
+lcnt,   0
+lt3,    0
+lk,     0
+t8,     0
+tR,     0
+tC,     0
+hX,     0                               // the ghost's hop steps, first-cell flag and last cell
+hY,     0
+lFst,   0
+gLR,    0
+gLC,    0
+
+// The entries, by entry. Each has its kind (0 a pattern, 1 a whole field), its cells' list or
+// its patSel, its row's parameter word on its page, and its preview's text.
+libKind,
+        0                               // BLOCK
+        0                               // BEEHIVE
+        0                               // LOAF
+        0                               // BOAT
+        0                               // TUB
+        0                               // SHIP
+        0                               // POND
+        0                               // EATER
+        0                               // BLINKER
+        0                               // TOAD
+        0                               // BEACON
+        0                               // CLOCK
+        0                               // PULSAR
+        0                               // PENTADEC
+        0                               // GALAXY
+        0                               // QUEENBEE
+        0                               // GLIDER
+        0                               // LWSS
+        0                               // MWSS
+        0                               // HWSS
+        0                               // GUN
+        0                               // SIMKIN
+        0                               // RPENT
+        0                               // ACORN
+        0                               // DIEHARD
+        0                               // BHEPTO
+        0                               // PIHEPTO
+        1                               // GUNS
+        1                               // ALGOL
+libData,
+        lc0:3
+        lc1:3
+        lc2:3
+        lc3:3
+        lc4:3
+        lc5:3
+        lc6:3
+        lc7:3
+        lc8:3
+        lc9:3
+        lc10:3
+        lc11:3
+        lc12:3
+        lc13:3
+        lc14:3
+        lc15:3
+        lc16:3
+        lc17:3
+        lc18:3
+        lc19:3
+        lc20:3
+        lc21:3
+        lc22:3
+        lc23:3
+        lc24:3
+        lc25:3
+        lc26:3
+        0
+        1
+libRow,
+        lr0:1
+        lr1:1
+        lr2:1
+        lr3:1
+        lr4:1
+        lr5:1
+        lr6:1
+        lr7:1
+        lr8:1
+        lr9:1
+        lr10:1
+        lr11:1
+        lr12:1
+        lr13:1
+        lr14:1
+        lr15:1
+        lr16:1
+        lr17:1
+        lr18:1
+        lr19:1
+        lr20:1
+        lr21:1
+        lr22:1
+        lr23:1
+        lr24:1
+        lr25:1
+        lr26:1
+        lr27:1
+        lr28:1
+libInfo,
+        li0:1
+        li1:1
+        li2:1
+        li3:1
+        li4:1
+        li5:1
+        li6:1
+        li7:1
+        li8:1
+        li9:1
+        li10:1
+        li11:1
+        li12:1
+        li13:1
+        li14:1
+        li15:1
+        li16:1
+        li17:1
+        li18:1
+        li19:1
+        li20:1
+        li21:1
+        li22:1
+        li23:1
+        li24:1
+        li25:1
+        li26:1
+        li27:1
+        li28:1
+
+// By page, its names' first word.
+pgTab,
+        pg0:1
+        pg1:1
+
+// The patterns' cells, as (row + 64) * 128 + column + 64 from the pattern's center, each
+// list ended by PATEND.
+lc0,                                    // BLOCK
+    0d8127; 0d8128; 0d8255; 0d8256
+    PATEND
+lc1,                                    // BEEHIVE
+    0d8127; 0d8128; 0d8254; 0d8257; 0d8383; 0d8384
+    PATEND
+lc2,                                    // LOAF
+    0d7999; 0d8000; 0d8126; 0d8129; 0d8255; 0d8257; 0d8384
+    PATEND
+lc3,                                    // BOAT
+    0d8127; 0d8128; 0d8255; 0d8257; 0d8384
+    PATEND
+lc4,                                    // TUB
+    0d8128; 0d8255; 0d8257; 0d8384
+    PATEND
+lc5,                                    // SHIP
+    0d8127; 0d8128; 0d8255; 0d8257; 0d8384; 0d8385
+    PATEND
+lc6,                                    // POND
+    0d7999; 0d8000; 0d8126; 0d8129; 0d8254; 0d8257; 0d8383; 0d8384
+    PATEND
+lc7,                                    // EATER
+    0d7998; 0d7999; 0d8126; 0d8128; 0d8256; 0d8384; 0d8385
+    PATEND
+lc8,                                    // BLINKER
+    0d8255; 0d8256; 0d8257
+    PATEND
+lc9,                                    // TOAD
+    0d8127; 0d8128; 0d8129; 0d8254; 0d8255; 0d8256
+    PATEND
+lc10,                                    // BEACON
+    0d7998; 0d7999; 0d8126; 0d8127; 0d8256; 0d8257; 0d8384; 0d8385
+    PATEND
+lc11,                                    // CLOCK
+    0d8000; 0d8126; 0d8128; 0d8255; 0d8257; 0d8383
+    PATEND
+lc12,                                    // PULSAR
+    0d7484; 0d7485; 0d7486; 0d7490; 0d7491; 0d7492; 0d7738; 0d7743
+    0d7745; 0d7750; 0d7866; 0d7871; 0d7873; 0d7878; 0d7994; 0d7999
+    0d8001; 0d8006; 0d8124; 0d8125; 0d8126; 0d8130; 0d8131; 0d8132
+    0d8380; 0d8381; 0d8382; 0d8386; 0d8387; 0d8388; 0d8506; 0d8511
+    0d8513; 0d8518; 0d8634; 0d8639; 0d8641; 0d8646; 0d8762; 0d8767
+    0d8769; 0d8774; 0d9020; 0d9021; 0d9022; 0d9026; 0d9027; 0d9028
+    PATEND
+lc13,                                    // PENTADEC
+    0d8125; 0d8130; 0d8251; 0d8252; 0d8254; 0d8255; 0d8256; 0d8257
+    0d8259; 0d8260; 0d8381; 0d8386
+    PATEND
+lc14,                                    // GALAXY
+    0d7740; 0d7741; 0d7742; 0d7743; 0d7744; 0d7745; 0d7747; 0d7748
+    0d7868; 0d7869; 0d7870; 0d7871; 0d7872; 0d7873; 0d7875; 0d7876
+    0d8003; 0d8004; 0d8124; 0d8125; 0d8131; 0d8132; 0d8252; 0d8253
+    0d8259; 0d8260; 0d8380; 0d8381; 0d8387; 0d8388; 0d8508; 0d8509
+    0d8636; 0d8637; 0d8639; 0d8640; 0d8641; 0d8642; 0d8643; 0d8644
+    0d8764; 0d8765; 0d8767; 0d8768; 0d8769; 0d8770; 0d8771; 0d8772
+    PATEND
+lc15,                                    // QUEENBEE
+    0d7870; 0d7996; 0d7998; 0d8123; 0d8125; 0d8245; 0d8246; 0d8250
+    0d8253; 0d8265; 0d8266; 0d8373; 0d8374; 0d8379; 0d8381; 0d8393
+    0d8394; 0d8508; 0d8510; 0d8638
+    PATEND
+lc16,                                    // GLIDER
+    0d8128; 0d8257; 0d8383; 0d8384; 0d8385
+    PATEND
+lc17,                                    // LWSS
+    0d7999; 0d8002; 0d8126; 0d8254; 0d8258; 0d8382; 0d8383; 0d8384
+    0d8385
+    PATEND
+lc18,                                    // MWSS
+    0d8000; 0d8126; 0d8130; 0d8253; 0d8381; 0d8386; 0d8509; 0d8510
+    0d8511; 0d8512; 0d8513
+    PATEND
+lc19,                                    // HWSS
+    0d8000; 0d8001; 0d8126; 0d8131; 0d8253; 0d8381; 0d8387; 0d8509
+    0d8510; 0d8511; 0d8512; 0d8513; 0d8514
+    PATEND
+lc20,                                    // GUN
+    0d7750; 0d7876; 0d7878; 0d7994; 0d7995; 0d8002; 0d8003; 0d8016
+    0d8017; 0d8121; 0d8125; 0d8130; 0d8131; 0d8144; 0d8145; 0d8238
+    0d8239; 0d8248; 0d8254; 0d8258; 0d8259; 0d8366; 0d8367; 0d8376
+    0d8380; 0d8382; 0d8383; 0d8388; 0d8390; 0d8504; 0d8510; 0d8518
+    0d8633; 0d8637; 0d8762; 0d8763
+    PATEND
+lc21,                                    // SIMKIN
+    0d6960; 0d6961; 0d6967; 0d6968; 0d7088; 0d7089; 0d7095; 0d7096
+    0d7348; 0d7349; 0d7476; 0d7477; 0d8134; 0d8135; 0d8137; 0d8138
+    0d8261; 0d8267; 0d8389; 0d8396; 0d8399; 0d8400; 0d8517; 0d8518
+    0d8519; 0d8523; 0d8527; 0d8528; 0d8650; 0d9156; 0d9157; 0d9284
+    0d9413; 0d9414; 0d9415; 0d9543
+    PATEND
+lc22,                                    // RPENT
+    0d8128; 0d8129; 0d8255; 0d8256; 0d8384
+    PATEND
+lc23,                                    // ACORN
+    0d8126; 0d8256; 0d8381; 0d8382; 0d8385; 0d8386; 0d8387
+    PATEND
+lc24,                                    // DIEHARD
+    0d8130; 0d8252; 0d8253; 0d8381; 0d8385; 0d8386; 0d8387
+    PATEND
+lc25,                                    // BHEPTO
+    0d8126; 0d8128; 0d8129; 0d8254; 0d8255; 0d8256; 0d8383
+    PATEND
+lc26,                                    // PIHEPTO
+    0d8127; 0d8128; 0d8129; 0d8255; 0d8257; 0d8383; 0d8385
+    PATEND
+
+        constants
+
+// The screen, the preview's buffers and the ghost's, in bank 1.
+bank 1
+
+// The screen's list, which the break routine starts while it is open. It draws the title and
+// the keys, then the page's names through scrPg, the preview through scrPv and its text, then
+// the tail.
+scrList, scale(1) intensity(LBLI) lpon next(point)
+        ITEM(BARY, 0)
+        type340 "\UPATTERNS"
+        ITEM(KEYY, 0)
+        type340 "\UPREV"
+        ITEM(KEYY, 0d128)
+        type340 "\UNEXT"
+        ITEM(KEYY, 0d256)
+        type340 "\UTURN"
+        ITEM(KEYY, 0d384)
+        type340 "\UFLIP"
+        ITEM(KEYY, 0d512)
+        type340 "\UPLACE"
+        ITEM(KEYY, 0d640)
+        type340 "\UCANCEL"
+        next(subroutine)
+scrPg,  jump tail:0 next(parameter)     // to the page's names, which end at scrPv
+scrPv,  jump tail:0 next(parameter)     // to the preview shown, or on
+
+// The preview's two buffers, written by lPreview. Each holds a parameter word, the cells'
+// points, a y word in subroutine mode, and the jump to the entry's text.
+pvA,
+        table PVWORDS
+pvB,
+        table PVWORDS
+
+// The ghost, drawn after the paint lists while a pattern is held. ghJmp jumps to the buffer
+// shown, or on to the tail. The two buffers are written by lGhost and end in the jump to the
+// tail.
+ghJmp,  jump tail:0 next(parameter)
+ghA,
+        table GHWORDS
+ghB,
+        table GHWORDS
+
+// The pages' names.
+// Page 1.
+pg0,    ITEM(BARY, 0d160)
+        type340 "\USTILL LIFES AND OSCILLATORS  1/2"
+lr0,    ITEM(SROWY1-0d0, 0d32)
+        type340 "\UBLOCK"
+lr1,    ITEM(SROWY1-0d36, 0d32)
+        type340 "\UBEEHIVE"
+lr2,    ITEM(SROWY1-0d72, 0d32)
+        type340 "\ULOAF"
+lr3,    ITEM(SROWY1-0d108, 0d32)
+        type340 "\UBOAT"
+lr4,    ITEM(SROWY1-0d144, 0d32)
+        type340 "\UTUB"
+lr5,    ITEM(SROWY1-0d180, 0d32)
+        type340 "\USHIP"
+lr6,    ITEM(SROWY1-0d216, 0d32)
+        type340 "\UPOND"
+lr7,    ITEM(SROWY1-0d252, 0d32)
+        type340 "\UEATER"
+lr8,    ITEM(SROWY1-0d0, 0d272)
+        type340 "\UBLINKER"
+lr9,    ITEM(SROWY1-0d36, 0d272)
+        type340 "\UTOAD"
+lr10,    ITEM(SROWY1-0d72, 0d272)
+        type340 "\UBEACON"
+lr11,    ITEM(SROWY1-0d108, 0d272)
+        type340 "\UCLOCK"
+lr12,    ITEM(SROWY1-0d144, 0d272)
+        type340 "\UPULSAR"
+lr13,    ITEM(SROWY1-0d180, 0d272)
+        type340 "\UPENTADEC"
+lr14,    ITEM(SROWY1-0d216, 0d272)
+        type340 "\UGALAXY"
+lr15,    ITEM(SROWY1-0d252, 0d272)
+        type340 "\UQUEENBEE"
+        next(subroutine)
+        jump scrPv:1 next(subroutine)
+// Page 2.
+pg1,    ITEM(BARY, 0d160)
+        type340 "\USPACESHIPS GUNS METHUSELAHS  2/2"
+lr16,    ITEM(SROWY1-0d0, 0d32)
+        type340 "\UGLIDER"
+lr17,    ITEM(SROWY1-0d36, 0d32)
+        type340 "\ULWSS"
+lr18,    ITEM(SROWY1-0d72, 0d32)
+        type340 "\UMWSS"
+lr19,    ITEM(SROWY1-0d108, 0d32)
+        type340 "\UHWSS"
+lr20,    ITEM(SROWY1-0d144, 0d32)
+        type340 "\UGUN"
+lr21,    ITEM(SROWY1-0d180, 0d32)
+        type340 "\USIMKIN"
+lr22,    ITEM(SROWY1-0d216, 0d32)
+        type340 "\URPENT"
+lr23,    ITEM(SROWY1-0d252, 0d32)
+        type340 "\UACORN"
+lr24,    ITEM(SROWY1-0d0, 0d272)
+        type340 "\UDIEHARD"
+lr25,    ITEM(SROWY1-0d36, 0d272)
+        type340 "\UBHEPTO"
+lr26,    ITEM(SROWY1-0d72, 0d272)
+        type340 "\UPIHEPTO"
+lr27,    ITEM(SROWY1-0d108, 0d272)
+        type340 "\UGUNS"
+lr28,    ITEM(SROWY1-0d144, 0d272)
+        type340 "\UALGOL"
+        next(subroutine)
+        jump scrPv:1 next(subroutine)
+
+// Each entry's preview text, below its preview.
+li0,    ITEM(INFOY, PVTX)
+        type340 "\U2X2  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li1,    ITEM(INFOY, PVTX)
+        type340 "\U4X3  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li2,    ITEM(INFOY, PVTX)
+        type340 "\U4X4  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li3,    ITEM(INFOY, PVTX)
+        type340 "\U3X3  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li4,    ITEM(INFOY, PVTX)
+        type340 "\U3X3  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li5,    ITEM(INFOY, PVTX)
+        type340 "\U3X3  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li6,    ITEM(INFOY, PVTX)
+        type340 "\U4X4  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li7,    ITEM(INFOY, PVTX)
+        type340 "\U4X4  STILL"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li8,    ITEM(INFOY, PVTX)
+        type340 "\U3X1  P2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li9,    ITEM(INFOY, PVTX)
+        type340 "\U4X2  P2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li10,    ITEM(INFOY, PVTX)
+        type340 "\U4X4  P2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li11,    ITEM(INFOY, PVTX)
+        type340 "\U4X4  P2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li12,    ITEM(INFOY, PVTX)
+        type340 "\U13X13  P3"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li13,    ITEM(INFOY, PVTX)
+        type340 "\U10X3  P15"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li14,    ITEM(INFOY, PVTX)
+        type340 "\U9X9  P8"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li15,    ITEM(INFOY, PVTX)
+        type340 "\U22X7  P30"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li16,    ITEM(INFOY, PVTX)
+        type340 "\U3X3  P4 C/4"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li17,    ITEM(INFOY, PVTX)
+        type340 "\U5X4  P4 C/2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li18,    ITEM(INFOY, PVTX)
+        type340 "\U6X5  P4 C/2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li19,    ITEM(INFOY, PVTX)
+        type340 "\U7X5  P4 C/2"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li20,    ITEM(INFOY, PVTX)
+        type340 "\U36X9  P30 GUN"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li21,    ITEM(INFOY, PVTX)
+        type340 "\U33X21  P120 GUN"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li22,    ITEM(INFOY, PVTX)
+        type340 "\U3X3  1103 GENS"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li23,    ITEM(INFOY, PVTX)
+        type340 "\U7X3  5206 GENS"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li24,    ITEM(INFOY, PVTX)
+        type340 "\U8X3  GONE AT 130"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li25,    ITEM(INFOY, PVTX)
+        type340 "\U4X3  148 GENS"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li26,    ITEM(INFOY, PVTX)
+        type340 "\U3X3  173 GENS"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li27,    ITEM(INFOY, PVTX)
+        type340 "\UWHOLE FIELD"
+        next(subroutine)
+        jump tail:0 next(parameter)
+li28,    ITEM(INFOY, PVTX)
+        type340 "\UWHOLE FIELD"
+        next(subroutine)
+        jump tail:0 next(parameter)
+
+bank 3

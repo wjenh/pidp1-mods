@@ -5,7 +5,7 @@ display, and how to use it.
 
 This is version 2.0\
 Edit date 4-Nov-2026\
-Updated for added funtionality from the thesis.
+Updated for added functionality from the thesis.
 
 ## What is Sketchpad?
 
@@ -77,7 +77,7 @@ this version does it in under 3 seconds while still preserving the iterative con
 - The BBN timesharing clock for its 1 ms counter.
 - The Type 550 Microtape, only to save and load pictures.
 - The Type 23 drum which holds the code overlays.
-- The am1 assembler envrionment.
+- The am1 assembler environment.
 
 All of the peripherals are supported by the simh version of the PDP-1 and this program should be able to
 run under it with few changes, but the simh target tracking speed might not be suitable.
@@ -112,9 +112,9 @@ This creates *sketchpad.rim* and *sketchpad.ovl*, the drum overlays.
 It is strongly suggested to use *pdp1central* or *ovlload* to load it, otherwise be prepared
 to wait a LONG while, about 5 minutes, it is the equivalent of 16 very long tapes!
 
-*pdp1central* will automatically load the overays onto the drum, see *UsingPdp1central.md*.
+*pdp1central* will automatically load the overlays onto the drum, see *UsingPdp1central.md*.
 
-To load it with *ovlload*, which will aso start the program:
+To load it with *ovlload*, which will also start the program:
 ```
 ovlload sketchpad.ovl
 ```
@@ -168,13 +168,13 @@ If there are multiple potential locks, there is a selection priority,
 a point is preferred over a line that is nearly as close.
 
 An instance or a text is identified by its middle, so aim at the middle to select it.\
-The dot also locs onto the crossing of two lines.\
+The dot also locks onto the crossing of two lines.\
 Moving with nothing being dragged locks onto lines but not arcs.
 
 In Line, Circle, and Move modes it finds lines and arcs once the target pauses, however briefly, and always at the
 moment the pen lifts.
 It does the same while Copy is carrying a copy by its attacher.
-However, again, the actual action only happens when either the pen is lifed or the target doesn't move for several
+However, again, the actual action only happens when either the pen is lifted or the target doesn't move for several
 seconds.
 
 What a lift will do:
@@ -441,7 +441,7 @@ An instance is moved by its origin, carrying its tie points, what is drawn on th
 every instance fastened to it.
 A tie point dragged brings its instance along, see *Attachers and tie points* below.
 
-A text is moved in its entireity, the place it was moved to stays under the dot.
+A text is moved in its entirety, the place it was moved to stays under the dot.
 At an edge of the screen it stops.
 A number's digits move the same way and the constraints on them follow.
 
@@ -560,7 +560,7 @@ An instance of a master that holds instances is taken apart one level.
 The master's own points, lines, arcs, and texts are placed as above, and each instance the master
 holds becomes an instance on the canvas its own master, at its place and size inside the
 instance taken apart.
-Ohe held at x2 in an instance at x2 shows at x4.
+One held at x2 in an instance at x2 shows at x4.
 Its tie points are the placed points it was tied to, so it stays joined to the parts.
 The held instances' texts are shown by the new instances, not placed as texts.
 A second Dismem on one of them takes the next level apart.
@@ -1411,7 +1411,7 @@ The circles and arcs are true arcs, drawn by the plotter's steps around the circ
 A character is its dots joined, as *sketchplot* joins them, in as few strokes as the joins allow.
 Anything that runs off the page's edge is drawn where it is on the page.
 
-A plot takes about as long as the Calcomp 560's 200 steps a second plus a fifth of a second
+A plot takes about as long as the CalComp 560's 200 steps a second plus a fifth of a second
 for each lift and lowering of the pen.
 On the 560 the sample pictures take about 25 seconds for Dimension and the Bridge, and about 80
 for the Girl and the GirlWink.

@@ -1,13 +1,13 @@
 /*
  * sketchplot -- draw a Sketchpad picture saved on a Microtape as a PNG file.
  *
- * Reads one picture (P1 to P16) from a Type 550 Microtape image file, checks it as Sketchpad's
+ * Reads one picture (P1 to P12) from a Type 550 Microtape image file, checks it as Sketchpad's
  * Load does, and draws what Sketchpad's screen shows of it after a load, in Locate's mode at
  * x1 with Show and Forces off: the lines, the arcs, the instances, and the texts and numbers'
  * digits, in the Type 340's characters. The arcs are drawn true, where the screen shows them
  * as chords, at most 1.6 units off at the largest radius. A damaged image's counts and indices
  * are held to what the picture holds, so it draws nothing that is not there. The PNG is one
- * bit deep, written with stored deflate blocks, so no library is needed. The picture's layout
+ * bit deep, its rows deflated by zlib (link with -lz). The picture's layout
  * is Sketchpad's tape module's (sptape.ac); the image file's is UsingType550Microtape.md's
  * ("The image file").
  *
@@ -19,6 +19,12 @@
  * 18-Oct-2026, Claude: tape format 14, sixteen pictures, an instance's size at any scale.
  * 18-Oct-2026, Claude: damaged images refused or drawn safely.
  * 18-Oct-2026, Claude: production cleanup, comments only.
+ * 20-Oct-2026, Claude: tape format 15, twelve pictures, the master store in two regions.
+ * 21-Oct-2026, Claude: tape format 16, sixteen masters, each master's words in its entry.
+ * 22-Oct-2026, Claude: tape format 17, each master's name last in its entry.
+ * 25-Oct-2026, Claude: the PNG's rows deflated by zlib, not stored.
+ * 27-Oct-2026, Claude: tape format 18, the masters' sub-instances; format 17 read too.
+ * 27-Oct-2026, Claude: tape format 19, the masters' own texts' counts; 18 and 17 read too.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +33,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <getopt.h>
+#include <zlib.h>
 
 #define MOUNTLIST "/opt/pidp1-mods/microtapes.txt"
 #define TAPEDIR "/opt/pidp1-mods/Microtapes/"
@@ -37,45 +44,85 @@
 #define TAPEBLOCKS 576
 #define NDRIVES 8
 
-// The picture on the tape, format 14, the one the load accepts, its header's words, and the
-// stream's words and blocks. Picture p (0 to 15) has a slot of TPSLOT blocks, P1 to P8 from
-// block 1, P9 to P16 from TPDIRBLK + 1, the directory's block between them; the picture is one
-// stream over the first TPPBLOCKS blocks of its slot, the header first and last.
+// The picture on the tape, format 19, 18 or 17, the three the load accepts, its header's words,
+// and the stream's words and blocks; 18's stream is 19's less the masters' own texts' counts,
+// 17's less the whole nesting, and 17's entries hold no sub-instances. Picture p (0 to 11) has a
+// slot of TPSLOT blocks, P1 to P6 from block 1, P7 to P12 from TPDIRBLK + 1, the directory's
+// block between them. The picture is the
+// stream over the first TPPBLOCKS blocks of its slot, the header first; then each master's
+// entry, from a block's start, for each master with words in turn, as many blocks in all as
+// the header's HENTRIES word says; then the closing block, the header again as its last words.
 #define TPMAGIC 0525253
-#define TPFORMAT 016
-#define TPSTREAM 8151
-#define TPHDRWORDS 4
-#define TPPBLOCKS 32
-#define TPSLOT 35
-#define TPHALF 8
+#define TPFORMAT 023
+#define TPSTREAM 5759
+#define TPFORMAT18 022
+#define TPSTREAM18 5743
+#define TPFORMAT17 021
+#define TPSTREAM17 5679
+#define TPHDRWORDS 5
+#define HENTRIES 4
+#define TPPBLOCKS 23
+#define TPSLOT 47
+#define TPHALF 6
 #define TPDIRBLK (1 + (TPHALF * TPSLOT))
-#define NPICTURES 16
+#define NPICTURES 12
 #define NAMEW 9
 
-// Each drawn part's first word in the stream (sptape.ac, tpSaveRuns), and the trailing header's.
-// The constraint table and the ties lie between the header and the name, the cycle's settings
-// and the masters' constraints between the name and the texts; nothing here draws them.
-#define SNAME 485
-#define STEXTS 890
-#define SDIGITS 2336
-#define SPICTURE 2561
-#define STRAILER ((TPPBLOCKS * 256) - TPHDRWORDS)
+// Each drawn part's first word in the stream (sptape.ac, tpSaveRuns), and the masters'
+// constraints' counts', which size their entries. The constraint table and the ties lie between
+// the header and the name, the cycle's settings between the name and the counts; nothing here
+// draws them.
+#define SNAME 486
+#define SCPNCON 518
+#define STEXTS 534
+#define SDIGITS 3432
+#define SPICTURE 3881
+#define SNEST 5679
 
-// Sketchpad's table sizes, and the largest radius it gives an arc.
+// Sketchpad's table sizes, and the largest radius it gives an arc. A master's words are at most
+// MPOOL1, the master store's larger region.
 #define MAXPTS 256
 #define MAXLINES 264
 #define MAXINST 32
-#define NMASTER 4
-#define MWORDS 128
+#define NMASTER 16
+#define MPOOL1 530
 #define MAXARCS 19
-#define NTEXT 32
-#define NMTEXT 32
+#define NTEXT 64
+#define NMTEXT 64
 #define TXRUN 17
-#define NSCAL 32
+#define NSCAL 64
 #define NOPOINT 0777777
 #define ARCRMAX 1294
 
+// A master's entry (sptape.ac, tpRecT): its words, then its points' two tables, its lines' two
+// and its arcs' CPATAB, as many as the directory's counts, and its constraints, CW words each,
+// as many as its count in the masters' constraints' counts; each count at most its record's
+// room; then the master's name, NAMEW words, which is not drawn.
+#define CPPTS 256
+#define CPLINES 128
+#define CPARCS 32
+#define CPATAB 5
+#define NCPCON 16
+#define CW 6
+
+// The masters' nesting, five tables of NMASTER from SNEST (format 19; 18 holds the first four):
+// each master's sub-instances' count, its own words' count, its words before its own crosses, the
+// masters it holds, a bit each, M1 in bit 17, and its own texts' count, which come first among
+// its texts. Its sub-instances are last in its entry, before its name, SUBW words each: the
+// master, x and y from the master's origin, the scale word, and NATT ties. A master's words
+// already hold its sub-instances' figures, composed by Define, and its texts their texts, so
+// nothing here draws from them.
+#define NSUBAT 0
+#define NOWNAT 16
+#define NDRAWAT 32
+#define NUSESAT 48
+#define NTXOWNAT 64
+#define NSUB 8
+#define NATT 6
+#define SUBW (4 + NATT)
+
 // The picture's runs (sptape.ac, TPPICTURE): each table's first word from SPICTURE, in order.
+// The masters' attachers' run lies between iScale's and the master directory's.
 #define SPOINTX 0
 #define SPOINTY 256
 #define SLINEFROM 512
@@ -83,41 +130,44 @@
 #define SIX 1040
 #define SIY 1072
 #define SISCALE 1104
-#define SBANK2 1136
-#define SLINECOUNT 1332
-#define SPOINTCOUNT 1333
-#define SMASTERS 1334
+#define SDIR 1440
+#define SLINECOUNT 1796
+#define SPOINTCOUNT 1797
 
-// Bank 2's run, the master directory, the instances' masters, the arc table.
-#define B2MLEN 0
-#define B2INSTCOUNT 48
-#define B2IMASTER 49
-#define B2ARCCOUNT 81
-#define B2ARCTC 82
+// The master directory's run, each master's length and its entry's counts, then the instances'
+// masters and the arc table's runs, from SDIR.
+#define DMLEN 0
+#define DCPNP 144
+#define DCPNL 160
+#define DCPNA 176
+#define DINSTCOUNT 208
+#define DIMASTER 209
+#define DARCCOUNT 241
+#define DARCTC 242
 
-// The texts' run (TPTEXTS), from STEXTS.
+// The texts' two runs (TPTEXTS), the canvas's then the masters' from MTM, from STEXTS.
 #define TXN 0
 #define MTN 1
-#define TXX 6
-#define TXY 38
-#define TXSC 70
-#define TXCH 102
-#define TXW 134
-#define TXRUNAT 166
-#define MTM 710
-#define MTDX 742
-#define MTDY 774
-#define MTSC 806
-#define MTCH 838
-#define MTW 870
-#define MTRUNAT 902
-#define TPTWORDS 1446
+#define TXX 18
+#define TXY 82
+#define TXSC 146
+#define TXCH 210
+#define TXW 274
+#define TXRUNAT 338
+#define MTM 1426
+#define MTDX 1490
+#define MTDY 1554
+#define MTSC 1618
+#define MTCH 1682
+#define MTW 1746
+#define MTRUNAT 1810
+#define TPTWORDS 2898
 
 // The digits' runs (TPDIGITS), from SDIGITS.
 #define DTXAN 0
-#define DMTAN 129
-#define DMTVAL 161
-#define TPSWORDS 225
+#define DMTAN 257
+#define DMTVAL 321
+#define TPSWORDS 449
 
 // The 340's vector words, character codes, and a character's size at x1.
 #define VEND 0400000
@@ -136,7 +186,7 @@
 
 // What Sketchpad shows of the texts, at most TEXTBUDGET characters in all, each text counting
 // its characters and TXOWN more; scales up to x8.
-#define TEXTBUDGET 180
+#define TEXTBUDGET 360
 #define TXOWN 2
 #define MAXSCALE 3
 #define MAXDIGITS 99999
@@ -158,7 +208,6 @@
 #define MINSIZE 16
 #define MAXSIZE 8192
 #define DEFSIZE 1024
-#define STOREDMAX 65535
 
 // A picture's tables, decoded.
 typedef struct
@@ -186,7 +235,13 @@ typedef struct
     int instY[MAXINST];
     uint32_t instScale[MAXINST];
     int masterLen[NMASTER];
-    uint32_t masters[NMASTER * MWORDS];
+    uint32_t masters[NMASTER][MPOOL1];
+    int nSub[NMASTER];
+    int ownLen[NMASTER];
+    int drawLen[NMASTER];
+    uint32_t uses[NMASTER];
+    int txOwn[NMASTER];
+    uint32_t subs[NMASTER][NSUB * SUBW];
     int txN;
     int txX[NTEXT];
     int txY[NTEXT];
@@ -355,7 +410,6 @@ static uint8_t *pixP;
 static int size;
 static double toPixel;
 static int shownChars;
-static uint32_t crcTable[256];
 
 // A tape word as a signed value, in the PDP-1's 1's complement.
 static int
@@ -544,7 +598,18 @@ size_t len;
     return( false );
 }
 
-// Picture p's first block (sptape.ac, tpFirst), P9 on past the directory's block.
+// A table count held to its table's size, so a damaged word cannot index past it.
+static int
+held(int count, int most)
+{
+    if( count < 0 )
+    {
+        return( 0 );
+    }
+    return( (count > most) ? most : count );
+}
+
+// Picture p's first block (sptape.ac, tpFirst), P7 on past the directory's block.
 static int
 slotFirst(int p)
 {
@@ -562,34 +627,98 @@ streamWord(int first, int k)
     return( dataWord(first + (k / 256), k % 256) );
 }
 
-// Check picture p (0 to 15) as Sketchpad's Load does before it reads a word into its tables.
-// It checks the header, this format and its stream's size, the trailing header the same, then every
-// block's sum. Returns PICOK, PICEMPTY or PICBAD.
+// Master m's sub-instances in the picture from block first, as its entry holds them: none on a
+// format 17 tape, whose stream has zeros where 18 and 19 keep the nesting.
+static int
+subCount(int first, int m)
+{
+    if( streamWord(first, 1) == TPFORMAT17 )
+    {
+        return( 0 );
+    }
+    return( held(signedWord(streamWord(first, SNEST + NSUBAT + m)), NSUB) );
+}
+
+// Master m's entry's words before its sub-instances (sptape.ac, tpRecT): its words and its tables
+// as the stream's counts give them, each held to its record's room.
+static int
+entryTables(int first, int m)
+{
+int words;
+
+    words = held(signedWord(streamWord(first, SPICTURE + SDIR + DMLEN + m)), MPOOL1);
+    words += 2 * held(signedWord(streamWord(first, SPICTURE + SDIR + DCPNP + m)), CPPTS);
+    words += 2 * held(signedWord(streamWord(first, SPICTURE + SDIR + DCPNL + m)), CPLINES);
+    words += CPATAB * held(signedWord(streamWord(first, SPICTURE + SDIR + DCPNA + m)), CPARCS);
+    words += CW * held(signedWord(streamWord(first, SCPNCON + m)), NCPCON);
+    return( words );
+}
+
+// Master m's entry's blocks in the picture from block first, none if it has no words (sptape.ac,
+// tpEntRuns): its tables, its sub-instances and its name, to a whole number of blocks.
+static int
+entryBlocks(int first, int m)
+{
+int words;
+
+    if( held(signedWord(streamWord(first, SPICTURE + SDIR + DMLEN + m)), MPOOL1) == 0 )
+    {
+        return( 0 );
+    }
+    words = entryTables(first, m) + (SUBW * subCount(first, m)) + NAMEW;
+    return( (words + 255) / 256 );
+}
+
+// Check picture p (0 to 11) as Sketchpad's Load does before it reads a word into its tables.
+// It checks the first block's sum; the header, a format it reads with that format's stream size,
+// and entries that end within the slot; the closing header the same; every block's sum; then the
+// entries' blocks the header gives against those the picture's tables give, which Load finds
+// only once it has begun to change its tables, so that it reports a bad block. Returns PICOK,
+// PICEMPTY or PICBAD.
 static int
 checkPicture(int p)
 {
 int first;
+int blocks;
+int entries;
 int k;
 
     first = slotFirst(p);
-    if( (streamWord(first, 0) != TPMAGIC) || (streamWord(first, 1) != TPFORMAT)
-        || (streamWord(first, 2) != TPSTREAM) )
+    if( !blockGood(first) )
+    {
+        return( PICBAD );
+    }
+    if( (streamWord(first, 0) != TPMAGIC)
+        || !(((streamWord(first, 1) == TPFORMAT) && (streamWord(first, 2) == TPSTREAM))
+             || ((streamWord(first, 1) == TPFORMAT18) && (streamWord(first, 2) == TPSTREAM18))
+             || ((streamWord(first, 1) == TPFORMAT17) && (streamWord(first, 2) == TPSTREAM17)))
+        || (streamWord(first, HENTRIES) > (uint32_t)(TPSLOT - TPPBLOCKS - 1)) )
     {
         return( PICEMPTY );
     }
+    blocks = TPPBLOCKS + (int)streamWord(first, HENTRIES) + 1;
     for( k = 0; k < TPHDRWORDS; k++ )
     {
-        if( streamWord(first, STRAILER + k) != streamWord(first, k) )
+        if( dataWord(first + blocks - 1, (256 - TPHDRWORDS) + k) != streamWord(first, k) )
         {
             return( PICEMPTY );
         }
     }
-    for( k = 0; k < TPPBLOCKS; k++ )
+    for( k = 0; k < blocks; k++ )
     {
         if( !blockGood(first + k) )
         {
             return( PICBAD );
         }
+    }
+    entries = 0;
+    for( k = 0; k < NMASTER; k++ )
+    {
+        entries += entryBlocks(first, k);
+    }
+    if( entries != (int)streamWord(first, HENTRIES) )
+    {
+        return( PICBAD );
     }
     return( PICOK );
 }
@@ -648,6 +777,7 @@ int digit;
 int k;
 int j;
 int b2;
+int entry;
 uint32_t nameRun[NAMEW];
 
     memset(&pic, 0, sizeof(pic));
@@ -681,21 +811,45 @@ uint32_t nameRun[NAMEW];
         pic.instX[k] = signedWord(streamWord(first, data + SIX + k));
         pic.instY[k] = signedWord(streamWord(first, data + SIY + k));
         pic.instScale[k] = streamWord(first, data + SISCALE + k);
-        pic.instMaster[k] = indexWord(streamWord(first, data + SBANK2 + B2IMASTER + k));
+        pic.instMaster[k] = indexWord(streamWord(first, data + SDIR + DIMASTER + k));
     }
-    pic.instCount = signedWord(streamWord(first, data + SBANK2 + B2INSTCOUNT));
+    pic.instCount = signedWord(streamWord(first, data + SDIR + DINSTCOUNT));
+
+    // Each master's words, the first of its entry's, and its sub-instances, the last before its
+    // name, the entries one after another from the stream's end; and the nesting, which a
+    // format 17 picture reads as a master with none has it.
+    entry = first + TPPBLOCKS;
     for( k = 0; k < NMASTER; k++ )
     {
-        pic.masterLen[k] = signedWord(streamWord(first, data + SBANK2 + B2MLEN + k));
+        pic.masterLen[k] = signedWord(streamWord(first, data + SDIR + DMLEN + k));
+        for( j = 0; j < held(pic.masterLen[k], MPOOL1); j++ )
+        {
+            pic.masters[k][j] = streamWord(entry, j);
+        }
+        if( pic.format != TPFORMAT17 )
+        {
+            pic.ownLen[k] = signedWord(streamWord(first, SNEST + NOWNAT + k));
+            pic.drawLen[k] = signedWord(streamWord(first, SNEST + NDRAWAT + k));
+            pic.uses[k] = streamWord(first, SNEST + NUSESAT + k);
+        }
+        else
+        {
+            pic.ownLen[k] = pic.masterLen[k];
+        }
+        if( entryBlocks(first, k) > 0 )
+        {
+            pic.nSub[k] = subCount(first, k);
+            for( j = 0; j < (SUBW * pic.nSub[k]); j++ )
+            {
+                pic.subs[k][j] = streamWord(entry, entryTables(first, k) + j);
+            }
+        }
+        entry += entryBlocks(first, k);
     }
-    for( k = 0; k < (NMASTER * MWORDS); k++ )
-    {
-        pic.masters[k] = streamWord(first, data + SMASTERS + k);
-    }
-    pic.arcCount = signedWord(streamWord(first, data + SBANK2 + B2ARCCOUNT));
+    pic.arcCount = signedWord(streamWord(first, data + SDIR + DARCCOUNT));
     for( k = 0; k < MAXARCS; k++ )
     {
-        b2 = (data + SBANK2 + B2ARCTC + k);
+        b2 = (data + SDIR + DARCTC + k);
         pic.arcCenter[k] = indexWord(streamWord(first, b2));
         pic.arcStart[k] = indexWord(streamWord(first, b2 + MAXARCS));
         pic.arcEnd[k] = indexWord(streamWord(first, b2 + (2 * MAXARCS)));
@@ -734,17 +888,27 @@ uint32_t nameRun[NAMEW];
         pic.mtAn[k] = streamWord(first, digit + DMTAN + k);
         pic.mtVal[k] = signedWord(streamWord(first, digit + DMTVAL + k));
     }
-}
 
-// A table count held to its table's size, so a damaged word cannot index past it.
-static int
-held(int count, int most)
-{
-    if( count < 0 )
+    // Each master's own texts' count, which format 19 keeps; on 18 and 17 every text a master
+    // holds counts as its own, as Load counts them.
+    for( k = 0; k < NMASTER; k++ )
     {
-        return( 0 );
+        pic.txOwn[k] = 0;
+        if( pic.format == TPFORMAT )
+        {
+            pic.txOwn[k] = signedWord(streamWord(first, SNEST + NTXOWNAT + k));
+        }
     }
-    return( (count > most) ? most : count );
+    if( pic.format != TPFORMAT )
+    {
+        for( k = 0; k < held(pic.mtN, NMTEXT); k++ )
+        {
+            if( (pic.mtM[k] >= 0) && (pic.mtM[k] < NMASTER) )
+            {
+                pic.txOwn[pic.mtM[k]]++;
+            }
+        }
+    }
 }
 
 // A value at an instance's scale, as Sketchpad shows a master's digits, doubled once a step,
@@ -768,23 +932,20 @@ int s;
     return( (value < 0) ? -magnitude : magnitude );
 }
 
-// A value at an instance's size, factor, its step being scale. It is digitsAtScale at a power
-// of two, otherwise the value times the size, rounded, its magnitude held at 99999.
+// A value at an instance's size, factor, its step being scale, as the program's instance module
+// takes it: rounded at the size less the step, a tie away from zero, since the 340's doublings
+// come after a variant's words. Any place on the screen is a multiple of them.
+static int
+atSize(int value, int scale, double factor)
+{
+    return( (int)lround((double)value * (factor / (double)(1 << scale))) );
+}
+
+// A value shown at an instance's size: digitsAtScale of the value at the size less the step.
 static int
 digitsAtSize(int value, int scale, double factor)
 {
-double magnitude;
-
-    if( factor == (double)(1 << scale) )
-    {
-        return( digitsAtScale(value, scale) );
-    }
-    magnitude = (fabs((double)value) * factor);
-    if( magnitude > MAXDIGITS )
-    {
-        magnitude = MAXDIGITS;
-    }
-    return( (value < 0) ? -(int)lround(magnitude) : (int)lround(magnitude) );
+    return( digitsAtScale(atSize(value, scale, factor), scale) );
 }
 
 // A value as Sketchpad writes digits, an upper shift, a minus sign when negative, the digits
@@ -1035,9 +1196,9 @@ uint32_t word;
     mult = instSize(i);
     x = pic.instX[i];
     y = pic.instY[i];
-    for( k = 0; k < held(pic.masterLen[m], MWORDS); k++ )
+    for( k = 0; k < held(pic.masterLen[m], MPOOL1); k++ )
     {
-        word = pic.masters[(m * MWORDS) + k];
+        word = pic.masters[m][k];
         dy = ((word >> 8) & 0177);
         dx = (word & 0177);
         if( word & VDOWN )
@@ -1232,8 +1393,8 @@ uint32_t run[TXRUN];
                 x += (boxWidth(held(pic.mtCh[t], TXRUN * 3), sc) >> 1);
                 y += (boxHeight(sc) >> 1);
             }
-            x = ((int)lround(x * factor) + pic.instX[i]);
-            y = ((int)lround(y * factor) + pic.instY[i]);
+            x = ((atSize(x, s, factor) * (1 << s)) + pic.instX[i]);
+            y = ((atSize(y, s, factor) * (1 << s)) + pic.instY[i]);
             sc = held(sc + s, MAXSCALE);
             if( pic.mtAn[t] != NOPOINT )
             {
@@ -1253,11 +1414,31 @@ uint32_t run[TXRUN];
     }
 }
 
-// Print the decoded tables, one item a line.
+// Master m's sub-instance j, one line: its master, x, y, the scale word, then its ties, -1 for
+// none.
+static void
+dumpSub(int m, int j)
+{
+const uint32_t *subP;
+int t;
+
+    subP = &pic.subs[m][j * SUBW];
+    printf("sub %d %d %d %d %d %d", m, j, indexWord(subP[0]), signedWord(subP[1]),
+           signedWord(subP[2]), (int)subP[3]);
+    for( t = 0; t < NATT; t++ )
+    {
+        printf(" %d", indexWord(subP[4 + t]));
+    }
+    printf("\n");
+}
+
+// Print the decoded tables, one item a line; a format 19 or 18 picture's nesting after its
+// masters, each master's own texts' count last.
 static void
 dumpPicture(int p)
 {
 int k;
+int j;
 char text[(TXRUN * 3) + 1];
 
     printf("picture P%d format %d words %d generation %06o\n", p + 1, pic.format, pic.words,
@@ -1282,6 +1463,18 @@ char text[(TXRUN * 3) + 1];
     for( k = 0; k < NMASTER; k++ )
     {
         printf("master %d %d\n", k, pic.masterLen[k]);
+    }
+    if( pic.format != TPFORMAT17 )
+    {
+        for( k = 0; k < NMASTER; k++ )
+        {
+            printf("nest %d %d %d %d %06o %d\n", k, pic.nSub[k], pic.ownLen[k], pic.drawLen[k],
+                   pic.uses[k], pic.txOwn[k]);
+            for( j = 0; j < pic.nSub[k]; j++ )
+            {
+                dumpSub(k, j);
+            }
+        }
     }
     printf("instances %d\n", pic.instCount);
     for( k = 0; k < held(pic.instCount, MAXINST); k++ )
@@ -1340,38 +1533,6 @@ int b;
     showTexts(false);
 }
 
-// The PNG's CRC-32 (ISO 3309), table driven.
-static void
-crcInit(void)
-{
-uint32_t c;
-int n;
-int k;
-
-    for( n = 0; n < 256; n++ )
-    {
-        c = (uint32_t)n;
-        for( k = 0; k < 8; k++ )
-        {
-            c = ((c & 1) ? (0xedb88320U ^ (c >> 1)) : (c >> 1));
-        }
-        crcTable[n] = c;
-    }
-}
-
-// The CRC of len bytes at bufP added to crc.
-static uint32_t
-crcAdd(uint32_t crc, const uint8_t *bufP, size_t len)
-{
-size_t k;
-
-    for( k = 0; k < len; k++ )
-    {
-        crc = (crcTable[(crc ^ bufP[k]) & 0xff] ^ (crc >> 8));
-    }
-    return( crc );
-}
-
 // A 32-bit word, most significant byte first, as PNG wants every number.
 static void
 putBig(uint8_t *p, uint32_t v)
@@ -1382,27 +1543,31 @@ putBig(uint8_t *p, uint32_t v)
     p[3] = (uint8_t)v;
 }
 
-// One chunk, its length, type, data and the CRC of the type and data.
+// One chunk, its length, type, data and the CRC-32 of the type and data, zlib's being PNG's.
 // Returns false when the write fails.
 static bool
 writeChunk(FILE *fP, const char *typeP, const uint8_t *dataP, uint32_t len)
 {
 uint8_t head[8];
 uint8_t tail[4];
-uint32_t crc;
+uLong crc;
 
     putBig(head, len);
     memcpy(head + 4, typeP, 4);
-    crc = crcAdd(0xffffffffU, head + 4, 4);
-    crc = crcAdd(crc, dataP, len);
-    putBig(tail, crc ^ 0xffffffffU);
+    crc = crc32(0L, head + 4, 4);
+    // crc32 given no buffer returns its starting value, so an empty chunk adds nothing.
+    if( len > 0 )
+    {
+        crc = crc32(crc, dataP, len);
+    }
+    putBig(tail, (uint32_t)crc);
     return( (fwrite(head, 1, 8, fP) == 8) && ((len == 0) || (fwrite(dataP, 1, len, fP) == len))
             && (fwrite(tail, 1, 4, fP) == 4) );
 }
 
-// Write the picture as a PNG, one bit deep, gray, each row's filter none, the rows in a zlib
-// stream of stored deflate blocks. Returns false, having said why, when the file cannot be
-// written.
+// Write the picture as a PNG, one bit deep, gray, each row's filter none (filter up made every
+// sample larger), the rows a zlib stream at level 9. Returns false, having said why, when the
+// file cannot be written.
 static bool
 writePng(const char *pathP, bool inverse)
 {
@@ -1412,12 +1577,7 @@ uint8_t *rawP;
 uint8_t *zP;
 size_t rowBytes;
 size_t rawLen;
-size_t zLen;
-size_t done;
-size_t blockLen;
-size_t z;
-uint32_t a;
-uint32_t b;
+uLongf zLen;
 int x;
 int y;
 bool lit;
@@ -1425,7 +1585,7 @@ bool ok;
 
     rowBytes = (1 + ((size + 7) / 8));
     rawLen = (rowBytes * size);
-    zLen = (2 + (5 * ((rawLen + STOREDMAX - 1) / STOREDMAX)) + rawLen + 4);
+    zLen = compressBound(rawLen);
     rawP = calloc(rawLen, 1);
     zP = malloc(zLen);
     if( !rawP || !zP )
@@ -1447,30 +1607,14 @@ bool ok;
         }
     }
 
-    // The zlib stream, deflate with a 32K window and no dictionary, stored blocks, Adler-32.
-    z = 0;
-    zP[z++] = 0x78;
-    zP[z++] = 0x01;
-    for( done = 0; done < rawLen; done += blockLen )
+    // compressBound's room always suffices, so a failure here is zlib's memory.
+    if( compress2(zP, &zLen, rawP, rawLen, 9) != Z_OK )
     {
-        blockLen = (((rawLen - done) > STOREDMAX) ? STOREDMAX : (rawLen - done));
-        zP[z++] = (uint8_t)(((done + blockLen) == rawLen) ? 1 : 0);
-        zP[z++] = (uint8_t)(blockLen & 0xff);
-        zP[z++] = (uint8_t)(blockLen >> 8);
-        zP[z++] = (uint8_t)(~blockLen & 0xff);
-        zP[z++] = (uint8_t)((~blockLen >> 8) & 0xff);
-        memcpy(zP + z, rawP + done, blockLen);
-        z += blockLen;
+        fprintf(stderr, "sketchplot: cannot compress %s\n", pathP);
+        free(rawP);
+        free(zP);
+        return( false );
     }
-    a = 1;
-    b = 0;
-    for( done = 0; done < rawLen; done++ )
-    {
-        a = ((a + rawP[done]) % 65521);
-        b = ((b + a) % 65521);
-    }
-    putBig(zP + z, (b << 16) | a);
-    z += 4;
 
     putBig(ihdr, size);
     putBig(ihdr + 4, size);
@@ -1487,7 +1631,7 @@ bool ok;
         return( false );
     }
     ok = ((fwrite("\x89PNG\r\n\x1a\n", 1, 8, fP) == 8) && writeChunk(fP, "IHDR", ihdr, 13)
-          && writeChunk(fP, "IDAT", zP, (uint32_t)z) && writeChunk(fP, "IEND", NULL, 0));
+          && writeChunk(fP, "IDAT", zP, (uint32_t)zLen) && writeChunk(fP, "IEND", NULL, 0));
     if( fclose(fP) != 0 )
     {
         ok = false;
@@ -1510,7 +1654,7 @@ usage(void)
             "usage: sketchplot [-d drive] [-p picture] [-t image] [-s size] [-i] out.png\n"
             "       sketchplot [-d drive] [-p picture] [-t image] --dump\n"
             "  -d n      drive 1 to 8 (default 1), its image from %s\n"
-            "  -p n      picture P1 to P16 (default 1)\n"
+            "  -p n      picture P1 to P12 (default 1)\n"
             "  -t image  read this image file instead of a drive's\n"
             "  -s n      the PNG n pixels square (default 1024, one pixel a screen unit)\n"
             "  -i        black on white, for printing\n"
@@ -1630,7 +1774,6 @@ char path[4096];
         return( 1 );
     }
     drawPicture();
-    crcInit();
     result = (writePng(outP, inverse) ? 0 : 1);
     free(pixP);
     return( result );

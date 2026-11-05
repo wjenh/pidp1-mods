@@ -1,5 +1,9 @@
 # Using the BBN Timesharing Clock
 
+This is version 1.1\
+Edit date 5-Nov-2026\
+Clarify when the clock starts.
+
 This document explains how to use the BBN timesharing clock.
 
 ## What is it?
@@ -31,15 +35,6 @@ It uses the AC register to control the clock.
 
 Why the AC? Because all IOTs 30-37 automatically clear the IO register when invoked!
 
-## What the clock counts
-
-The clock and the countdown timer count the time the machine runs, and stop while it is halted.
-They keep time while a high speed channel steals cycles, as the Type 23 drum does during a transfer,
-and through the full length of a *mul* or *div*.
-They do not count a span the emulator skips to catch up after the host has fallen more than
-`throttlemaxlag` behind (see UsingTheConfigFile.md); the timing report counts each such span.
-So the clock is not a time of day; the Chronolog clock is (UsingTheChronologClock.md).
-
 # The IOT
 
 This is implemented via a single IOT, 32 as mentioned.
@@ -64,6 +59,8 @@ bit 9 i enables the 32 ms interrupt
 bits 10-13 MMMM  is the channel to use for the 1 min interrupt
 bits 14-17 mmmm is the channel to use for the 32 ms interrupt
 ```
+
+Note that the clock does not start until the first bit 7 enable has been issued.
 
 If the SBS16 system is not enabled, the interrupt channels are ignored and use the single channel provided
 by the SBS system.

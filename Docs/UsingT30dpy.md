@@ -2,10 +2,10 @@
 
 This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.11
+This is version 1.13
 
-Updated 27-Oct-2026\
-add aging algorithm
+Updated 5-Nov-2026\
+minor version number reconciliation
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 

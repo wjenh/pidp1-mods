@@ -447,7 +447,7 @@ A slider moved while such a tape plays moves the whole line, dynamics and all.
 *dacgain* scales the output, 1.0 is as the tapes were made.
 This normally shouldn't need to be changed.
 
-When the PDP-1 stops, the IOT prints a line on the emulator's standard error:
+If debugging has been enabled in the IOT, on a stop the following will be logged in /tmp/iot.dbg:
 ```
 IOT 71: late samples 0 0 0 0, lost fetches 0, clipped frames 0, windows 0
 ```

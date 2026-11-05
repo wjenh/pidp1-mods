@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.3 and covers up through am1 version 5.4; it will be updated as needed.\
-Edit date 25-Oct-2026\
-Update for %%ovresident addition.
+This is version 3.4 and covers up through am1 version 5.5; it will be updated as needed.\
+Edit date 5-Nov-2026\
+Clarify location assignment, did not agree with the origin statement descrpition
 
 ## What is **am1**?
 
@@ -811,7 +811,7 @@ An example of origin symbols is:
 4/ lem
 start+10/
 ```
-Origin symbols don't generate any code themselves, the just set the current memory location.
+Origin symbols don't generate any code themselves, they just set the current memory location.
 New code will be placed starting at the address before the /.
 However, any code-generating statements following the / will of course generate code.
 
@@ -1125,6 +1125,12 @@ Directives are:
 - bank
 - %%optimize
 - %%endoptimize
+- %%nooptimize
+- %%endnooptimize
+- %%speed
+- %%endspeed
+- %%inline
+- %%ceiling
 - %%drumreserve
 - %%window
 - %%overlay
@@ -1146,9 +1152,8 @@ that evaluates *at that time* to a value. This means that for any use of a symbo
 location must already be resolved.
 Using a forward reference actually makes no sense, and **macro1** doesn't allow it either.
 
-**This statement must be on a line by itself**, optionally followed by a comment.
-This is to disambiguate it from an expression with a division operator.
-If you do want to have code on the same line, use a semicolon separator.
+Location assignments don't generate any code themselves, they just set the current memory location.
+Any code-generating statements following symbol will of course generate code.
 
 Examples are:
 ```
@@ -1156,9 +1161,9 @@ Examples are:
 .+10/   the location counter is incremented by 10
 
 a, foo
-a+10/   the location counter is set to the location of foo plus 10, a must be defined *prior* to its use
+a+10/   the location counter is set to the location of a plus 10, a must be defined *prior* to its use
 
-200/; cla
+200/ cla
 ```
 
 ## Octal and decimal
@@ -1792,14 +1797,20 @@ If a keyword has parentheses, e.g. loc(al), the part in the parentheses is optio
 
 | Keywords      |
 |---------------|
-| %%drumreserve |
-| %%endoptimize |
-| %%endoverlay  |
 | %%forcelocal  |
 | %%optimize    |
+| %%endoptimize |
+| %%nooptimize  |
+| %%endnooptimize  |
+| %%speed       |
+| %%endspeed    |
+| %%inline      |
+| %%ceiling     |
 | %%ovcall      |
 | %%ovload      |
 | %%overlay     |
+| %%endoverlay  |
+| %%drumreserve |
 | %%ovtable     |
 | %%window      |
 | addloc(al)  |

@@ -9,7 +9,7 @@ It takes 5-6 minutes and will eventually finish.
 As it was, the test never ended, it looped forever on the final test. This is less than useful.
 The code has been changed to print a done message and halt.
 And yes, the implementation passes.
-Note that the break system test requires the sbs16 break system which needs to be enabled in the pidp1.config file.
+Note that the break system test requires the single-channel sbs break system, do not enable the sbs 16 channel version.
 
 Five further probes, each with its expected results in its header comment:
 dbaprobe.am1 checks that a DBA break arrives when the drum reaches the DBA address, both on its own and in

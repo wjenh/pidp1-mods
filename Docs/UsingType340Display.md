@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.14
+This is version 1.15
 
-Edit date 31-Oct-2026\
-Add documentation for the Type 370 lightpen
+Edit date 5-Nov-2026\
+Update for typos and out-of-date information
 
 ## What is it?
 
@@ -377,7 +377,7 @@ example.
 
 Example:
 ```
-parameter mode(increment)
+parameter next(increment)
 visible set1(incup) set2(incdown|incright) set3(incdown|incleft) set4(incup|incleft) end
 ```
 
@@ -396,14 +396,14 @@ All take an address, a 13-bit address(!). This means they can only address bank 
 
 Examples:
 ```
-    parameter mode(subroutine)
-    jump foo mode(vector)
+    parameter next(subroutine)
+    jump foo next(vector)
 
-    parameer mode(subroutine)
-    save bar mode(increment)
+    parameer next(subroutine)
+    save bar next(increment)
 
-    parameter mode(subroutine)
-    deposit zip mode(vector)
+    parameter next(subroutine)
+    deposit zip next(vector)
 ```
 For *jump*, control transfers to the commands at location foo, exactly the same as a normal PDP-1 *jmp*.
 
@@ -701,7 +701,7 @@ prog, scale(1) intensity(4) next(point)
     visible up deltay(0d109) right deltax(0d63)
     visible down deltay(0d109) right deltax(0d63)
     visible deltay(0) left deltax(0d126) end
-    mode(subroutine)
+    next(subroutine)
     jump prog
 
 start top

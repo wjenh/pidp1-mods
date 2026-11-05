@@ -6,9 +6,9 @@ It covers the directives, the overlay manager the program includes, the loader *
 each costs.
 *UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-This is version 1.6 and covers up through am1 version 5.4; it will be updated as needed.\
-Edit date 25-Oct-2026
-Update for new twopass and drum packing support.
+This is version 1.7 and covers up through am1 version 5.5; it will be updated as needed.\
+Edit date 5-Nov-2026
+Fix some typs
 
 ## What are overlays?
 
@@ -147,7 +147,7 @@ must not overlap another window of the same bank, and in bank 0 must end at or b
 Its addresses may not be tagged with another bank.
 
 *twopass* makes the swapping of its persistent overlays a write and then a read instead
-of a swap, allowing more efficient use of drum spaace, see *The swap and the
+of a swap, allowing more efficient use of drum saace, see *The swap and the
 twopass window*.\
 It changes nothing for a window with no persistent overlay, and **am1** warns of that.
 
@@ -542,7 +542,7 @@ Each halt stops with its number in AC:
 | *ovErrNest* | 1 | an *%%ovcall* or *%%ovload* while an overlay is running | halts again |
 | *ovErrStamp* | 2 | the overlay read is not this build's, or not this overlay, or none is loaded | reads the overlay again, run **ovlload** and continue |
 | *ovErrDrum* | 3 | *OV_TRIES* transfers in a row, 4 by default, ended in error | tries as many again |
-| *ovErrSwap* | 4 | a swap ended in error, a halt part-way through it, the outgoing overlay's words are lost. Not iussed for a *twopass* window | reads only the incoming overlay |
+| *ovErrSwap* | 4 | a swap ended in error, a halt part-way through it, the outgoing overlay's words are lost. Not issued for a *twopass* window | reads only the incoming overlay |
 
 The stamp is what makes the second halt useful; a root reassembled and the drum not reloaded or the
 opposite stops at the first load instead of running the wrong code.

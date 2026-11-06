@@ -1,0 +1,22 @@
+Test rg58: a bank wildcard, name:*, followed by another term
+// The * of :* was lexed as a multiplication that took the blank after it with
+// it, so name:* 1 had no separator between its operands and was a syntax error.
+// Each line must give the word that the same line with (name:*) gives, written
+// in its comment.  near is in this bank, far in bank 2.
+#define RET far:*
+100/
+    lac near:* 1                // 200113
+    lac far:* 1                 // 220301
+    lac [near:* 1]              // 200113, its pool word 000113
+    lac [far:* 1]               // 200114, its pool word 020301
+    lac RET 1                   // 220301
+    lac near:* ~0777777         // 200112, the ~ handed back its separator
+    lac far:* ~0777777          // 220300
+    lac far:* -1                // 220277, still a subtraction
+    lac far:* * 2               // 240600, still a multiplication
+    lac 1 far:*                 // 220301
+near, 0
+bank 2
+300/
+far, 0
+start 100

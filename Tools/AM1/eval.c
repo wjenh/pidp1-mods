@@ -30,6 +30,7 @@ extern void vwarnl(int errType, int lineno, const char *msgP, ...);
 
 static int _evalExpr(PNodeP);
 static bool hasIndirect(PNodeP nodeP);
+static int signedWord(int value);
 
 // Set while poolKey() evaluates a constant, the code generators give the law
 // range warning when they evaluate it, and a copy at parse time would repeat it.
@@ -136,6 +137,36 @@ SymNodeP symP;
         case RSHIFT:
             rslt = lval >> twosComplAdj(rval);
             return( rslt );
+
+        // An assert's operators, 1 for true and 0 for false.
+        // Each operand compares as the signed word it is, so -0 equals +0.
+        // Only an assert has them, and an assert is never a constant, so they
+        // never reach hashExpr() or appendExprText().
+        // Both sides of && and || are evaluated, so that a name either side
+        // gives is reported if it has no value.
+        case ISEQ:
+            return( signedWord(lval) == signedWord(rval) );
+
+        case ISNE:
+            return( signedWord(lval) != signedWord(rval) );
+
+        case ISLT:
+            return( signedWord(lval) < signedWord(rval) );
+
+        case ISLE:
+            return( signedWord(lval) <= signedWord(rval) );
+
+        case ISGT:
+            return( signedWord(lval) > signedWord(rval) );
+
+        case ISGE:
+            return( signedWord(lval) >= signedWord(rval) );
+
+        case LOGAND:
+            return( (signedWord(lval) != 0) && (signedWord(rval) != 0) );
+
+        case LOGOR:
+            return( (signedWord(lval) != 0) || (signedWord(rval) != 0) );
         }
 
         // Math operator, handle the one's cmpl adjustments
@@ -193,6 +224,10 @@ SymNodeP symP;
 
             case CMPL:
                 return( ~_evalExpr(nodeP->rightP) );
+
+            case LOGNOT:
+                // An assert's, as its binary operators above.
+                return( signedWord(_evalExpr(nodeP->rightP)) == 0 );
 
         default:
             verror("unknown unary op %d in _evalExpr", nodeP->value.ival);
@@ -269,6 +304,28 @@ SymNodeP symP;
 
     // never reached: verror() does not return, and every other case returns
     return(0);
+}
+
+// A value as _evalExpr() returns it, an 18-bit one's complement word with any
+// bits above, as the signed number the word is.  Both zeros are 0.
+static int
+signedWord(int value)
+{
+    value &= WRDMASK;
+
+    if( value & 0400000 )
+    {
+        return( -((~value) & 0377777) );
+    }
+
+    return( value );
+}
+
+// Whether an assert's value is true: any word but +0 and -0.
+bool
+assertTrue(int value)
+{
+    return( signedWord(value) != 0 );
 }
 
 // Check to see if an i modifier occurs in the tree.
@@ -763,6 +820,205 @@ int value;
     }
 
     return(text.bufP);
+}
+
+static void appendAssertExpr(KeyText *textP, PNodeP nodeP);
+
+// An assert statement's text, as the listing and the macro1 output show it:
+// "assert expression" and the message, if it has one, numbers in octal.
+// Returns the text, allocated; the caller frees it.
+char *
+assertText(PNodeP assertP)
+{
+KeyText text;
+const unsigned char *cP;
+
+    keyStart(&text);
+    keyAppend(&text, "assert ");
+    appendAssertExpr(&text, (PNodeP)(assertP->value.ptr));
+
+    if( assertP->value2.strP )
+    {
+        keyAppend(&text, ", \"");
+
+        for( cP = (const unsigned char *)(assertP->value2.strP); *cP; ++cP )
+        {
+            if( (*cP == '"') || (*cP == '\\') )
+            {
+                keyAppend(&text, "\\%c", *cP);
+            }
+            else if( (*cP >= ' ') && (*cP < 0177) )
+            {
+                keyAppend(&text, "%c", *cP);
+            }
+            else
+            {
+                keyAppend(&text, "\\%03o", *cP);
+            }
+        }
+
+        keyAppend(&text, "\"");
+    }
+
+    return(text.bufP);
+}
+
+// Append an assert's expression to its text, as written, its names included.
+static void
+appendAssertExpr(KeyText *textP, PNodeP nodeP)
+{
+const char *opP;
+
+    if( !nodeP )
+    {
+        return;
+    }
+
+    switch( nodeP->type )
+    {
+    case BINOP:
+        switch( nodeP->value.ival )
+        {
+        case PLUS:
+            opP = "+";
+            break;
+        case MINUS:
+            opP = "-";
+            break;
+        case MUL:
+            opP = "*";
+            break;
+        case DIV:
+            opP = "/";
+            break;
+        case MOD:
+            opP = "%";
+            break;
+        case AND:
+            opP = "&";
+            break;
+        case OR:
+            opP = "|";
+            break;
+        case XOR:
+            opP = "^";
+            break;
+        case LSHIFT:
+            opP = "<<";
+            break;
+        case RSHIFT:
+            opP = ">>";
+            break;
+        case SEPARATOR:
+            opP = " ";
+            break;
+        case ISEQ:
+            opP = " == ";
+            break;
+        case ISNE:
+            opP = " != ";
+            break;
+        case ISLT:
+            opP = " < ";
+            break;
+        case ISLE:
+            opP = " <= ";
+            break;
+        case ISGT:
+            opP = " > ";
+            break;
+        case ISGE:
+            opP = " >= ";
+            break;
+        case LOGAND:
+            opP = " && ";
+            break;
+        case LOGOR:
+            opP = " || ";
+            break;
+        default:
+            verror("unknown binary op %d in an assert", nodeP->value.ival);
+            return;
+        }
+
+        appendAssertExpr(textP, nodeP->leftP);
+        keyAppend(textP, "%s", opP);
+        appendAssertExpr(textP, nodeP->rightP);
+        return;
+
+    case UNOP:
+        switch( nodeP->value.ival )
+        {
+        case PARENS:
+            keyAppend(textP, "(");
+            appendAssertExpr(textP, nodeP->rightP);
+            keyAppend(textP, ")");
+            return;
+        case UMINUS:
+            keyAppend(textP, "-");
+            break;
+        case CMPL:
+            keyAppend(textP, "~");
+            break;
+        case LOGNOT:
+            keyAppend(textP, "!");
+            break;
+        default:
+            verror("unknown unary op %d in an assert", nodeP->value.ival);
+            return;
+        }
+
+        appendAssertExpr(textP, nodeP->rightP);
+        return;
+
+    case NAME:
+        // A name looked up when the assert is checked.
+        if( (nodeP->flags & PN_ASSERTLOCAL) || (nodeP->value2.ival == ASSERT_OWNBANK) )
+        {
+            keyAppend(textP, "%s", nodeP->value.strP);
+        }
+        else if( nodeP->value2.ival == ASSERT_ANYBANK )
+        {
+            keyAppend(textP, "%s:*", nodeP->value.strP);
+        }
+        else
+        {
+            keyAppend(textP, "%s:%d", nodeP->value.strP, nodeP->value2.ival);
+        }
+        return;
+
+    case BREF:
+        keyAppend(textP, "%s:%d", nodeP->value.symP->name, nodeP->value2.ival);
+        return;
+
+    case ADDR:
+    case LCLADDR:
+    case OPORABLE:
+    case OPCODE:
+    case OPADDR:
+    case VALUESPEC:
+    case IMOD:
+        keyAppend(textP, "%s", nodeP->value.symP->name);
+        return;
+
+    case DOT:
+        keyAppend(textP, ".");
+        return;
+
+    case LITCHAR:
+        keyAppend(textP, "'\\%03o'", nodeP->value.ival & 0377);
+        return;
+
+    case INTEGER:
+    case CHAR:
+    case FLEXO:
+        keyAppend(textP, "%o", nodeP->value.ival & WRDMASK);
+        return;
+
+    default:
+        verror("unknown op %d in an assert", nodeP->type);
+        return;
+    }
 }
 
 // Given a number in 2s cmpl, convert to 1s cmpl.

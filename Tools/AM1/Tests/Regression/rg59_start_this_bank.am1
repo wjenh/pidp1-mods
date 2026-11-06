@@ -1,0 +1,11 @@
+Test rg59: start names a label in the current bank, not bank 0
+// go is defined in bank 0 and in bank 3, and the program ends in bank 3, so
+// start go is bank 3's go.  The start address once dropped the bank and was
+// 000200, bank 0's address; it is 030200.
+100/
+go, hlt
+bank 3
+200/
+go, lac go:0
+    hlt
+start go

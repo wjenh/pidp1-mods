@@ -400,6 +400,348 @@ else
 fi
 echo ""
 
+# rg54: literals that apply an operator to a symbol not yet defined, which once
+# shared one pool word and loaded the first one's value. The words its .ref pins
+# were checked against the values written in its comments before it was made.
+run_test rg54_litpool_forward       "$SCRIPT_DIR/rg54_litpool_forward.am1"
+echo ""
+
+# rg55: literals whose values are all known but whose pool key's number is not
+# their value (-0, a negative operand, and under -a a blank), which once shared
+# one pool word and loaded the first one's value. The words each .ref pins were
+# checked against the values written in its comments before it was made.
+run_test rg55_litpool_known         "$SCRIPT_DIR/rg55_litpool_known.am1"
+run_test rg55_litpool_known_a       "$SCRIPT_DIR/rg55_litpool_known_a.am1"  -a
+echo ""
+
+# rg56: a keyword written as a label, at the start of its line, is reported as
+# one, on its own line.
+#   1. rg56 is start as a local label after a literal naming a later label,
+#      once reported as that label undefined, at the literal's line
+#   2. each of the six keywords lexed at the start of a line, as a label at
+#      column 0 and, with a blank before the comma, indented
+#   3. a keyword away from the start of its line: after a ';', as a label and
+#      as a statement, in a local, addlocal and private list, and as an
+#      operand. The first once assembled as a label, a local list took the
+#      name silently, and the rest were reported as undefined at the end
+#   4. the control: labels at column 0 that only begin with a keyword still
+#      assemble
+# The legs' sources are written here, not kept beside rg56, because other
+# test scripts assemble every rg*.am1 not named _xfail_.
+run_test rg56_xfail_keyword_label   "$SCRIPT_DIR/rg56_xfail_keyword_label.am1"  --xfail --xmsg "start is an am1 keyword and cannot be a label at line 7,"
+for kw in start stop constants variables import export; do
+    printf 'Test rg56: label %s\n100/\n%s, hlt\nstop\n' "$kw" "$kw" > "$WORK/rg56_$kw.am1"
+    run_test rg56_$kw "$WORK/rg56_$kw.am1" --xfail --xmsg "$kw is an am1 keyword and cannot be a label at line 3,"
+    printf 'Test rg56: label %s, indented\n100/\n    %s , hlt\nstop\n' "$kw" "$kw" > "$WORK/rg56_${kw}_ind.am1"
+    run_test rg56_${kw}_indented "$WORK/rg56_${kw}_ind.am1" --xfail --xmsg "$kw is an am1 keyword and cannot be a label at line 3,"
+done
+rg56_away() {   # leg name, keyword, the line written on line 4
+    printf 'Test rg56: %s away from the start of a line\n100/\nx, 0\n%s\n    hlt\nstart 100\n' "$2" "$3" > "$WORK/rg56_$1.am1"
+    run_test rg56_$1 "$WORK/rg56_$1.am1" --xfail --xmsg "$2 is an am1 keyword, allowed only at the start of a line at line 4,"
+}
+rg56_away semi_label     start      '    hlt; start, law 7'
+rg56_away semi_stmt      constants  '    hlt; constants'
+rg56_away semi_stop      stop       '    hlt; stop'
+rg56_away local          start      '    local start'
+rg56_away local_list     import     '    local a, import, b'
+rg56_away addlocal       variables  '    addlocal variables'
+rg56_away private        export     '    private export'
+rg56_away operand        stop       '    jmp stop'
+printf 'Test rg56: labels that begin with a keyword\n100/\nstarter, jmp stopper\nstopper, lac constantsx\nexports, hlt\nconstantsx, 7\nstart 100\n' > "$WORK/rg56_prefix.am1"
+"$AM1" -T -I"$SCRIPT_DIR" "$WORK/rg56_prefix.am1" > "$WORK/rg56_prefix.log" 2>&1
+if [ -f rg56_prefix.dmp ] && [ "$(tr '\n' ' ' < rg56_prefix.dmp)" = "000100 600101 000101 200103 000102 760400 000103 000007 000100 000100 " ]; then
+    echo "PASS:  rg56_prefix_labels"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg56_prefix_labels (want the words 600101 200103 760400 000007, start 100)"
+    sed 's/^/       /' "$WORK/rg56_prefix.log"
+    [ -f rg56_prefix.dmp ] && sed 's/^/       /' rg56_prefix.dmp
+    fail=$((fail+1))
+    FAILURES+=("rg56_prefix_labels")
+fi
+echo ""
+
+# rg57: indented names that only begin with a keyword, once split into the
+# keyword and the rest, are names. Blank and tab indents, an indented
+# constants and start among them, assembled with cpp and with -n, which keeps
+# the tabs. The source is written here for the reason rg56's legs are.
+printf 'Test rg57: indented names that begin with a keyword\n100/\n    starter, jmp stop_2\n    stop_2, lac constants1\n\tvariablesX, law 5\n    importer, hlt\n\texportAddr, 7\n\tconstants1, 3\n    constants\n    start 100\n' > "$WORK/rg57_prefix_indented.am1"
+for leg in cpp n; do
+    lflag=""; [ "$leg" = n ] && lflag=-n
+    rm -f rg57_prefix_indented.dmp
+    "$AM1" -T $lflag -I"$SCRIPT_DIR" "$WORK/rg57_prefix_indented.am1" > "$WORK/rg57_$leg.log" 2>&1
+    if [ -f rg57_prefix_indented.dmp ] && [ "$(tr '\n' ' ' < rg57_prefix_indented.dmp)" = "000100 600101 000101 200105 000102 700005 000103 760400 000104 000007 000105 000003 000100 000100 " ]; then
+        echo "PASS:  rg57_prefix_indented_$leg"
+        pass=$((pass+1))
+    else
+        echo "FAIL:  rg57_prefix_indented_$leg (want the words 600101 200105 700005 760400 000007 000003, start 100)"
+        sed 's/^/       /' "$WORK/rg57_$leg.log"
+        [ -f rg57_prefix_indented.dmp ] && sed 's/^/       /' rg57_prefix_indented.dmp
+        fail=$((fail+1))
+        FAILURES+=("rg57_prefix_indented_$leg")
+    fi
+done
+echo ""
+
+# rg58: a bank wildcard, name:*, followed by another term, once a syntax error,
+# in this bank and another, in a literal, through a macro and before a
+# complement. The words its .ref pins are those of the same lines with each
+# name:* parenthesized, assembled by am1 v5.5, which took that form.
+run_test rg58_bank_wildtag          "$SCRIPT_DIR/rg58_bank_wildtag.am1"
+echo ""
+
+# rg59: start and banks. A bare name is the current bank's if that bank defines
+# it, and otherwise must be defined in exactly one other bank; the start address
+# carries the bank it was found in.
+#   1. a label in one other bank, first used after the current one, once refused
+#   2. a label in the current bank, nonzero, and in bank 0, whose start address
+#      once had no bank
+#   3. a label no bank defines, reported on the start line, once one past it
+#   4. a label two other banks define, which start must qualify
+run_test rg59_start_other_bank      "$SCRIPT_DIR/rg59_start_other_bank.am1"
+run_test rg59_start_this_bank       "$SCRIPT_DIR/rg59_start_this_bank.am1"
+run_test rg59_xfail_start_nowhere   "$SCRIPT_DIR/rg59_xfail_start_nowhere.am1"  --xfail --xmsg "start symbol go has no defined value in any bank at line 8,"
+run_test rg59_xfail_start_ambiguous "$SCRIPT_DIR/rg59_xfail_start_ambiguous.am1"  --xfail --xmsg "start symbol go is defined in banks 0, 5 and not in bank 3; give its bank, go:N at line 12,"
+echo ""
+
+# rg60: an #error inside a #define block is refused with its own text in the
+# message, which once said only "#error inside a #define block".
+run_test rg60_xfail_define_error    "$SCRIPT_DIR/rg60_xfail_define_error.am1"  --xfail --xmsg "#error inside a #define block: the CHECK text"
+echo ""
+
+# rg61: comments on and after the start and stop lines, once a syntax error.
+#   1. start with a // comment, from another bank, then // and C-style comment
+#      lines and a blank line; the .ref pins the words of the uncommented program
+#   2. the same for stop
+#   3. code after the comment lines is still refused
+run_test rg61_start_comment         "$SCRIPT_DIR/rg61_start_comment.am1"
+run_test rg61_stop_comment          "$SCRIPT_DIR/rg61_stop_comment.am1"
+run_test rg61_xfail_code_after_start "$SCRIPT_DIR/rg61_xfail_code_after_start.am1"  --xfail --xmsg "syntax error"
+echo ""
+
+# rg62 to rg67: assert, a check on assembled values, and -A, which ignores it.
+# A true assert emits no word, so each true fixture's .ref holds the words of
+# the same source with its assert lines left blank, and rg_same compares a
+# build with the one of that blank-line copy. The false and refused legs are
+# written here, for the reason rg56's are, or made from a true fixture by sed.
+rg_result() {   # leg name, what went wrong, empty for a pass
+    if [ -z "$2" ]; then
+        echo "PASS:  $1"
+        pass=$((pass+1))
+    else
+        echo "FAIL:  $1 ($2)"
+        fail=$((fail+1))
+        FAILURES+=("$1")
+    fi
+}
+# A source and its blank-line copy, each built in its own directory with the
+# flags given, must agree in every output named. "out" is stdout and stderr;
+# "lst-" and "mac-" compare the listing and the macro1 file less their assert
+# lines, and require one such line for each assert in the source.
+rg_same() {     # leg name, source, outputs to compare, flags...
+    local name=$1 src=$2 exts=$3 e a b n bad=""
+    shift 3
+    rm -rf "$WORK/$name.a" "$WORK/$name.b"
+    mkdir -p "$WORK/$name.a" "$WORK/$name.b"
+    cp "$src" "$WORK/$name.a/t.am1"
+    sed 's/^assert .*$//' "$src" > "$WORK/$name.b/t.am1"
+    n=$(grep -c '^assert ' "$src")
+    if [ "$n" -eq 0 ]; then
+        bad="no assert line to blank"
+    elif ! (cd "$WORK/$name.a" && "$AM1" "$@" -I"$SCRIPT_DIR" t.am1 > t.out 2>&1) ||
+         ! (cd "$WORK/$name.b" && "$AM1" "$@" -I"$SCRIPT_DIR" t.am1 > t.out 2>&1); then
+        bad="a build failed"
+        sed 's/^/       /' "$WORK/$name.a/t.out" "$WORK/$name.b/t.out"
+    else
+        for e in $exts; do
+            a="$WORK/$name.a/t.${e%-}"
+            b="$WORK/$name.b/t.${e%-}"
+            case "$e" in
+                lst-)
+                    { [ "$(grep -c '^ *[0-9]*: [0-7]\{6\}        assert ' "$a")" -eq "$n" ] &&
+                      grep -v '^ *[0-9]*: [0-7]\{6\}        assert ' "$a" | cmp -s - "$b"; } || bad="$bad $e"
+                    ;;
+                mac-)
+                    { [ "$(grep -c '^/ assert ' "$a")" -eq "$n" ] &&
+                      grep -v '^/ assert ' "$a" | cmp -s - "$b"; } || bad="$bad $e"
+                    ;;
+                *)
+                    { [ -f "$a" ] && cmp -s "$a" "$b"; } || bad="$bad $e"
+                    ;;
+            esac
+        done
+        [ -n "$bad" ] && bad="differs from the blank-line copy in:$bad"
+    fi
+    rg_result "$name" "$bad"
+}
+# Each assert of a true fixture, its expression put under !(...), must fail on
+# its own line with its own message.
+rg_negate_all() {   # leg prefix, true fixture
+    local n msg
+    while IFS=: read -r n _; do
+        msg=$(sed -n "${n}s/.*, \"\(.*\)\"\$/\1/p" "$2")
+        sed "${n}s/^assert \(.*\), \"/assert !(\1), \"/" "$2" > "$WORK/$1_$n.am1"
+        if cmp -s "$2" "$WORK/$1_$n.am1" || [ -z "$msg" ]; then
+            rg_result "$1_$n" "line $n has no assert with a message to negate"
+        else
+            run_test "$1_$n" "$WORK/$1_$n.am1" --xfail --xmsg "assert failed: $msg at line $n,"
+        fi
+    done < <(grep -n '^assert ' "$2")
+}
+
+# rg62: the nine operators. Each holds where written and gives 0 under !, -0
+# equals +0, a word with its sign bit set is negative, an address above
+# 0100000 is positive, and the priorities are C's, all below |. Then each
+# assert negated, and a false one of each operator on its own, which writes no
+# tape; under -A that one assembles to the program without its line.
+run_test rg62_assert_operators      "$SCRIPT_DIR/rg62_assert_operators.am1"
+rg_negate_all rg62_negated "$SCRIPT_DIR/rg62_assert_operators.am1"
+rg62_op() {     # operator's name, a false expression with it
+    printf 'Test rg62: %s, false\n100/\nx, 0\nassert %s, "%s"\nstart x\n' "$1" "$2" "$1" > "$WORK/rg62_$1.am1"
+    run_test rg62_false_$1 "$WORK/rg62_$1.am1" --xfail --xmsg "assert failed: $1 at line 4,"
+}
+rg62_op eq  '1 == 2'
+rg62_op ne  '0777777 != 0'
+rg62_op lt  '0 < -3'
+rg62_op le  '1 <= -3'
+rg62_op gt  '-1 > 2'
+rg62_op ge  '-1 >= 0'
+rg62_op and '1 && 0'
+rg62_op or  '0 || 0'
+rg62_op not '!1'
+if [ ! -f rg62_eq.rim ] && [ -f rg62_assert_operators.rim ]; then
+    rg_result rg62_false_no_tape ""
+else
+    rg_result rg62_false_no_tape "a failed assert left rg62_eq.rim, or the true fixture wrote no .rim"
+fi
+rg_same rg62_false_eq_A "$WORK/rg62_eq.am1" "rim sym lst mac out" -A -d -m -b
+echo ""
+
+# rg63: the values an assert sees: a forward reference, '.' in bank 0, after a
+# constant pool and in bank 3, a variable, thisbank, and names in another bank,
+# by name:* and name:N. Each negated must fail, as must an undefined name, on
+# the assert's line; -l, -m, -S, the .sym and the .map are those of the source
+# without the assert lines, the listing and -m less those lines.
+run_test rg63_assert_values         "$SCRIPT_DIR/rg63_assert_values.am1"
+rg_negate_all rg63_negated "$SCRIPT_DIR/rg63_assert_values.am1"
+rg63_name() {   # leg name, what replaces fwd on line 5, the message
+    sed "5s/^assert fwd /assert $2 /" "$SCRIPT_DIR/rg63_assert_values.am1" > "$WORK/rg63_$1.am1"
+    run_test rg63_$1 "$WORK/rg63_$1.am1" --xfail --xmsg "$3 at line 5,"
+}
+rg63_name undefined      nowhere    "symbol nowhere has no defined value"
+rg63_name undefined_bank nowhere:3  "symbol nowhere in bank 3 has no defined value"
+rg63_name undefined_wild nowhere:\\* "wildcarded symbol 'nowhere' cannot be found"
+rg_same rg63_outputs "$SCRIPT_DIR/rg63_assert_values.am1" "rim sym map out lst- mac-" -d -S -m -b
+# A forward reference to a label made under %%forcelocal, which goes into the
+# local scope alone, once reported as having no defined value.
+printf 'Test rg63: a forward reference to a %%%%forcelocal label\n100/\ngo, hlt\n    local\n%%%%forcelocal\nassert c == 0101, "forced local"\nc, 0\n%%%%forcelocal\n    endlocal\nstart go\n' > "$WORK/rg63_forcelocal.am1"
+rg_same rg63_forcelocal "$WORK/rg63_forcelocal.am1" "rim sym" -s
+rg_negate_all rg63_forcelocal_negated "$WORK/rg63_forcelocal.am1"
+echo ""
+
+# rg64: where a failure is reported: in an included file, at its own line in
+# that file; in a macro body, at the line that expanded it; with no message,
+# "assert failed" alone.
+printf 'Test rg64: an assert in an included file\n100/\nx, 0\n#include "rg64_assert.ah"\nstart x\n' > "$WORK/rg64_include.am1"
+run_test rg64_include "$WORK/rg64_include.am1" --xfail --xmsg "assert failed: from the include at line 3, file $SCRIPT_DIR/rg64_assert.ah"
+printf 'Test rg64: an assert in a macro body\n#define CHECK(e) assert e, "macro check"\n100/\nx, 0\n    hlt\nCHECK(x == 0101)\nstart x\n' > "$WORK/rg64_macro.am1"
+run_test rg64_macro "$WORK/rg64_macro.am1" --xfail --xmsg "assert failed: macro check at line 6,"
+printf 'Test rg64: an assert with no message\n100/\nx, 0\nassert x - x\nstart x\n' > "$WORK/rg64_nomsg.am1"
+run_test rg64_nomsg "$WORK/rg64_nomsg.am1" --xfail --xmsg "assert failed at line 4,"
+echo ""
+
+# rg65: assert is a keyword. As a label, at column 0 and indented, after a ';'
+# and as an operand it is reported as one; a name that only begins with it is
+# a name. The new operators are refused outside an assert, as is a constant
+# inside one; a syntax error in one and one inside an overlay are refused, and
+# all of these still are under -A.
+run_test rg65_assert_prefix         "$SCRIPT_DIR/rg65_assert_prefix.am1"
+rg65_leg() {    # leg name, the line written on line 4, the message
+    printf 'Test rg65: %s\n100/\nx, 0\n%s\n    hlt\nstart x\n' "$1" "$2" > "$WORK/rg65_$1.am1"
+    run_test rg65_$1 "$WORK/rg65_$1.am1" --xfail --xmsg "$3 at line 4,"
+    run_test rg65_${1}_A "$WORK/rg65_$1.am1" -A --xfail --xmsg "$3 at line 4,"
+}
+rg65_leg label      'assert, hlt'          "assert is an am1 keyword and cannot be a label"
+rg65_leg label_ind  '    assert , hlt'     "assert is an am1 keyword and cannot be a label"
+rg65_leg semi       '    hlt; assert x == 0100' "assert is an am1 keyword, allowed only at the start of a line"
+rg65_leg operand    '    lac assert'       "assert is an am1 keyword, allowed only at the start of a line"
+rg65_leg constant   'assert [5] == 5'      "a constant cannot be used in an assert, its word would be added to the program"
+rg65_leg syntax     'assert x == == 1'     "syntax error"
+rg65_leg op_eq      '    lac x == 1'       "== is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_ne      '    lac x != 1'       "!= is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_lt      '    hlt; lac x < 1'   "< is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_le      '    lac x <= 1'       "<= is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_gt      '    lac x > 1'        "> is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_ge      '    lac x >= 1'       ">= is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_and     '    lac x && 1'       "&& is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_or      '    lac x || 1'       "|| is a comparison or logical operator, allowed only in an assert"
+rg65_leg op_not     '    lac !x'           "! is a comparison or logical operator, allowed only in an assert"
+printf 'Test rg65: an assert in an overlay\n%%%%drumreserve 0-17\nbank 2\n%%%%window w1, 2000, 2777\n%%%%overlay edit, w1\n        export editRun\neditRun, hlt\nassert editRun == 02000\n%%%%endoverlay\nbank 0\n100/\ngo,     hlt\n%%%%ovtable\n        start go\n' > "$WORK/rg65_overlay.am1"
+run_test rg65_overlay   "$WORK/rg65_overlay.am1" --xfail --xmsg "an assert cannot be used inside overlay edit, opened at line 5"
+run_test rg65_overlay_A "$WORK/rg65_overlay.am1" -A --xfail --xmsg "an assert cannot be used inside overlay edit, opened at line 5"
+echo ""
+
+# rg66: the optimizer. Asserts that hold at every level, one of them on '.'
+# after the deleted word, give the words of the source without them at -O1
+# and -O2, which do delete it; -O=source writes them back, and the file it
+# writes assembles to the same tape. A size assert that -O1 and -O2 break
+# fails "after optimization", leaving no .rim and no .opt; under -O it holds.
+run_test rg66_assert_optimize       "$SCRIPT_DIR/rg66_assert_optimize.am1"
+rg_same rg66_optimize_O1 "$SCRIPT_DIR/rg66_assert_optimize.am1" "rim" -O1
+rg_same rg66_optimize_O2 "$SCRIPT_DIR/rg66_assert_optimize.am1" "rim" -O2
+if [ -f rg66_assert_optimize.rim ] && ! cmp -s rg66_assert_optimize.rim "$WORK/rg66_optimize_O1.a/t.rim"; then
+    rg_result rg66_optimize_deletes ""
+else
+    rg_result rg66_optimize_deletes "-O1 left the tape unchanged, so nothing was relaid out"
+fi
+mkdir -p "$WORK/rg66_src"
+cp "$SCRIPT_DIR/rg66_assert_optimize.am1" "$WORK/rg66_src/t.am1"
+if (cd "$WORK/rg66_src" && "$AM1" -O1 -O=source t.am1 > o.log 2>&1 && mkdir w && cp t.opt.am1 w/ &&
+    cd w && "$AM1" t.opt.am1 >> ../o.log 2>&1) &&
+   [ "$(grep -c '^assert ' "$WORK/rg66_src/t.opt.am1")" -eq 3 ] &&
+   cmp -s "$WORK/rg66_src/w/t.opt.rim" "$WORK/rg66_optimize_O1.a/t.rim"; then
+    rg_result rg66_optimize_source ""
+else
+    rg_result rg66_optimize_source "-O=source lost an assert, or its file assembles to another tape"
+fi
+run_test rg66_assert_shrinks        "$SCRIPT_DIR/rg66_assert_shrinks.am1"
+rg_same rg66_shrinks_O "$SCRIPT_DIR/rg66_assert_shrinks.am1" "rim" -O
+# Built from a copy in the work directory, where its outputs go, so that the
+# check for a .rim or .opt left behind looks where -O would write them; the
+# -O build just before shows that it does.
+cp "$SCRIPT_DIR/rg66_assert_shrinks.am1" "$WORK/rg66_shrinks.am1"
+for lvl in O1 O2; do
+    rm -f rg66_shrinks.rim rg66_shrinks.opt
+    "$AM1" -O "$WORK/rg66_shrinks.am1" > /dev/null 2>&1
+    if [ ! -f rg66_shrinks.rim ] || [ ! -f rg66_shrinks.opt ]; then
+        rg_result rg66_shrinks_${lvl}_no_output "-O wrote no .rim or .opt here, so their absence below proves nothing"
+        continue
+    fi
+    rm -f rg66_shrinks.rim rg66_shrinks.opt
+    run_test rg66_shrinks_$lvl "$WORK/rg66_shrinks.am1" -$lvl --xfail --xmsg "assert failed after optimization: three words to end at line 11,"
+    if [ -e rg66_shrinks.rim ] || [ -e rg66_shrinks.opt ]; then
+        rg_result rg66_shrinks_${lvl}_no_output "the failed build left a .rim or a .opt"
+    else
+        rg_result rg66_shrinks_${lvl}_no_output ""
+    fi
+done
+echo ""
+
+# rg67: -A. A false assert and one naming an undefined symbol assemble, to the
+# .ref's words and to every output of the source without them, printing
+# nothing; without -A the source fails.
+run_test rg67_assert_ignored        "$SCRIPT_DIR/rg67_assert_ignored.am1" -A
+run_test rg67_assert_checked        "$SCRIPT_DIR/rg67_assert_ignored.am1" --xfail --xmsg "assert failed: false, ignored under -A at line 7,"
+rg_same rg67_ignored_outputs "$SCRIPT_DIR/rg67_assert_ignored.am1" "rim sym map lst mac out" -A -d -S -m -b
+rm -f rg67_assert_ignored.rim
+"$AM1" -A "$SCRIPT_DIR/rg67_assert_ignored.am1" > "$WORK/rg67_silent.log" 2>&1
+if [ ! -s "$WORK/rg67_silent.log" ] && [ -f rg67_assert_ignored.rim ]; then
+    rg_result rg67_ignored_silent ""
+else
+    rg_result rg67_ignored_silent "-A printed something, or wrote no tape"
+fi
+echo ""
+
 # Not a failure: an --xfail test never gets far enough to have words to
 # compare, and rg34 is checked through its listing instead. It is printed so a
 # new test cannot quietly join the suite with nothing but an exit code behind

@@ -24,6 +24,10 @@ static bool noIncrement = false;
 static bool stmtBare = true;    // nothing yet but one expression with no separator in it
 static int parenDepth = 0;      // open parentheses in that expression
 
+// Whether the statement being scanned is an assert, kept by yylex(): only an
+// assert takes the comparison and logical operators, and it takes no constant.
+static bool inAssert = false;
+
 static char *commentP;
 static char commentBuf[MAXCCOMMENT];
 
@@ -58,8 +62,10 @@ extern void vwarn(int errtype, char *msgP, ...);
 
 // The keywords the start-of-line rules below recognize. Anywhere else one
 // reaches the name rule, which reports it rather than take it as a name.
-static const char *lineKeywords[] = { "start", "stop", "constants", "variables", "import", "export" };
+static const char *lineKeywords[] = { "start", "stop", "constants", "variables", "import", "export",
+                                      "assert" };
 static int directiveToken(int token);
+static void checkAssertToken(int token);
 static void noteStatement(int token);
 
 #define YY_USER_INIT BEGIN FIRST
@@ -248,9 +254,16 @@ thisbank[ \t]*      { return(THISBANK); }
                         return(BAD);
                         }
 
+\:\*                    {
+                        // The wildcard tag of name:*, one token. Lexed as a colon and a
+                        // multiplication, the MUL rule took the blank after the * as well,
+                        // and b:* 1 then had no separator between its two operands.
+                        return(WILDTAG);
+                        }
+
 \:                      { return(BREF); }
 
-^[ \t]*(start|stop|constants|variables|import|export)[ \t]*,   {
+^[ \t]*(start|stop|constants|variables|import|export|assert)[ \t]*,   {
                         // A keyword written as a label. Left to the rules below,
                         // start or stop ends the program here, and the parse
                         // reports a syntax error or, when a literal before it names
@@ -270,7 +283,7 @@ thisbank[ \t]*      { return(THISBANK); }
                         return(BAD);
                         }
 
-^[ \t]+(start|stop|constants|variables|import|export)[a-zA-Z0-9_]+  {
+^[ \t]+(start|stop|constants|variables|import|export|assert)[a-zA-Z0-9_]+  {
                         // An indented name that only begins with a keyword, such as
                         // starter. The keyword rules below take the blanks with the
                         // keyword, so they outmatch the blanks rule and split the
@@ -286,6 +299,10 @@ thisbank[ \t]*      { return(THISBANK); }
 ^[ \t]*variables[ \t]*  { return(VARS); }
 ^[ \t]*import[ \t]*     { return(IMPORT); }
 ^[ \t]*export[ \t]*     { return(EXPORT); }
+                        /* Its line and file are recorded as a directive's are,
+                         * for the check after the parse.
+                         */
+^[ \t]*assert[ \t]*     { return(directiveToken(ASSERT)); }
 
 ascii[ \t]+             { return(ASCII); }
 text[ \t]+              { BEGIN DOTEXT; }
@@ -467,6 +484,24 @@ octal                   { decimalMode = false; }
 [ ]*%[ ]*               { return(MOD); }
 [ ]*<<[ ]*          { return(LSHIFT); }
 [ ]*>>[ ]*          { return(RSHIFT); }
+
+                    /* The comparison and logical operators, an assert's only;
+                     * checkAssertToken() refuses them anywhere else.
+                     * Each is longer than the one-character operator it begins
+                     * with, so flex prefers it, and << and >> are longer than
+                     * < and >.  A <name> with no blank before the < is still a
+                     * library file name, being longer.
+                     * Like the operators above they take blanks, not tabs.
+                     */
+[ ]*==[ ]*              { return(ISEQ); }
+[ ]*!=[ ]*              { return(ISNE); }
+[ ]*<=[ ]*              { return(ISLE); }
+[ ]*>=[ ]*              { return(ISGE); }
+[ ]*<[ ]*               { return(ISLT); }
+[ ]*>[ ]*               { return(ISGT); }
+[ ]*&&[ ]*              { return(LOGAND); }
+[ ]*\|\|[ ]*            { return(LOGOR); }
+[ ]*![ ]*               { return(LOGNOT); }
 \.                  { return(DOT); }
                     /* A label's line is recorded here.
                      * By the time the label rule reduces, lineno may
@@ -1152,6 +1187,7 @@ yylex(void)
     case CHAR:
     case LITCHAR:
     case ENDCONST:
+    case WILDTAG:
     case ')':
         afterOperand = true;
         break;
@@ -1197,6 +1233,7 @@ yylex(void)
     case LSHIFT:
     case RSHIFT:
     case BREF:       // the colon of a bank reference, "name:bank"
+    case WILDTAG:    // the ":*" of "name:*"
         break;
 
     case '(':
@@ -1215,8 +1252,72 @@ yylex(void)
         break;
     }
 
+    checkAssertToken(token);
     noteStatement(token);
     return(token);
+}
+
+// Keep inAssert for the statement being scanned, and refuse what only an
+// assert may hold outside one, and what an assert may not hold inside it.
+// An assert ends with its line; every token that ends a statement clears it.
+static void
+checkAssertToken(int token)
+{
+const char *opP;
+int line;
+
+    // After a ';' lineno is already one ahead.
+    line = (sawSemi)?(lineno - 1):lineno;
+
+    switch( token )
+    {
+    case ASSERT:
+        inAssert = true;
+        break;
+
+    case TERMINATOR:
+    case SEMI:
+    case EMPTYLINE:
+    case COMMENT:
+    case CSCOMMENT:
+    case CSSTART:
+    case FILENAME:
+    case HEADER:
+        inAssert = false;
+        break;
+
+    case CONSTANT:
+        // A constant's word would go into the pool, and an assert puts nothing
+        // on the tape.
+        if( inAssert )
+        {
+            verrorl(line, "a constant cannot be used in an assert, its word would be added to the program");
+        }
+        break;
+
+    case ISEQ:
+    case ISNE:
+    case ISLE:
+    case ISGE:
+    case ISLT:
+    case ISGT:
+    case LOGAND:
+    case LOGOR:
+    case LOGNOT:
+        if( !inAssert )
+        {
+            for( opP = yytext; *opP == ' '; ++opP )
+            {
+            }
+
+            verrorl(line, "%.*s is a comparison or logical operator, allowed only in an assert",
+                (int)strcspn(opP, " "), opP);
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 // Record where an optimizer directive was seen and return its token.

@@ -1,0 +1,16 @@
+Test rg61: a comment on the start line, and comment lines after it
+// Both were once a syntax error. go is found in bank 0 from bank 3, so the
+// comment also rides on rg59's bank search. The words are those of the same
+// program with no comment on or after the start line.
+100/
+go, lac x
+    hlt
+x, 7
+bank 3
+200/
+y, 0
+start go // the start, in bank 0
+// a comment line after the start
+
+/* and a C-style one,
+   over two lines */

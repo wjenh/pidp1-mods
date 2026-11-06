@@ -15,7 +15,10 @@
  * a C comment, so they cannot serve.  If the map does not hold, or the text
  * cannot give the order of lines needed, every line is rendered from the tree
  * instead (-O=source=tree), to be assembled with -n; stderr says so.  An
- * include file holding a change is written out in place of its #include line.
+ * include file holding a change is written out in place of its #include line,
+ * and an #includeonce that read nothing, or an #uninclude, naming it is left
+ * out: the written file never includes it.  A line the map pairs with a
+ * statement runs on over the lines a macro call's arguments took.
  *
  * Every statement is written so the lexer reads the same tokens back: a binary
  * operator has a blank on each side, so "a / b" is never read as an origin, and
@@ -62,8 +65,10 @@
 #include <limits.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <sys/stat.h>
 
 #include "am1.h"
+#include "preprocess.h"
 #include "y.tab.h"
 #include "type340chars.h"
 #include "optimizer.h"
@@ -171,6 +176,8 @@ typedef struct
     int last;
     int nodes;          // the statement-list nodes it was parsed as
     bool seen;          // the optimized list still holds it, in place or moved
+    int runTo;          // the next line of its file cpp wrote text for: a macro
+                        // call's arguments may run on up to it
 } SrcGroup, *SrcGroupP;
 
 // A statement-list node's line, in the map's hash.
@@ -339,6 +346,8 @@ static void dirOf(const char *pathP, char *dirP, size_t size);
 static bool isLineEnd(PNodeP nodeP);
 static bool isMarkerLine(const char *lineP, int *lineNoP, char *nameP, size_t size, bool *enterP, bool *leaveP);
 static bool isBlankLine(const char *lineP);
+static bool isEmptyLine(const char *lineP);
+static bool isHashLine(const char *lineP);
 static bool continues(const char *lineP);
 static bool isIncludeLine(const char *lineP, char *nameP, size_t size);
 static bool originOnly(const char *lineP);
@@ -363,6 +372,14 @@ static void closeInst(int inst);
 static void flushTo(int inst, int line);
 static void copyLine(int inst, int line);
 static void wasLine(const char *lineP);
+static bool includeTargets(void);
+static bool unincludeHolds(const char *targetP);
+static bool holdsDefine(int inst);
+static int writtenTarget(int inst, int line, const char **targetPP);
+static bool hasReading(int inst, int line);
+static bool sameFile(const char *aP, const char *bP);
+static void leftOut(int inst, int line, const char *targetP);
+static bool isUninclude(const char *lineP);
 
 // Record one -D given on the command line, for the header comment.
 void
@@ -418,13 +435,17 @@ srcCodegen(FILE *outfP, PNodeP rootP, const char *sourceP)
     if( textLayer )
     {
         textAnalyze(rootP->leftP);
-        dryRun = true;
-        textLayer = textWalk(rootP->leftP);
-        dryRun = false;
 
-        if( !textLayer )
+        if( includeTargets() )
         {
-            whyTree = "the optimized order of the lines is one the copied text cannot give";
+            dryRun = true;
+            textLayer = textWalk(rootP->leftP);
+            dryRun = false;
+
+            if( !textLayer )
+            {
+                whyTree = "the optimized order of the lines is one the copied text cannot give";
+            }
         }
     }
 
@@ -815,6 +836,18 @@ srcNode(PNodeP nodeP)
     case OVTABLE:
     case OVCALL:
         srcOverlayDirective(nodeP);
+        break;
+
+    case ASSERT:
+        // Its names are as written, looked up only when it is checked.
+        put("\tassert ");
+        srcOperand((PNodeP)(nodeP->value.ptr));
+        if( nodeP->value2.strP )
+        {
+            put(", \"");
+            srcAsciiString(nodeP->value2.strP);
+            put("\"");
+        }
         break;
 
     default:
@@ -1314,6 +1347,7 @@ int pi;
 int first;
 int count;
 int lineNo;
+int line;
 int inst;
 bool blank;
 bool found;
@@ -1588,6 +1622,21 @@ static char why[SRC_NOTE + PATH_MAX];
         groupP->last = lineAtP[pi];
         groupP->nodes = count;
 
+        // cpp writes a macro call whose arguments run on over lines as one
+        // line, then a blank or a marker for the rest: the next line it wrote
+        // text for, in this reading, bounds them.  Past an #include there is
+        // no bound, but its '#' line stops the run.
+        groupP->runTo = INT_MAX;
+        for( i = pi + 1; (i < n) && (((kindP[i] == 'b') && isEmptyLine(physP->linesPP[i])) ||
+                                     ((kindP[i] == 'm') && (lineAtP[i] == 0))); ++i )
+        {
+        }
+
+        if( (i < n) && (instAtP[i] == instAtP[first]) )
+        {
+            groupP->runTo = lineAtP[i];
+        }
+
         for( scanP = nodeP; ; scanP = scanP->leftP )
         {
             mapNode(scanP, groupCount);
@@ -1622,6 +1671,20 @@ static char why[SRC_NOTE + PATH_MAX];
             while( (groupsP[i].last < textP->count) && continues(textP->linesPP[groupsP[i].last - 1]) )
             {
                 ++groupsP[i].last;
+            }
+
+            // So does a macro call whose arguments run on: to the last line
+            // before runTo that is not empty.  A '#' line, or a radix word,
+            // which cpp writes as text, is not part of it.
+            for( line = groupsP[i].last + 1;
+                 (line < groupsP[i].runTo) && (line <= textP->count) && !isHashLine(textP->linesPP[line - 1]) &&
+                 (isEmptyLine(textP->linesPP[line - 1]) || !isBlankLine(textP->linesPP[line - 1]));
+                 ++line )
+            {
+                if( !isEmptyLine(textP->linesPP[line - 1]) )
+                {
+                    groupsP[i].last = line;
+                }
             }
         }
     }
@@ -1933,6 +1996,20 @@ size_t len;
     }
 
     return( (len == 0) || ((len == 5) && !strncmp(cP, "octal", 5)) || ((len == 7) && !strncmp(cP, "decimal", 7)) );
+}
+
+// Whether a line holds nothing but blanks.
+static bool
+isEmptyLine(const char *lineP)
+{
+    return( lineP[strspn(lineP, " \t\r")] == '\0' );
+}
+
+// Whether a line is a preprocessor directive, or a '#' line cpp passes through.
+static bool
+isHashLine(const char *lineP)
+{
+    return( lineP[strspn(lineP, " \t")] == '#' );
 }
 
 // Whether cpp joins a line to the next: it ends in a backslash, which gcc's
@@ -2705,6 +2782,7 @@ static void
 flushTo(int inst, int line)
 {
 SrcInstP instP;
+const char *targetP;
 int child;
 int saved;
 int at;
@@ -2742,6 +2820,11 @@ int at;
         if( child >= 0 )
         {
             instsP[child].kept = true;
+        }
+        else if( writtenTarget(inst, at, &targetP) >= 0 )
+        {
+            leftOut(inst, at, targetP);
+            continue;
         }
 
         copyLine(inst, at);
@@ -2792,6 +2875,228 @@ char *cP;
     startLine();
     put(lineP);
     put("\n");
+}
+
+// An #includeonce that read nothing, as its file was included already, or an
+// #uninclude, acts on its file by name.  Where that file is written out in
+// place, the written file never includes it, so such a line would read it
+// again, or find nothing to undo.  Each such line is left out, and its
+// reading written out so that it can be.  Returns false, the map given up,
+// when an #uninclude must undo a #define the written text cannot.
+static bool
+includeTargets(void)
+{
+SrcTextP textP;
+const char *targetP;
+int inst;
+int line;
+bool grew;
+
+    if( !doCpp )
+    {
+        return(true);
+    }
+
+    // Writing a reading out can make another line's file one written out.
+    do
+    {
+        grew = false;
+
+        for( inst = 0; inst < instCount; ++inst )
+        {
+            if( (instsP[inst].nameP[0] == '<') || !ppIncludeTargetsIn(instsP[inst].nameP) )
+            {
+                continue;
+            }
+
+            if( !loadInst(inst) )
+            {
+                return(false);
+            }
+
+            textP = instsP[inst].textP;
+
+            for( line = 1; line <= textP->count; ++line )
+            {
+                if( writtenTarget(inst, line, &targetP) < 0 )
+                {
+                    continue;
+                }
+
+                if( isUninclude(textP->linesPP[line - 1]) && !unincludeHolds(targetP) )
+                {
+                    return( mapFail("an #uninclude of a file written out in place, which holds a #define or #undef") );
+                }
+
+                if( !instsP[inst].changed )
+                {
+                    markChanged(inst);
+                    grew = true;
+                }
+            }
+        }
+    } while( grew );
+
+    return(true);
+}
+
+// Whether every written-out reading of targetP, and every reading inside one,
+// holds no #define or #undef, which an #uninclude of it would undo.
+static bool
+unincludeHolds(const char *targetP)
+{
+int inst;
+int inner;
+
+    for( inst = 0; inst < instCount; ++inst )
+    {
+        if( !instsP[inst].changed || (instsP[inst].nameP[0] == '<') || !sameFile(targetP, instsP[inst].nameP) )
+        {
+            continue;
+        }
+
+        for( inner = 0; inner < instCount; ++inner )
+        {
+            if( isWithin(inner, inst) && holdsDefine(inner) )
+            {
+                return(false);
+            }
+        }
+    }
+
+    return(true);
+}
+
+// Whether a reading's file holds a #define or an #undef; one that cannot be
+// read is taken to.
+static bool
+holdsDefine(int inst)
+{
+SrcTextP textP;
+const char *cP;
+int line;
+
+    if( (instsP[inst].nameP[0] == '<') || !(textP = readText(instsP[inst].nameP)) )
+    {
+        return(true);
+    }
+
+    for( line = 0; line < textP->count; ++line )
+    {
+        cP = textP->linesPP[line];
+        cP += strspn(cP, " \t");
+
+        if( *cP++ != '#' )
+        {
+            continue;
+        }
+
+        cP += strspn(cP, " \t");
+
+        if( (!strncmp(cP, "define", 6) && !isalnum((unsigned char)cP[6]) && (cP[6] != '_')) ||
+            (!strncmp(cP, "undef", 5) && !isalnum((unsigned char)cP[5]) && (cP[5] != '_')) )
+        {
+            return(true);
+        }
+    }
+
+    return(false);
+}
+
+// The written-out reading of the file that line of inst names, where the line
+// is an #includeonce that read nothing or an #uninclude; -1 for any other.
+// Sets *targetPP to the file, as the preprocessor found it.
+static int
+writtenTarget(int inst, int line, const char **targetPP)
+{
+int other;
+
+    if( !doCpp || hasReading(inst, line) || !(*targetPP = ppIncludeTarget(instsP[inst].nameP, line)) )
+    {
+        return(-1);
+    }
+
+    for( other = 0; other < instCount; ++other )
+    {
+        if( instsP[other].changed && (instsP[other].nameP[0] != '<') && sameFile(*targetPP, instsP[other].nameP) )
+        {
+            return(other);
+        }
+    }
+
+    return(-1);
+}
+
+// Whether line of inst is an #include that made a reading.
+static bool
+hasReading(int inst, int line)
+{
+int other;
+
+    for( other = 0; other < instCount; ++other )
+    {
+        if( (instsP[other].parent == inst) && (instsP[other].includeLine == line) )
+        {
+            return(true);
+        }
+    }
+
+    return(false);
+}
+
+// Whether two paths name one file, as the preprocessor knows a file: by its
+// device and inode, however the path is spelled.
+static bool
+sameFile(const char *aP, const char *bP)
+{
+struct stat a;
+struct stat b;
+
+    return( !stat(aP, &a) && !stat(bP, &b) && (a.st_dev == b.st_dev) && (a.st_ino == b.st_ino) );
+}
+
+// Write a line left out, as includeTargets() says, as a comment quoting it.
+// Blanks at its end go, and a backslash there, which would join the next line
+// to the comment.
+static void
+leftOut(int inst, int line, const char *targetP)
+{
+const char *lineP;
+size_t len;
+
+    if( dryRun )
+    {
+        return;
+    }
+
+    lineP = instsP[inst].textP->linesPP[line - 1];
+
+    for( len = strlen(lineP); (len > 0) && ((lineP[len - 1] == ' ') || (lineP[len - 1] == '\t') ||
+                                           (lineP[len - 1] == '\r') || (lineP[len - 1] == '\\')); --len )
+    {
+    }
+
+    startLine();
+    put("// am1 -O=source: left out, as ");
+    put(targetP);
+    put(" is written out in place, so not included:  ");
+    fwrite(lineP, 1, len, srcfP);
+    put("\n");
+}
+
+// Whether a line is an #uninclude.
+static bool
+isUninclude(const char *lineP)
+{
+    lineP += strspn(lineP, " \t");
+
+    if( *lineP++ != '#' )
+    {
+        return(false);
+    }
+
+    lineP += strspn(lineP, " \t");
+    return( !strncmp(lineP, "uninclude", 9) );
 }
 
 // Write a comment quoting a source line a rendered line replaces.  Blanks at
@@ -3832,6 +4137,30 @@ PNodeP outerP;
         case RSHIFT:
             opP = " >> ";
             break;
+        case ISEQ:
+            opP = " == ";
+            break;
+        case ISNE:
+            opP = " != ";
+            break;
+        case ISLT:
+            opP = " < ";
+            break;
+        case ISLE:
+            opP = " <= ";
+            break;
+        case ISGT:
+            opP = " > ";
+            break;
+        case ISGE:
+            opP = " >= ";
+            break;
+        case LOGAND:
+            opP = " && ";
+            break;
+        case LOGOR:
+            opP = " || ";
+            break;
         default:
             cannot(nodeP, "a binary operator");
             return;
@@ -3855,6 +4184,10 @@ PNodeP outerP;
             break;
         case CMPL:
             put("~");
+            srcOperand(nodeP->rightP);
+            break;
+        case LOGNOT:
+            put("!");
             srcOperand(nodeP->rightP);
             break;
         default:
@@ -3909,6 +4242,24 @@ PNodeP outerP;
 
     case ADDR:
         putName(nodeP);
+        break;
+
+    case NAME:
+        // An assert's name, as it was written.
+        // One written under %%forcelocal is a bare name, its value2 the local scope.
+        put(nodeP->value.strP);
+        if( !(nodeP->flags & PN_ASSERTLOCAL) )
+        {
+            if( nodeP->value2.ival == ASSERT_ANYBANK )
+            {
+                put(":*");
+            }
+            else if( nodeP->value2.ival != ASSERT_OWNBANK )
+            {
+                put(":");
+                putNum(nodeP->value2.ival);
+            }
+        }
         break;
 
     case LAW:

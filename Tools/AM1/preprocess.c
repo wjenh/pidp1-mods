@@ -32,6 +32,9 @@
  * on that line and am1 writes them to its .map.
  * The * text written is unchanged by them.
  *
+ * Added: the file each #uninclude, and each #includeonce that read nothing,
+ * named, which -O=source asks for by file and line.
+ *
  * Refused by name: stringizing (#parameter), variadic macros, __FILE__,
  * __LINE__, _Pragma, and the directives am1 does not support (#pragma, #line,
  * #include_next and the like).
@@ -372,6 +375,19 @@ static int nRecs;
 static int recCap;
 static int recCursor;           // where ppStatementOrigin() last found a line
 
+// An #includeonce that read nothing, or an #uninclude, and the file it named,
+// for ppIncludeTarget(): -O=source must know what such a line refers to.
+typedef struct PPIncRec
+{
+    char *fileP;                // the directive's file, as the markers name it
+    int line;
+    char *pathP;                // the file it named, as findInclude() found it
+} PPIncRec;
+
+static PPIncRec *incRecsP;
+static int nIncRecs;
+static int incRecCap;
+
 static PPToken *lexToken(void);
 static PPToken *getToken(void);
 static bool handleDirective(PPToken *hashP);
@@ -379,6 +395,7 @@ static void doDefine(PPBuffer *defBufP);
 static void recLine(void);
 static void recToken(PPToken *tP);
 static void recEndStatement(void);
+static void recInclude(const char *pathP);
 
 // Allocate or die: am1 cannot go on without the memory.
 static void *
@@ -593,8 +610,7 @@ size_t len;
             *cP2 = 0;
         }
 
-        cP = 
-        strncat(textP, cP, strlen(cP));
+        cP = strncat(textP, cP, strlen(cP));
         first = false;
         sourceP = NULL;
     }
@@ -1652,6 +1668,59 @@ int i;
     return( NULL );
 }
 
+// Record the file the directive being obeyed names.
+static void
+recInclude(const char *pathP)
+{
+    if( nIncRecs >= incRecCap )
+    {
+        incRecCap = (incRecCap)?(incRecCap * 2):64;
+        incRecsP = realloc(incRecsP, (incRecCap * sizeof(PPIncRec)));
+        if( !incRecsP )
+        {
+            fprintf(stderr, "am1: out of memory preprocessing\n");
+            exit(1);
+        }
+    }
+
+    incRecsP[nIncRecs].fileP = ppStrndup(bufP->nameP, strlen(bufP->nameP));
+    incRecsP[nIncRecs].line = dirLine;
+    incRecsP[nIncRecs].pathP = ppStrndup(pathP, strlen(pathP));
+    ++nIncRecs;
+}
+
+const char *
+ppIncludeTarget(const char *fileP, int line)
+{
+int i;
+
+    for( i = 0; i < nIncRecs; ++i )
+    {
+        if( (incRecsP[i].line == line) && fileP && !strcmp(incRecsP[i].fileP, fileP) )
+        {
+            return( incRecsP[i].pathP );
+        }
+    }
+
+    return( NULL );
+}
+
+bool
+ppIncludeTargetsIn(const char *fileP)
+{
+int i;
+
+    for( i = 0; i < nIncRecs; ++i )
+    {
+        if( fileP && !strcmp(incRecsP[i].fileP, fileP) )
+        {
+            return( true );
+        }
+    }
+
+    return( false );
+}
+
 static unsigned
 hashName(const char *sP)
 {
@@ -2525,6 +2594,33 @@ PPToken *tP, *nameP;
                 return( makeEof(0) );
             }
 
+            // An #error's own text goes in the message, which would otherwise hide what
+            // the writer meant the error to say
+            if( (nameP->type == PP_NAME) && !strcmp(nameP->textP, "error") )
+            {
+            PPToken *eP;
+            PPVec v;
+
+                memset(&v, 0, sizeof(v));
+                vecPush(&v, nameP);
+                while( (eP = lexToken())->type != PP_EOF )
+                {
+                    vecPush(&v, eP);
+                }
+
+                if( v.n > 1 )
+                {
+                    diagHere(PPD_ERROR, tP->line, tP->col, "#error inside a #define block: %s",
+                        diagText(v.vPP, v.n));
+                }
+                else
+                {
+                    diagHere(PPD_ERROR, tP->line, tP->col, "#error inside a #define block");
+                }
+                blkP->bad = true;
+                continue;
+            }
+
             diagHere(PPD_ERROR, tP->line, tP->col, "#%s inside a #define block", nameP->textP);
             blkP->bad = true;
             if( nameP->type != PP_EOF )
@@ -3014,6 +3110,7 @@ bool angled, any;
 
     if( kind == D_UNINCLUDE )
     {
+        recInclude(pathP);
         any = false;
         for( iP = inclusionsP; iP; iP = iP->nextP )
         {
@@ -3042,6 +3139,7 @@ bool angled, any;
         {
             if( iP->active && (iP->dev == st.st_dev) && (iP->ino == st.st_ino) )
             {
+                recInclude(pathP);
                 return;
             }
         }

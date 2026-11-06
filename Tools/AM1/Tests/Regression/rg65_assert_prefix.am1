@@ -1,0 +1,8 @@
+Test rg65: names that begin with assert are names
+// A label at column 0 and an indented one, and operands; the .ref pins
+// their words.
+100/
+assertx, jmp asserted
+    asserted, lac assertx
+    assert_2, hlt
+start assertx

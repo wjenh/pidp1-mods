@@ -34,10 +34,12 @@ static void listOvTable(FILE *outfP, PNodeP nodeP);
 
 extern bool sawBank;
 extern bool dropIncludeText;
+extern bool ignoreAsserts;
 extern int lineno;
 extern BankContextP banksP;
 
 extern int evalExpr(PNodeP);
+extern char *assertText(PNodeP assertP);
 extern Word ovStamp;
 extern Word *ovTableWordsP;
 extern void ovlPrintLayout(FILE *outfP, const char *prefixP);
@@ -108,6 +110,7 @@ int i, j;
 PNodeP node2P;
 WindowP winP;
 char *cP;
+char *textP;                // an assert's text
 bool skipTerm = false;      // set by an optimizer directive: drop its line's terminator
 PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
 
@@ -361,6 +364,21 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
             listTracks(outfP, (uint32_t)nodeP->value.ival);
             break;
 
+        case ASSERT:
+            if( ignoreAsserts )
+            {
+                // Under -A the listing is that of the source without the line,
+                // as for an optimizer directive.
+                skipTerm = true;
+                break;
+            }
+
+            startLine(true, outfP, nodeP);
+            textP = assertText(nodeP);
+            output(outfP, doOutput, "%s", textP);
+            free(textP);
+            break;
+
         case WINDOWDECL:
             // Listed at the window's first address, not the root's pc.
             winP = (WindowP)(nodeP->value.ptr);
@@ -392,7 +410,8 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
 
         // skipTerm lives only through the node after the directive; if that is a
         // SEMI or COMMENT rather than a TERMINATOR, it prints as it always does.
-        if( (nodeP->type != OPTIMIZE) && (nodeP->type != ENDOPTIMIZE) )
+        if( (nodeP->type != OPTIMIZE) && (nodeP->type != ENDOPTIMIZE) &&
+            !((nodeP->type == ASSERT) && ignoreAsserts) )
         {
             skipTerm = false;
         }

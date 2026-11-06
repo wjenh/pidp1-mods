@@ -1,0 +1,7 @@
+Test rg61: code after start is still refused when comments come between
+// Only comment lines and blank lines may follow start or stop.
+100/
+go, hlt
+start go // the start
+// a comment line
+    hlt

@@ -1,0 +1,3 @@
+// Test rg64: an included file whose assert, on its line 3, fails
+//
+assert 1 == 2, "from the include"

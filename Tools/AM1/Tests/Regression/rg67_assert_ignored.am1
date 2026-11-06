@@ -1,0 +1,10 @@
+Test rg67: -A ignores every assert
+// Under -A a false assert and one naming an undefined symbol assemble, to the
+// words of the program with the two lines left blank, which the .ref pins.
+// Without -A the first fails.
+100/
+go, lac x
+assert x == 0, "false, ignored under -A"
+assert nowhere == 1
+x, 7
+start go

@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v5.5 25-Oct-2026"
-#define AM1SHORTVERSION "am1 v5.5"
+#define AM1VERSION "am1 v5.6 5-Nov-2026"
+#define AM1SHORTVERSION "am1 v5.6"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -62,6 +62,8 @@
                         // bank the bank
 #define PN_OVLOAD   128 // an OVCALL node written as %%ovload
 #define PN_OVRES    256 // an OVCALL node written as %%ovresident, which names no entry
+#define PN_ASSERTLOCAL 512  // an assert's bare name written under %%forcelocal: value2.ptr
+                            // is the local scope, where a later label of that name goes
 
 // The directive an OVCALL node was written as, without its %%.
 #define OVCALLNAME(nodeP) ((((nodeP)->flags) & PN_OVRES)? "ovresident": \
@@ -76,6 +78,11 @@
 // A dot can't be in a symbol, so no program can write either.
 #define OVRESWINDOW ".window"
 #define OVRESNUMBER ".number"
+
+// The bank an assert's NAME node gives, in its value2.ival, when it names none.
+// The name is looked up only when the assert is checked; 0 up is a bank given as name:N.
+#define ASSERT_OWNBANK  -1  // a bare name: the assert's own bank
+#define ASSERT_ANYBANK  -2  // name:*, the bank that defines it
 
 // What a RELAYOUT node is, in its value.ival.
 // Only optrelayout.c makes them, every back end but the listing skips them

@@ -1,11 +1,12 @@
 /* am1.c - another macro assembler for the PDP-1
  *
- * Usage: am1 [-abdlmMnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-i path]
+ * Usage: am1 [-aAbdlmMnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-i path]
  *    [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
  * -a   treat space in expressions as add, not or
+ * -A   ignore every assert: each is still parsed, none is checked
  * -b   generate binary code
  * -d   same as giving both -s and -l, generates all the files needed for ad1
  * -l   generate a listing
@@ -145,99 +146,7 @@
  *
  * 18-Dec-2025 wje - initial version
  * 02-Jan-2026 wje - 'production' release
- * 04-Jan-2026 wje - added tables, masking of math results to 18 bits
- * 05-Jan-2026 wje - added -z, -a, cleanup, doc updates
- * 06-Jan-2026 wje - added -s and symbol table output
- * 06-Jan-2026 wje - final code cleanup, make bank use vs no use consistent instead of no use being a special case
- * 08-Jan-2026 wje - clean up line numbering in listing, add bank ref wildcard, a:*
- * 12-Jan-2026 wje - more listing cleanup, rename pause to stop, add import/export, add lshift and rshift,
- *                   make opr precedence same as C, update docs
- * 14-Jan-2026 wje - fix serious bug introduced by the mod operator, can't use a percent
- * 20-Jan-2026 wje - fix bug in forced locals, rename mod to %%
- * 22-Jan-2026 wje - add ioh, same as iot i
- * 23-Jan-2026 wje - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
- * 03-Feb-2026 wje - add C, dpyc, sdb
- * 04-Feb-2026 wje - predefine AM1 as an ifdef marker for include files, not defined if macro is being produced
- * 06-Feb-2026 wje - add -r flag
- * 12-Feb-2026 wje - fix a case of duplicate symbols across banks not resolving correctly
- * 15-Feb-2026 wje - addlocal directive added, allow nested local to have same name as outer local
- * 16-Feb-2026 wje - just some warnings about locals hiding other locals or globals
- * 18-Feb-2026 wje - fix command line parsing, add -W=xxx error control, add line number and version to symbol file
- * 26-Feb-2026 wje - use extended addresses, bank and pc, in listings
- * 05-Mar-2026 wje - change import to use V2 symtabs, set correct max bank, 16 not 32
- * 08-Mar-2026 wje - fix obscure issue with a symbol being used with and without a bank ref in constants
- * 09-Mar-2026 wje - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
- * 10-Mar-2026 wje - change constant hash again, if it ain't broke, fix it anyway just to hash
- *                   resolved symbol values better.
- * 17-Mar-2026 wje - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
- * 28-Mar-2026 wje - add code passing 4K boundary, code overwriting other code checks and error msgs
- * 02-Apr-2026 wje - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
- * 07-Apr-2026 wje - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
- * 08-Apr-2026 wje - fix some formatting issue with trailing comments in macro output
- * 12-Apr-2026 wje - minor change, turn off cpp warning about unterminated quotes in flex text strings
- * 26-Apr-2026 wje - add c-style block comments
- * 26-Apr-2026 wje - add -N to suppress included file text in listing
- * 12-Jun-2026 wje - fix incorrect opcode for cmi, should be 770000
- * 20-Jun-2026 wje - add special sequences in flexo and text for ribbon color and carriage return
- * 21-Jun-2026 wje - labeled location, label and text/ascii/type340 now allowed on same line
- * 24-Jun-2026 wje - fix WARN_BANK/WARN_BANKS name swap in warnings[] table
- * 25-Jun-2026 wje - swapBanks refactor, replace cur_pc, globalSymP, constSymP, varNodesP with
- *                   BankContextP curBankP->x references, it's just cleaner code
- * 26-Jun-2026 wje - add test output mode
- * 26-Jun-2026 wje - adjust type340 nl to just insert a cr, the t340 emulator changed, it does cr/lf for cr
- * 30-Jun-2026 wje - add thisbank keyword
- * 13-Jul-2026 wje - add private keyword
- * 19-Aug-2026 wje - fix use of wrong pc when emitting an automatically-emitted constant in multibank use
- * 28-Aug-2026 fab - make output deterministic using a serial number instead of a memory address for hashing
- * 30-Aug-2026 wje - add -S, memory usage summary
- * 31-Aug-2026 wje - replace accidentally deleted lex pattern for DOTEXT
- * 3-Sep-2026 wje - just some formatting cleanup, no code change, no version change
- * 3-Sep-2026 wje - add out-of-bounds warning for law -n or law (i) > 07777
- * 5-Sep-2026 wje - more law cases handled, all should be covered now
- * 5-Sep-2026 wje - various fixes for dangling constants and vars not being emitted correctly
- * 6-Sep-2026 wje - minor fix in listcodegen to fix some constants being listed incorrectly
- * 6-Sep-2026 wje - trivial change, show mem usage in sorted low bank to high bank order
- * 8-Sep-2026 wje - change symtab version number, fix testcodegen to handle text, ascii, type340
- * 8-Sep-2026 claude - add -O, the optimizer advisor, see Docs/UsingTheAm1Optimizer.md.
- * 9-Sep-2026 wje - fixes (finally) for line numbers sometimes being off by one in error messages, fix some of the
- *    directives, e.g. table, not allowing use of location 07777
- * 9-Sep-2026 claude - -O=calls and -O=share, the call-graph and return-word dumps.
- * 14-Sep-2026 claude - -O1 and its -O=xform dump, -O=values, and typo fixes.
- * 14-Sep-2026 wje - clean up usage and explicitly initialize doMacro and doBinary
- * 15-Sep-2026 claude - -O=scratch, and fixes to hashExpr and resolveWildcard.
- * 16-Sep-2026 claude - -O=guess, and -O2, the heuristic level; -O2s and -O2t refused.
- * 17-Sep-2026 claude - -O=speed, the bisection modifiers, -O=relayout and -O=edits.
- * 18-Sep-2026 claude - -O=place=undeclared, needing -O2, and the -O=inline usage lines.
- * 19-Sep-2026 wje - rework lexer, % is now mod like it should be, %% is a directive, the old use of % in locals is gone
- * 19-Sep-2026 claude - -O=unroll=cap usage, -Wall -Wextra warnings cleared, and the %%ceiling directive.
- * 20-Sep-2026 claude - usage text for -O=reclaim=off.
- * 21-Sep-2026 wje - and finally fix xxx/ stmt for an origin statement
- * 21-Sep-2026 wje - some edge-case fixes in eval.c and in type340chars
- * 21-Sep-2026 claude - -O=window usage
- * 21-Sep-2026 claude - usage text for -O1, -O2, -O=xform and -O=edits says what they do now
- * 21-Sep-2026 claude - -O=source, the program written back out as am1 source
- * 22-Sep-2026 claude - -O=source copies unchanged lines; usage for -O=source=render and -O=source=tree
- * 25-Sep-2026 claude - %% followed by a name that is no directive is diagnosed by name again
- * 25-Sep-2026 claude - v3.0, AM1VERSION and AM1SHORTVERSION move from v1.50 to v3.0
- * 29-Sep-2026 claude - -O=undeclared, needing -O2, with -O=place=undeclared its alias
- * 29-Sep-2026 wje - minor fix, line number one off in error message for cross-bank ref to nonexistent symbol 
- * 3-Oct-2026 claude - a var declared twice, or declared and then used as a label, is an error
- * 3-Oct-2026 claude - export then var keeps the export; duplicate label and import clash messages corrected
- * 11-Oct-2026 wje - handing IOTs that skip, new skip list added
- * 12-Oct-2026 claude - v3.6, drum overlays: %%drumreserve, %%window, %%overlay, %%ovcall, %%ovtable, .ovl and .osym
- * 12-Oct-2026 claude - -S prints a bank with no word as none, not as -1
- * 12-Oct-2026 claude - v3.7, -d accepted for a program with overlays, now that ad1 reads them
- * 12-Oct-2026 claude - v3.8, the title is the source's first line as written, not cpp's expansion
- * 12-Oct-2026 claude - v3.9, -S prints each bank's highest word, not where its counter ended
- * 13-Oct-2026 claude - v4.0, -O, -O1, -O2 and -O=source take a program with overlays
- * 14-Oct-2026 wje - production cleanup
- * 18-Oct-2026 wje - don't generate a symtab automatically when export is used inside an overlay definition
- * 20-Oct-2026 claude - am1 preprocesses its source itself (preprocess.c) and no longer runs cpp
- * 20-Oct-2026 claude - a function-like #define with nothing after its parameters opens a block, closed by #enddef
- * 20-Oct-2026 wje - cleanup for release, remove #warning or #error and quotes from these messages
- * 21-Oct-2026 claude - v5.1, add %%ovload
- * 21-Oct-2026 claude - the optimizer report is no longer closed twice when a fatal error follows it under -O
- * 21-Oct-2026 wje - more cleanup
+ * Old history trimmed, too long
  * 22-Oct-2026 wje - fixes for various signal catching and a null pointer during them
  * 24-Oct-2026 claude/wje - v5.3, modify the constant pool logic to avoid some cases where different
  *    constants with the same symbolic names in them would hash to the same slot.
@@ -245,6 +154,14 @@
  * 25-Oct-2026 claude - v5.5, a // comment after a macro name with no '(', or inside a macro's
  *    arguments, no longer becomes a block comment that fails to assemble
  * 25-Oct-2026 wje give a syntax error if a directive that must start at the beginning of a line follows a semicolon
+ * 05-Nov-2026 claude - name:* binds to its symbol, so another term can follow it; start's bare name is
+ *    looked up in every bank, and its start address carries its bank
+ * 05-Nov-2026 claude - an #error inside a #define block shows its own text; start and stop take a
+ *    // comment on their line, and comment lines may follow them
+ * 05-Nov-2026 claude - -O=source no longer writes a file that fails to assemble when an include written
+ *    out in place is named again by #includeonce or #uninclude, or a changed line's macro call runs on
+ * 05-Nov-2026 claude - assert, a check on assembled values with the comparison and logical operators,
+ *    and -A, which ignores every assert
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -311,6 +228,7 @@ bool noMemFatal;
 bool dropIncludeText;
 bool showMemUsage;
 bool doOptimize;                // -O, run the optimizer advisor
+bool ignoreAsserts;             // -A, parse every assert but check none
 int lineno;
 
 extern int yydebug;
@@ -338,6 +256,9 @@ void enableWarning(char *nameP);
 void leave(int);
 void dumpParseTree(PNodeP);
 void dumpExpr(PNodeP);
+static void checkAsserts(bool afterOptimizer);
+static PNodeP bindAssertExpr(PNodeP nodeP, PNodeP assertP);
+static void freeAssertExpr(PNodeP nodeP);
 
 extern int evalExpr(PNodeP);
 extern int macCodegen(FILE *, PNodeP);
@@ -356,6 +277,11 @@ extern void ovlPrintLayout(FILE *outfP, const char *prefixP);
 extern void ovlWriteOvl(FILE *outfP, const char *sourceP);
 extern void ovlWriteOsym(FILE *outfP, const char *filenameP);
 extern void vwarn(int errtype, const char *msgP, ...);
+extern void verror(const char *msgP, ...);
+extern void verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...);
+extern bool assertTrue(int value);
+extern bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
+extern PNodeListP assertsP;
 
 int
 main(int argc, char **argv)
@@ -405,6 +331,10 @@ int top;                    // -S: one past a bank's highest word
             {
             case 'a':
                 spaceIsAdd = true;
+                break;
+
+            case 'A':
+                ignoreAsserts = true;
                 break;
 
             case 'k':
@@ -666,6 +596,12 @@ int top;                    // -S: one past a bank's highest word
 
     fclose(yyin);
 
+    // Every address is known now, and nothing has been written.
+    if( !ignoreAsserts )
+    {
+        checkAsserts(false);
+    }
+
     if(dumpTree)
     {
         dumpParseTree(rootP);
@@ -699,6 +635,13 @@ int top;                    // -S: one past a bank's highest word
         if(!i)                    // optimizer failed
         {
             unlink(ofilename);      // get rid of output
+        }
+
+        // -O1 and -O2 may have moved words, and the back ends write those.
+        // A failure removes the report, the file ofilename names.
+        if( i && !ignoreAsserts && (optTransformLevel() > 0) )
+        {
+            checkAsserts(true);
         }
 
         // -O=source: the program as it now stands, beside the source rather
@@ -1134,6 +1077,9 @@ typeToName(int type)
     case OVCALL:
         return("ovcall");
         break;
+    case ASSERT:
+        return("assert");
+        break;
     default:
         return(0);
         break;
@@ -1511,15 +1457,16 @@ usage()
     // with AM1_TEST_SWITCHES defined (make am1test); optimizeSetOption() refuses
     // them otherwise.
 #ifdef AM1_TEST_SWITCHES
-    fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=dump|decode|refs|flow|calls|share|regions|rules|xform|source|values|scratch|guess|speed|relayout|window|check]...\n");
+    fprintf(stderr, "Usage: am1 [-aAbdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=dump|decode|refs|flow|calls|share|regions|rules|xform|source|values|scratch|guess|speed|relayout|window|check]...\n");
     fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI[@name]]... [-O=off=FILE]... [-O=edits=FILE]...\n");
 #else
-    fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=xform|source]\n");
+    fprintf(stderr, "Usage: am1 [-aAbdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=xform|source]\n");
     fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI[@name]]... [-O=off=FILE]...\n");
 #endif
     fprintf(stderr, "  [-O=inline=cap:N] [-O=inline=reserve:N] [-O=undeclared] [-O=unroll=cap:N]\n");
     fprintf(stderr, "  [-Dsymbol]... [-Ipath]... [-irootpath] [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
+    fprintf(stderr, "  -A ignore every assert: each is still parsed, none is checked\n");
     fprintf(stderr, "  -b generate binary code, the default if neither -b nor -m is given\n");
     fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
     fprintf(stderr, "  -l generate listing, and its origin map, .map\n");
@@ -1741,4 +1688,159 @@ bool
 fileIsMain(char *nameP)
 {
     return( !strcmp(nameP, origFilenameP) );
+}
+
+// Check every assert in source order, the first false one fatal on its own
+// line.  Each is evaluated on a copy of its expression whose names are looked
+// up now, so the tree, which the back ends write as source, keeps them as written.
+static void
+checkAsserts(bool afterOptimizer)
+{
+PNodeListP itemP;
+PNodeP assertP;
+PNodeP exprP;
+char *savedFileP;
+int savedLine;
+int value;
+
+    savedFileP = filenameP;
+    savedLine = lineno;
+
+    for( itemP = assertsP; itemP; itemP = itemP->nextP )
+    {
+        assertP = itemP->nodeP;
+
+        // An undefined name is reported on the assert's line, not the file's end.
+        lineno = assertP->srcLine;
+        filenameP = assertP->srcFileP;
+
+        exprP = bindAssertExpr((PNodeP)(assertP->value.ptr), assertP);
+        value = evalExpr(exprP);
+        freeAssertExpr(exprP);
+
+        if( !assertTrue(value) )
+        {
+            verrorlf(assertP->srcLine, assertP->srcFileP, "assert failed%s%s%s",
+                (afterOptimizer)?" after optimization":"",
+                (assertP->value2.strP)?": ":"",
+                (assertP->value2.strP)?assertP->value2.strP:"");
+        }
+    }
+
+    filenameP = savedFileP;
+    lineno = savedLine;
+}
+
+// A copy of an assert's expression to evaluate: each name looked up as the
+// parser would have, had it been defined where the assert stands, and each '.'
+// the assert's location, which the optimizer's relayout may have moved.
+// Returns the copy; freeAssertExpr() frees it.
+static PNodeP
+bindAssertExpr(PNodeP nodeP, PNodeP assertP)
+{
+PNodeP copyP;
+BankContextP bankP;
+SymNodeP symP;
+PNodeListItem item;
+
+    if( !nodeP )
+    {
+        return(NILP);
+    }
+
+    if( !(copyP = (PNodeP)malloc(sizeof(PNode))) )
+    {
+        verror("out of memory checking an assert");
+    }
+
+    *copyP = *nodeP;
+    copyP->leftP = bindAssertExpr(nodeP->leftP, assertP);
+    copyP->rightP = bindAssertExpr(nodeP->rightP, assertP);
+
+    switch( nodeP->type )
+    {
+    case DOT:
+        copyP->value.ival = assertP->pc;
+        break;
+
+    case NAME:
+        // A bare name is its own bank's, as an ADDR; any other a BREF, which
+        // carries the bank in its high bits.
+        copyP->srcLine = assertP->srcLine;
+        copyP->srcFileP = assertP->srcFileP;
+
+        if( nodeP->flags & PN_ASSERTLOCAL )
+        {
+            // Written under %%forcelocal: the local scope's label if it has one,
+            // else, as for any bare name, the assert's own bank's.
+            symP = sym_find(&(((LocalContextP)(nodeP->value2.ptr))->symRootP), nodeP->value.strP);
+            if( symP && (symP->flags & SYMF_RESOLVED) )
+            {
+                copyP->type = LCLADDR;
+                copyP->value.symP = symP;
+                break;
+            }
+
+            copyP->value2.ival = ASSERT_OWNBANK;
+        }
+
+        if( copyP->value2.ival == ASSERT_ANYBANK )
+        {
+            item.nodeP = copyP;
+            item.nextP = NILP;
+
+            if( !resolveWildcard(&item, banksP) )
+            {
+                verrorlf(assertP->srcLine, assertP->srcFileP, "wildcarded symbol '%s' cannot be found",
+                    nodeP->value.strP);
+            }
+            break;
+        }
+
+        bankP = findBank((copyP->value2.ival == ASSERT_OWNBANK)?assertP->bank:copyP->value2.ival);
+        symP = (bankP)?sym_find(&(bankP->globalSymP), nodeP->value.strP):NILP;
+
+        if( !symP || !(symP->flags & SYMF_RESOLVED) )
+        {
+            if( copyP->value2.ival == ASSERT_OWNBANK )
+            {
+                verrorlf(assertP->srcLine, assertP->srcFileP, "symbol %s has no defined value",
+                    nodeP->value.strP);
+            }
+            else
+            {
+                verrorlf(assertP->srcLine, assertP->srcFileP, "symbol %s in bank %d has no defined value",
+                    nodeP->value.strP, copyP->value2.ival);
+            }
+        }
+
+        if( copyP->value2.ival == ASSERT_OWNBANK )
+        {
+            copyP->type = ADDR;
+        }
+        else
+        {
+            copyP->type = BREF;
+        }
+
+        copyP->value.symP = symP;
+        break;
+
+    default:
+        break;
+    }
+
+    return(copyP);
+}
+
+// Free a copy bindAssertExpr() made; the symbols and names it points at are not its own.
+static void
+freeAssertExpr(PNodeP nodeP)
+{
+    if( nodeP )
+    {
+        freeAssertExpr(nodeP->leftP);
+        freeAssertExpr(nodeP->rightP);
+        free(nodeP);
+    }
 }

@@ -1,0 +1,9 @@
+Test rg56: a keyword written as a label is reported as one
+// start is the end of the program, so a label start once ended the parse at
+// its line. The literal above it names x, defined below, and the error was
+// "symbol x has no defined value" at the literal's line, not this one.
+100/
+    lac [x]
+start, hlt
+x, 1
+start 100

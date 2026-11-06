@@ -39,6 +39,17 @@ static int pendingLabelLine;
 // The varname rules record it, setVarsPC() placing the var later leaves it alone.
 int nameTokenLine;
 int nameTokenSrcLine;
+// The start statement's line, and whether its operand is being parsed.
+static int startLine;
+static bool inStart;
+
+// Whether an assert's expression is being parsed, and its line and file.
+// Every assert's node, in source order, for checkAsserts() in am1.c.
+static bool inAssert;
+static int assertLine;
+static const char *assertFileP;
+PNodeListP assertsP;
+static PNodeListP assertsTailP;
 
 
 // The optimizer directives.
@@ -99,6 +110,7 @@ void addExports(PNodeP nodesP);
 void importSymbols(char *filenameP);
 void resolveWildcards(PNodeListP wildsP, BankContextP banksP);
 bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
+static void resolveStartName(PNodeP exprP, int line);
 BankContextP findBank(int bank);
 void bankOrigin(BankContextP bankP, int pc);
 BankContextP addBank(int bank);
@@ -124,6 +136,8 @@ static void checkOvResidents(void);
 static bool ovResWildcard(PNodeP nodeP);
 PNodeP literalNode(int lineNo, int pc, PNodeP exprP, PNodeP endP);
 PNodeP directiveNode(int type);
+static PNodeP assertNode(PNodeP exprP, char *messageP);
+static PNodeP assertName(char *nameP, int bank);
 void reserveTracks(long first, long last);
 void refuseInOverlay(const char *whatP);
 bool rootNameInOverlay(SymNodeP symP);
@@ -316,11 +330,28 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 // Declared after OVLOAD for the same reason.
 %token OVRESIDENT
 
+// The ":*" of a wildcard bank reference, "name:*", the lexer's one token for it.
+// Declared after OVRESIDENT for the same reason.
+%token WILDTAG
+
+// The assert statement and the operators only it takes, declared after WILDTAG
+// for the same reason.  ASSERT is also the type of its node; each operator is
+// the value of its BINOP or UNOP.
+%token ASSERT
+%token ISEQ ISNE ISLT ISLE ISGT ISGE
+%token LOGAND LOGOR LOGNOT
+
 %type <strP> ovIdent
+%type <strP> assertMessage
+%type <pnodeP> assert_expr assertOr
+%type <pnodeP> assertAndAny assertAnd
+%type <pnodeP> assertEqAny assertEq
+%type <pnodeP> assertRelAny assertRel
+%type <pnodeP> assertNotAny assertNot
 
 %%
 
-program         : optfilenames HEADER TERMINATOR body start
+program         : optfilenames HEADER TERMINATOR body start trailer
                 {
                     // An optimizer span left open at the end of the source is
                     // an error, not a warning.
@@ -337,16 +368,51 @@ filenames       : FILENAME
                 | filenames FILENAME
                 ;
 
-start           : START simple_expr TERMINATOR
+start           : START
                 {
-                    $$ = newnode(lineno, curBankP->cur_pc, START, NILP, NILP);
-                    $$->value.ival = evalExpr($2);
-                    $$->exprP = $2;         // relayout re-evaluates it
+                    // The terminator is lookahead by the time the rule ends, and
+                    // lineno is then one past the start line.
+                    startLine = lineno;
+                    inStart = true;
                 }
-                | STOP TERMINATOR
+                  simple_expr startEnd
+                {
+                int savedLine = lineno;
+
+                    inStart = false;
+                    $$ = newnode(lineno, curBankP->cur_pc, START, NILP, NILP);
+                    resolveStartName($3, startLine);
+
+                    // An undefined symbol is reported on the start line.
+                    lineno = startLine;
+                    $$->value.ival = evalExpr($3);
+                    lineno = savedLine;
+                    $$->exprP = $3;         // relayout re-evaluates it
+                }
+                | STOP startEnd
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, STOP, NILP, NILP);
                 }
+
+                /* The end of the start or stop line. The // rule takes the newline with
+                 * the comment, so a commented line ends in COMMENT, not TERMINATOR.
+                 * Not terminator, which would also take a ';' or a FILENAME here.
+                 * The comment is not kept in the tree.
+                 */
+startEnd        : TERMINATOR
+                | COMMENT
+                ;
+
+                /* After start or stop: comment lines and blank lines only, so code
+                 * after the end of the program stays an error.
+                 * Like the start line's comment, they are not kept in the tree.
+                 */
+trailer         :
+                | trailer COMMENT
+                | trailer CSSTART CSCOMMENT
+                | trailer TERMINATOR
+                | trailer EMPTYLINE
+                ;
 
 body   : stmt_list
                 {
@@ -845,6 +911,116 @@ one_stmt        : expr
                 {
                     $$ = ovResident($2);
                 }
+                | ASSERT
+                {
+                    // An overlay's names resolve after the parse, against its
+                    // own view.
+                    refuseInOverlay("an assert");
+                    assertLine = optRegionTokenLine;
+                    assertFileP = internFileName(optRegionTokenFileP);
+                    inAssert = true;
+                }
+                  assert_expr assertMessage
+                {
+                    inAssert = false;
+                    $$ = assertNode($3, $4);
+                }
+                ;
+
+                /* An assert's message, after a comma. */
+assertMessage   :
+                {
+                    $$ = NILP;
+                }
+                | LOCATION STRING
+                {
+                    $$ = $2;
+                }
+                ;
+
+                /* An assert's expression: a simple_expr, or the comparison and
+                 * logical operators over simple_exprs, which bind looser than
+                 * every operator of a simple_expr, '|' and the blank included.
+                 * Among themselves they have C's priorities, lowest first:
+                 * ||, &&, == and !=, < <= > >=, and ! the tightest.
+                 * Each level has two rules: the ...Any rule is a simple_expr or
+                 * the level's own rule, which holds at least one of these
+                 * operators, so that a simple_expr in parentheses is only ever
+                 * a simple_expr's and the grammar keeps its two conflicts.
+                 */
+assert_expr     : simple_expr                       { $$ = $1; }
+                | assertOr                          { $$ = $1; }
+                ;
+
+assertOr        : assertAnd                         { $$ = $1; }
+                | assert_expr LOGOR assertAndAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, LOGOR, $1, $3);
+                }
+                ;
+
+assertAndAny    : simple_expr                       { $$ = $1; }
+                | assertAnd                         { $$ = $1; }
+                ;
+
+assertAnd       : assertEq                          { $$ = $1; }
+                | assertAndAny LOGAND assertEqAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, LOGAND, $1, $3);
+                }
+                ;
+
+assertEqAny     : simple_expr                       { $$ = $1; }
+                | assertEq                          { $$ = $1; }
+                ;
+
+assertEq        : assertRel                         { $$ = $1; }
+                | assertEqAny ISEQ assertRelAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, ISEQ, $1, $3);
+                }
+                | assertEqAny ISNE assertRelAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, ISNE, $1, $3);
+                }
+                ;
+
+assertRelAny    : simple_expr                       { $$ = $1; }
+                | assertRel                         { $$ = $1; }
+                ;
+
+assertRel       : assertNot                         { $$ = $1; }
+                | assertRelAny ISLT assertNotAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, ISLT, $1, $3);
+                }
+                | assertRelAny ISLE assertNotAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, ISLE, $1, $3);
+                }
+                | assertRelAny ISGT assertNotAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, ISGT, $1, $3);
+                }
+                | assertRelAny ISGE assertNotAny
+                {
+                    $$ = binop(lineno, curBankP->cur_pc, ISGE, $1, $3);
+                }
+                ;
+
+assertNotAny    : simple_expr                       { $$ = $1; }
+                | assertNot                         { $$ = $1; }
+                ;
+
+                /* ! applies to the whole simple_expr after it: !a+1 is !(a+1). */
+assertNot       : LOGNOT assertNotAny
+                {
+                    $$ = unop(lineno, curBankP->cur_pc, LOGNOT, $2);
+                }
+                | '(' assertOr ')'
+                {
+                    $$ = unop(lineno, curBankP->cur_pc, PARENS, $2);
+                }
                 ;
 
                 // A window's or overlay's name, or a window's or overlay's mode.
@@ -1080,55 +1256,81 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 {
                 SymNodeP symP;
 
-                    if( $2 != curBank )
+                    if( inAssert )
                     {
-                        symP = findSymbolInBank($2, $1);
+                        // As for a bare name below.
+                        $$ = assertName($1, $2);
                     }
                     else
                     {
-                       // This is just a regular global in the current bank
-                        symP = sym_make($1, 0);
-                        symP->bank = curBank;
-                        sym_add(&(curBankP->globalSymP), symP);
-                        symP->flags = SYM_GLOB;
-                    }
+                        if( $2 != curBank )
+                        {
+                            symP = findSymbolInBank($2, $1);
+                        }
+                        else
+                        {
+                           // This is just a regular global in the current bank
+                            symP = sym_make($1, 0);
+                            symP->bank = curBank;
+                            sym_add(&(curBankP->globalSymP), symP);
+                            symP->flags = SYM_GLOB;
+                        }
 
-                    $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
-                    $$->value.symP = symP;
-                    $$->value2.ival = $2;
-                    setRefSource($$);
+                        $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
+                        $$->value.symP = symP;
+                        $$->value2.ival = $2;
+                        setRefSource($$);
+                    }
                 }
                 | ADDR bref
                 {
                 SymNodeP symP;
 
-                    if( $2 != curBank )
+                    if( inAssert && ($2 != curBank) )
                     {
-                        symP = findSymbolInBank($2, $1->name);
+                        // Another bank's name may not be there yet, and finding it
+                        // makes it; as for a bare name below.
+                        $$ = assertName($1->name, $2);
                     }
                     else
                     {
-                        // This is a symbol in our own bank, but that's ok
-                        symP = $1;
-                    }
+                        if( $2 != curBank )
+                        {
+                            symP = findSymbolInBank($2, $1->name);
+                        }
+                        else
+                        {
+                            // This is a symbol in our own bank, but that's ok
+                            symP = $1;
+                        }
 
-                    $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
-                    $$->value.symP = symP;
-                    $$->value2.ival = $2;
-                    setRefSource($$);
+                        $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
+                        $$->value.symP = symP;
+                        $$->value2.ival = $2;
+                        setRefSource($$);
+                    }
                 }
                 | NAME wildref
                 {
                 PNodeListP wildP;
 
-                    $$ = newnode(lineno, curBankP->cur_pc, WILDREF, NILP, NILP);
-                    $$->value.strP = $1;
+                    if( inAssert )
+                    {
+                        // As for a bare name below: the wildcard list is resolved
+                        // after the parse, and refuses a name no bank has.
+                        $$ = assertName($1, ASSERT_ANYBANK);
+                    }
+                    else
+                    {
+                        $$ = newnode(lineno, curBankP->cur_pc, WILDREF, NILP, NILP);
+                        $$->value.strP = $1;
 
-                    // We need this for fixup later
-                    wildP = (PNodeListP)malloc(sizeof(PNodeListItem));
-                    wildP->nodeP = $$;
-                    wildP->nextP = wildcardsP;
-                    wildcardsP = wildP;
+                        // We need this for fixup later
+                        wildP = (PNodeListP)malloc(sizeof(PNodeListItem));
+                        wildP->nodeP = $$;
+                        wildP->nextP = wildcardsP;
+                        wildcardsP = wildP;
+                    }
                 }
                 | ADDR wildref
                 {
@@ -1141,6 +1343,11 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                         $$->value.symP = $1;
                         $$->value2.ival = curBank;
                         setRefSource($$);
+                    }
+                    else if( inAssert )
+                    {
+                        // As for a bare name below.
+                        $$ = assertName($1->name, ASSERT_ANYBANK);
                     }
                     else
                     {
@@ -1159,9 +1366,17 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 {
                 SymNodeP symP, symP2;
 
+                    // A name an assert gives is looked up only when the assert is
+                    // checked.  Made here, its symbol would be in the symbol table
+                    // and the listing, and take a serial number the constant pools
+                    // key by, where the source without the assert has none.
+                    if( inAssert )
+                    {
+                        $$ = assertName($1, ASSERT_OWNBANK);
+                    }
                     // a symbol we haven't seen yet, add to the global symtab
                     // unless forcelocal is in effect, then add to locals and globals
-                    if( localContextP && (localContextP->flags == CTX_FORCELOCAL) )
+                    else if( localContextP && (localContextP->flags == CTX_FORCELOCAL) )
                     {
                         symP = addLocalSymbol($1);
                         // We add a new sym to globals with a ref to the local
@@ -1172,17 +1387,24 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                         sym_add(&(curBankP->globalSymP), symP2);
                         symP->flags = symP2->flags = SYMF_FORCED | SYM_LOC;
                         $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
+                        $$->value.symP = symP;
                     }
                     else
                     {
                         symP = sym_make($1, 0);
                         symP->bank = curBank;
-                        sym_add(&(curBankP->globalSymP), symP);
+
+                        // A start's name is looked up in every bank, so it is not made
+                        // a placeholder in the current one: the symbol table, the map
+                        // and the listing would show it.
+                        if( !inStart )
+                        {
+                            sym_add(&(curBankP->globalSymP), symP);
+                        }
                         symP->flags = SYM_GLOB;
                         $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
+                        $$->value.symP = symP;
                     }
-
-                    $$->value.symP = symP;
                 }
                 | LCLADDR
                 {
@@ -1493,7 +1715,7 @@ bref            : BREF INTEGER
                 }
                 ;
 
-wildref         : BREF MUL
+wildref         : WILDTAG
                 ;
 
 var             : varname
@@ -1907,6 +2129,79 @@ SymNodeP symP;
     }
 
     return( false );
+}
+
+// Give a start's operand, when it is a bare name, the bank that defines it.
+// A name defined in the current bank is that bank's; any other must be defined in
+// exactly one other bank. Unlike a name:*, no search order picks among several:
+// the owner ruled that ambiguous, so the start must name its bank.
+// The name becomes a BREF, so the start address carries the bank in its high bits,
+// as the manual says; a bare ADDR evaluates to the in-bank address only.
+// In bank 0 the two are the same word, and a bank-0 name stays an ADDR, so that the
+// source renderer writes it back as it was.
+// The wildcard pass has run by now, so this cannot be left to it.
+static void
+resolveStartName(PNodeP exprP, int line)
+{
+SymNodeP symP;
+SymNodeP foundP = NILP;
+SymNodeP candP;
+
+    if( !exprP || (exprP->type != ADDR) )
+    {
+        return;
+    }
+
+    symP = exprP->value.symP;
+
+    if( symP->flags & SYMF_RESOLVED )
+    {
+        foundP = symP;
+    }
+    else
+    {
+    char banks[64] = "";
+    int nFound = 0;
+
+        // banksP lists the banks newest first; the message names them lowest first.
+        for( int bank = 0; bank < 16; ++bank )
+        {
+            BankContextP bankP = findBank(bank);
+
+            if( bankP && (bank != curBank) &&
+                (candP = sym_find(&(bankP->globalSymP), symP->name)) &&
+                (candP->flags & SYMF_RESOLVED) )
+            {
+                foundP = candP;
+                ++nFound;
+                snprintf(banks + strlen(banks), sizeof(banks) - strlen(banks),
+                    (nFound == 1)? "%d": ", %d", bank);
+            }
+        }
+
+        if( nFound == 0 )
+        {
+            verrorlf(line, filenameP, "start symbol %s has no defined value in any bank",
+                symP->name);
+        }
+        else if( nFound > 1 )
+        {
+            verrorlf(line, filenameP,
+                "start symbol %s is defined in banks %s and not in bank %d; give its bank, %s:N",
+                symP->name, banks, curBank, symP->name);
+        }
+    }
+
+    if( (foundP == symP) && (foundP->bank == 0) )
+    {
+        return;
+    }
+
+    exprP->type = BREF;
+    exprP->value.symP = foundP;
+    exprP->value2.ival = foundP->bank;
+    exprP->srcLine = line;
+    exprP->srcFileP = strdup(filenameP);
 }
 
 // Add a local symbol, setting the scope level
@@ -2501,6 +2796,69 @@ PNodeP nodeP;
     // One higher, as openOptRegion() explains.
     nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, type, NILP, NILP);
     nodeP->flags |= PN_NOINC;
+    return(nodeP);
+}
+
+// An assert's node, which emits no word, and its place on the list
+// checkAsserts() walks.  The expression is kept in value.ptr, not under rightP
+// or exprP, so that no back end or optimizer pass that walks those takes it for
+// a word's operand; the message is in value2.strP, NILP for none.
+static PNodeP
+assertNode(PNodeP exprP, char *messageP)
+{
+PNodeP nodeP;
+PNodeListP itemP;
+
+    nodeP = directiveNode(ASSERT);
+    nodeP->value.ptr = exprP;
+    nodeP->value2.strP = messageP;
+    nodeP->srcLine = assertLine;
+    nodeP->srcFileP = (char *)assertFileP;
+
+    if( !(itemP = (PNodeListP)malloc(sizeof(PNodeListItem))) )
+    {
+        verror("out of memory recording an assert");
+    }
+
+    itemP->nodeP = nodeP;
+    itemP->nextP = NILP;
+
+    if( assertsTailP )
+    {
+        assertsTailP->nextP = itemP;
+    }
+    else
+    {
+        assertsP = itemP;
+    }
+
+    assertsTailP = itemP;
+    return(nodeP);
+}
+
+// A name an assert gives, kept as written for checkAsserts() to look up:
+// value.strP the name, value2.ival the bank it was given, or ASSERT_OWNBANK or
+// ASSERT_ANYBANK.  Nothing is added to any bank's symbol table.
+static PNodeP
+assertName(char *nameP, int bank)
+{
+PNodeP nodeP;
+
+    nodeP = newnode(lineno, curBankP->cur_pc, NAME, NILP, NILP);
+    nodeP->value.strP = nameP;
+
+    if( (bank == ASSERT_OWNBANK) && localContextP && (localContextP->flags == CTX_FORCELOCAL) )
+    {
+        // Under %%forcelocal a label defined later goes into the local scope alone,
+        // where the check must look for it.
+        nodeP->flags |= PN_ASSERTLOCAL;
+        nodeP->value2.ptr = localContextP;
+    }
+    else
+    {
+        nodeP->value2.ival = bank;
+    }
+
     return(nodeP);
 }
 

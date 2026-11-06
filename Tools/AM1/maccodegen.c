@@ -14,11 +14,13 @@
 #define LOADER_HALT 07772       // the halt instruction in our loader, keep in sync with xldr
 
 extern bool sawBank;
+extern bool ignoreAsserts;
 extern BankContextP banksP;
 
 extern bool doWarn(int warnNo);
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
+extern char *assertText(PNodeP assertP);
 extern Word *ovTableWordsP;
 
 static void emitStatements(FILE *, PNodeP);
@@ -278,6 +280,19 @@ char str[128];
         case OVTABLE:
         case OVCALL:
             emitOverlayDirective(outfP, nodeP);
+            noNl = true;
+            break;
+
+        case ASSERT:
+            // macro1 has no such statement: the line, as a comment.  Under -A
+            // nothing is written, as for the source without the line.
+            if( !ignoreAsserts )
+            {
+                cP = assertText(nodeP);
+                fprintf(outfP, "/ %s\n", cP);
+                free(cP);
+            }
+
             noNl = true;
             break;
 

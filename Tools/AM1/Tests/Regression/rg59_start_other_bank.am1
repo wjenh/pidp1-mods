@@ -1,0 +1,16 @@
+Test rg59: start names a label in another bank
+// go is defined in bank 5 only, and the program ends in bank 3, a bank first
+// used before bank 5.  start go was refused, "symbol go has no defined value",
+// one line past the end of the file.  The name is now looked up in every bank,
+// as go:* is, and the start address carries its bank: 050300.
+100/
+    hlt
+bank 3
+200/
+x, 0
+bank 5
+300/
+go, lac x:3
+    hlt
+bank 3
+start go

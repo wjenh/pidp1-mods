@@ -1,0 +1,10 @@
+Test rg61: a comment on the stop line, and comment lines after it
+// Both were once a syntax error. The words are those of the same program
+// with no comment on or after the stop line.
+100/
+go, lac x
+    hlt
+x, 7
+stop // no start address
+/* a C-style comment line after the stop */
+// and a // one

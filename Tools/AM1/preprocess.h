@@ -36,4 +36,12 @@ bool preprocess(const char *srcNameP, const char *outNameP, const char *incRootP
 // Asked in the order am1 reads the statements.
 const PPOrigin *ppStatementOrigin(const char *fileP, int line, int ordinal);
 
+// The file named by the #includeonce on line of fileP that read nothing, as
+// already included, or by the #uninclude there; fileP as the markers name it.
+// NULL for any other line.
+const char *ppIncludeTarget(const char *fileP, int line);
+
+// Whether fileP holds any line ppIncludeTarget() knows.
+bool ppIncludeTargetsIn(const char *fileP);
+
 #endif

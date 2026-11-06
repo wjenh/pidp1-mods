@@ -1,0 +1,12 @@
+Test rg59: start names a label that two other banks define
+// go is in bank 0 and bank 5, not in bank 3 where start is.  No search order
+// picks one, so start must name its bank, go:0 or go:5.
+100/
+go, hlt
+bank 5
+300/
+go, hlt
+bank 3
+200/
+x, 0
+start go

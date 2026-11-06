@@ -1,0 +1,32 @@
+Test rg54: literals that read a symbol not yet defined
+// Each literal names foo, or zero, before it is defined, so the parser files it in
+// the pool before its value is known.  Literals that differ only in an operator on
+// such a symbol once shared one pool word, and all but the first loaded a wrong
+// value.  foo is 0301, at an odd address so that & 1, | 1 and ^ 1 tell; zero is 0,
+// so that - and ~ tell.  The comment on each line is the word its literal must load.
+100/
+    lac [foo]           // 000301
+    lac [foo*2]         // 000602
+    lac [foo&1]         // 000001
+    lac [foo>>1]        // 000140
+    lac [foo/3]         // 000100
+    lac [foo<<1]        // 000602
+    lac [foo+1]         // 000302
+    lac [foo|1]         // 000301
+    lac [foo^1]         // 000300
+    lac [foo%3]         // 000001
+    lac [1+foo]         // 000302, and the same pool word as foo+1
+    lac [-foo]          // 777476
+    lac [-zero]         // 000000
+    lac [~zero]         // 777777
+    lac [[foo]]         // the address of foo's own literal
+    lac [0]             // 000000
+    lac [foo-1          // 000300
+    hlt
+    constants
+
+301/
+foo,    0
+0/
+zero,   0
+stop

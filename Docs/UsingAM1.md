@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.4 and covers up through am1 version 5.5; it will be updated as needed.\
+This is version 3.5 and covers up through am1 version 5.6; it will be updated as needed.\
 Edit date 5-Nov-2026\
-Clarify location assignment, did not agree with the origin statement descrpition
+Add assert, clarify bank behavior with start and stop
 
 ## What is **am1**?
 
@@ -206,11 +206,13 @@ Just type make.
 ## Usage
 
 ```
-**am1** [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-Dsymbol]...  [-W|-W=name...]
+**am1** [-aAbdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-Dsymbol]...  [-W|-W=name...]
     [-Ipath]... [-ipath] sourcefile
 ```
 
 - a space means *add*, default is *or*
+- A ignore every *assert*, each is still parsed, a syntax error in one is still reported, but none
+  are checked, see *Assert*
 - b generate binary tape image code, the default action
 - d generate all files needed for **ad1**, the same as giving the *-s* and *-l* flags.
   For a program with overlays, the *.osym* file is also generated.
@@ -659,7 +661,9 @@ The body is every line in between, each a statement line of its own,  no *\\* or
   A comment can follow the opening *#define* or the *#enddef*.
 - Parameters, *##*, and nested macros work as in a one-line *#define*.
   A line ending in *\\* is still joined to the next.
-- A block cannot hold a directive. A line in it starting with *#* is an error and the macro is not defined.
+- A block cannot contain a directive.
+  A line in it starting with *#* is an error and the macro is not defined.
+  For an *#error* line, the error message shows its text.
   A macro whose body is *#error* or *#warning* keeps the one-line form.
 - *#enddef* with no block open is an error and tokens after an *#enddef* on the same line give a warning.
   A block not closed by the end of its file is an error, reported at its *#define*.
@@ -1067,6 +1071,9 @@ This can be overridden if -0 is to be kept, see *Usage*.
 Bitwise operations can of course affect any bit and their result is not adjusted, they are not math.
 If a -0 bit pattern results, it is kept as-is.
 
+The comparison and logical operators, `== != < <= > >= && || !`, can be used only in an
+*assert*, where they rank below all of these; see *Assert*.
+
 ## Numbers
 
 Numbers are just that, an optional leading *-* followed by sequence of digits.
@@ -1366,6 +1373,10 @@ no searching done.
 
 If not found in any bank, an error results.
 
+A bank reference is part of its symbol, another term can follow it as it can follow any symbol:
+*lac b:\* 1* is *lac (b:\*) 1*, and *[jump b:\* next(parameter)]* is one word.
+The *:\** **must** be written with no blank between the colon and the asterisk.
+
 For example:
 ```
 100/
@@ -1393,7 +1404,7 @@ To reinforce, a : always results in a 16-bit address regardless of where it is u
 The formal calculation is *(bankno << 12) + symbol-value*.
 
 As a convenience, the form *integer:bankno* can be used.
-The same as above, it is a shorthand for *(bankno << 12) + integer*, e.g. 100:3.
+It is a shorthand for *(bankno << 12) + integer*, e.g. 100:3.
 
 Code using banks and cross-bank references must understand the standard PDP-1 extended memory mode access rules.
 
@@ -1421,6 +1432,82 @@ Bit 1 (in DEC numbering), next-to-msb, will be 1 if eem is on, else 0.
 The **macro** and **macro1** compilers do not support extended memory,
 so code using banks will generate code that isn't actually usable, but it will be annotated
 to show where banks were switched.
+
+## Assert
+
+An *assert* checks a value that is known only once the program is assembled: an address, a
+size, a bank.
+It makes the assembly fail when the value is wrong.
+The preprocessor's *#if* cannot do this, since it sees only macros, never an assembled value.
+
+```
+assert thisbank < 020000, "penmenulist.ac must be in bank 0 or 1"
+assert tblEnd - tbl == 040, "the table must be 040 words"
+assert . <= 07000, "the program runs into the loader"
+assert pmBar:* < 020000
+```
+
+The form is *assert expression* or *assert expression, "message"*, a statement on a line of its
+own.
+*assert* is a keyword, like *start*: it may be indented, but cannot be a label, follow a *;*,
+or be an operand.
+A name that only begins with it, such as *assertx*, is an ordinary name.
+An *assert* emits no word and does not move the location.
+
+**When it is checked.** Every *assert* is checked once the whole source is assembled, so it may
+name a label defined after it.
+Its *.* is the location where the *assert* stands, *thisbank* is its bank, and *name:\**,
+*name:N* and *name:.* mean what they mean anywhere else (see *Bank and cross-bank references*).
+With *-O1* or *-O2* each is checked again after the optimizer, against the program as
+optimized, so a size check sees a table that the optimizer shrank.
+
+**A failure.** A zero value fails.
+**am1** prints *assert failed: message*, or *assert failed* if there is no message, at the
+*assert*'s own file and line, exits with status 1, and writes no output file.
+A failure only at the second check says *assert failed after optimization*.
+An *assert* in a macro body is reported at the line that expanded the macro.
+A name that is not defined is reported at the *assert*'s line.
+
+**The operators.** These can be used only in an *assert*.
+Each gives 1 for true and 0 for false.
+
+| Operator          | Meaning                                  |
+|-------------------|------------------------------------------|
+| \|\|              | logical or                               |
+| &&                | logical and                              |
+| == !=             | equal, not equal                         |
+| < <= > >=         | less, less or equal, greater, greater or equal |
+| !                 | logical not                              |
+
+They are listed in order of increasing priority, which among themselves is **C**'s.
+All of them rank below every other operator, *|* included, so *a & 7 == 0* is
+*(a & 7) == 0*, unlike **C**.
+*!* applies to the whole expression after it, up to the next of these operators: *!a + 1* is
+*!(a + 1)*.
+Parentheses group them as usual.
+
+Values compare as signed 1's complement words, the way the arithmetic operators see them, and
+-0 equals +0.
+So 0777776 is -1, and less than 0.
+Every address, *name:\** included, is below 0400000, so it compares as a positive number.
+
+Both sides of *&&* and *||* are always evaluated, so an undefined name on either side is an
+error.
+Write blanks around *<* and *>*: *a\<b\>c* would be read as the library file name *\<b\>*.
+
+**What it cannot contain.** A constant, *[...]*, cannot be used in an *assert*, since its value
+would be added to the program's constants.
+An *assert* cannot be used inside an *%%overlay*.
+
+**The outputs.** The listing shows an *assert* line with its location and no word, and
+**macro1** output, *-m*, has it as a comment.
+*-O=source* writes it back.
+The *.rim*, the *.sym*, the origin map and *-S* are those of the source without it.
+
+**Ignoring them.** With *-A*, every *assert* is still parsed, so a syntax error 
+is still reported, but none are checked.
+Every output, the listing and *-m* included, is without the *assert* lines,
+except for *-O=source* since the file it writes is the program's source.
 
 ## %%optimize and %%endoptimize
 
@@ -1537,22 +1624,31 @@ This gives the address of location 0 in the bank, e.g. if in bank 1, *thisbank* 
 ## Start or stop
 
 The start or stop directive must be the last statement in a program, and this is enforced.
-*Start* tells the loader where to begin running the program.
+Only comment lines and blank lines may follow it.  A *//* comment can end the start or stop line itself,
+as on any other line.
 The start address can be a numeric address or a location symbol.
 The start address can also be in any bank and can be a shared location symbol.
 
 The *stop* directive tells the loader to halt instead of starting the program.
 Additional tapes can then be loaded via read-in.
 
-**IMPORTANT** - an unqualified start means *in the current bank*:
+**IMPORTANT** - an unqualified start, a location symbol without a bank, looks first in the current bank:
 ```
 bank 2
 start foo
 ```
-will look for *foo* in bank 2 and tell the loader to start there.
+will look for *foo* in bank 2 and tell the loader to start at that locastion in bank 2.
+If *foo* is not defined in bank 2, it is looked up in the other banks, and must be defined in exactly one of them.\
+If no bank defines it, or more than one other bank does, an error results.
+unlike a *sym:\** reference, there is no resolution by search order sine only one instance can exist.
 
-If you want to start in another bank, typically bank 0, either qualify the location with a bank or
-switch to the desired bank before using the directive.
+A number is an absolute address.
+
+An expression such as *start foo+1* is evaluated as any other expression, *foo* has its in-bank address.
+In a bank other than 0 write *start foo:.+1* if you want the full address.
+
+To start at a symbol defined in more than one bank, other than the current bank, qualify it with its bank,
+for example: start *foo:0*.
 
 Examples are:
 ```
@@ -1815,6 +1911,7 @@ If a keyword has parentheses, e.g. loc(al), the part in the parentheses is optio
 | %%window      |
 | addloc(al)  |
 | ascii       |
+| assert      |
 | bank        |
 | char        |
 | constants   |

@@ -1,0 +1,14 @@
+Test rg55a: literals with a blank under -a, numbered wrongly by the pool key
+// Run with -a, so a blank adds.  The pool key's number takes a blank as OR, so where
+// the terms share a bit, literals of different values once shared one pool word, and
+// all but the first loaded a wrong value.  The comment on each line is the word its
+// literal must load.
+100/
+    lac [3 1]           // 000004
+    lac [3]             // 000003
+    lac [4]             // 000004
+    lac [lac 7 1]       // 200010
+    lac [lac 7]         // 200007
+    hlt
+    constants
+stop

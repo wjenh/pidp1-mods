@@ -1,0 +1,10 @@
+Test rg60: an #error inside a #define block shows its own text
+// The block is refused when it is defined, as before, but the message once
+// said only "#error inside a #define block" and hid the text after #error.
+#define CHECK(x)
+    lac x
+#error the CHECK text
+#enddef
+100/
+go, hlt
+start go

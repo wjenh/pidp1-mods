@@ -1,0 +1,20 @@
+Test rg55: literals whose values are all known, numbered wrongly by the pool key
+// Every value each literal reads is known where it is written, so its pool key is
+// hashExpr()'s number, meant to be its value.  Where evalExpr() gives another value
+// (-0 folds to 0; a negative operand of + or *), literals of different values once
+// shared one pool word, and all but the first loaded a wrong value.  zero is a label
+// at 0, defined first.  The comment on each line is the word its literal must load.
+0/
+zero,   0
+100/
+    lac [-0]            // 000000
+    lac [~0]            // 777777
+    lac [-zero]         // 000000
+    lac [~zero]         // 777777
+    lac [0]             // 000000
+    lac [-1+2]          // 000001
+    lac [-2*3]          // 777771
+    lac [-10]           // 777767
+    hlt
+    constants
+stop

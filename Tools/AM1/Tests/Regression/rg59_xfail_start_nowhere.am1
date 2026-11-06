@@ -1,0 +1,8 @@
+Test rg59: start names a label that no bank defines
+// Refused on the start line itself, not one line past the end of the file.
+100/
+x, hlt
+bank 3
+200/
+y, 0
+start go

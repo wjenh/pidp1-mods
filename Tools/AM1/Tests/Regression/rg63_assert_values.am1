@@ -1,0 +1,23 @@
+Test rg63: the values an assert sees
+// Every assert holds; the .ref pins the words of the program with its assert
+// lines left blank. run_regression.sh makes each assert false in turn.
+100/
+assert fwd == 0103, "forward reference"
+go, lac fwd
+    lac [7]
+    jmp far:*
+assert . == 0103 && thisbank == 0, "dot in bank 0"
+var v
+fwd, 0
+constants
+assert . == 0105, "dot after the constant pool"
+variables
+assert v == 0105 && v:* == 0105, "variable"
+assert far:* == 030200 && far:3 == 030200, "name in another bank"
+bank 3
+200/
+far, hlt
+assert . == 0201 && thisbank == 030000, "dot in bank 3"
+assert go:* == 0100 && go:0 == 0100, "name in bank 0"
+bank 0
+start go

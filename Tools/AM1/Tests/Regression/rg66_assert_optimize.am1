@@ -1,0 +1,16 @@
+Test rg66: asserts that hold whether or not -O1 or -O2 deletes the cla
+// The second follows the relayout: '.' is where the assert stands after the
+// word is gone. The .ref pins the plain build's words; run_regression.sh
+// checks -O1 and -O2 against the same source with the assert lines blank.
+100/
+go, lac x
+%%optimize
+    cla
+    lac x
+%%endoptimize
+end, hlt
+assert end - go >= 2, "at least two words to end"
+assert . == end + 1, "dot follows the relayout"
+assert x:* - end == 1 && !(go != 0100), "x just after end"
+x, 0
+start go

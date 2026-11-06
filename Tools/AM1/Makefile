@@ -154,7 +154,7 @@ listcodegen.o: listcodegen.c am1.h y.tab.h $(UTILLIBS)/flexoConversion.h
 mapcodegen.o: mapcodegen.c am1.h symtab.h preprocess.h
 	$(CC) -c mapcodegen.c
 
-srccodegen.o: srccodegen.c optimizer.h am1.h y.tab.h type340chars.h $(UTILLIBS)/flexoConversion.h
+srccodegen.o: srccodegen.c optimizer.h am1.h y.tab.h type340chars.h preprocess.h $(UTILLIBS)/flexoConversion.h
 	$(CC) -c srccodegen.c
 
 testcodegen.o: testcodegen.c am1.h y.tab.h

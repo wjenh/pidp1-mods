@@ -1,0 +1,13 @@
+Test rg66: a size assert that holds as written and fails once the cla goes
+// Plain and under -O it assembles; under -O1 or -O2 the region loses a word
+// and the second check fails, "after optimization", writing nothing.
+100/
+go, lac x
+%%optimize
+    cla
+    lac x
+%%endoptimize
+end, hlt
+assert end - go == 3, "three words to end"
+x, 0
+start go

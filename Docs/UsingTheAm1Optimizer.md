@@ -5,9 +5,9 @@ and `-O2` flags, which act on the code.
 For **am1** itself, see *UsingAM1.md*. For which flags to use and what can go
 wrong, in a few pages, see *UsingTheAm1OptimizerQuickReference.md*.
 
-This is version 1.35 and covers up through am1 version 3.5; it will be updated as needed.\
-Edit date 11-Oct-2026\
-Added information about IOTs that skip.
+This is version 1.36 and covers up through am1 version 5.6; it will be updated as needed.\
+Edit date 5-Nov-2026\
+Added information for new am1 features
 
 ## What the advisor is
 
@@ -64,9 +64,7 @@ address-taken and not timed.
 everything else, so the ordinary way to use it is to add it to a build that
 was already producing a listing:
 
-```bash
 am1 -b -d -S -O adventure.am1
-```
 
 The installed **am1** takes these modifiers:
 
@@ -89,7 +87,7 @@ go. It is written after the optimizer, and under `-O1` or `-O2` after
 relayout, so it holds the program as that level left it. Each `%%` directive
 is written where it stood, and no new one is added.
 
-```bash
+```
 am1 -b -O1 -O=source adventure.am1        # writes adventure.opt.am1
 am1 -b adventure.opt.am1                  # the optimized build's tape
 ```
@@ -119,14 +117,18 @@ w1,	law	5; local am1gone; endloc  // the limit  // am1 -O1: T8d, was lac [5]  //
     the word, what the old one named first, so the pool keys hold
 ```
 
-(The written line is one line; it is folded here.)
-
 A written line has numbers where the source had names, and a macro call
-comes out as its expansion. When a change falls inside an include file, that
-file is written out in place of its `#include` line, between two comment
-lines naming it, and so is each include around it. A quoted `#include`
-inside it that named a file beside it, in another directory, is rewritten to
-the path cpp found that file by, with a note.
+comes out as its expansion; where the call's arguments ran on over later
+lines, the written line replaces all of them. When a change falls inside an
+include file, that file is written out in place of its `#include` line,
+between two comment lines naming it, and so is each include around it. A
+quoted `#include` inside it that named a file beside it, in another
+directory, is rewritten to the path cpp found that file by, with a note.
+The written file never includes a file written out in place, so an
+`#includeonce` that read nothing because that file was already included,
+and an `#uninclude` of it, are written as comments beginning
+`// am1 -O=source: left out`; an include holding such a line is written out
+too.
 
 Under `-O1` and `-O2` the file gives the optimized build's own tape. Each
 change carries a comment beginning `am1 -O1:` or `am1 -O2:`, the level as
@@ -168,7 +170,9 @@ optimized order is one the copied text cannot give, am1 says why on stderr
 and writes every line from the program as assembled, after cpp, as
 `-O=source` did before it copied lines. That file is assembled with **-n**,
 and its header says so. A source whose title line comes from an include is
-one such case.
+one such case. Another is an `#uninclude` of an include file written out in
+place, when that file, or one it includes, holds a `#define` or `#undef`:
+the copied text cannot undo them as the `#uninclude` did.
 
 **One build cannot be written exactly.** Under `-O2`, a T8 that no region
 declares keeps the pool word it stops naming. If relayout then moves that
@@ -250,8 +254,8 @@ call-depth figures. A reader who does not believe a group can check it there
 without reading any C.
 
 `-O=regions` is the working behind the report's region section. It prints one
-line per region — the bank and address it starts and ends at, its word count,
-the lines the two directives are on and the file they are in — and then one
+line per region -- the bank and address it starts and ends at, its word count,
+the lines the two directives are on and the file they are in -- and then one
 line per word inside a region that the reference analysis saw written, patched
 or with its address taken. On a source that declares no region, which is most
 of them, it prints one line saying so.
@@ -283,7 +287,7 @@ with you about it.
 ```
 
 The assembler's manual, `UsingAM1.md`, has the syntax, the four errors and the
-guarantee that the directives cost nothing — no word emitted, no location
+guarantee that the directives cost nothing -- no word emitted, no location
 moved, and not a byte of difference in the tape, the listing, the macro1 source
 or the test dump. What matters here is what a region *means*.
 
@@ -295,8 +299,8 @@ obvious reading of "the directive replaces precondition P5" is the wrong one.
 A region is your permission to **rewrite**. It is not a condition on being
 **told**.
 
-- **A source with no region anywhere** — which is every program written so far,
-  `adventure.am1` included — gets exactly the report it always got. P5 is not
+- **A source with no region anywhere** -- which is every program written so far,
+  `adventure.am1` included -- gets exactly the report it always got. P5 is not
   checked, the header says so in the same words, every finding is live, and
   every count is unchanged. The report gains one short section saying no region
   was declared, and nothing else. If it did anything more than that, all 239 of
@@ -311,7 +315,7 @@ A region is your permission to **rewrite**. It is not a condition on being
 The suppressed list is for patterns the evidence refuses. A pattern you have
 simply not opted in yet is not refused.
 
-A pattern that straddles a boundary — some words inside, some outside — is
+A pattern that straddles a boundary -- some words inside, some outside -- is
 marked *straddling*, and a transform would not fire on it either. A rewrite
 takes the whole pattern or none of it, so half a permission is none. Moving the
 directive by one line is usually all such a case needs.
@@ -357,13 +361,13 @@ checks them:
 
 > A word inside a region that the analysis saw written, patched, or with its
 > address taken is a **contradiction between your declaration and the
-> evidence**, and the report names it — which region, which address, and what
+> evidence**, and the report names it -- which region, which address, and what
 > was seen.
 
 That is the most useful thing this part of the advisor produces, because it is
 precisely the case in which a transform could corrupt a working program on
 your own say-so. Either the region is drawn wider than you meant, or the
-reference is one you know to be harmless — but it is worth being sure which.
+reference is one you know to be harmless -- but it is worth being sure which.
 `-O1` does not refuse a region the evidence disputes: each word it rewrites
 there has passed P1 to P4 on its own evidence. But its Transforms section
 repeats the warning and names every rewritten word that sits in such a region.
@@ -1819,7 +1823,7 @@ the same program diff cleanly. Each finding gives:
   spelled it
 - `becomes:` the suggested replacement, in **am1** syntax
 - `note:` why the rewrite holds, naming the specific addresses involved
-- `region:` where the pattern sits with respect to the declared regions —
+- `region:` where the pattern sits with respect to the declared regions --
   printed only when the source declares at least one, and only in this list,
   never on a refused pattern in section 3
 
@@ -1852,7 +1856,7 @@ extend window: `eem` and `lem`". `-O=window` is the working.
 **4. Optimize regions.** Where the source has declared that `-O1` may
 rewrite, and whether the evidence agrees with that declaration. On a
 source that declares no region it is four lines saying so, and saying that
-nothing above has been withheld for want of one — which is the state of every
+nothing above has been withheld for want of one -- which is the state of every
 program written so far. On a source that declares one it gives each region's
 extent, word count and lines; how many words are inside a region in each bank;
 how the live findings split between inside, outside and straddling; and every
@@ -1932,18 +1936,18 @@ everything above it and the section says so in its own first paragraph, at
 length, every time.
 
 Two routines can share one return word when neither can be on the call stack
-while the other is. On `adventure.am1` that would free **116 words** — 46 in
-bank 0, 23 in bank 1, 37 in bank 2 and 10 in bank 3 — which is more than the
+while the other is. On `adventure.am1` that would free **116 words** -- 46 in
+bank 0, 23 in bank 1, 37 in bank 2 and 10 in bank 3 -- which is more than the
 whole peephole catalog recovers on the same program. Banks 1 and 2 are the two
 that are short of space, and each gains about 45% more free space.
 
 **It is advisory only, permanently, and by construction.** It is not a finding,
 it is not counted in any finding total, and there is no flag that makes **am1**
-act on it — not `-O` and not anything later. That is not caution about an
+act on it -- not `-O` and not anything later. That is not caution about an
 unfinished feature. Every other suggestion in the report fails visibly when it
 is wrong: the program stops, or a test does. A wrongly shared return word fails
 as a wild jump at run time, in a routine that works until the one call ordering
-that overlaps, with no stack and no trap to catch it — and putting the old
+that overlaps, with no stack and no trap to catch it -- and putting the old
 source back will not reproduce it, because it depends on an interleaving and
 not on the code. So this section names the routines and leaves the decision
 where it belongs.
@@ -1964,8 +1968,8 @@ The section has three parts.
 - **The full assignment**, per bank, one group per proposed word: the address
   proposed to keep, how many words the group holds, how many would be freed,
   and every routine that would share it, named. A group marked NOT FULLY KNOWN
-  holds a routine whose body or exits the analysis could not read in full — 13
-  of `adventure.am1`'s 140 return words, on the large routines — and those are
+  holds a routine whose body or exits the analysis could not read in full -- 13
+  of `adventure.am1`'s 140 return words, on the large routines -- and those are
   the ones to look at hardest, because they are where the analysis could be
   wrong in the direction that costs a return address.
 - **What it would cost to collect.** Two things the section is careful not to
@@ -1974,7 +1978,7 @@ The section has three parts.
   and on a hand-laid source the space only becomes usable when the bank is
   repacked. And the edit is not local: a shared word cannot stay `local` to one
   routine, so every `dac rtn` and every `jmp i rtn` in every routine of the
-  group has to name the one surviving address — which is why that address is
+  group has to name the one surviving address -- which is why that address is
   named.
 
 Two kinds of return word are excluded outright and counted where you can see
@@ -1996,13 +2000,13 @@ any finding total, and there is no flag that makes **am1** act on it.
 Where section 8 is about the words a routine keeps its return address in, this
 one is about the storage words a program declares: the population is every word
 carrying a `local` label, less the return words, the words of a text string,
-and words that are code — **271 words on `adventure.am1`**. Two of them can
+and words that are code -- **271 words on `adventure.am1`**. Two of them can
 share one location when they are never live at the same time. On
 `adventure.am1` that would free **109 words**: 18 in bank 0, 18 in bank 1, 70
 in bank 2 and 3 in bank 3.
 
-What is offered is only what is private to one **unit** — one routine, or a
-group of routines control passes between without returning — and is never live
+What is offered is only what is private to one **unit** -- one routine, or a
+group of routines control passes between without returning -- and is never live
 across a call the unit makes or on entry to it. A word whose address is taken,
 one two units reference, one in a unit the analysis could not read in full, one
 in code both the main line and a sequence-break handler run, and one that
@@ -2028,7 +2032,7 @@ The section has five parts.
 - **What is not promised.** A word marked `near-taken` sits in a run of data
   words where some word's address is taken, and **am1** cannot see what pointer
   arithmetic from that address reaches. **32 of `adventure.am1`'s words are
-  marked**, and the figure that stands without every one of them — **77** — is
+  marked**, and the figure that stands without every one of them -- **77** -- is
   printed as its own number. Confirm a marked word against the source before
   counting it.
 - **The call class, refused, with its number**: **77 words on `adventure.am1`**,
@@ -2041,7 +2045,7 @@ The section has five parts.
   gives: a freed word is not a collected word, and the edit is not local.
 
 One blind spot is stated in the section itself: a device that writes memory on
-its own — the drum, DCS2, the high-speed channel — writes words this analysis
+its own -- the drum, DCS2, the high-speed channel -- writes words this analysis
 never sees written, so a word one of them fills is not known to be live and
 must not be shared.
 

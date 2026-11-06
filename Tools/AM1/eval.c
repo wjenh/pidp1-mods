@@ -246,6 +246,9 @@ SymNodeP symP;
         return( nodeP->value.ival );   // also positive, don't adjust
         break;
 
+    // An unresolved name is reported at its reference's own line, as for a BREF
+    // below; a node not made from a name has none, and verrorlf() then gives the
+    // global lineno.
     case LCLADDR:
         // local addrs will already be resolved to the actual location
         symP = nodeP->value.symP;
@@ -255,7 +258,7 @@ SymNodeP symP;
         }
         else
         {
-            verror("local symbol %s has no defined value", symP->name);
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "local symbol %s has no defined value", symP->name);
         }
         break;
 
@@ -267,7 +270,7 @@ SymNodeP symP;
         }
         else
         {
-            verror("symbol %s has no defined value", symP->name);
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "symbol %s has no defined value", symP->name);
         }
         break;
 

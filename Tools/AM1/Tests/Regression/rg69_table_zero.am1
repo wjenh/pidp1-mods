@@ -1,0 +1,17 @@
+Test rg69: a table count of 0 adds no word, and a block that fits exactly
+// ROW pads arc's row to ROWW words with a count of 0.
+#define ROWW 3
+#define ROW(name, txt)
+r ## name, 0
+    type340 txt
+    table r ## name + ROWW - ., 0
+#enddef
+100/
+a,  1
+    table 0, 0
+b,  2
+    ROW(arc, "Arc")
+c,  3
+assert b == a + 1, "table 0 added a word"
+assert c == rarc + ROWW, "the exact row moved c"
+start a

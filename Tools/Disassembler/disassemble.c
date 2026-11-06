@@ -106,13 +106,14 @@
  * 06-Apr-2026 wje - Add -n flag to eliminate multiple outputs of an address
  * 09-Apr-2026 wje - Add deduction of more meaningful label names
  * 14-Jul-2026 wje - Am1 loader was not handling multi-block loads properly
- * 24-Oct-2026 Claude - Version 2.5: am1 and macro output now assemble back to the tape's original words,
+ * 24-Oct-2026 Claude - am1 and macro output now assemble back to the tape's original words,
  *                  labels follow the target's bank and use, the loader is found from the RIM block, and
  *                  binloader.c checks checksums, am1loader.c and kloader.c end blocks correctly.
+ * 06-Nov-2026 Claude - a tape that is a RIM block only is the program, its jmp the start
  *
  */
 
-#define VERSION "2.5"
+#define VERSION "2.6"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -185,6 +186,8 @@ bool allowRepeat = true;
 bool keepRim = false;
 bool verbose = true;
 bool extendedMem = false;
+bool rimProgram = false;    // the RIM block is the whole program: no loader follows its jmp
+int rimLoneWord = -1;       // the one word after a RIM program's jmp, which nothing loads, or -1
 
 int pass = 1;               // first pass
 int curBank = 0;            // used for am1
@@ -229,7 +232,10 @@ LabelP markValid(int addr, int iFlags);
 LabelP markTarget(int addr, int creator, int flags);
 void markValidByInstruction(int addr, int word);
 void printEquates(FILE *outfP);
+void printStart(int addr);
+void emitRimWord(int addr, int word);
 LoaderP detectLoader(FILE *fP);
+void findRimProgram(FILE *fP);
 void showLoaders();
 bool loadSymbols(char *filenameP);
 bool setBit(uint64_t map[], int addr);
@@ -247,7 +253,6 @@ char *cP;
 FILE *fP;
 char filename[256];
 char shortname[256];
-char tmpstr[128];
 char *ldrArgs[128];
 
     strcpy(separator, "!");         // is a logical or in macro1
@@ -374,6 +379,11 @@ char *ldrArgs[128];
         skipRim = true;
     }
 
+    if( !rawMode && !skipRim )
+    {
+        findRimProgram(fP);
+    }
+
     if( !rawMode )
     {
         DIAGNOSTIC(DIAG_PASS, "Pass one started");
@@ -460,22 +470,44 @@ char *ldrArgs[128];
                 state = RIM;
                 curAddr = OPERAND(word);
 
-                if( verbose && keepRim )
+                if( verbose && (keepRim || rimProgram) )
                 {
                     fprintf(outfP,"Start of RIM block at tape position %d\n", tape_loc - 3);
                     fprintf(outfP,"Tape  Addr  Raw    Lbl   Instruction\n");
                 }
 
                 word = getWord(fP, 2, state);
-                if( keepRim )
-                {
-                    formatInstr(curAddr, word);
-                }
+                emitRimWord(curAddr, word);
+                lastAddr = curAddr;
             }
             break;
 
         case RIM:
-            if( OPERATION(word) == 060 )        // end of RIM code block
+            if( (OPERATION(word) == 060) && rimProgram )    // the RIM block was the program
+            {
+                // Nothing loads the word after the jmp, so it is listed, never placed; before the
+                // start, which must be the source's last statement.
+                if( rimLoneWord != -1 )
+                {
+                    if( asAm1 )
+                    {
+                        fprintf(outfP,"// %06o follows the RIM block's jmp, not loaded\n", rimLoneWord);
+                    }
+                    else if( asMacro )
+                    {
+                        fprintf(outfP,"/ %06o follows the RIM block's jmp, not loaded\n", rimLoneWord);
+                    }
+                    else
+                    {
+                        fprintf(outfP,"%-5s ------: %06o       follows the RIM block's jmp, not loaded\n", "",
+                            rimLoneWord);
+                    }
+                }
+
+                printStart(OPERAND(word));
+                state = DONE;
+            }
+            else if( OPERATION(word) == 060 )   // end of RIM code block
             {
                 state = LOADING;                // loader-specific block now
                 // Reset our address to 0, initial condition, and restart the loader
@@ -492,12 +524,7 @@ char *ldrArgs[128];
             {
                 curAddr = OPERAND(word);
                 word = getWord(fP, 2, state);
-
-                if( keepRim )
-                {
-                    formatInstr(curAddr, word);
-                }
-
+                emitRimWord(curAddr, word);
                 lastAddr = curAddr;
             }
             else
@@ -531,36 +558,7 @@ char *ldrArgs[128];
             switch( (*loaderP)(fP, LOADER_CMD_NEXT, &curAddr, &word, NULL) )
             {
             case LOADER_DONE:
-                state = DONE;
-
-                if( asMacro && extendedMem && (BANKOF(curAddr) != 0) )
-                {
-                    fprintf(outfP,"/ Warning - start address not in bank 0.\n");
-                }
-
-                // Put out the start directive
-                if( verbose )
-                {
-                    fprintf(outfP,"%-5d %06o: 000000", tape_loc, lastAddr);
-                }
-
-                // With no label the start is a number, bank-relative with its bank as am1 writes it
-                if( getLabel(curAddr, curAddr, tmpstr) == -1 )
-                {
-                    sprintf(tmpstr,"%04o", (curAddr & 07777));
-                }
-
-                // am1 keeps each bank's symbols apart, so the bank is named unless both are 0
-                word = BANKNUM(curAddr);
-                if( asAm1 && (word || curBank) )
-                {
-                    fprintf(outfP,"       start %s:%o\n", tmpstr, word);
-                }
-                else
-                {
-                    fprintf(outfP,"       start %s\n", tmpstr);
-                }
-
+                printStart(curAddr);
                 state = DONE;
                 break;
 
@@ -713,7 +711,13 @@ bool hasStart;
 
         case RIM:
             word = getWord(fP, 1, state);
-            if( OPERATION(word) == 060 )        // end of RIM code block
+            if( (OPERATION(word) == 060) && rimProgram )    // the RIM block was the program
+            {
+                curAddr = OPERAND(word);        // its jmp is the start
+                hasStart = true;
+                state = DONE;
+            }
+            else if( OPERATION(word) == 060 )   // end of RIM code block
             {
                 if( keepRim )
                 {
@@ -738,9 +742,14 @@ bool hasStart;
                 curAddr = OPERAND(word);
 
                 word = getWord(fP, 1, state);
-                if( keepRim )
+                if( keepRim || rimProgram )
                 {
                     markValidByInstruction(curAddr, word);
+                }
+
+                if( rimProgram && (loadCount[curAddr] < 0177777) )
+                {
+                    ++loadCount[curAddr];
                 }
             }
             else
@@ -1263,6 +1272,123 @@ LabelP labelP;
     }
 }
 
+// Print the start directive, or the listing's start line, for the start address addr.
+void
+printStart(int addr)
+{
+int bank;
+char tmpstr[128];
+
+    if( asMacro && extendedMem && (BANKOF(addr) != 0) )
+    {
+        fprintf(outfP,"/ Warning - start address not in bank 0.\n");
+    }
+
+    if( verbose )
+    {
+        fprintf(outfP,"%-5d %06o: 000000", tape_loc, lastAddr);
+    }
+
+    // With no label the start is a number, bank-relative with its bank as am1 writes it
+    if( getLabel(addr, addr, tmpstr) == -1 )
+    {
+        sprintf(tmpstr,"%04o", (addr & 07777));
+    }
+
+    // am1 keeps each bank's symbols apart, so the bank is named unless both are 0
+    bank = BANKNUM(addr);
+    if( asAm1 && (bank || curBank) )
+    {
+        fprintf(outfP,"       start %s:%o\n", tmpstr, bank);
+    }
+    else
+    {
+        fprintf(outfP,"       start %s\n", tmpstr);
+    }
+}
+
+// Print a word the RIM block loads, if the RIM block is shown: with -k, or when it is the program.
+// A RIM program can load an address twice, as a loader's blocks can, so -n and the source forms
+// treat its words as they treat a loader's.
+void
+emitRimWord(int addr, int word)
+{
+    if( !(keepRim || rimProgram) )
+    {
+        return;
+    }
+
+    if( !rimProgram )
+    {
+        formatInstr(addr, word);
+    }
+    else if( !allowRepeat )
+    {
+        if( setBit(memMap, addr) )
+        {
+            formatInstr(addr, word);
+        }
+    }
+    else if( !(asMacro || asAm1) || (loadCount[addr] <= 1) )
+    {
+        formatInstr(addr, word);
+    }
+    else
+    {
+        --loadCount[addr];
+    }
+}
+
+// Find whether the RIM block is the whole program. Read-in mode loads the block and its closing
+// jmp starts what it loaded; a tape with a loader has the loader's blocks after the jmp. So the
+// block is the program when the tape ends at the jmp, or holds one word after it: no block can
+// be made of one word, and nothing loads it, so it is reported here and listed, never placed.
+// The input is left at its start.
+void
+findRimProgram(FILE *fP)
+{
+int word;
+int pairs;
+int after;
+
+    pairs = 0;
+
+    while( (word = nextWord(fP)) >= 0 )
+    {
+        if( OPERATION(word) != 032 )
+        {
+            break;              // the 060 that ends the block, or not a RIM block
+        }
+
+        if( nextWord(fP) < 0 )
+        {
+            word = -1;
+            break;
+        }
+
+        ++pairs;
+    }
+
+    if( (pairs > 0) && (word >= 0) && (OPERATION(word) == 060) )
+    {
+        after = nextWord(fP);
+        if( (after < 0) || (nextWord(fP) < 0) )
+        {
+            rimProgram = true;
+            rimLoneWord = after;
+
+            if( after >= 0 )
+            {
+                fprintf(stderr, "Warning: the word %06o after the RIM block's jmp is loaded by nothing, "
+                    "so it is listed and not placed.\n", after);
+            }
+        }
+    }
+
+    fseek(fP, 0, SEEK_SET);
+    tape_loc = 0;
+}
+
 // Choose a loader from the RIM block, which loads the loader itself: the DDT loader has rpb at
 // 7751, am1's has rpb at 7752 after an eem or a nop. The input is left at its start.
 // Returns the loader found, or the bin loader if neither matches.
@@ -1393,7 +1519,7 @@ char line[256];
         return( false );
     }
 
-    lineNo = 3;
+    lineNo = 0;
 
     while( fgets(line, sizeof(line), fP) )
     {

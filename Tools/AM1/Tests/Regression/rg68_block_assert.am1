@@ -1,0 +1,23 @@
+Test rg68: an assert on a block macro's later lines, and after a ';'
+// ROW pads each row to ROWW words and checks it; LBL checks that a label fits
+// with no padding. The rows sit at 0100 + k * ROWW.
+#define ROWW 6
+#define ROW(name, txt)
+r ## name, 0
+    type340 txt
+    table r ## name + ROWW - ., 0
+    assert . - r ## name == ROWW, "row too long"
+#enddef
+#define LBL(name, txt)
+name, 0
+    type340 txt
+    assert . - name <= ROWW, "label too long"
+#enddef
+100/
+    ROW(line, "Line")
+    ROW(truss, "Truss >")
+    ROW(arc, "Arc")
+    LBL(title, "Title")
+assert rarc == 0100 + 2 * ROWW, "rows are not ROWW apart"
+w, 0; assert w == 0100 + 3 * ROWW + 4, "where"
+start rline

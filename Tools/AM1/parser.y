@@ -157,6 +157,8 @@ void vwarnl(int errType, int lineno, const char *msgP, ...);
 void verrorl(int lineno, const char *msgP, ...);
 void verrorlf(int lineno, const char *fileNameP, const char *msgP, ...);
 void setRefSource(PNodeP nodeP);
+static int tableCount(PNodeP exprP, int line);
+bool lexAfterSemi(void);        // lexer.l: a ';' has been scanned on this line
 
 int yylex(void);
 
@@ -806,14 +808,14 @@ one_stmt        : expr
                 {
                     // Will already have been converted in the lexer.
                     // We reuse the Flex struct because this is also a counted-length string.
-                    $$ = newnode(lineno+1, curBankP->cur_pc, TYPE340, NILP, NILP);
+                    $$ = newnode((lexAfterSemi())?lineno:(lineno + 1), curBankP->cur_pc, TYPE340, NILP, NILP);
                     $$->value.flexText = $2;
                     curBankP->cur_pc += countText($2);
                     checkPCBound("Type340", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | TEXT
                 {
-                    $$ = newnode(lineno+1, curBankP->cur_pc, TEXT, NILP, NILP);
+                    $$ = newnode((lexAfterSemi())?lineno:(lineno + 1), curBankP->cur_pc, TEXT, NILP, NILP);
                     $$->value.flexText = $1;
                     curBankP->cur_pc += countText($1);
                     checkPCBound("Text", curBankP->cur_pc - 1, $$->lineNo);
@@ -821,7 +823,7 @@ one_stmt        : expr
                 | TABLE simple_expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, NILP);
-                    $$->value.ival = evalExpr($2);
+                    $$->value.ival = tableCount($2, $$->lineNo);
                     $$->exprP = $2;         // relayout holds the count and reads this
                     curBankP->cur_pc += $$->value.ival;
                     checkPCBound("Table", curBankP->cur_pc - 1, $$->lineNo);
@@ -829,7 +831,7 @@ one_stmt        : expr
                 | TABLE simple_expr LOCATION simple_expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, $4);
-                    $$->value.ival = evalExpr($2);
+                    $$->value.ival = tableCount($2, $$->lineNo);
                     $$->exprP = $2;         // as above
                     curBankP->cur_pc += $$->value.ival;
                     checkPCBound("Table", curBankP->cur_pc - 1, $$->lineNo);
@@ -1132,7 +1134,7 @@ labelTrailer    : optExpr
                 | TYPE340 T340STRING
                 {
                     // Will already have been converted in the lexer.
-                    $$ = newnode(lineno+1, pendingLabelPC, TYPE340, NILP, NILP);
+                    $$ = newnode((lexAfterSemi())?lineno:(lineno + 1), pendingLabelPC, TYPE340, NILP, NILP);
                     $$->value.flexText = $2;
                     curBankP->cur_pc += countText($2);
                     checkPCBound("Type340", curBankP->cur_pc - 1, $$->lineNo);
@@ -1140,7 +1142,7 @@ labelTrailer    : optExpr
                 }
                 | TEXT
                 {
-                    $$ = newnode(lineno+1, pendingLabelPC, TEXT, NILP, NILP);
+                    $$ = newnode((lexAfterSemi())?lineno:(lineno + 1), pendingLabelPC, TEXT, NILP, NILP);
                     $$->value.flexText = $1;
                     curBankP->cur_pc += countText($1);
                     checkPCBound("Text", curBankP->cur_pc - 1, $$->lineNo);
@@ -1246,6 +1248,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
+                    setRefSource($$);
                 }
                 | INTEGER bref
                 {
@@ -1388,6 +1391,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                         symP->flags = symP2->flags = SYMF_FORCED | SYM_LOC;
                         $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
                         $$->value.symP = symP;
+                        setRefSource($$);
                     }
                     else
                     {
@@ -1404,12 +1408,14 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                         symP->flags = SYM_GLOB;
                         $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                         $$->value.symP = symP;
+                        setRefSource($$);
                     }
                 }
                 | LCLADDR
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
                     $$->value.symP = $1;
+                    setRefSource($$);
                 }
                 | FLEXO
                 {
@@ -2316,15 +2322,34 @@ BankContextP ctxP;
     return( ctxP );
 }
 
-// Record where a BREF made from a name was written, for evalExpr's error if its
-// symbol never resolves.
+// Record where a reference made from a name (a BREF, ADDR or LCLADDR) was
+// written, for evalExpr's error if its symbol never resolves.
 // The node's lineNo will not do: the reference is
 // reduced mid-line, before the terminator that newnode() allows for.
+// The file name is the interned copy, one for every reference to the file.
 void
 setRefSource(PNodeP nodeP)
 {
     nodeP->srcLine = nameTokenSrcLine;
-    nodeP->srcFileP = strdup(filenameP);
+    nodeP->srcFileP = (char *)internFileName(filenameP);
+}
+
+// A table's count, which may not be negative: a block padded to a fixed size
+// whose contents are too long gives one, and added to the pc it read as a bank
+// overflow.  0 is allowed, for a block that fits exactly.
+static int
+tableCount(PNodeP exprP, int line)
+{
+int count;
+
+    count = evalExpr(exprP);
+
+    if( count & 0400000 )
+    {
+        verrorl(line, "table count is negative (-%d)", (~count) & 0377777);
+    }
+
+    return(count);
 }
 
 // Look up a symbol in a bank, create it if not found
@@ -4120,11 +4145,24 @@ char format[1024];
     leave(0);
 }
 
+// The line is the one the token that cannot follow is on. A token that ends a
+// line has counted its newline already, and after a ';' the ';' has counted it.
+// A C-style comment's token has not: its newline is pushed back, not yet read.
 int
 yyerror(const char *errstr)
 {
+int line;
+
+    line = lineno;
+
+    if( (yychar == TERMINATOR) || (yychar == COMMENT) || (yychar == EMPTYLINE) ||
+        (yychar == YYEOF) || lexAfterSemi() )
+    {
+        line = lineno - 1;
+    }
+
     fprintf(stderr,"am1: %s\nat line %d, file %s\n",
-    errstr,lineno,filenameP);
+    errstr,line,filenameP);
     leave(0);
     // never returns, just to shut up overly-picky c compilers
     return(0);

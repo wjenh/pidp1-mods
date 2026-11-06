@@ -32,6 +32,7 @@ static int emitConstants(FILE *outfP, SymNodeP nodeP);
 static void emitOverlayDirective(FILE *outfP, PNodeP nodeP);
 
 extern void verror(char *msgP, ...);
+extern void verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...);
 
 // Walk a tree and emit equivalent macro1 code.
 void
@@ -478,6 +479,15 @@ SymNodeP symP;
         break;
 
     case BREF:
+        // The binary back end refuses an undefined name:N the same way (eval.c), and
+        // -m alone never runs it.
+        symP = nodeP->value.symP;
+        if( !(symP->flags & SYMF_RESOLVED) )
+        {
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "symbol %s in bank %d has no defined value",
+                symP->name, symP->bank);
+        }
+
         if( doWarn(WARN_BREF) )
         {
             fprintf(stderr,"am1: WARNING: bank references are not supported by macro1!\n");
@@ -512,7 +522,7 @@ SymNodeP symP;
         }
         else
         {
-            verror("local symbol %s has no defined value", symP->name);
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "local symbol %s has no defined value", symP->name);
         }
         break;
 
@@ -524,7 +534,7 @@ SymNodeP symP;
         }
         else
         {
-            verror("symbol %s has no defined value", symP->name);
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "symbol %s has no defined value", symP->name);
         }
         break;
 

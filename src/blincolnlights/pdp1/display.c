@@ -36,6 +36,8 @@
 // 28-Sep-2026 Claude - first-time setup of the subsystem and of each screen is serialized by setupLock
 // 7-Oct-2026 wje/Claude - a partial write that ends inside a word no longer misaligns the client stream.
 // 31-Oct-2026 wje - useMotionPrediction removed, prediction is always used now.
+// 6-Nov-2026 Claude - reset the prediction filters if the position jumps farther than they can compensate for,
+//    and when no motion occurs.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -92,8 +94,12 @@
 #define DPYFULLRETRIES 100         // addDpyCommand: max retries while dpy buf is full before dropping a command
 
 // A pen that is down but has sent nothing for this long, in ns, has stopped moving.
-// The motion/ prediction filters are given its last position again.
+// The motion prediction filters are started over at its last position.
 #define PENHOLDRESAMPLE ((uint64_t)(DELTA_TIME_CLAMP * 1000.0 * 1000.0 * 1000.0))
+// A report this far, in screen units, from where the filters predict the pen is a jump, not a
+// movement they can follow: about three times their largest error tracking a pen at 4000 units a
+// second, and well under a pen carried across the screen in one step.
+#define PENJUMPDIST 64
 #define TIMING_FILE_DPY "/tmp/pidp1-dpytiming.txt"
 #define TIMING_WINDOW_NS 1000000000ULL      // one report line per this much wall time
 // ctlP->fd is written by more than one thread, use atomics to coordinate
@@ -205,6 +211,8 @@ static void initializeDisplaySubsystem(void);
 static DisplayControlP initializeDisplay(int screenNo);
 static DisplayControlP getDisplayControlP(int screenNo);
 static bool lightpenReader(DisplayControlP ctlP, int fd);
+static bool penJumped(DisplayControlP ctlP, int x, int y);
+static void restartPenFilters(DisplayControlP ctlP, int x, int y);
 static int cvtDpyTo1024(int dpy);
 static uint64_t currentTime(void);
 static void initializeDisplayControl(DisplayControlP ctlP);
@@ -1366,18 +1374,31 @@ uint32_t cmd;
         ctlP->rawX = lastX;
         ctlP->rawY = lastY;
         ctlP->lpData = true;
-        motionFilterAdd(&(ctlP->xFilter), lastX);
-        motionFilterAdd(&(ctlP->yFilter), lastY);
+
+        // A pen carried to another place in one report is not a movement the filters can follow.
+        // Fed to them, the jump becomes a velocity they extrapolate past the new place and then
+        // ring around it for about 100 ms, and the dots drawn under the pen there are missed, where
+        // a real pen sees the first one.
+        if( penJumped(ctlP, lastX, lastY) )
+        {
+            logger(LOG_LP, "LP jump to x %d, y %d, prediction restarted\n", lastX, lastY);
+            restartPenFilters(ctlP, lastX, lastY);
+        }
+        else
+        {
+            motionFilterAdd(&(ctlP->xFilter), lastX);
+            motionFilterAdd(&(ctlP->yFilter), lastY);
+        }
         ctlP->lpSampleTime = ctlP->now;
     }
     else if( penDown && ((ctlP->now - ctlP->lpSampleTime) >= PENHOLDRESAMPLE) )
     {
         // The pen is down and has sent nothing for PENHOLDRESAMPLE, it is being held still.
-        // Without new samples the filters would go on extrapolating from the last velocity they saw
-        // and the prediction would stay off to one side of where the pen stopped.
-        // Giving them the last position again lets the velocity decay and the prediction settle on it.
-        motionFilterAdd(&(ctlP->xFilter), ctlP->rawX);
-        motionFilterAdd(&(ctlP->yFilter), ctlP->rawY);
+        // Without new samples the filters would go on extrapolating from the last velocity they saw.
+        // Fed the last position again, they would still take four or five more of these to lose
+        // that velocity, the prediction swinging around the pen meanwhile.
+        // A pen this still has no velocity, so the prediction starts over where it is.
+        restartPenFilters(ctlP, ctlP->rawX, ctlP->rawY);
         ctlP->lpSampleTime = ctlP->now;
     }
 
@@ -1398,6 +1419,35 @@ uint32_t cmd;
     }
 
     return( gotPosition );
+}
+
+// True if a pen report at x, y lies farther than PENJUMPDIST from where the filters predict the pen
+// is now. Filters not yet started, after a reset or a pen up, have nothing to jump from.
+// Called with the display data lock held.
+static bool
+penJumped(DisplayControlP ctlP, int x, int y)
+{
+int delx, dely;
+
+    if( !ctlP->xFilter.isInitialized || !ctlP->yFilter.isInitialized )
+    {
+        return(false);
+    }
+
+    delx = x - motionFilterPredict(&(ctlP->xFilter));
+    dely = y - motionFilterPredict(&(ctlP->yFilter));
+    return( ((delx * delx) + (dely * dely)) > (PENJUMPDIST * PENJUMPDIST) );
+}
+
+// Start both prediction filters over at x, y: that position, with no velocity or acceleration.
+// Called with the display data lock held.
+static void
+restartPenFilters(DisplayControlP ctlP, int x, int y)
+{
+    motionFilterReset(&(ctlP->xFilter));
+    motionFilterReset(&(ctlP->yFilter));
+    motionFilterAdd(&(ctlP->xFilter), x);       // the first sample after a reset is the position
+    motionFilterAdd(&(ctlP->yFilter), y);
 }
 
 // Wait up to waitUs microseconds for a post.

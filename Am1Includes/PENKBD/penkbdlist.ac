@@ -1,0 +1,39 @@
+// penkbdlist.ac -- the pen keyboard's display list: the prompt, the field and the keys, then the
+// halt that ends the keyboard's frame (PKHALT). It holds no jump and no save, so it may stand in
+// any bank; the program starts it with dla at the address pkOpen answers, and starts it again
+// at each frame's end while the keyboard is open.
+// Include penkbd.ah first, and this file once, in any bank; penkbd.ac reaches its words by
+// their 16-bit addresses (sym:*). pkOpen writes the prompt, the field and the keys before the
+// list is shown, and every word is written whole, so a frame that reads a mix of old and new
+// words still ends where it should.
+// 04-Nov-2026, Claude: the library, from Sketchpad's pen keyboard.
+
+#ifndef PENKBDLIST_AC
+#define PENKBDLIST_AC
+
+// A key's block: its parameter word (PKKEY, or PKLIT while lit), its y and x, and its text.
+#define PK_LBLOCK(name, xx, yy, n, code, t) \
+pk ## name, PKKEY; \
+    y(yy) next(point); \
+    x(xx) next(character); \
+    type340 t;
+
+// The prompt and the field are fixed runs, padded with upper shifts, their end code in the
+// run's last word.
+pkList,
+pkPrmB, PKTXT
+    y(PKPY) next(point)
+    x(PKX0) next(character)
+pkPrm,
+    table PKPW - 1, PKPAD
+    PKBLANK
+pkFldB, PKTXT
+    y(PKFY) next(point)
+    x(PKX0) next(character)
+pkFld,
+    table PKFW - 1, PKPAD
+    PKBLANK
+    PK_KEYS(PK_LBLOCK)
+pkHalt, PKHALT
+
+#endif

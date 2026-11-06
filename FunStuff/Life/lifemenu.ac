@@ -85,10 +85,13 @@ oh1,    lac hMs
         dac lastMs
         law 1
         dac anyHit
+        lac fresh
+        SKIP_NEXT_IF_AC_ZERO
+        jsp i [tpPress:6]               // a press puts out the status word
         lac scrGo
         SKIP_NEXT_IF_AC_NOT_ZERO
         jmp oh5
-        jsp i [libHit:3]
+        jsp i scrHit                    // the library's screen or the pen keyboard
         jmp ohx
 oh5,    lac hy
         sub [BARTHR]
@@ -146,6 +149,8 @@ ohx,    jmp .
 // STEP makes one generation while stopped, PATTERN opens the library's screen, and an item with
 // a list opens it, or closes it when it is open. Any of them closes a list open under another
 // item, and ends place mode. Called via jsp. AC and IO are clobbered.
+// The column is (hx + 16) / 112, as (hx + 16) * 1171 / 2^17, mul's high word, which is exact
+// for every x on the screen.
 barHit, dap bhx
         lac armed
         SKIP_NEXT_IF_AC_NOT_ZERO
@@ -155,9 +160,9 @@ barHit, dap bhx
         dac needFresh
         lac hx
         add [0d16]                      // a label's left reach belongs to it
-        sar 7s
+        mul [0d1171]
         dac col
-        sub [6]
+        sub [7]
         SKIP_NEXT_IF_AC_NEGATIVE
         jmp bhx
         lac col
@@ -206,8 +211,8 @@ bhx,    jmp .
 // on the lit row and closes the list. Called via jsp. AC and IO are clobbered.
 listHit, dap lhx
         lac listOn
-        sal 7s
-        dac lx
+        mul [0d56]
+        dio lx                          // the column times 112, mul's low word
         lac hx
         sub lx
         sub [BOXHIT]
@@ -319,7 +324,8 @@ lrY,    lac .
         ior [y(0) next(point)]
         dac i [boxY:1]
         lac listOn
-        sal 7s
+        mul [0d56]
+        lai                             // the column times 112, mul's low word
         add [BOXDX]
         ior [x(0) next(vector)]
         dac i [boxX:1]
@@ -378,6 +384,12 @@ aeClr,  jsp i [libSnap:3]
         law 1
         dac dirty
 aex,    jmp .
+
+// TAPE's action, PUNCH or READ, in lifetape.ac. Each stops a run.
+actTape, dap atx
+        jsp stopRun
+        jsp i [tpAct:6]
+atx,    jmp .
 
 // SPEED's action sets the speed at once.
 actSpd, dap asx
@@ -693,6 +705,7 @@ sl5,    lac [intensity(LBLI) next(point)]
         dac i [barP3:1]
         dac i [barP4:1]
         dac i [barP5:1]
+        dac i [barP6:1]
         lac listOn
         SKIP_NEXT_IF_AC_NOT_ZERO
         jmp slx
@@ -716,12 +729,16 @@ setAp,  dap sax
 sax,    jmp .
 
 // The menu's housekeeping, each pass of the main loop. A held pattern is dropped on the pen's
-// lift, and a list idle for LISTIDLEMS ms is closed. Called via jsp. AC and IO are clobbered.
+// lift, the pen keyboard's tick is run while it is open, and a list idle for LISTIDLEMS ms is
+// closed. Called via jsp. AC and IO are clobbered.
 tidy,   dap tyx
         jsp ovDrain
         lac stampP
         SKIP_NEXT_IF_AC_ZERO
         jsp i [libTidy:3]
+        lac tickTo
+        SKIP_NEXT_IF_AC_ZERO
+        jsp i tickTo
         lac listOn
         SKIP_NEXT_IF_AC_NOT_ZERO
         jmp tyx
@@ -894,67 +911,69 @@ bord3,  scale(1) intensity(BORDI) next(point)
 // The one pen-on word of the frame, so one hit a frame, the display resumed with the pen off.
 penHead, scale(1) intensity(LBLI) lpon next(point)
 
-// The bar, six items on a 128-unit pitch.
+// The bar, seven items on a 112-unit pitch, the counter after them at CNTX.
 barP0,  ITEM(BARY, 0)
 barT0,  0                               // RUN or STOP, from txRun or txStop
 barT1,  0
-barP1,  ITEM(BARY, 0d128)
+barP1,  ITEM(BARY, 0d112)
         type340 "\USTEP"
-barP2,  ITEM(BARY, 0d256)
+barP2,  ITEM(BARY, 0d224)
         type340 "\UEDIT"
-barP3,  ITEM(BARY, 0d384)
+barP3,  ITEM(BARY, 0d336)
         type340 "\UPATTERN"
-barP4,  ITEM(BARY, 0d512)
+barP4,  ITEM(BARY, 0d448)
         type340 "\USPEED"
-barP5,  ITEM(BARY, 0d640)
+barP5,  ITEM(BARY, 0d560)
         type340 "\UFIELD"
+barP6,  ITEM(BARY, 0d672)
+        type340 "\UTAPE"
         next(subroutine)
 menuJmp, jump latJmp:1 next(subroutine)   // to the open list's first word, or on
 latJmp, jump ovPar:1 next(parameter)      // to the lattice while stopped, or on
 
 // The lists, each row's words lit in place, each list ending at the box's jump.
 lsEdit,
-rE1,    ITEM(ROWY1, 0d256)
+rE1,    ITEM(ROWY1, 0d224)
         type340 "\UPAINT"
-rE2,    ITEM(ROWY1-ROWPITCH, 0d256)
+rE2,    ITEM(ROWY1-ROWPITCH, 0d224)
         type340 "\UERASE"
-rE3,    ITEM(ROWY1-0d2*ROWPITCH, 0d256)
+rE3,    ITEM(ROWY1-0d2*ROWPITCH, 0d224)
         type340 "\UCLEAR"
-rE4,    ITEM(ROWY1-0d3*ROWPITCH, 0d256)
+rE4,    ITEM(ROWY1-0d3*ROWPITCH, 0d224)
         type340 "\UUNDO"
         next(subroutine)
         jump boxJmp:1 next(subroutine)
 lsSpd,
-rS1,    ITEM(ROWY1, 0d512)
+rS1,    ITEM(ROWY1, 0d448)
         type340 "\UFAST"
-rS2,    ITEM(ROWY1-ROWPITCH, 0d512)
+rS2,    ITEM(ROWY1-ROWPITCH, 0d448)
         type340 "\U8/S"
-rS3,    ITEM(ROWY1-0d2*ROWPITCH, 0d512)
+rS3,    ITEM(ROWY1-0d2*ROWPITCH, 0d448)
         type340 "\U4/S"
-rS4,    ITEM(ROWY1-0d3*ROWPITCH, 0d512)
+rS4,    ITEM(ROWY1-0d3*ROWPITCH, 0d448)
         type340 "\U2/S"
-rS5,    ITEM(ROWY1-0d4*ROWPITCH, 0d512)
+rS5,    ITEM(ROWY1-0d4*ROWPITCH, 0d448)
         type340 "\U1/S"
-rS6,    ITEM(ROWY1-0d5*ROWPITCH, 0d512)
+rS6,    ITEM(ROWY1-0d5*ROWPITCH, 0d448)
         type340 "\U1/2 S"
         next(subroutine)
         jump boxJmp:1 next(subroutine)
 lsSize,
-rZ1,    ITEM(ROWY1, 0d640)
+rZ1,    ITEM(ROWY1, 0d560)
         type340 "\U126X120"
-rZ2,    ITEM(ROWY1-ROWPITCH, 0d640)
+rZ2,    ITEM(ROWY1-ROWPITCH, 0d560)
         type340 "\U90X90"
-rZ3,    ITEM(ROWY1-0d2*ROWPITCH, 0d640)
+rZ3,    ITEM(ROWY1-0d2*ROWPITCH, 0d560)
         type340 "\U60X60"
-rZ4,    ITEM(ROWY1-0d3*ROWPITCH, 0d640)
+rZ4,    ITEM(ROWY1-0d3*ROWPITCH, 0d560)
         type340 "\U32X32"
-rZ5,    ITEM(ROWY1-0d4*ROWPITCH, 0d640)
+rZ5,    ITEM(ROWY1-0d4*ROWPITCH, 0d560)
         type340 "\UDEAD"
-rZ6,    ITEM(ROWY1-0d5*ROWPITCH, 0d640)
+rZ6,    ITEM(ROWY1-0d5*ROWPITCH, 0d560)
         type340 "\UMIRROR"
-rZ7,    ITEM(ROWY1-0d6*ROWPITCH, 0d640)
+rZ7,    ITEM(ROWY1-0d6*ROWPITCH, 0d560)
         type340 "\UTORUS"
-rZ8,    ITEM(ROWY1-0d7*ROWPITCH, 0d640)
+rZ8,    ITEM(ROWY1-0d7*ROWPITCH, 0d560)
         type340 "\UOPEN"
         next(subroutine)
         jump boxJmp:1 next(subroutine)
@@ -1010,20 +1029,29 @@ txRun,  type340 "\URUN "
 txStop, type340 "\USTOP"
 
 // By list, from EDIT's column 2, its first word, its rows, its rows' parameter words, its action.
-// PATTERN, column 3, opens the library's screen instead, and has no list.
-lsBlkT, lsEdit:1; 0; lsSpd:1; lsSize:1
-lsNT,   4; 0; 6; 0d8
-lsRowT, rtEdit; 0; rtSpd; rtSize
-lsActT, actEdit; 0; actSpd; actSize
+// PATTERN, column 3, opens the library's screen instead, and has no list. TAPE's list is
+// lifetape.ac's.
+lsBlkT, lsEdit:1; 0; lsSpd:1; lsSize:1; lsTape:1
+lsNT,   4; 0; 6; 0d8; 2
+lsRowT, rtEdit; 0; rtSpd; rtSize; rtTape
+lsActT, actEdit; 0; actSpd; actSize; actTape
 rtEdit, rE1:1; rE2:1; rE3:1; rE4:1
 rtSpd,  rS1:1; rS2:1; rS3:1; rS4:1; rS5:1; rS6:1
 rtSize, rZ1:1; rZ2:1; rZ3:1; rZ4:1; rZ5:1; rZ6:1; rZ7:1; rZ8:1
-barPT,  barP0:1; barP1:1; barP2:1; barP3:1; barP4:1; barP5:1
+rtTape, rT1:1; rT2:1
+barPT,  barP0:1; barP1:1; barP2:1; barP3:1; barP4:1; barP5:1; barP6:1
 rowYT,  ROWY1; ROWY1-ROWPITCH; ROWY1-0d2*ROWPITCH; ROWY1-0d3*ROWPITCH
         ROWY1-0d4*ROWPITCH; ROWY1-0d5*ROWPITCH; ROWY1-0d6*ROWPITCH; ROWY1-0d7*ROWPITCH
 
+// Where the hits go while scrGo shows a screen, the library's (lifelib.ac's libHit) or the pen
+// keyboard's (lifetape.ac's tpKbHit); the keyboard's tick while it is open, or 0; and the status
+// word's text beside the counter, or 0 for FULL or blanks (lifetape.ac).
+scrHit, libHit:3
+tickTo, 0
+stTxt,  0
+
 // The menu's state. lifelib.ac's startOver zeroes listOn to lastC as one block.
-listOn, 0                               // the open list's column, 2 to 5, or 0
+listOn, 0                               // the open list's column, 2 to 6, or 0
 litRow, 0                               // its lit row, from 1, or 0
 penMode, 0                              // 0 PAINT, 1 ERASE
 stampP, 0                               // the held pattern's library entry plus 1, or 0

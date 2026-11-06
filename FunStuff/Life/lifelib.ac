@@ -15,7 +15,9 @@
 // key acts only on a press's first hit, so a pen slid onto one does nothing.
 
 #define KEYY        0d40                // the keys' baseline
-#define KEYTHR      0d64                // a hit below this y is on the keys
+#define KEYY2       0d76                // the second row's, lifetape.ac's keys
+#define KEYSPLIT    0d64                // a key's hit at or above this y is on the second row
+#define KEYTHR      0d98                // a hit below this y is on the keys
 #define SROWY1      0d940               // the first row's baseline; a row's hits are 12 below it to 24 above
 #define NAMEX2      0d256               // a hit at or right of this x is on the second column
 #define PREVX       0d496               // a hit at or right of this x is on the preview
@@ -24,12 +26,14 @@
 #define PVFX        0d512               // a whole field's row 0, column 0 in the preview, pitch 4
 #define PVFY        0d900
 #define PVTX        0d528               // the preview's text
-#define INFOY       0d100
+#define INFOY       0d120
 #define PVWORDS     (0d1+0d2*PVCAP+0d2)
 #define GHWORDS     (0d4+0d2*GHCAP+0d2)
 // The library's size.
+// gen_library.py writes from here: defines
 #define LIBN        0d29                // entries
 #define LIBPAGES    0d2                 // pages of up to 16
+// gen_library.py writes to here: defines
 
 // A call to bank 0's routine R, through far. AC is R's answer, IO as R leaves it.
 #define FAR(R) lac [R:0]; dac i [farTo:0]; jsp i [far:0]
@@ -81,21 +85,26 @@ llR1,   lac i pp3
 llClip, FAR(clipField)
         jmp i llR
 
-// Opens the screen on the page last shown, no row lit; the caller has stopped the run and
-// closed any list. Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+// Opens the screen on the built-in page last shown, no row lit; the caller has stopped the run
+// and closed any list. Called via jsp i, the return in AC; returns by jmp i. AC and IO are
+// clobbered.
 libOpen, dac loR
         jsp lUnlit
+        dzm libMode
         lac [jump tail:0 next(parameter)]
         dac i [scrPv:1]
         jsp lPage
         lac [scrList:1]
         dac i [scrGo:0]
+        lac [libHit:3]
+        dac i [scrHit:0]
         FAR(setLook)
         jmp i loR
 
-// Takes a hit at (hx, hy) while the screen is open. A key acts on a fresh press. A row lights
-// and shows its preview. Called via jsp i, the return in AC; returns by jmp i. AC and IO are
-// clobbered.
+// Takes a hit at (hx, hy) while the screen is open. A key acts on a fresh press, the second
+// row's in lifetape.ac. A row lights and shows its preview; on a tape's page or the paper
+// record's, lifetape.ac takes it. Called via jsp i, the return in AC; returns by jmp i. AC and
+// IO are clobbered.
 libHit, dac lhR
         lac i [hy:0]
         sub [KEYTHR]
@@ -131,7 +140,13 @@ lh2,    lac lk
         lac lk
         add [0d8]
         dac lk
-lh3,    lac lPg
+lh3,    lac libMode
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lh4
+        lio lk
+        jsp i [tpRow:6]
+        jmp i lhR
+lh4,    lac lPg
         sal 4s
         add lk
         dac lk                          // the entry
@@ -151,6 +166,11 @@ lhKey,  lac i [fresh:0]
         add [0d16]                      // a label's left reach belongs to it
         sar 7s
         dac lk
+        lac i [hy:0]
+        sub [KEYSPLIT]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp lhK3
+        lac lk
         sub [6]
         SKIP_NEXT_IF_AC_NEGATIVE
         jmp i lhR
@@ -161,10 +181,22 @@ lhK1,   lac .
         dap lhK2
 lhK2,   jsp .
         jmp i lhR
+lhK3,   lac lk
+        sub [5]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp i lhR
+        lio lk
+        jsp i [tpKey2:6]
+        jmp i lhR
 
 // The keys, each called via jsp. AC and IO are clobbered.
-// PREV and NEXT turn to the page before or after, round the pages, with no row lit.
+// PREV and NEXT turn to the page before or after, round the pages, with no row lit; a tape's
+// pages are lifetape.ac's, and the paper record's one page does not turn.
 kPrev,  dap kpx
+        lio [-1]
+        lac libMode
+        SKIP_NEXT_IF_AC_ZERO
+        jmp kpT
         lac lPg
         SKIP_NEXT_IF_AC_NOT_ZERO
         law LIBPAGES
@@ -172,6 +204,10 @@ kPrev,  dap kpx
         dac lPg
         jmp kn1
 kNext,  dap kpx
+        lio [1]
+        lac libMode
+        SKIP_NEXT_IF_AC_ZERO
+        jmp kpT
         idx lPg
         sub [LIBPAGES]
         SKIP_NEXT_IF_AC_NEGATIVE
@@ -180,6 +216,9 @@ kn1,    jsp lUnlit
         lac [jump tail:0 next(parameter)]
         dac i [scrPv:1]
         jsp lPage
+        jmp kpx
+kpT,    SKIP_NEXT_IF_DIFFERENT [1]
+        jsp i [tpTurn:6]
 kpx,    jmp .
 
 // TURN turns the lit pattern a quarter turn clockwise, and FLIP swaps its left for right.
@@ -212,7 +251,8 @@ kFlip,  dap kfx
 kfx,    jmp .
 
 // PLACE puts a lit pattern into the pen's hand, or a lit whole field in place of the field
-// with the counter at 0. Either closes the screen.
+// with the counter at 0; a tape's record too large for the pen replaces the field with its own
+// size, edge and counter (lifetape.ac's tpField). Each closes the screen.
 kPlace, dap kcx
         lac lLit
         SKIP_NEXT_IF_AC_NOT_ZERO
@@ -220,7 +260,12 @@ kPlace, dap kcx
         jsp lIsPat
         SKIP_NEXT_IF_AC_ZERO
         jmp kc1
-        jsp lSnap
+        lac lLit
+        SKIP_NEXT_IF_SAME [LIBN+1]
+        jmp kc4
+        jsp i [tpField:6]
+        jmp kc3
+kc4,    jsp lSnap
         lac lLit
         add [libData-1]
         dap kc2
@@ -243,10 +288,12 @@ kCancel, dap kxx
         jsp lClose
 kxx,    jmp .
 
-// Closes the screen. The frame goes back to the field, and the lattice waits for a fresh press,
-// so the pen still on the key does not draw. Called via jsp. AC and IO are clobbered.
+// Closes the screen, back on the built-in pages for its next opening. The frame goes back to
+// the field, and the lattice waits for a fresh press, so the pen still on the key does not
+// draw. Called via jsp. AC and IO are clobbered.
 lClose, dap lcx
         jsp lUnlit
+        dzm libMode
         dzm i [scrGo:0]
         law 1
         dac i [needFresh:0]
@@ -265,15 +312,52 @@ li1,    lac .
         xor [1]
 lix,    jmp .
 
-// Shows page lPg's names. Called via jsp. AC is clobbered, IO is preserved.
+// Shows the page for the mode: built-in page lPg's names, a tape's page or the paper record's
+// (lifetape.ac's tpgBuf and ppgBuf), with the mode's second row of keys.
+// Called via jsp. AC is clobbered, IO is preserved.
 lPage,  dap lpgx
+        lac libMode
+        add [k2Tab]
+        dap lpg2
+lpg2,   lac .
+        dac i [scrK2:1]
+        lac libMode
+        SKIP_NEXT_IF_AC_ZERO
+        jmp lpg3
         lac lPg
         add [pgTab]
         dap lpg1
 lpg1,   lac .
-        ior [jump next(parameter)]
+        jmp lpg4
+lpg3,   add [pgModeT-1]
+        dap lpg5
+lpg5,   lac .
+lpg4,   ior [jump next(parameter)]
         dac i [scrPg:1]
 lpgx,   jmp .
+
+// lifetape.ac's hold on the screen, by IO: 0 puts out the lit row, 1 lights the record's entry,
+// LIBN, with its preview, 2 closes the screen, 3 shows the page for the mode.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+libCtl, dac lcR
+        dio lt3
+        lac lt3
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp lcU
+        SKIP_NEXT_IF_DIFFERENT [1]
+        jmp lcL
+        SKIP_NEXT_IF_DIFFERENT [2]
+        jmp lcC
+        jsp lPage
+        jmp i lcR
+lcU,    jsp lUnlit
+        jmp i lcR
+lcL,    law LIBN
+        dac lk
+        jsp lLight
+        jmp i lcR
+lcC,    jsp lClose
+        jmp i lcR
 
 // Lights entry lk's row, putting out the one lit before, and shows its preview.
 // Called via jsp. AC and IO are clobbered.
@@ -656,6 +740,7 @@ libEnd, dac leR
 // Breaks must be off and the display halted. Called via jsp i, the return in AC; returns by
 // jmp i. AC and IO are clobbered.
 startOver, dac soR
+        jsp i [tpInit:6]
         FAR(closeList)
         lac i [scrGo:0]
         SKIP_NEXT_IF_AC_ZERO
@@ -692,9 +777,9 @@ so1,    dzm i pq
         jmp so1
         jmp i soR
 
-// Takes UNDO's copy of the field, its row flags, the generation and the counter's digits,
-// before an edit. Called via jsp i, the return in AC; returns by jmp i. lSnap is the same
-// routine called via jsp. AC is clobbered, IO is preserved.
+// Takes UNDO's copy of the field, its row flags, the generation, the counter's digits, the size
+// and the edge, before an edit. Called via jsp i, the return in AC; returns by jmp i. lSnap is
+// the same routine called via jsp. AC is clobbered, IO is preserved.
 libSnap, dac lsR
         jsp lSnap
         jmp i lsR
@@ -726,18 +811,64 @@ ls2,    lac i pp3
         jmp ls2
         lac i [gen:0]
         dac uGen
+        lac i [sizeSel:0]
+        dac uSize
+        lac i [edgeSel:0]
+        dac uEdge
         law 1
         dac i [undoOk:0]
 lsx,    jmp .
 
 // UNDO swaps the field, its flags, the generation and the counter with the copy, so a second
-// UNDO puts back the first's. It does nothing with no copy. Called via jsp i, the return in AC;
-// returns by jmp i. AC and IO are clobbered.
+// UNDO puts back the first's. A copy taken at another size or edge, before a tape's record
+// replaced the field, has its size and edge set first, DEAD while the size is set, so the
+// field swapped in keeps its band. It does nothing with no copy. Called via jsp i, the return
+// in AC; returns by jmp i. AC and IO are clobbered.
 libUndo, dac luR
         lac i [undoOk:0]
         SKIP_NEXT_IF_AC_NOT_ZERO
         jmp i luR
+        lac i [sizeSel:0]
+        SKIP_NEXT_IF_SAME uSize
+        jmp lu4
+        lac i [edgeSel:0]
+        SKIP_NEXT_IF_SAME uEdge
+        jmp lu4
+        jmp lu5
+// The field is parked in lifetape.ac's scratch field while the size is set, since the size's
+// clip would cut it, then the copy put in its place and the field in the copy's.
+lu4,    lac [field:4]
+        dac pp3
+        lac [scrFld:4]
+        dac pq
+        jsp lSpan
+        lac i [sizeSel:0]
+        lio uSize
+        dac uSize
+        dio i [sizeSel:0]
+        lac i [edgeSel:0]
+        dac lt3
+        lac uEdge
+        dac lk
+        lac lt3
+        dac uEdge
+        dzm i [edgeSel:0]
+        jsp sizeSet
+        lac lk
+        dac i [edgeSel:0]
+        jsp edgeSet
+        lac [fldU:4]
+        dac pp3
         lac [field:4]
+        dac pq
+        jsp lSpan
+        lac [scrFld:4]
+        dac pp3
+        lac [fldU:4]
+        dac pq
+        jsp lSpan
+        jmp lu6
+lu5,    lac [field:4]
         dac pp3
         lac [fldU:4]
         dac pq
@@ -751,7 +882,7 @@ lu2,    lac i pp3
         idx pq
         isp lcnt
         jmp lu2
-        lac [dig:0]
+lu6,    lac [dig:0]
         dac pp3
         lac [uDig:3]
         dac pq
@@ -773,14 +904,34 @@ lu3,    lac i pp3
         dac i [dirty:0]
         jmp i luR
 
+// Copies FIELDSPAN words, a field with its spare row and flags, from pp3 to pq.
+// Called via jsp. AC is clobbered, IO is preserved.
+lSpan,  dap lspx
+        law i FIELDSPAN
+        dac lcnt
+lsp1,   lac i pp3
+        dac i pq
+        idx pp3
+        idx pq
+        isp lcnt
+        jmp lsp1
+lspx,   jmp .
+
 // The keys' actions, by key from the left.
 keyT,   kPrev; kNext; kTurn; kFlip; kPlace; kCancel
+
+// By mode, the second row's keys' list (lifetape.ac's), and for modes 1 and 2 the page.
+k2Tab,  jump k2Built:1 next(parameter)
+        jump k2Tape:1 next(parameter)
+        jump k2Paper:1 next(parameter)
+pgModeT, tpgBuf:1; ppgBuf:1
 
 // The library's state. lPg is the page shown, lLit the lit entry plus 1, or 0; oSw, oNr and oNc
 // the turn the keys left. The ghost's place is (gR, gC); plDown is set by a press that moves it
 // and cleared by the lift's drop.
 lPg,    0
 lLit,   0
+libMode, 0                              // the pages shown: 0 built in, 1 a tape's, 2 the paper record's
 oSw,    0
 oNr,    0
 oNc,    0
@@ -794,6 +945,8 @@ ghOn,   0                               // a ghost is shown
 gR,     0
 gC,     0
 plDown, 0
+uSize,  0                               // UNDO's copy of the size and the edge
+uEdge,  0
 uGen,   0                               // UNDO's copy of the generation and the digits
 uDig,
         table 7
@@ -808,6 +961,7 @@ leR,    0
 lsR,    0
 luR,    0
 soR,    0
+lcR,    0
 pp3,    0
 pq,     0
 lw,     0
@@ -823,8 +977,10 @@ lFst,   0
 gLR,    0
 gLC,    0
 
+// gen_library.py writes from here: bank 3
 // The entries, by entry. Each has its kind (0 a pattern, 1 a whole field), its cells' list or
-// its patSel, its row's parameter word on its page, and its preview's text.
+// its patSel, its row's parameter word on its page, and its preview's text. The last, LIBN,
+// is a tape's record, its first three words set by lifetape.ac's recSetup.
 libKind,
         0                               // BLOCK
         0                               // BEEHIVE
@@ -855,6 +1011,7 @@ libKind,
         0                               // PIHEPTO
         1                               // GUNS
         1                               // ALGOL
+        0                               // a tape's record
 libData,
         lc0:3
         lc1:3
@@ -885,6 +1042,7 @@ libData,
         lc26:3
         0
         1
+        recList:4
 libRow,
         lr0:1
         lr1:1
@@ -915,6 +1073,7 @@ libRow,
         lr26:1
         lr27:1
         lr28:1
+        lr0:1
 libInfo,
         li0:1
         li1:1
@@ -945,6 +1104,7 @@ libInfo,
         li26:1
         li27:1
         li28:1
+        recInfo:1
 
 // By page, its names' first word.
 pgTab,
@@ -1058,6 +1218,7 @@ lc25,                                    // BHEPTO
 lc26,                                    // PIHEPTO
     0d8127; 0d8128; 0d8129; 0d8255; 0d8257; 0d8383; 0d8385
     PATEND
+// gen_library.py writes to here: bank 3
 
         constants
 
@@ -1082,7 +1243,10 @@ scrList, scale(1) intensity(LBLI) lpon next(point)
         type340 "\UPLACE"
         ITEM(KEYY, 0d640)
         type340 "\UCANCEL"
+        ITEM(BARY, 0d760)
+scrSt,  type340 "\U\U\U\U\U\U\U\U\U\U\U"  // the status word, written by lifetape.ac
         next(subroutine)
+scrK2,  jump k2Built:1 next(parameter)  // to the second row of keys, which go on to scrPg
 scrPg,  jump tail:0 next(parameter)     // to the page's names, which end at scrPv
 scrPv,  jump tail:0 next(parameter)     // to the preview shown, or on
 
@@ -1103,6 +1267,7 @@ ghB,
         table GHWORDS
 
 // The pages' names.
+// gen_library.py writes from here: bank 1
 // Page 1.
 pg0,    ITEM(BARY, 0d160)
         type340 "\USTILL LIFES AND OSCILLATORS  1/2"
@@ -1289,5 +1454,6 @@ li28,    ITEM(INFOY, PVTX)
         type340 "\UWHOLE FIELD"
         next(subroutine)
         jump tail:0 next(parameter)
+// gen_library.py writes to here: bank 1
 
 bank 3

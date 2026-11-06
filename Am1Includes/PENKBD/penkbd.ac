@@ -1,0 +1,837 @@
+// penkbd.ac -- the pen keyboard's code: a keyboard of keys the light pen types on, shown in
+// place of the program's frame, giving the text typed back at OK. Four entries: pkInit at the
+// program's start, pkOpen to open it on a block (penkbd.ah), pkHit for each light-pen hit while
+// it is open, pkTick on each pass of the program's main loop while it is open.
+// Include penkbd.ah first, then this file once, in any bank, and penkbdlist.ac once, in any
+// bank. The code runs with the extend window open, reaches the list and the caller's words by
+// their 16-bit addresses, and issues no IOT: the program reads the pen and the clock and starts
+// the display. It is not reentrant; call it from the main loop only. Every entry is entered by
+// jda with the window open, farjda (memory.ah) from another bank: AC the clock in ms, IO the
+// argument; it returns with the window open, its answer in AC. The bank's literals are placed
+// by the program's constants.
+// The text is kept a character a word in pkCh, its 340 code with PKLOWER for a lower-case
+// letter. It is written as 340 text, three codes to a word, an upper shift first and a shift
+// before each change of case, into the field with the cursor after it, and into the caller's
+// buffer at OK.
+// 04-Nov-2026, Claude: the library, from Sketchpad's pen keyboard.
+
+#ifndef PENKBD_AC
+#define PENKBD_AC
+
+// The key past the last: no key.
+#define PKNOKEY (pkBlkE - pkBlkT)
+
+// The keyboard closed, at the program's start.
+// Entry: AC = the clock (not used). Exit: AC = 0. IO is preserved. Called via jda.
+pkInit, 0
+    local piRtn
+    dac piRtn
+    dzm pkOn
+    dzm pkPress
+    law PKNOKEY
+    dac pkLit
+    cla
+    jmp i piRtn
+piRtn, 0
+    endloc
+
+// Open the keyboard on a block (penkbd.ah): read the buffer's text, write the prompt, the field
+// and the keys, and start a press, its gap counted from now, so that a pen still resting where
+// it touched acts on nothing until it is lifted. The list is whole before the answer, so the
+// program may start it at once.
+// Entry: AC = the clock; IO = the block's 16-bit address. Exit: AC = the list's 16-bit address,
+// for the program's dla. IO is clobbered. Called via jda.
+pkOpen, 0
+    local poRtn, poLimOk, poRd, poLet, poSym, poPut, poShift, poNext, poDone, poPrm, poPrEnd, \
+        poP, poCh, poSt, poC
+    dac poRtn
+    dio poP
+    lac i poP
+    dac pkKind
+    idx poP
+    lac i poP
+    dac pkLim
+    sub [PKMAX]
+    spa                 // skip if at or past PKMAX
+    jmp poLimOk
+    law PKMAX
+    dac pkLim
+poLimOk,
+    idx poP
+    lac i poP
+    dac pkPrP
+    idx poP
+    lac i poP
+    dac pkBuf
+    idx poP
+    lac i poP
+    dac pkRun
+    dzm pkShift
+    law PKNOKEY
+    dac pkLit
+
+    // The starting value: the buffer's codes up to its end, each shift changing the case, a
+    // letter kept with its case, a set 1 character as it is, a space in either set; set 2's
+    // other characters, which no key types, and the controls are passed over.
+    dzm pkN
+    lac pkBuf
+    jda pkUnp
+    law PKCUP
+    dac poSt
+    law i PKBUFC
+    dac poC
+poRd,
+    jsp pkGet
+    dac poCh
+    sad [PKCEND]        // skip unless the end
+    jmp poDone
+    sad [PKCUP]         // skip unless an upper shift
+    jmp poShift
+    sad [PKCLOW]        // skip unless a lower shift
+    jmp poShift
+    sad [PKCSPACE]      // skip unless a space
+    jmp poPut
+    sza i               // skip unless the blob
+    jmp poNext
+    sub [033]
+    sma                 // skip if a letter, 01 to 032
+    jmp poSym
+    lac poSt
+    sas [PKCLOW]        // skip if lower case
+    jmp poLet
+    lac poCh
+    ior [PKLOWER]
+    jmp poPut
+poLet,
+    lac poCh
+    jmp poPut
+poSym,
+    lac poCh
+    sub [040]
+    spa                 // skip unless a control, 033 to 037
+    jmp poNext
+    lac poSt
+    sas [PKCUP]         // skip if upper case, set 1
+    jmp poNext
+    lac poCh
+poPut,
+    jda pkAdd
+    jmp poNext
+poShift,
+    dac poSt
+poNext,
+    isp poC
+    jmp poRd
+poDone,
+
+    // The prompt, its codes up to its end or the run's last place, padded.
+    lac [pkPrm:*]
+    jda pkPack
+    lac pkPrP
+    jda pkUnp
+poPrm,
+    lac pkpC
+    sad [PKPWC - 1]     // skip unless the run is full but for its end
+    jmp poPrEnd
+    jsp pkGet
+    sad [PKCEND]        // skip unless the prompt's end
+    jmp poPrEnd
+    jda pkEmit
+    jmp poPrm
+poPrEnd,
+    law PKPWC
+    jda pkFill
+
+    jsp pkShow
+    jsp pkKeys
+    lac pkOpen
+    dac pkHitAt
+    law 1
+    dac pkPress
+    dac pkOn
+    lac [pkList:*]
+    jmp i poRtn
+poRtn, 0
+poP, 0
+poCh, 0
+poSt, 0
+poC, 0
+    endloc
+
+// A light-pen hit while the keyboard is open; while it is closed it does nothing. Every hit
+// keeps the press going (pkTick ends it); only a press's first hit acts, so a pen held on a key
+// types once and a pen dragged over the keys types nothing past the key it came down on. A
+// press that begins off the keys, or on a key this keyboard does not have, does nothing. A
+// character key types its character, in lower case for a letter while Shift is on, unless the
+// text is at its limit; Shift toggles the case; Back takes the last character off and Clear all
+// of them; OK writes the text into the caller's buffer and closes, Cancel closes. A key that
+// acts flashes.
+// Entry: AC = the clock; IO = the hit as drc gives it, x and y each without its low bit, x in
+// the high 9 bits. Exit: AC = PKSTILL while the keyboard is open (or closed before the hit),
+// PKOK or PKCANCEL once it has closed. IO is clobbered. Called via jda.
+pkHit, 0
+    local phRtn, phNone, phSpec, phSpJ, phSpT, phShf, phBack, phClear, phShow, phOK, phFlu, \
+        phOKA, phCancel, phClose, phBk, phFl, phK, phP, phCode, phAns
+    dac phRtn
+    lac pkOn
+    sza i               // skip if the keyboard is open
+    jmp phNone
+    lac pkHit
+    dac pkHitAt
+    lac pkPress
+    sza                 // skip unless a press is under way
+    jmp phNone
+    law 1
+    dac pkPress
+
+    // The hit's x and y in the 340's units, each low bit restored as 0.
+    dio pkHW
+    lac pkHW
+    and [0777]
+    sal 1s
+    dac pkHY
+    lac pkHW
+    sar 9s
+    and [0777]
+    sal 1s
+    dac pkHX
+
+    jsp pkFind
+    dac phK
+    sad [PKNOKEY]       // skip unless no key is under the hit
+    jmp phNone
+    add [pkCode:.]
+    dac phP
+    lac i phP
+    dac phCode
+    jda pkHas
+    sza i               // skip if this keyboard has the key
+    jmp phNone
+    lac phCode
+    and [PKSPEC]
+    sza                 // skip unless an action key
+    jmp phSpec
+
+    // A character, a letter in the case Shift gives.
+    lac pkN
+    sad pkLim           // skip unless the text is at its limit
+    jmp phNone
+    lac phCode
+    and [PKLET]
+    sza i               // skip if a letter
+    jmp phBk
+    lac pkShift
+    sza i               // skip if Shift is on
+    jmp phBk
+    lac phCode
+    and [077]
+    ior [PKLOWER]
+    jmp phFl
+phBk,
+    lac phCode
+    and [077]
+phFl,
+    jda pkAdd
+    jmp phShow
+
+    // An action key, by its number, through a jump table.
+phSpec,
+    lac phCode
+    and [07]
+    add [phSpT]
+    dap phSpJ
+phSpJ, jmp .
+phSpT,
+    jmp phShf           // PKASHIFT
+    jmp phBack          // PKABACK
+    jmp phClear         // PKACLEAR
+    jmp phOK            // PKAOK
+    jmp phCancel        // PKACANCEL
+
+phShf,
+    lac pkShift
+    xor [1]
+    dac pkShift
+    jsp pkKeys
+    jmp phNone
+phBack,
+    lac pkN
+    sza i               // skip unless the text is empty
+    jmp phNone
+    law i 1
+    add pkN
+    dac pkN
+    jmp phShow
+phClear,
+    dzm pkN
+phShow,
+    jsp pkShow
+    lac phK
+    jda pkFlash
+    jmp phNone
+phOK,
+    lac pkBuf
+    jda pkPack
+    jsp pkText
+    lac pkRun
+    sza i               // skip if the buffer is a fixed run
+    jmp phFlu
+    jda pkFill
+    jmp phOKA
+phFlu,
+    jsp pkFlush
+phOKA,
+    law PKOK
+    jmp phClose
+phCancel,
+    law PKCANCEL
+phClose,
+    dac phAns
+    jsp pkClose
+    lac phAns
+    jmp i phRtn
+phNone,
+    cla
+    jmp i phRtn
+phRtn, 0
+phK, 0
+phP, 0
+phCode, 0
+phAns, 0
+    endloc
+
+// The keyboard's tick, each pass of the main loop while it is open. A press with no hit for
+// PKGAPMS ends, the pen lifted or gone, so the next hit acts; a flash that has run PKFLASHMS
+// ends, its key put out.
+// Entry: AC = the clock. Exit: AC = 0. IO is preserved. Called via jda.
+pkTick, 0
+    local ptRtn, ptFl, ptOut
+    dac ptRtn
+    lac pkPress
+    sza i               // skip if a press is under way
+    jmp ptFl
+    lac pkTick
+    PUI_SINCE(pkHitAt)
+    sub [PKGAPMS]
+    spa                 // skip once no hit has come for PKGAPMS
+    jmp ptFl
+    dzm pkPress
+ptFl,
+    lac pkLit
+    sad [PKNOKEY]       // skip if a key is lit
+    jmp ptOut
+    lac pkTick
+    PUI_SINCE(pkLitAt)
+    sub [PKFLASHMS]
+    spa                 // skip once the flash has run its time
+    jmp ptOut
+    jsp pkDark
+ptOut,
+    cla
+    jmp i ptRtn
+ptRtn, 0
+    endloc
+
+// Close the keyboard: hits are no longer its, and a lit key is put out. The program shows its
+// own frame again.
+// AC is clobbered, IO preserved. Called via jsp.
+pkClose,
+    local pcRtn
+    dap pcRtn
+    dzm pkOn
+    jsp pkDark
+pcRtn, jmp .
+    endloc
+
+// Whether this keyboard has a key: every key on the text keyboard; on the number keyboards
+// those marked PKKNUM, and the point on the decimal one.
+// Entry: AC = the key's code word. Exit: AC = 1 if it has the key, 0 if not. IO is preserved.
+// Called via jda.
+pkHas, 0
+    local haRtn, haYes, haNo
+    dap haRtn
+    lac pkKind
+    sza i               // skip unless the text keyboard
+    jmp haYes
+    lac pkHas
+    and [PKKNUM]
+    sza                 // skip unless a key of every number keyboard
+    jmp haYes
+    lac pkKind
+    sas [PKDEC]         // skip if the decimal keyboard
+    jmp haNo
+    lac pkHas
+    sas [PKCDOT]        // skip if the point
+    jmp haNo
+haYes,
+    law 1
+    jmp haRtn
+haNo,
+    cla
+haRtn, jmp .
+    endloc
+
+// The key under the hit at pkHX, pkHY, the first whose record holds it.
+// Exit: AC = the key, or PKNOKEY. IO is preserved. Called via jsp.
+pkFind,
+    local kdRtn, kdLoop, kdN1, kdN2, kdN3, kdN4, kdP, kdK
+    dap kdRtn
+    lac [pkRec:.]
+    dac kdP
+    dzm kdK
+kdLoop,
+    lac pkHX
+    sub i kdP
+    spa                 // skip unless left of the key
+    jmp kdN4
+    idx kdP
+    lac pkHX
+    sub i kdP
+    sma                 // skip if short of the key's right
+    jmp kdN3
+    idx kdP
+    lac pkHY
+    sub i kdP
+    spa                 // skip unless below the key
+    jmp kdN2
+    idx kdP
+    lac pkHY
+    sub i kdP
+    sma                 // skip if short of the key's top
+    jmp kdN1
+    lac kdK
+    jmp kdRtn
+kdN4,
+    idx kdP
+kdN3,
+    idx kdP
+kdN2,
+    idx kdP
+kdN1,
+    idx kdP
+    idx kdK
+    sas [PKNOKEY]       // skip once every key is tried
+    jmp kdLoop
+    law PKNOKEY
+kdRtn, jmp .
+kdP, 0
+kdK, 0
+    endloc
+
+// Write each key's text for the keyboard's kind and Shift's case, every key unlit, Shift lit
+// while on. A character key's word is a shift, its character and the end, or blank when this
+// keyboard does not have it; Shift's and Space's three words are their text, or blank on a
+// number keyboard; the other action keys' text never changes.
+// AC and IO are clobbered. Called via jsp.
+pkKeys,
+    local kkRtn, kkLoop, kkUp, kkWord, kkBlank, kkPut, kkHide, kkSp, kkTp, kkTpl0, kkTpl, \
+        kkNext, kkStep, kkB, kkC, kkK, kkN, kkP, kkT, kkW, kkCode
+    dap kkRtn
+    lac [pkBlkT:.]
+    dac kkB
+    lac [pkCode:.]
+    dac kkC
+    dzm kkK
+    law PKNOKEY
+    dac pkLit
+kkLoop,
+    lac i kkB
+    dac kkP
+    add [3]
+    dac kkT
+    lac [PKKEY]
+    dac i kkP
+    lac i kkC
+    dac kkCode
+    and [PKSPEC | PKHIDE]
+    sza                 // skip if a character key
+    jmp kkHide
+    lac kkCode
+    jda pkHas
+    sza i               // skip if this keyboard has the key
+    jmp kkBlank
+    lac kkCode
+    and [PKLET]
+    sza i               // skip if a letter
+    jmp kkUp
+    lac pkShift
+    sza i               // skip if Shift is on
+    jmp kkUp
+    lac [PKCLOW * 010000 + PKCEND]
+    jmp kkWord
+kkUp,
+    lac [PKCUP * 010000 + PKCEND]
+kkWord,
+    dac kkW
+    lac kkCode
+    and [077]
+    ral 6s
+    ior kkW
+    jmp kkPut
+kkBlank,
+    lac [PKBLANK]
+kkPut,
+    dac i kkT
+    jmp kkNext
+
+    // Shift and Space take three words from their text, or the blank on a number keyboard.
+kkHide,
+    lac kkCode
+    and [PKHIDE]
+    sza i               // skip if Shift or Space
+    jmp kkNext
+    lac kkCode
+    and [PKSPEC]
+    sza i               // skip if Shift
+    jmp kkSp
+    lac [pkShT:.]
+    jmp kkTp
+kkSp,
+    lac [pkSpT:.]
+kkTp,
+    dac kkW
+    lac pkKind
+    sza i               // skip unless the text keyboard
+    jmp kkTpl0
+    lac [pkBlT:.]
+    dac kkW
+kkTpl0,
+    law i 3
+    dac kkN
+kkTpl,
+    lac i kkW
+    dac i kkT
+    idx kkW
+    idx kkT
+    isp kkN
+    jmp kkTpl
+kkNext,
+    lac kkCode
+    sas [PKSHIFTC]      // skip if Shift
+    jmp kkStep
+    lac pkShift
+    sza i               // skip if Shift is on
+    jmp kkStep
+    lac [PKLIT]
+    dac i kkP
+kkStep,
+    idx kkB
+    idx kkC
+    idx kkK
+    sas [PKNOKEY]       // skip once every key is written
+    jmp kkLoop
+kkRtn, jmp .
+kkB, 0
+kkC, 0
+kkK, 0
+kkN, 0
+kkP, 0
+kkT, 0
+kkW, 0
+kkCode, 0
+    endloc
+
+// Write the field, the text with the cursor after it, padded.
+// AC and IO are clobbered. Called via jsp.
+pkShow,
+    local ksRtn
+    dap ksRtn
+    lac [pkFld:*]
+    jda pkPack
+    jsp pkText
+    law PKCLOW
+    sas pkCase          // skip if already lower case, set 2's
+    jda pkEmit
+    law PKCURSOR
+    jda pkEmit
+    law PKFWC
+    jda pkFill
+ksRtn, jmp .
+    endloc
+
+// Emit the text, an upper shift and then each character, a shift before each change of case.
+// Exit: pkCase = the case the text ends in. AC and IO are clobbered. Called via jsp.
+pkText,
+    local ktxRtn, ktxLoop, ktxCh, ktxDone, ktxP, ktxC
+    dap ktxRtn
+    law PKCUP
+    dac pkCase
+    jda pkEmit
+    lac pkN
+    sza i               // skip unless the text is empty
+    jmp ktxDone
+    cma
+    dac ktxC
+    lac [pkCh:.]
+    dac ktxP
+ktxLoop,
+    lac i ktxP
+    and [PKLOWER]
+    sza                 // skip if upper case
+    law PKCLOW
+    sza i               // skip if lower case, AC being PKCLOW
+    law PKCUP
+    sad pkCase          // skip if the case changes
+    jmp ktxCh
+    dac pkCase
+    jda pkEmit
+ktxCh,
+    lac i ktxP
+    and [077]
+    jda pkEmit
+    idx ktxP
+    isp ktxC
+    jmp ktxLoop
+ktxDone,
+ktxRtn, jmp .
+ktxP, 0
+ktxC, 0
+    endloc
+
+// Add a character to the text, unless it is at its limit.
+// Entry: AC = the character. AC is clobbered, IO preserved. Called via jda.
+pkAdd, 0
+    local kaRtn, kaP
+    dap kaRtn
+    lac pkN
+    sad pkLim           // skip unless the text is at its limit
+    jmp kaRtn
+    add [pkCh:.]
+    dac kaP
+    lac pkAdd
+    dac i kaP
+    idx pkN
+kaRtn, jmp .
+kaP, 0
+    endloc
+
+// Light a key for PKFLASHMS from the latest hit (pkTick puts it out), putting out the one lit
+// before.
+// Entry: AC = the key. AC and IO are clobbered. Called via jda.
+pkFlash, 0
+    local kfRtn, kfP
+    dap kfRtn
+    jsp pkDark
+    lac pkFlash
+    dac pkLit
+    add [pkBlkT:.]
+    dac kfP
+    lac i kfP
+    dac kfP
+    lac [PKLIT]
+    dac i kfP
+    lac pkHitAt
+    dac pkLitAt
+kfRtn, jmp .
+kfP, 0
+    endloc
+
+// Put out the key a flash lit, if any, back to its resting word.
+// AC is clobbered, IO preserved. Called via jsp.
+pkDark,
+    local kdkRtn
+    dap kdkRtn
+    lac pkLit
+    sad [PKNOKEY]       // skip if a key is lit
+    jmp kdkRtn
+    jda pkRest
+    law PKNOKEY
+    dac pkLit
+kdkRtn, jmp .
+    endloc
+
+// Write a key's resting parameter word: PKLIT for Shift while Shift is on, PKKEY otherwise.
+// Entry: AC = the key. AC is clobbered, IO preserved. Called via jda.
+pkRest, 0
+    local krRtn, krPlain, krPut, krP, krW
+    dap krRtn
+    lac pkRest
+    add [pkCode:.]
+    dac krP
+    lac i krP
+    sas [PKSHIFTC]      // skip if Shift
+    jmp krPlain
+    lac pkShift
+    sza i               // skip if Shift is on
+    jmp krPlain
+    lac [PKLIT]
+    jmp krPut
+krPlain,
+    lac [PKKEY]
+krPut,
+    dac krW
+    lac pkRest
+    add [pkBlkT:.]
+    dac krP
+    lac i krP
+    dac krP
+    lac krW
+    dac i krP
+krRtn, jmp .
+krP, 0
+krW, 0
+    endloc
+
+// Start packing codes three to a word at a 16-bit address.
+// Entry: AC = the address. AC is clobbered, IO preserved. Called via jda.
+pkPack, 0
+    local kpkRtn
+    dap kpkRtn
+    lac pkPack
+    dac pkpP
+    dzm pkpW
+    dzm pkpN
+    dzm pkpC
+kpkRtn, jmp .
+    endloc
+
+// Pack a code; a word is written once it holds three.
+// Entry: AC = the code. AC is clobbered, IO preserved. Called via jda.
+pkEmit, 0
+    local keRtn
+    dap keRtn
+    idx pkpC
+    lac pkpW
+    ral 6s
+    ior pkEmit
+    dac pkpW
+    idx pkpN
+    sas [3]             // skip once the word holds three codes
+    jmp keRtn
+    lac pkpW
+    dac i pkpP
+    idx pkpP
+    dzm pkpW
+    dzm pkpN
+keRtn, jmp .
+    endloc
+
+// End a run of a fixed number of codes with upper shifts up to its last place, then the end
+// code.
+// Entry: AC = the run's codes, three times its words. AC and IO are clobbered. Called via jda.
+pkFill, 0
+    local kflRtn, kflLoop, kflEnd, kflE
+    dap kflRtn
+    law i 1
+    add pkFill
+    dac kflE
+kflLoop,
+    lac pkpC
+    sub kflE
+    sma                 // skip while short of the end's place
+    jmp kflEnd
+    law PKCUP
+    jda pkEmit
+    jmp kflLoop
+kflEnd,
+    law PKCEND
+    jda pkEmit
+kflRtn, jmp .
+kflE, 0
+    endloc
+
+// End a text with the end code, repeated to the end of its word.
+// AC and IO are clobbered. Called via jsp.
+pkFlush,
+    local kfuRtn, kfuLoop
+    dap kfuRtn
+kfuLoop,
+    law PKCEND
+    jda pkEmit
+    lac pkpN
+    sza                 // skip once the word is written
+    jmp kfuLoop
+kfuRtn, jmp .
+    endloc
+
+// Start unpacking codes three to a word from a 16-bit address.
+// Entry: AC = the address. AC is clobbered, IO preserved. Called via jda.
+pkUnp, 0
+    local kuRtn
+    dap kuRtn
+    lac pkUnp
+    dac pkuP
+    dzm pkuN
+kuRtn, jmp .
+    endloc
+
+// The next code unpacked.
+// Exit: AC = the code. IO is preserved. Called via jsp.
+pkGet,
+    local kgRtn, kgNext
+    dap kgRtn
+    lac pkuN
+    sza                 // skip if the word is used up
+    jmp kgNext
+    lac i pkuP
+    dac pkuW
+    idx pkuP
+    law 3
+    dac pkuN
+kgNext,
+    law i 1
+    add pkuN
+    dac pkuN
+    lac pkuW
+    ral 6s
+    dac pkuW
+    and [077]
+kgRtn, jmp .
+    endloc
+
+// The keyboard's state: open, a press under way and its latest hit, the key lit and the flash's
+// start; the block's words; the text and its length, Shift, the case the text ends in, the hit;
+// and the packer's and the unpacker's words.
+pkOn, 0
+pkPress, 0
+pkHitAt, 0
+pkLit, 0
+pkLitAt, 0
+pkKind, 0
+pkLim, 0
+pkPrP, 0
+pkBuf, 0
+pkRun, 0
+pkN, 0
+pkShift, 0
+pkCase, 0
+pkHW, 0
+pkHX, 0
+pkHY, 0
+pkpP, 0
+pkpW, 0
+pkpN, 0
+pkpC, 0
+pkuP, 0
+pkuW, 0
+pkuN, 0
+pkCh,
+    table PKMAX, 0
+
+// Shift's and Space's texts, and the blank that hides them on a number keyboard; three words
+// each, as in the list.
+pkShT, type340 "Shift"
+pkSpT, type340 "Space"
+pkBlT, PKPAD
+    PKPAD
+    PKBLANK
+
+// The tables made from the keys' list (penkbd.ah's PK_KEYS), each in its order: each key's
+// parameter word's 16-bit address, its code word, and its hit record (the x and the y it answers
+// from, inclusive, and up to, exclusive).
+#define PK_TBLK(name, xx, yy, n, code, t) pk ## name:*;
+#define PK_TCODE(name, xx, yy, n, code, t) code;
+#define PK_TREC(name, xx, yy, n, code, t) \
+    (xx) - PKR; \
+    (xx) + (n) * PKADV + PKRX; \
+    (yy) - PKR; \
+    (yy) + PKH + PKR;
+pkBlkT,
+    PK_KEYS(PK_TBLK)
+pkBlkE,
+pkCode,
+    PK_KEYS(PK_TCODE)
+pkRec,
+    PK_KEYS(PK_TREC)
+
+#endif

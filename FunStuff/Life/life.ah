@@ -41,3 +41,28 @@
 #define PVCAP       0d160               // cells a preview shows, 2 words each in two buffers; the
                                         // largest entry, GUNS, has 144
 #define GHCAP       0d64                // runs a ghost shows, 2 words each in two buffers
+
+// Saving and loading, on paper tape and on the Microtape (lifetape.ac).
+#define NAMEMAX     0d8                 // a record's name's characters
+#define PKMAX       NAMEMAX             // the pen keyboard's field, the name's width
+#define LEADER      0d60                // blank lines punched before a record, about 1 s
+#define TRAILER     0d30                // blank lines punched after it
+#define RDRMS       0d2000              // ms the reader may go with no line before it fails
+#define TPSELMS     0d45                // ms a drive is given after it is selected
+#define TPTMO       0d70000             // polls a Microtape wait may make with no flag
+#define DRIVES      0d8                 // drives the drive key steps through, 1 to 8
+#define RECCAP      GHCAP               // cells a record held in the pen may have, so its ghost
+                                        // fits under any turn; a larger one replaces the field
+
+// The record's and the library's fixed values.
+// A change here makes tapes written before it unreadable, and must be made in
+// Tests/lifetape.py too.
+#define RECMARK     0114                // the record's first line, L
+#define RECFORMAT   1                   // its second
+#define DIRBLK      0d283               // the directory's first block
+#define DIRBLKS     3                   // its blocks
+#define DIRWDS      0d768               // its words
+#define SLOTS       0d128               // the library's entries
+#define SLOTBLKS    4                   // blocks an entry's slot holds
+#define DIRMAGIC    0545454             // the directory's first word
+#define DIRFORMAT   1                   // its second

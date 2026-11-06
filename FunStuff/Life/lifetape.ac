@@ -1,0 +1,2870 @@
+// lifetape.ac -- saving and loading the field, on paper tape and on the Microtape, included by
+// life.am1 in bank 6 after the pen keyboard's code (PENKBD's penkbd.ac). TAPE's PUNCH punches
+// the field's record and READ reads one; the library screen's second row of keys reads the
+// Microtape's directory, saves, deletes and loads its records. The record's format is
+// CompletedTasks/TASK-TAPE.md's, "The record", and Tests/lifetape.py writes and reads the same.
+//
+// The record is a stream of 8-bit lines from its mark to its check. The encoder puts each line
+// through putL, a jump set to the punch (ppL) or to the packer (pmL), which packs 9 lines in 4
+// words for the Microtape. The decoder takes each line from getL, a jump set to the reader
+// (gpL) or to the unpacker (gmL), and writes the cells into the scratch field, scrFld in bank
+// 4, so the field is untouched until the record has passed. A refusal anywhere goes to tpFail,
+// which stops the tape, restores the frame, shows the status word and returns from the entry
+// that began the operation, through tpRet.
+//
+// While a tape moves, breaks are off and the display shows WAIT from waitL, a list that loops
+// on itself; waitOff starts the frame again where the break routine would.
+//
+// The entries are called via jsp i to their full address, the return in AC, and return by jmp i.
+// They are not reentrant; all are called from the main loop. This code calls bank 0's routines
+// through far, reaches other banks' words by their full addresses, and calls the pen keyboard
+// by jda, within this bank. Extend mode is on throughout.
+
+// The status word's values, as tpSt takes them; stTab gives each one's text.
+#define STPUNCHED   1
+#define STREAD      2
+#define STSAVED     3
+#define STLOADED    4
+#define STDELETED   5
+#define STBAD       6
+#define STNOTAPE    7
+#define STNOTLIFE   0d8
+#define STLOCKED    0d9
+#define STFULL      0d10
+
+// The tape pages: 16 names a page, so SLOTS / 16 pages; tpTurn's wrap assumes 8.
+#define TPPAGES     0d8
+#define TPROW0      0d10                // a page's row 0's parameter word, from the page's start
+#define TPROWW      0d9                 // words a row: its item's 3 and its name's 6
+#define NAMEWDS     0d6                 // a name's run: an upper shift, a shift before each of
+                                        // 8 characters at worst, and the end code
+
+// The entries.
+
+// Sets the tape's state as a load leaves it, for a start at go: no status word, the keyboard
+// closed, no directory read, the name all spaces. The drive is kept. From lifelib.ac's
+// startOver. Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpInit, dac inR
+        dzm i [stTxt:0]
+        jsp stShow
+        dzm i [tickTo:0]
+        dzm tpWOn
+        dzm tpMT
+        dzm dirOk
+        dzm edP
+        law i 1
+        dac tpBadS
+        lac [tpName:6]
+        dac rp
+        law i NAMEMAX
+        dac rk
+ti1,    law 040
+        dac i rp
+        idx rp
+        isp rk
+        jmp ti1
+        jda pkInit
+        jmp i inR
+
+// A fresh press puts out the status word, if one shows. From bank 0's oneHit.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpPress, dac prR
+        lac i [stTxt:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i prR
+        dzm i [stTxt:0]
+        jsp stShow
+        jmp i prR
+
+// TAPE's list's action, on its lit row: PUNCH opens the keyboard for the name, READ reads a
+// record from the reader. The caller has stopped the run.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpAct,  dac tpRet
+        lac i [litRow:0]
+        sas [1]
+        jmp ta1
+        law 1
+        lia
+        jsp kbOpen
+        jmp i tpRet
+ta1,    jsp opRead
+        jmp i tpRet
+
+// A hit while the keyboard is open, passed on from bank 0's oneHit through scrHit. OK closes it
+// and goes on with the punch or the save, the name typed; Cancel closes it and does nothing.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpKbHit, dac tpRet
+        lio i [hDrc:0]
+        lac i [hMs:0]
+        jda pkHit
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i tpRet                     // still open
+        dac kbAns
+        lac kbSvGo
+        dac i [scrGo:0]
+        lac kbSvHit
+        dac i [scrHit:0]
+        dzm i [tickTo:0]
+        law 1
+        dac i [needFresh:0]
+        FAR(setLook)
+        lac kbAns
+        sas [PKOK]
+        jmp i tpRet                     // Cancel
+// The name typed, a line a character, padded with spaces.
+        lac [pkCh:6]
+        dac rq
+        lac [tpName:6]
+        dac rp
+        law i NAMEMAX
+        dac rk
+        cla
+        sub pkN
+        dac rj                          // the characters typed, negative
+kh1,    lac rj
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp kh2
+        lac i rq
+        dac i rp
+        idx rq
+        idx rj
+        jmp kh4
+kh2,    law 040
+        dac i rp
+kh4,    idx rp
+        isp rk
+        jmp kh1
+        lac kbMode
+        sas [1]
+        jmp kh3
+        jsp opPunch
+        jmp i tpRet
+kh3,    jsp opSave
+        jmp i tpRet
+
+// The keyboard's tick, each pass of the main loop while it is open, from bank 0's tidy through
+// tickTo. Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpTick, dac tkR
+        rck
+        dio rT
+        lac rT
+        jda pkTick
+        jmp i tkR
+
+// A key of the library screen's second row, its column in IO, 0 to 4, on a fresh press. On the
+// built-in pages column 0 is TAPE; on the tape's pages BUILT IN, the drive, SAVE, DELETE and
+// FIELD; on the paper record's page only FIELD, column 4.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpKey2, dac tpRet
+        dio tkC
+        lac i [libMode:3]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tk1
+        lac tkC
+        SKIP_NEXT_IF_AC_ZERO
+        jmp i tpRet
+        jsp tpTape
+        jmp i tpRet
+tk1,    sas [1]
+        jmp tk9
+        lac tkC
+        add [tkT]
+        dap tk2
+tk2,    jmp .
+tkT,    jmp tkBi
+        jmp tkDrv
+        jmp tkSave
+        jmp tkDel
+        jmp tkFld
+tk9,    lac tkC
+        sas [4]
+        jmp i tpRet
+        jmp tkFld
+// BUILT IN: the built-in pages again, the page last shown.
+tkBi,   cli
+        jsp i [libCtl:3]
+        dzm i [libMode:3]
+        law 3
+        lia
+        jsp i [libCtl:3]
+        jmp i tpRet
+// The drive key: the next drive, round from the last to the first, and its directory.
+tkDrv,  idx tpDrv
+        sub [DRIVES]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        dzm tpDrv
+        jsp tpTape
+        jmp i tpRet
+// SAVE: the keyboard, then the save.
+tkSave, law 2
+        lia
+        jsp kbOpen
+        jmp i tpRet
+// DELETE: the lit record's slot made free.
+tkDel,  jsp recLit
+        jsp opDel
+        jmp i tpRet
+// FIELD: the lit record in place of the field, then the screen closed.
+tkFld,  jsp recLit
+        jsp tpFld
+        law 2
+        lia
+        jsp i [libCtl:3]
+        jmp i tpRet
+
+// A row of a tape's page, or the paper record's, lk in IO, 0 to 15, lit by any hit. A tape's
+// row reads its record and shows its preview; a free slot's does nothing. A row whose record
+// was refused is read again only on a fresh press, so a pen held on it does not read it over
+// and over.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpRow,  dac tpRet
+        dio trK
+        lac i [libMode:3]
+        sas [1]
+        jmp trP
+        lac dirOk
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i tpRet
+        lac tpPg
+        sal 4s
+        add trK
+        dac trS
+        lac i [lLit:3]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tr1
+        lac trS
+        sas tpLitS
+        jmp tr1
+        jmp i tpRet                     // lit already
+tr1,    lac trS
+        sas tpBadS
+        jmp tr2
+        lac i [fresh:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i tpRet                     // refused, and the pen not lifted since
+tr2,    lio trS
+        jsp dirEnt
+        dac rq
+        lac i rq
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp i tpRet                     // a free slot
+        dac ldN
+        lac trS
+        dac tpBadS                      // until the read has passed
+        cli
+        jsp i [libCtl:3]                // the lit row out before its words are reused
+        jsp waitOn
+        jsp mtMount
+        jsp ldSlot
+        jsp mtStop                      // WAIT stays until the row is lit, as in opRead
+        lac trK
+        sal 3s
+        add trK                         // 9 words a row
+        add [tpgBuf:1]
+        add [TPROW0]
+        dac rRow
+        jsp recSetup
+        law i 1
+        dac tpBadS
+        lac trS
+        dac tpLitS
+        law 1
+        lia
+        jsp i [libCtl:3]
+        jsp waitOff
+        jmp i tpRet
+// The paper record's page: its one row, lit again if it was put out.
+trP,    lac trK
+        SKIP_NEXT_IF_AC_ZERO
+        jmp i tpRet
+        lac i [lLit:3]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp i tpRet
+        law 1
+        lia
+        jsp i [libCtl:3]
+        jmp i tpRet
+
+// PREV and NEXT on a tape's pages, IO 1 or -1: the next or the last page, round, none lit.
+// Called via jsp i, the return in AC; returns by jmp i. AC and IO are clobbered.
+tpTurn, dac tnR
+        dio tnD
+        cli
+        jsp i [libCtl:3]
+        lac tpPg
+        add tnD
+        add [TPPAGES]
+        and [TPPAGES-1]
+        dac tpPg
+        jsp tpgFill
+        jmp i tnR
+
+// PLACE on a record too large for the pen: the record in place of the field, as FIELD does.
+// lifelib.ac's kPlace closes the screen after. Called via jsp i, the return in AC; returns by
+// jmp i. AC and IO are clobbered.
+tpField, dac fdR
+        jsp tpFld
+        jmp i fdR
+
+// The operations, each called from an entry, which set tpRet: a refusal returns from there.
+
+// Punches the field's record: the leader, the record, the trailer, WAIT showing.
+// Called via jsp. AC and IO are clobbered.
+opPunch, dap opx
+        jsp waitOn
+        law i LEADER
+        dac bkN
+        jsp blanks
+        lac [jmp ppL]
+        dac putL
+        jsp encode
+        law i TRAILER
+        dac bkN
+        jsp blanks
+        jsp waitOff
+        lio [STPUNCHED]
+        jsp tpSt
+opx,    jmp .
+
+// Punches -bkN blank lines, the count set by the caller. Called via jsp. AC and IO are
+// clobbered.
+blanks, dap bkx
+bk1,    cli
+        ppa
+        isp bkN
+        jmp bk1
+bkx,    jmp .
+
+// Reads a record from the reader. A good one opens the library screen on the paper record's
+// page, the record lit, with READ in the status word.
+// Called via jsp. AC and IO are clobbered.
+opRead, dap orx
+        jsp waitOn
+        lac [jmp gpL]
+        dac getL
+        jsp decode
+        lac [dName:6]
+        dac rq
+        lac [nmBuf:6]
+        dac rp
+        law i NAMEMAX
+        dac rk
+or1,    lac i rq
+        dac i rp
+        idx rq
+        idx rp
+        isp rk
+        jmp or1
+        jsp nmDash
+        lac [nmBuf:6]
+        dac nmP
+        lac [ppgNm:1]
+        dac twP
+        law NAMEWDS*3
+        dac twN
+        jsp nmText
+        lac [ppgRow:1]
+        dac rRow
+        jsp recSetup
+        jsp i [libOpen:3]
+        law 2
+        dac i [libMode:3]
+        law 3
+        lia
+        jsp i [libCtl:3]
+        law 1
+        lia
+        jsp i [libCtl:3]
+        lio [STREAD]
+        jsp tpSt
+// WAIT stays until the page is built: recSetup scans the record's box, over a second for a
+// large one, and the field shown meanwhile looked like a READ that had done nothing.
+        jsp waitOff
+orx,    jmp .
+
+// Saves the field's record to the nearest free slot of the drive's tape, the slot first and the
+// directory last, then shows the page again. The directory is read again first, so a tape
+// changed since is seen. Called via jsp. AC and IO are clobbered.
+opSave, dap osx
+        jsp waitOn
+        jsp mtMount
+        jsp rdDir
+// The nearest free slot.
+        dzm svS
+        lac [dirBuf:3]
+        add [4]
+        dac rq
+        law i SLOTS
+        dac rk
+sv1,    lac i rq
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp sv2
+        lac rq
+        add [5]
+        dac rq
+        idx svS
+        isp rk
+        jmp sv1
+        lac [STFULL]
+        jmp tpFail
+// The record, packed into recBuf, the last block padded with zeros.
+sv2,    lac [jmp pmL]
+        dac putL
+        lac [recBuf:1]
+        dac pmP
+        dzm pmW
+        dzm pmB
+        dzm pmN
+        jsp encode
+        jsp pmFl
+        lac pmP
+        dac rp
+        lac pmN
+        dac rT
+sv3,    lac rT
+        and [0377]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp sv4
+        dzm i rp
+        idx rp
+        idx rT
+        jmp sv3
+sv4,    lio svS
+        jsp slotBlk
+        dac mtWant
+        jsp mtSeek
+        lac [recBuf:1]
+        dac mtAt
+        lac pmN
+        dac rT
+        jsp nBlks
+        jsp mtWrite
+// Its entry: the length, then the name two lines a word, the first in the high 9 bits.
+        lio svS
+        jsp dirEnt
+        dac rp
+        jsp edKeep
+        lac pmN
+        dac i rp
+        idx rp
+        lac [tpName:6]
+        dac rq
+        law i 4
+        dac rk
+sv5,    lac i rq
+        sal 6s
+        sal 3s
+        dac rT
+        idx rq
+        lac i rq
+        ior rT
+        dac i rp
+        idx rq
+        idx rp
+        isp rk
+        jmp sv5
+        jsp wrDir
+        dzm edP
+        jsp mtDone
+        jsp tpgFill
+        lio [STSAVED]
+        jsp tpSt
+osx,    jmp .
+
+// Deletes the lit record's slot, tpLitS, writing the directory again, and shows the page again
+// with nothing lit. Called via jsp. AC and IO are clobbered.
+opDel,  dap odx
+        cli
+        jsp i [libCtl:3]
+        jsp waitOn
+        jsp mtMount
+        jsp rdDir
+        lio tpLitS
+        jsp dirEnt
+        dac rp
+        jsp edKeep
+        law i 5
+        dac rk
+od1,    dzm i rp
+        idx rp
+        isp rk
+        jmp od1
+        jsp wrDir
+        dzm edP
+        jsp mtDone
+        jsp tpgFill
+        lio [STDELETED]
+        jsp tpSt
+odx,    jmp .
+
+// The lit record in place of the field, at its own size, edge and counter; UNDO's copy is the
+// field before, with its size and edge. Called via jsp. AC and IO are clobbered.
+tpFld,  dap tfx
+        jsp i [libSnap:3]
+        lac dSz
+        dac i [sizeSel:0]
+        dzm i [edgeSel:0]               // DEAD while the size is set, so no band is cleared
+        jsp i [sizeSet:3]
+        lio dEd
+        jsp i [edgePick:3]
+        lac [scrFld:4]
+        dac rq
+        lac [field:4]
+        dac rp
+        law i FIELDWORDS
+        dac rk
+tf1,    lac i rq
+        dac i rp
+        idx rq
+        idx rp
+        isp rk
+        jmp tf1
+        FAR(clipField)                  // the row flags
+        lac [dDig:6]
+        dac rq
+        lac [dig:0]
+        dac rp
+        law i 7
+        dac rk
+tf2,    lac i rq
+        dac i rp
+        idx rq
+        idx rp
+        isp rk
+        jmp tf2
+        lac dGen
+        dac i [gen:0]
+        law 1
+        dac i [undoOk:0]
+        dac i [dirty:0]
+        lio [STLOADED]
+        jsp tpSt
+tfx,    jmp .
+
+// Returns when the lit entry is the record, else returns from the entry: a key that acts on the
+// lit record does nothing with none lit. Called via jsp. AC is clobbered, IO is preserved.
+recLit, dap rlx
+        lac i [lLit:3]
+        sas [LIBN+1]
+        jmp i tpRet
+rlx,    jmp .
+
+// Switches the library screen to the drive's tape: its pages, page 1, the drive key's label,
+// and its directory read. The page shows blank until the directory has passed.
+// Called via jsp. AC and IO are clobbered.
+tpTape, dap ttx
+        cli
+        jsp i [libCtl:3]
+        law 1
+        dac i [libMode:3]
+        dzm tpPg
+        dzm dirOk
+        lac tpDrv
+        add [0350461]                   // an upper shift, D, and the drive's digit
+        dac i [k2Drv:1]
+        jsp tpgFill
+        law 3
+        lia
+        jsp i [libCtl:3]
+        jsp waitOn
+        jsp mtMount
+        jsp rdDir
+        jsp mtDone
+        jsp tpgFill
+ttx,    jmp .
+
+// Opens the pen keyboard for the name, IO the operation OK goes on to, 1 the punch or 2 the
+// save. Its field starts with the name last used. The frame and the hits go to the keyboard
+// until it closes (tpKbHit). Called via jsp. AC and IO are clobbered.
+kbOpen, dap kox
+        dio kbMode
+        lac [tpName:6]
+        dac nmP
+        lac [kbBuf:6]
+        dac twP
+        law PKBUFC
+        dac twN
+        jsp nmText
+        lac i [scrGo:0]
+        dac kbSvGo
+        lac i [scrHit:0]
+        dac kbSvHit
+        rck
+        dio rT
+        lio [kbBlk:6]
+        lac rT
+        jda pkOpen
+        dac i [scrGo:0]
+        lac [tpKbHit:6]
+        dac i [scrHit:0]
+        lac [tpTick:6]
+        dac i [tickTo:0]
+        FAR(setLook)
+kox,    jmp .
+
+// The screen while a tape moves, the status word and the end of a refusal.
+
+// Turns breaks off and shows WAIT. Called via jsp. AC is clobbered, IO is clobbered.
+waitOn, dap wnx
+        lsm
+        lio [waitL:1]
+        dla
+        law 1
+        dac tpWOn
+wnx,    jmp .
+
+// Starts the frame again where the break routine would, the open screen's list or the field's
+// list shown, and turns breaks on. Called via jsp. AC and IO are clobbered.
+waitOff, dap wfx
+        dzm tpWOn
+// A pen held through the operation is still the press that began it. With breaks off its hits
+// stopped, so the gap would read as a new press: the status put out, the key under it pressed.
+// The hits posted before the operation are that press's too, on a screen since changed, and
+// stamped before the clock set here, so they are dropped: hits' loop ends at its next test.
+// Breaks are still off.
+        rck
+        dio i [lastMs:0]
+        dio i [lastMMs:0]
+        lac i [wIdx:0]
+        dac i [rIdx:0]
+        lac i [wPtr:0]
+        dac i [rPtr:0]
+        lio [BUFA]
+        lac i [shown:0]
+        SKIP_NEXT_IF_AC_ZERO
+        lio [BUFB]
+        lac i [scrGo:0]
+        SKIP_NEXT_IF_AC_ZERO
+        lia
+        cbs
+        esm
+        dla
+wfx,    jmp .
+
+// The Microtape's operation done: the tape stopped, as the transfers leave it, then the frame.
+// Called via jsp. AC and IO are clobbered.
+mtDone, dap mdx
+        jsp mtStop
+        jsp waitOff
+mdx,    jmp .
+
+// Sets the status word to IO's value, STPUNCHED to STFULL, beside the counter and on the
+// library screen. Called via jsp. AC and IO are clobbered.
+tpSt,   dap tsx
+        dio rT
+        lac rT
+        add [stTab-1]
+        dap ts1
+ts1,    lac .
+        dac i [stTxt:0]
+        jsp stShow
+tsx,    jmp .
+
+// Copies the status word's text, or blanks, to the library screen's, and has the field's list
+// built again for the counter's. Called via jsp. AC and IO are clobbered.
+stShow, dap ssx
+        lac i [stTxt:0]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        lac [txBlank:1]
+        dac sq
+        lac [scrSt:1]
+        dac sp
+        law i 4
+        dac sk
+ss1,    lac i sq
+        dac i sp
+        idx sq
+        idx sp
+        isp sk
+        jmp ss1
+        law 1
+        dac i [dirty:0]
+ssx,    jmp .
+
+// A refusal, its status in AC: the tape stopped if one was moving, the frame restored, the
+// status shown, and a return from the entry that began the operation. An entry changed in
+// dirBuf but not written gets its words back, and a directory not read shows blank pages.
+// Reached by jmp.
+tpFail, dac tfSt
+        lac tpMT
+        SKIP_NEXT_IF_AC_ZERO
+        jsp mtStop
+        lac tpWOn
+        SKIP_NEXT_IF_AC_ZERO
+        jsp waitOff
+        lac edP
+        SKIP_NEXT_IF_AC_ZERO
+        jsp edBack
+        lac dirOk
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jsp tpgFill
+        lio tfSt
+        jsp tpSt
+        jmp i tpRet
+
+// A record refused as BAD TAPE. Reached by jmp.
+tpBad,  lac [STBAD]
+        jmp tpFail
+
+// Keeps the 5 words of the directory's entry at rp in edSv, and its address in edP, until the
+// directory is written. Called via jsp. AC and IO are clobbered; rp is kept.
+edKeep, dap ekx
+        lac rp
+        dac edP
+        dac sp
+        lac [edSv:6]
+        dac sq
+        law i 5
+        dac sk
+ek1,    lac i sp
+        dac i sq
+        idx sp
+        idx sq
+        isp sk
+        jmp ek1
+ekx,    jmp .
+
+// Puts edSv's words back in the entry at edP, and clears edP. Called via jsp. AC and IO are
+// clobbered.
+edBack, dap ebx
+        lac edP
+        dac sp
+        lac [edSv:6]
+        dac sq
+        law i 5
+        dac sk
+eb1x,   lac i sq
+        dac i sp
+        idx sp
+        idx sq
+        isp sk
+        jmp eb1x
+        dzm edP
+ebx,    jmp .
+
+// The record.
+
+// Puts the field's record through putL, from its mark to its check: the context, the size's
+// live cells' tight box, the name, the box's rows and the sum. Only the cells inside the size
+// are written, so OPEN's band is not.
+// Called via jsp. AC and IO are clobbered.
+encode, dap enx
+        dzm eSum
+// The box. Each row's words, masked by the size's (dm), ORed into eU, the column union, and
+// the first and last rows with a live cell kept.
+        lac [eU:6]
+        dac ep
+        law i 7
+        dac ek
+eb0,    dzm i ep
+        idx ep
+        isp ek
+        jmp eb0
+        dzm eAny
+        dzm eR0
+        dzm eC0
+        dzm eH
+        dzm eW
+        lac i [sR0:0]
+        dac eR
+        cla
+        sub i [sRN:0]
+        dac en
+        lac eR
+        sal 3s
+        sub eR
+        add [field:4]
+        dac ep
+eb1,    lac [eU:6]
+        dac eq
+        lac [dm:0]
+        dac em
+        law i 7
+        dac ek
+        dzm eOr
+eb2,    lac i ep
+        and i em
+        dac eT
+        ior eOr
+        dac eOr
+        lac i eq
+        ior eT
+        dac i eq
+        idx ep
+        idx eq
+        idx em
+        isp ek
+        jmp eb2
+        lac eOr
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp eb3
+        lac eAny
+        SKIP_NEXT_IF_AC_ZERO
+        jmp eb4
+        lac eR
+        dac eR0
+        law 1
+        dac eAny
+eb4,    lac eR
+        dac eR1
+eb3,    idx eR
+        isp en
+        jmp eb1
+// The columns, the first and last live in the union.
+        lac eAny
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp eb8
+        lac eR1
+        sub eR0
+        add [1]
+        dac eH
+        lac [eU:6]
+        dac cuP
+        lac [0400000]
+        dac cuM
+        dzm eC
+        law i 0d126
+        dac ek
+        dzm eFst
+eb5,    lac i cuP
+        and cuM
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp eb6
+        lac eFst
+        SKIP_NEXT_IF_AC_ZERO
+        jmp eb7
+        lac eC
+        dac eC0
+        law 1
+        dac eFst
+eb7,    lac eC
+        dac eC1
+eb6,    jsp cuNx
+        idx eC
+        isp ek
+        jmp eb5
+        lac eC1
+        sub eC0
+        add [1]
+        dac eW
+// The mark, the context, the box and the name.
+eb8,    law RECMARK
+        lia
+        jsp eL
+        law RECFORMAT
+        lia
+        jsp eL
+        lac i [sizeSel:0]
+        sal 4s
+        ior i [edgeSel:0]
+        lia
+        jsp eL
+        jsp eGen
+        lio eR0
+        jsp eL
+        lio eC0
+        jsp eL
+        lio eH
+        jsp eL
+        lio eW
+        jsp eL
+        lac [tpName:6]
+        dac ep
+        law i NAMEMAX
+        dac ek
+en1,    lio i ep
+        jsp eL
+        idx ep
+        isp ek
+        jmp en1
+// The rows, top down.
+        lac eW
+        add [7]
+        sar 3s
+        dac eNb                         // a bitmap row's lines
+        dzm ePend
+        lac eH
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp erE
+        cla
+        sub eH
+        dac eRn
+        lac eR0
+        dac cuR
+er1,    lac eC0
+        dac cuC
+        lac [field:4]
+        dac cuB
+        jsp cuSet
+        dzm eSt
+        dzm eRl
+        dzm eK
+        lac [runB:6]
+        dac eRp
+        dzm eBv
+        law i 0d8
+        dac eBk
+        lac [bmB:6]
+        dac eBp
+        dzm eAny
+        cla
+        sub eW
+        dac eJ
+// Each cell: a change of state ends the run held, and its bit goes into the bitmap's line.
+er2,    lac i cuP
+        and cuM
+        SKIP_NEXT_IF_AC_ZERO
+        law 1
+        dac eB
+        SKIP_NEXT_IF_DIFFERENT eSt
+        jmp er3
+        dac eSt
+        jsp eRun
+er3,    idx eRl
+        lac eBv
+        sal 1s
+        ior eB
+        dac eBv
+        isp eBk
+        jmp er4
+        lac eBv
+        dac i eBp
+        idx eBp
+        dzm eBv
+        law i 0d8
+        dac eBk
+er4,    lac eB
+        ior eAny
+        dac eAny
+        jsp cuNx
+        isp eJ
+        jmp er2
+// The bitmap's last line padded, a live run at the row's end ended, a dead one dropped.
+        lac eBk
+        SKIP_NEXT_IF_DIFFERENT [-0d8]
+        jmp er5
+erP,    lac eBv
+        sal 1s
+        dac eBv
+        isp eBk
+        jmp erP
+        lac eBv
+        dac i eBp
+er5,    lac eSt
+        SKIP_NEXT_IF_AC_ZERO
+        jsp eRun
+        lac eAny
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp er8
+        jsp ePFl
+        lac eK
+        sub eNb
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp er6
+// Fewer runs than the bitmap's lines: the runs.
+        lac eK
+        ior [0100]
+        lia
+        jsp eL
+        lac [runB:6]
+        dac eRp
+        cla
+        sub eK
+        dac eJ
+er7,    lio i eRp
+        jsp eL
+        idx eRp
+        isp eJ
+        jmp er7
+        jmp er9
+// Else the bitmap.
+er6,    cli
+        jsp eL
+        lac [bmB:6]
+        dac eBp
+        cla
+        sub eNb
+        dac eJ
+er10,   lio i eBp
+        jsp eL
+        idx eBp
+        isp eJ
+        jmp er10
+        jmp er9
+// An empty row, held to be written with the others after it, 128 at most to a line.
+er8,    idx ePend
+        SKIP_NEXT_IF_DIFFERENT [0d128]
+        jsp ePFl
+er9,    idx cuR
+        isp eRn
+        jmp er1
+erE,    jsp ePFl
+// The sum, high line first, not itself summed.
+        lac eSum
+        sar 8s
+        lia
+        jsp putL
+        lac eSum
+        and [0377]
+        lia
+        jsp putL
+enx,    jmp .
+
+// The line in IO, added to the sum and put through putL.
+// Called via jsp. AC and IO are clobbered.
+eL,     dap elx
+        dio eV
+        lac eV
+        add eSum
+        and [0177777]
+        dac eSum
+        lio eV
+        jsp putL
+elx,    jmp .
+
+// The line sink, a jump to ppL or pmL.
+putL,   jmp ppL
+
+// The empty rows held, written as one line, if any.
+// Called via jsp. AC and IO are clobbered.
+ePFl,   dap epx
+        lac ePend
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp epx
+        sub [1]
+        ior [0200]
+        lia
+        jsp eL
+        dzm ePend
+epx,    jmp .
+
+// Ends the run held, eRl cells: kept while fewer than 16 are, and counted in eK.
+// Called via jsp. AC is clobbered, IO is preserved.
+eRun,   dap eux
+        lac eK
+        sub [0d16]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp eu1
+        lac eRl
+        dac i eRp
+        idx eRp
+eu1,    idx eK
+        dzm eRl
+eux,    jmp .
+
+// The generation's three lines, its 24 bits from the counter's digits, high line first. The
+// value is made as two 12-bit halves, gH and gL, so no product passes 17 bits.
+// Called via jsp. AC and IO are clobbered.
+eGen,   dap egx
+        dzm gH
+        dzm gL
+        lac [dig:0]
+        add [6]
+        dac ep
+        law i 7
+        dac ek
+eg1,    lac gL
+        sal 2s
+        add gL
+        sal 1s
+        add i ep
+        dac gL                          // gL * 10 + the digit
+        sar 6s
+        sar 6s
+        dac eT
+        lac gL
+        and [07777]
+        dac gL
+        lac gH
+        sal 2s
+        add gH
+        sal 1s
+        add eT
+        dac gH
+        lac ep
+        sub [1]
+        dac ep
+        isp ek
+        jmp eg1
+        lac gH
+        sar 4s
+        lia
+        jsp eL
+        lac gH
+        and [017]
+        sal 4s
+        dac eT
+        lac gL
+        sar 8s
+        ior eT
+        lia
+        jsp eL
+        lac gL
+        and [0377]
+        lia
+        jsp eL
+egx,    jmp .
+
+// Reads a record through getL into scrFld, cleared first, and its context into dSz, dEd, dGen
+// and dDig, its box into dR0, dC0, dH and dW, its name into dName and its cells' count into
+// dCells. Any fault goes to tpBad. On paper, blank lines before the mark are passed.
+// Called via jsp. AC and IO are clobbered.
+decode, dap dex
+        lac [scrFld:4]
+        dac dp
+        law i FIELDWORDS
+        dac dk
+dc0,    dzm i dp
+        idx dp
+        isp dk
+        jmp dc0
+        dzm dSum
+        dzm dCells
+        dzm dMk
+dc1,    jsp getL
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp dc1
+        dac dV
+        law 1
+        dac dMk
+        lac dV
+        dac dSum
+        sas [RECMARK]
+        jmp tpBad
+        jsp dL
+        sas [RECFORMAT]
+        jmp tpBad
+// The size and the edge.
+        jsp dL
+        dac dV
+        sar 4s
+        dac dSz
+        lac dV
+        and [017]
+        dac dEd
+        lac dSz
+        sub [4]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+        lac dEd
+        sub [4]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+        lac dSz
+        SKIP_NEXT_IF_AC_ZERO
+        jmp dc2
+        lac dEd
+        sas [3]
+        jmp dc2
+        jmp tpBad                       // OPEN at 126x120
+// The generation, as two 12-bit halves, at most 9,999,999 (2441 * 4096 + 1663).
+dc2,    jsp dL
+        dac dG1
+        jsp dL
+        dac dG2
+        jsp dL
+        dac dG3
+        lac dG1
+        sal 4s
+        dac gH
+        lac dG2
+        sar 4s
+        ior gH
+        dac gH
+        lac dG2
+        and [017]
+        sal 6s
+        sal 2s
+        ior dG3
+        dac gL
+        lac gH
+        sub [0d2441]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp dc4
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tpBad
+        lac gL
+        sub [0d1664]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+// The box: 0 by 0, or inside its size.
+dc4,    jsp dL
+        dac dR0
+        jsp dL
+        dac dC0
+        jsp dL
+        dac dH
+        jsp dL
+        dac dW
+        lac dH
+        SKIP_NEXT_IF_AC_ZERO
+        jmp dc5
+        lac dW
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tpBad
+        jmp dc6
+dc5,    lac dW
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tpBad
+        lac dSz
+        add [szR0:3]
+        dac dp
+        lac i dp
+        dac dSR
+        lac dSz
+        add [szRN:3]
+        dac dp
+        lac i dp
+        dac dSN
+        lac dSz
+        add [szC0:3]
+        dac dp
+        lac i dp
+        dac dSC
+        lac dSz
+        add [szCN:3]
+        dac dp
+        lac i dp
+        dac dSM
+        lac dR0
+        sub dSR
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp tpBad
+        lac dC0
+        sub dSC
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp tpBad
+        lac dSR
+        add dSN
+        sub dR0
+        sub dH
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp tpBad
+        lac dSC
+        add dSM
+        sub dC0
+        sub dW
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp tpBad
+// The name.
+dc6,    lac [dName:6]
+        dac dp
+        law i NAMEMAX
+        dac dk
+dc7,    jsp dL
+        dac i dp
+        idx dp
+        isp dk
+        jmp dc7
+// The rows, each from its code line.
+        lac dW
+        add [7]
+        sar 3s
+        dac dNb
+        dzm dI
+dr1,    lac dI
+        sub dH
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp drE
+        jsp dL
+        dac dCd
+        and [0200]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp dr2
+// n + 1 empty rows, not past the box's end.
+        lac dCd
+        and [0177]
+        add [1]
+        add dI
+        dac dI
+        sub dH
+        sub [1]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+        jmp dr1
+dr2,    lac dR0
+        add dI
+        dac cuR
+        lac dC0
+        dac cuC
+        lac [scrFld:4]
+        dac cuB
+        jsp cuSet
+        lac dCd
+        and [0100]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp dr4
+// k runs, dead first, not past the box's end.
+        lac dCd
+        and [077]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp dr9
+        dac dT
+        cla
+        sub dT
+        dac dk
+        dzm dCol
+        dzm dLv
+dr3,    jsp dL
+        dac dN
+        add dCol
+        dac dCol
+        sub dW
+        sub [1]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+        lac dN
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp dr6
+        cla
+        sub dN
+        dac dJ
+dr5,    lac dLv
+        SKIP_NEXT_IF_AC_ZERO
+        jsp dSet
+        jsp cuNx
+        isp dJ
+        jmp dr5
+dr6,    lac dLv
+        xor [1]
+        dac dLv
+        isp dk
+        jmp dr3
+        jmp dr9
+// A bitmap: ceil(w / 8) lines, the leftmost cell the first line's high bit.
+dr4,    lac dCd
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tpBad                       // a row code 1 to 077
+        cla
+        sub dNb
+        dac dk
+        dzm dCol
+dr7,    jsp dL
+        ral 7s
+        ral 3s
+        dac dV                          // the line's high bit in bit 0
+        law i 0d8
+        dac dJ
+dr8,    lac dCol
+        sub dW
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp dr10                        // past the width, ignored
+        lac dV
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jsp dSet
+        jsp cuNx
+        idx dCol
+        lac dV
+        ral 1s
+        dac dV
+        isp dJ
+        jmp dr8
+dr10,   isp dk
+        jmp dr7
+dr9,    idx dI
+        jmp dr1
+// The sum, high line first.
+drE,    jsp getL
+        sal 4s
+        sal 4s
+        dac dT
+        jsp getL
+        ior dT
+        sas dSum
+        jmp tpBad
+// The generation's digits, least significant first, from its value over 10,000, and gen's
+// value, its low 17 bits.
+        lac gH
+        and [037]
+        sal 6s
+        sal 6s
+        ior gL
+        dac dGen
+        ral 1s
+        lia
+        lac gH
+        sar 5s
+        div [0d10000]
+        jmp tpBad
+        dac dQ
+        dio dT
+        lac [dDig:6]
+        dac dp
+        law i 4
+        dac dk
+dg1,    lio dT
+        jsp dv10
+        dac dT
+        dio i dp
+        idx dp
+        isp dk
+        jmp dg1
+        lac dQ
+        dac dT
+        law i 3
+        dac dk
+dg2,    lio dT
+        jsp dv10
+        dac dT
+        dio i dp
+        idx dp
+        isp dk
+        jmp dg2
+dex,    jmp .
+
+// The next line through getL, added to the sum. Called via jsp. AC is the line, IO is
+// clobbered.
+dL,     dap dlx
+        jsp getL
+        dac dV
+        add dSum
+        and [0177777]
+        dac dSum
+        lac dV
+dlx,    jmp .
+
+// The line source, a jump to gpL or gmL.
+getL,   jmp gpL
+
+// A cell set in the scratch field at the cursor, and counted.
+// Called via jsp. AC is clobbered, IO is preserved.
+dSet,   dap dsx
+        lac i cuP
+        ior cuM
+        dac i cuP
+        idx dCells
+dsx,    jmp .
+
+// IO over 10: AC the quotient, IO the remainder. Called via jsp.
+dv10,   dap dvx
+        cla
+        scl 1s
+        div [0d10]
+        jmp tpBad
+dvx,    jmp .
+
+// The cursor at cell (cuR, cuC) of the field at cuB: cuP its word, cuM its bit.
+// Called via jsp. AC is clobbered, IO is preserved.
+cuSet,  dap cux
+        lac cuR
+        sal 3s
+        sub cuR
+        add cuB
+        dac cuP
+        lac cuC
+        dac cuT
+cu1,    lac cuT
+        sub [0d18]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp cu2
+        dac cuT
+        idx cuP
+        jmp cu1
+cu2,    lac cuT
+        add [bitTab:0]
+        dac cuT
+        lac i cuT
+        dac cuM
+cux,    jmp .
+
+// The cursor one cell right; the bit rotated past a word's end starts the next word.
+// Called via jsp. AC is clobbered, IO is preserved.
+cuNx,   dap cnx
+        lac cuM
+        rar 1s
+        dac cuM
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        idx cuP
+cnx,    jmp .
+
+// Sets the record's library entry, LIBN, from the decoded record: its kind, its cell list in
+// recList, its row's parameter word rRow, and its preview's text. A record of RECCAP cells or
+// fewer is a pattern, its cells about the box's cell (h / 2, w / 2); a larger one is a whole
+// field, its first PVCAP cells listed as row * 128 + column for the preview.
+// Called via jsp. AC and IO are clobbered.
+recSetup, dap rsx
+        lac dCells
+        sub [RECCAP+1]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp rs1
+        dzm rKind
+        lac [recList:4]
+        dac rData
+        jmp rs2
+rs1,    law 1
+        dac rKind
+        law 4                           // patTab's entry for the record
+        dac rData
+rs2,    lac [libKind:3]
+        add [LIBN]
+        dac rp
+        lac rKind
+        dac i rp
+        lac [libData:3]
+        add [LIBN]
+        dac rp
+        lac rData
+        dac i rp
+        lac [libRow:3]
+        add [LIBN]
+        dac rp
+        lac rRow
+        dac i rp
+// The anchor, then the cells.
+        lac dH
+        sar 1s
+        add dR0
+        dac aR
+        lac dW
+        sar 1s
+        add dC0
+        dac aC
+        lac [recList:4]
+        dac rq
+        law i PVCAP
+        dac rCap
+        lac dH
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp rs9
+        cla
+        sub dH
+        dac rRn
+        lac dR0
+        dac cuR
+rs3,    lac dC0
+        dac cuC
+        dac rC
+        lac [scrFld:4]
+        dac cuB
+        jsp cuSet
+        cla
+        sub dW
+        dac rj
+rs4,    lac i cuP
+        and cuM
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp rs6
+        lac rKind
+        SKIP_NEXT_IF_AC_ZERO
+        jmp rs5
+        lac cuR
+        sub aR
+        add [0d64]
+        sal 7s
+        dac rT
+        lac rC
+        sub aC
+        add [0d64]
+        ior rT
+        jmp rs7
+rs5,    lac cuR
+        sal 7s
+        ior rC
+rs7,    dac i rq
+        idx rq
+        isp rCap
+        jmp rs6
+        jmp rs9                         // the preview's cap
+rs6,    jsp cuNx
+        idx rC
+        isp rj
+        jmp rs4
+        idx cuR
+        isp rRn
+        jmp rs3
+rs9,    lac [PATEND]
+        dac i rq
+// The preview's text: width X height, the size, the edge, the generation.
+        lac [recTxt:1]
+        dac twP
+        law 0d36
+        dac twN
+        jsp txBeg
+        lio dW
+        jsp txNum
+        lio [030]
+        jsp txC
+        lio dH
+        jsp txNum
+        jsp tx2Sp
+        lac dSz
+        add [szTxT]
+        dap rs10
+rs10,   lac .
+        dac twS
+        jsp txStr
+        lio [040]
+        jsp txC
+        lac dEd
+        add [edTxT]
+        dap rs11
+rs11,   lac .
+        dac twS
+        jsp txStr
+        jsp tx2Sp
+// The generation, its leading zeros dropped.
+        lac [dDig:6]
+        add [6]
+        dac rq
+        law i 6
+        dac rk
+rs12,   lac i rq
+        SKIP_NEXT_IF_AC_ZERO
+        jmp rs13
+        lac rq
+        sub [1]
+        dac rq
+        isp rk
+        jmp rs12
+rs13,   lac rk
+        sub [1]
+        dac rk                          // the digits shown, negative
+rs14,   lac i rq
+        add [060]
+        lia
+        jsp txC
+        lac rq
+        sub [1]
+        dac rq
+        isp rk
+        jmp rs14
+        jsp txEnd
+rsx,    jmp .
+
+// The paper tape.
+
+// Punches the line in IO, waiting for the punch. Called via jsp. AC is clobbered, IO is
+// preserved.
+ppL,    dap ppx
+        ppa
+ppx,    jmp .
+
+// The next line from the reader. With no line in RDRMS ms the tape is taken as ended: NO TAPE
+// before the mark, BAD TAPE after it. Called via jsp. AC is the line, IO is clobbered.
+gpL,    dap gpx
+        rpa-i
+        rck
+        dio gpT0
+gp1,    cks
+        ril 1s
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp gp2
+        rrb
+        lai
+        and [0377]
+gpx,    jmp .
+gp2,    rck
+        lai
+        sub gpT0
+        MSWRAP
+        sub [RDRMS]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp gp1
+        lac dMk
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tpBad
+        lac [STNOTAPE]
+        jmp tpFail
+
+// The Microtape's packing: 9 lines in 4 words, high bits first.
+
+// Packs the line in IO into pmW, storing each full word at pmP and counting it in pmN.
+// Called via jsp. AC and IO are clobbered.
+pmL,    dap pmx
+        lai
+        ral 7s
+        ral 3s
+        dac pmV                         // the line's high bit in bit 0
+        law i 0d8
+        dac pmK
+pm1,    lac pmW
+        lio pmV
+        rcl 1s
+        dac pmW
+        dio pmV
+        idx pmB
+        SKIP_NEXT_IF_DIFFERENT [0d18]
+        jsp pmSt
+        isp pmK
+        jmp pm1
+pmx,    jmp .
+
+// The word packed, stored. Called via jsp. AC is clobbered, IO is preserved.
+pmSt,   dap psx
+        lac pmW
+        dac i pmP
+        idx pmP
+        idx pmN
+        dzm pmW
+        dzm pmB
+psx,    jmp .
+
+// The last word, padded with 0, stored if it holds a bit. Called via jsp. AC is clobbered, IO
+// is preserved.
+pmFl,   dap pfx
+        lac pmB
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp pfx
+        sub [0d18]
+        dac pmK
+pf1,    lac pmW
+        ral 1s
+        dac pmW
+        isp pmK
+        jmp pf1
+        jsp pmSt
+pfx,    jmp .
+
+// The next line from the packed words at gmP, gmN of them left (negative); past the last, the
+// record is cut short. Called via jsp. AC is the line, IO is clobbered.
+gmL,    dap gmx
+        law i 0d8
+        dac gmK
+        dzm gmV
+gm1,    lac gmB
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jsp gmW
+        lac gmB
+        sub [1]
+        dac gmB
+        lac gmV
+        lio gmC
+        rcl 1s
+        dac gmV
+        dio gmC
+        isp gmK
+        jmp gm1
+        lac gmV
+gmx,    jmp .
+
+// The next packed word into gmC, 18 bits to take. Called via jsp. AC is clobbered, IO is
+// preserved.
+gmW,    dap gwx
+        lac gmN
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+        idx gmN
+        lac i gmP
+        dac gmC
+        idx gmP
+        law 0d18
+        dac gmB
+gwx,    jmp .
+
+// The Microtape: the drive, the seek, the transfers (sptape.ac's tpMount, tpSeek, tpRead and
+// tpWrite, simplified to one run forward), and the library's directory.
+
+// Selects the drive in use, waits out the selection, and learns whether it has a tape: a stop
+// is refused, the error flag up, only when it has none. A write-locked tape passes. NO TAPE
+// goes to tpFail. Called via jsp. AC and IO are clobbered.
+mtMount, dap mmx
+        law 1
+        dac tpMT
+        lac tpDrv
+        add [1]
+        sal 6s
+        sal 6s
+        lia
+        mse
+        rck
+        dio mmT0
+mm1,    rck
+        lai
+        sub mmT0
+        MSWRAP
+        sub [TPSELMS]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp mm1
+        cli
+        mlc
+        mrs
+        ril 2s                          // the error flag to bit 0
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mm2
+mmx,    jmp .
+mm2,    dzm tpMT
+        lac [STNOTAPE]
+        jmp tpFail
+
+// Stops the tape. Called via jsp. AC is clobbered, IO is clobbered.
+mtStop, dap mpx
+        dzm tpMT
+        cli
+        mlc
+mpx,    jmp .
+
+// Searches forward to block mtWant's forward flag, each flag steering: a forward flag before
+// the block goes on, one past it turns back; a reverse flag before it turns forward, one at or
+// past it goes on back. The end zone turns the tape; a MISS is passed over. Returns as the flag
+// arrives, with 400 us to start the transfer; UNABLE, or no flag in TPTMO polls, is BAD TAPE.
+// Called via jsp. AC and IO are clobbered.
+mtSeek, dap msx
+        lio [mtgo mtsrch]
+        mlc
+ms1,    lac [TPTMO]
+        cma
+        dac mtTmo
+ms2,    mrs
+        SKIP_NEXT_IF_IO_NEGATIVE        // the data flag, a flag's word
+        jmp ms5
+        mrd
+        dio mtWord
+        lac mtWord
+        and [mtblk]
+        sub mtWant
+        dac mtN
+        lio mtWord
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp ms4                         // a reverse flag
+        lac mtN
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp ms3
+        jmp ms1                         // before the block
+ms3,    SKIP_NEXT_IF_AC_ZERO
+        jmp ms7                         // past it
+msx,    jmp .
+ms4,    lac mtN
+        SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+        jmp ms6                         // before the block, in reverse
+        jmp ms1
+ms6,    lio [mtgo mtsrch]
+        mlc
+        jmp ms1
+ms7,    lio [mtgo mtrev mtsrch]
+        mlc
+        jmp ms1
+ms5,    ril 2s                          // the error flag to bit 0
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp ms8
+        mrs
+        dio mtStat
+        lac mtStat
+        and [mtend]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp ms9
+        lac mtStat
+        and [mtrevs]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ms6                         // the near end zone, reversing: forward
+        jmp ms7                         // the far end zone: back
+ms9,    lac mtStat
+        and [mtmiss]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp mtBadE                      // UNABLE, no tape, or off the reel
+        lac mtStat
+        and [mtrevs]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ms7
+        jmp ms6
+ms8,    isp mtTmo
+        jmp ms2
+        jmp mtBadE
+
+// A Microtape fault: the tape stopped, BAD TAPE. Reached by jmp.
+mtBadE, jsp mtStop
+        jmp tpBad
+
+// A block's start: 256 words to go, its sum zero. Called via jsp. AC is clobbered, IO is
+// preserved.
+mtBlock, dap mbx
+        law i 0400
+        dac mtWc
+        dzm mtSum
+mbx,    jmp .
+
+// Reads -mtBlk blocks to mtAt on, the seek having found the first block's flag; each block's
+// two checksums and 256 words summed, and a block not totaling zero refused. The tape is
+// stopped after the last. Any fault is BAD TAPE. Called via jsp. AC and IO are clobbered.
+mtRead, dap mrx
+        dzm mtBadN
+        jsp mtBlock
+        lio [mtgo mtread]
+        mlc
+mr1,    mrs
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp mr7
+        mrd                             // the leading checksum
+        lai
+        add mtSum
+        dac mtSum
+mr2,    mrs
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp mr8
+        mrd
+        dio i mtAt
+        lai
+        add mtSum
+        dac mtSum
+        idx mtAt
+        isp mtWc
+        jmp mr2
+mr3,    mrs                             // the words all taken, wait for the block's end
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp mr9
+        mrd
+        lai
+        add mtSum
+        dac mtSum
+        jmp mr3
+mr4,    mrd                             // the trailing checksum
+        lai
+        add mtSum
+        SKIP_NEXT_IF_AC_ZERO
+        idx mtBadN
+        isp mtBlk
+        jmp mr5
+        mrs
+        dio mtStat
+        cli
+        mlc
+        lac mtStat
+        and [mterf]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp mtBadE
+        lac mtBadN
+        SKIP_NEXT_IF_AC_ZERO
+        jmp mtBadE
+mrx,    jmp .
+mr5,    jsp mtBlock
+        jmp mr1
+// No data flag: the block end too soon, the error flag, or GO cleared by a halt is a fault;
+// else wait on.
+mr7,    ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mtBadE
+        ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mtBadE
+        ril 4s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mr1
+        jmp mtBadE
+mr8,    ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mtBadE
+        ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mtBadE
+        ril 4s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mr2
+        jmp mtBadE
+mr9,    ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mr4                         // the block's end
+        ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mtBadE
+        ril 4s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mr3
+        jmp mtBadE
+
+// Writes -mtBlk blocks from mtAt on, the seek having found the first block's flag; each block's
+// 256 words, then on its end the checksum, the complement of their sum. The tape is stopped
+// after the last. A write refused (UNABLE, the drive write-locked) is LOCKED, any other fault
+// BAD TAPE. Called via jsp. AC and IO are clobbered.
+mtWrite, dap mwx
+        jsp mtBlock
+        lio [mtgo mtwrit]
+        mlc
+mw1,    mrs
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp mw5
+        lio i mtAt
+        mwr
+        lai
+        add mtSum
+        dac mtSum
+        idx mtAt
+        isp mtWc
+        jmp mw1
+mw2,    mrs                             // the words all given, wait for the block's end
+        SKIP_NEXT_IF_IO_NEGATIVE
+        jmp mw6
+        cli
+        mwr
+        jmp mw2
+mw3,    lac mtSum
+        cma
+        lia
+        mwr                             // the trailing checksum
+        isp mtBlk
+        jmp mw4
+        law i 0d20                      // about 300 us; the checksum reaches the tape 200 us on
+        dac mtTmo
+mw7,    isp mtTmo
+        jmp mw7
+        mrs
+        dio mtStat
+        cli
+        mlc
+        lac mtStat
+        and [mterf]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp mwx
+        jmp mw9
+mw4,    jsp mtBlock
+        jmp mw1
+mw5,    ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mw8
+        ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mw8
+        ril 4s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mw1
+        jmp mw8
+mw6,    ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mw3                         // the block's end
+        ril 1s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mw8
+        ril 4s
+        SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+        jmp mw2
+        jmp mw8
+mw8,    mrs
+        dio mtStat
+        cli
+        mlc
+mw9,    dzm tpMT
+        lac mtStat
+        and [mtunab]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tpBad
+        lac [STLOCKED]
+        jmp tpFail
+mwx,    jmp .
+
+// The blocks rT words fill, as mtBlk, negative. Called via jsp. AC is clobbered, IO is
+// preserved.
+nBlks,  dap nbx
+        lac rT
+        add [0377]
+        sar 8s
+        dac rT
+        cla
+        sub rT
+        dac mtBlk
+nbx,    jmp .
+
+// Reads the drive's directory into dirBuf, the tape mounted, and sets dirOk once it has
+// passed. All zeros is an empty library only if block 0 is zero too; otherwise a directory
+// without Life's magic, format and slots is NOT LIFE. Called via jsp. AC and IO are clobbered.
+rdDir,  dap rdx
+        dzm dirOk                       // dirBuf no longer the pages' until it has passed
+        lac [DIRBLK]
+        dac mtWant
+        jsp mtSeek
+        lac [dirBuf:3]
+        dac mtAt
+        law i DIRBLKS
+        dac mtBlk
+        jsp mtRead
+        lac [dirBuf:3]
+        dac rq
+        law i DIRWDS
+        dac rk
+rd1,    lac i rq
+        SKIP_NEXT_IF_AC_ZERO
+        jmp rd3
+        idx rq
+        isp rk
+        jmp rd1
+// A blank directory: block 0 must be blank too.
+        dzm mtWant
+        jsp mtSeek
+        lac [recBuf:1]
+        dac mtAt
+        law i 1
+        dac mtBlk
+        jsp mtRead
+        lac [recBuf:1]
+        dac rq
+        law i 0400
+        dac rk
+rd2,    lac i rq
+        SKIP_NEXT_IF_AC_ZERO
+        jmp rdNL
+        idx rq
+        isp rk
+        jmp rd2
+        jmp rdOk
+rd3,    lac i [dirBuf:3]
+        sas [DIRMAGIC]
+        jmp rdNL
+        lac [dirBuf:3]
+        add [1]
+        dac rq
+        lac i rq
+        sas [DIRFORMAT]
+        jmp rdNL
+        idx rq
+        lac i rq
+        sas [SLOTS]
+        jmp rdNL
+rdOk,   law 1
+        dac dirOk
+rdx,    jmp .
+rdNL,   jsp mtStop
+        lac [STNOTLIFE]
+        jmp tpFail
+
+// Writes the directory, its header first set: the magic, the format, the slots and a 0.
+// Called via jsp. AC and IO are clobbered.
+wrDir,  dap wdx
+        lac [dirBuf:3]
+        dac rp
+        lac [DIRMAGIC]
+        dac i rp
+        idx rp
+        law DIRFORMAT
+        dac i rp
+        idx rp
+        law SLOTS
+        dac i rp
+        idx rp
+        dzm i rp
+        lac [DIRBLK]
+        dac mtWant
+        jsp mtSeek
+        lac [dirBuf:3]
+        dac mtAt
+        law i DIRBLKS
+        dac mtBlk
+        jsp mtWrite
+wdx,    jmp .
+
+// Reads slot trS's record, ldN words, and decodes it, the tape mounted. A length past a slot's
+// blocks is BAD TAPE. Called via jsp. AC and IO are clobbered.
+ldSlot, dap lsx
+        lac ldN
+        sub [SLOTBLKS*0400+1]
+        SKIP_NEXT_IF_AC_NEGATIVE
+        jmp tpBad
+        lio trS
+        jsp slotBlk
+        dac mtWant
+        jsp mtSeek
+        lac [recBuf:1]
+        dac mtAt
+        lac ldN
+        dac rT
+        jsp nBlks
+        jsp mtRead
+        lac [jmp gmL]
+        dac getL
+        lac [recBuf:1]
+        dac gmP
+        cla
+        sub ldN
+        dac gmN
+        dzm gmB
+        jsp decode
+lsx,    jmp .
+
+// Slot IO's first block: slot 2k the k-th below the directory, 2k+1 the k-th above.
+// Called via jsp. AC is the block, IO is clobbered.
+slotBlk, dap sbx
+        dio sbS
+        lai
+        sar 1s
+        sal 2s
+        dac sbT
+        lac sbS
+        and [1]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp sb1
+        lac [DIRBLK-SLOTBLKS]
+        sub sbT
+        jmp sbx
+sb1,    lac [DIRBLK+DIRBLKS]
+        add sbT
+sbx,    jmp .
+
+// The full address of slot IO's directory entry. Called via jsp. AC is the address, IO is
+// preserved.
+dirEnt, dap dax
+        dio sbS
+        lac sbS
+        sal 2s
+        add sbS
+        add [4]
+        add [dirBuf:3]
+dax,    jmp .
+
+// Writes the tape's page tpPg: its title and its 16 rows' names from the directory, a free
+// slot's row blank, and every row blank until a directory is read (dirOk).
+// Called via jsp. AC and IO are clobbered.
+tpgFill, dap tgx
+        lac [tpgT:1]
+        dac twP
+        law 0d21
+        dac twN
+        jsp txBeg
+        lac [tgTit:6]
+        dac twS
+        jsp txStr
+        lac tpDrv
+        add [061]
+        lia
+        jsp txC
+        jsp tx2Sp
+        lac tpPg
+        add [061]
+        lia
+        jsp txC
+        lio [057]                       // /
+        jsp txC
+        law TPPAGES+060
+        lia
+        jsp txC
+        jsp txEnd
+// The rows.
+        lac tpPg
+        sal 4s
+        dac tgS
+        lac [tpgBuf:1]
+        add [TPROW0+3]
+        dac tgP
+        law i 0d16
+        dac tgK
+tg1,    lac tgP
+        dac twP
+        law NAMEWDS*3
+        dac twN
+        lac dirOk
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tg3
+        lio tgS
+        jsp dirEnt
+        dac rq
+        lac i rq
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tg3
+// The name's 8 lines from its 4 words, a name of spaces shown as -.
+        idx rq
+        lac [nmBuf:6]
+        dac rp
+        law i 4
+        dac rk
+tg2,    lac i rq
+        sar 9s
+        and [0777]
+        dac i rp
+        idx rp
+        lac i rq
+        and [0777]
+        dac i rp
+        idx rp
+        idx rq
+        isp rk
+        jmp tg2
+        jsp nmDash
+        lac [nmBuf:6]
+        dac nmP
+        jsp nmText
+        jmp tg5
+tg3,    jsp txBeg
+        jsp txEnd
+tg5,    lac tgP
+        add [TPROWW]
+        dac tgP
+        idx tgS
+        isp tgK
+        jmp tg1
+tgx,    jmp .
+
+// A name of spaces in nmBuf made -, so that its row has a label to light.
+// Called via jsp. AC is clobbered, IO is preserved.
+nmDash, dap ndx
+        lac [nmBuf:6]
+        dac ntq
+        law i NAMEMAX
+        dac ntK
+nd1,    lac i ntq
+        sas [040]
+        jmp ndx
+        idx ntq
+        isp ntK
+        jmp nd1
+        law 055                         // -
+        dac nmBuf
+ndx,    jmp .
+
+// 340 text, written into a run of display words: twP the next word's full address, twN the
+// codes left in the run. The run starts with an upper shift (txBeg) and ends padded with upper
+// shifts and the end code in its last word (txEnd), so a frame drawing it while it is written
+// never reads past it.
+
+// Starts a run. Called via jsp. AC is clobbered, IO is clobbered.
+txBeg,  dap tbx
+        dzm twW
+        dzm twK
+        dzm twCase
+        law 035
+        lia
+        jsp txPut
+tbx,    jmp .
+
+// The character in IO, a name line's value: its 340 code, PKLOWER for a lower-case letter. The
+// shift is written first when the case changes; a character that is not a lower-case letter is
+// written in upper case. Called via jsp. AC and IO are clobbered.
+txC,    dap tcx
+        dio twC
+        lai
+        and [PKLOWER]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tc1
+        lac twCase
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp tc3
+        dzm twCase
+        law 035
+        lia
+        jsp txRaw
+        jmp tc3
+tc1,    lac twCase
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tc3
+        law 1
+        dac twCase
+        law 036
+        lia
+        jsp txRaw
+tc3,    lio twC
+        jsp txRaw
+tcx,    jmp .
+
+// The code in IO, unless only the end's place is left. Called via jsp. AC and IO are
+// clobbered.
+txRaw,  dap trx
+        lac twN
+        sub [2]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp trx
+        jsp txPut
+trx,    jmp .
+
+// The code in IO's low 6 bits put in the run, its word stored once full.
+// Called via jsp. AC and IO are clobbered.
+txPut,  dap tux
+        lai
+        and [077]
+        dac twT
+        lac twW
+        ral 6s
+        ior twT
+        dac twW
+        lac twN
+        sub [1]
+        dac twN
+        idx twK
+        SKIP_NEXT_IF_DIFFERENT [3]
+        jsp txSt
+tux,    jmp .
+
+// The word made, stored. Called via jsp. AC is clobbered, IO is preserved.
+txSt,   dap txx
+        lac twW
+        dac i twP
+        idx twP
+        dzm twW
+        dzm twK
+txx,    jmp .
+
+// Ends the run: upper shifts to the last code, then the end code.
+// Called via jsp. AC and IO are clobbered.
+txEnd,  dap tex
+te1,    lac twN
+        sub [2]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp te2
+        law 035
+        lia
+        jsp txPut
+        jmp te1
+te2,    law 037
+        lia
+        jsp txPut
+tex,    jmp .
+
+// Two spaces. Called via jsp. AC and IO are clobbered.
+tx2Sp,  dap t2x
+        lio [040]
+        jsp txC
+        lio [040]
+        jsp txC
+t2x,    jmp .
+
+// The characters at twS, a 16-bit pointer, to a 0. Called via jsp. AC and IO are clobbered.
+txStr,  dap ttsx
+tts1,   lac i twS
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp ttsx
+        lia
+        jsp txC
+        idx twS
+        jmp tts1
+ttsx,   jmp .
+
+// The number in IO, 0 to 999, its leading zeros dropped. Called via jsp. AC and IO are
+// clobbered.
+txNum,  dap tnx
+        jsp dv10
+        dio tnD0
+        lia
+        jsp dv10
+        dio tnD1
+        dac tnD2
+        lac tnD2
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tn2
+        lac tnD1
+        SKIP_NEXT_IF_AC_ZERO
+        jmp tn1
+        jmp tn0
+tn2,    lac tnD2
+        add [060]
+        lia
+        jsp txC
+tn1,    lac tnD1
+        add [060]
+        lia
+        jsp txC
+tn0,    lac tnD0
+        add [060]
+        lia
+        jsp txC
+tnx,    jmp .
+
+// The name's 8 lines at nmP as a run: its trailing spaces dropped, each line made a character
+// the 340 has (a line that is none shown as ?).
+// Called via jsp. AC and IO are clobbered.
+nmText, dap ntx
+        jsp txBeg
+        lac nmP
+        add [7]
+        dac ntq
+        law NAMEMAX
+        dac ntL
+nt1,    lac i ntq
+        sas [040]
+        jmp nt2
+        lac ntq
+        sub [1]
+        dac ntq
+        lac ntL
+        sub [1]
+        dac ntL
+        SKIP_NEXT_IF_AC_ZERO
+        jmp nt1
+nt2,    lac ntL
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp nt4
+        cla
+        sub ntL
+        dac ntK
+        lac nmP
+        dac ntq
+nt3,    lio i ntq
+        jsp nmSafe
+        jsp txC
+        idx ntq
+        isp ntK
+        jmp nt3
+nt4,    jsp txEnd
+ntx,    jmp .
+
+// IO's name line, made a character: a letter of either case, or a space, digit or sign in upper
+// case; anything else ?. Called via jsp. AC is clobbered, IO is the character.
+nmSafe, dap nsx
+        dio nsV
+        lai
+        and [0777600]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ns9
+        lac nsV
+        and [077]
+        SKIP_NEXT_IF_AC_NOT_ZERO
+        jmp ns9
+        sub [033]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp nsx                         // a letter
+        lac nsV
+        and [077]
+        sub [040]
+        SKIP_NEXT_IF_AC_NOT_NEGATIVE
+        jmp ns9
+        lac nsV
+        and [PKLOWER]
+        SKIP_NEXT_IF_AC_ZERO
+        jmp ns9
+        jmp nsx
+ns9,    lio [077]
+nsx,    jmp .
+
+// The texts: each size's and edge's for the preview, and the tape page's title, a character a
+// word to a 0.
+szTxT,  szT0:6; szT1:6; szT2:6; szT3:6
+edTxT,  edT0:6; edT1:6; edT2:6; edT3:6
+szT0,   061; 062; 066; 030; 061; 062; 060; 0
+szT1,   071; 060; 030; 071; 060; 0
+szT2,   066; 060; 030; 066; 060; 0
+szT3,   063; 062; 030; 063; 062; 0
+edT0,   04; 05; 01; 04; 0
+edT1,   015; 011; 022; 022; 017; 022; 0
+edT2,   024; 017; 022; 025; 023; 0
+edT3,   017; 020; 05; 016; 0
+tgTit,  015; 011; 03; 022; 017; 024; 01; 020; 05; 040; 04; 0
+
+// The status words' texts, by status, STPUNCHED first.
+stTab,  stPun:1; stRd:1; stSav:1; stLd:1; stDel:1
+        stBad:1; stNo:1; stNL:1; stLk:1; stFl:1
+
+// The pen keyboard's block (penkbd.ah): the text kind, NAMEMAX characters, the prompt, the
+// buffer, which holds the name last used, and no padding.
+kbBlk,  PKTEXT
+        NAMEMAX
+        kbPrm:6
+        kbBuf:6
+        0
+kbPrm,  type340 "\UNAME"
+kbBuf,
+        table PKBUFW
+
+// The tape's state. tpDrv is the drive, 0 to DRIVES - 1, kept across a start at go; tpPg the
+// tape page shown; tpLitS the slot of the record lit on it; tpBadS the slot whose read was last
+// refused, or -1; dirOk set while dirBuf holds the drive's directory; edP the entry changed in
+// dirBuf and not yet written, or 0, with edSv its words before; tpWOn while WAIT shows; tpMT
+// while the tape may be moving.
+tpDrv,  0
+tpPg,   0
+tpLitS, 0
+tpBadS, 0
+dirOk,  0
+edP,    0
+edSv,
+        table 5
+tpWOn,  0
+tpMT,   0
+tpName,                                 // the name, a line a character
+        table NAMEMAX
+kbMode, 0                               // what OK goes on to, 1 the punch or 2 the save
+kbAns,  0
+kbSvGo, 0                               // the frame's and the hits' routes before the keyboard
+kbSvHit, 0
+
+// Returns.
+tpRet,  0
+bkN,    0
+inR,    0
+prR,    0
+tkR,    0
+tnR,    0
+fdR,    0
+
+// Working words.
+rp,     0
+rq,     0
+rk,     0
+rj,     0
+rT,     0
+sp,     0
+sq,     0
+sk,     0
+tkC,    0
+trK,    0
+trS,    0
+ldN,    0
+svS,    0
+tnD,    0
+tfSt,   0
+rRow,   0
+rKind,  0
+rData,  0
+aR,     0
+aC,     0
+rCap,   0
+rRn,    0
+rC,     0
+tgS,    0
+tgP,    0
+tgK,    0
+
+// The encoder's.
+eSum,   0
+ep,     0
+eq,     0
+em,     0
+ek,     0
+en,     0
+eR,     0
+eR0,    0
+eR1,    0
+eC,     0
+eC0,    0
+eC1,    0
+eH,     0
+eW,     0
+eT,     0
+eOr,    0
+eAny,   0
+eFst,   0
+eNb,    0
+ePend,  0
+eRn,    0
+eSt,    0
+eRl,    0
+eK,     0
+eRp,    0
+eBv,    0
+eBk,    0
+eBp,    0
+eB,     0
+eJ,     0
+eV,     0
+gH,     0
+gL,     0
+eU,                                     // the box's column union
+        table 7
+runB,                                   // a row's runs
+        table 0d16
+bmB,                                    // a row's bitmap
+        table 0d16
+
+// The decoder's, and the record it read.
+dSum,   0
+dMk,    0                               // the mark has passed
+dV,     0
+dp,     0
+dk,     0
+dT,     0
+dQ,     0
+dN,     0
+dJ,     0
+dI,     0
+dCd,    0
+dCol,   0
+dLv,    0
+dNb,    0
+dG1,    0
+dG2,    0
+dG3,    0
+dSR,    0
+dSN,    0
+dSC,    0
+dSM,    0
+dSz,    0
+dEd,    0
+dGen,   0
+dR0,    0
+dC0,    0
+dH,     0
+dW,     0
+dCells, 0
+dName,
+        table NAMEMAX
+dDig,                                   // the counter's digits, least significant first
+        table 7
+cuP,    0
+cuM,    0
+cuR,    0
+cuC,    0
+cuB,    0
+cuT,    0
+gpT0,   0
+
+// The packer's and the unpacker's.
+pmP,    0
+pmW,    0
+pmB,    0
+pmN,    0
+pmV,    0
+pmK,    0
+gmP,    0
+gmN,    0
+gmB,    0
+gmC,    0
+gmV,    0
+gmK,    0
+
+// The Microtape's.
+mmT0,   0
+mtWant, 0
+mtWord, 0
+mtStat, 0
+mtTmo,  0
+mtN,    0
+mtAt,   0
+mtWc,   0
+mtSum,  0
+mtBlk,  0
+mtBadN, 0
+sbS,    0
+sbT,    0
+
+// The text writer's.
+twP,    0
+twN,    0
+twW,    0
+twK,    0
+twT,    0
+twC,    0
+twCase, 0
+twS,    0
+tnD0,   0
+tnD1,   0
+tnD2,   0
+nmP,    0
+ntq,    0
+ntL,    0
+ntK,    0
+nsV,    0
+nmBuf,
+        table NAMEMAX
+
+// The display words, in bank 1.
+bank 1
+
+// WAIT at the screen's center, a list that loops on itself while a tape moves (waitOn). Its 8
+// invisible vectors keep it from refreshing, and stealing cycles, faster than it need.
+waitL,  scale(2) intensity(CELLI) lpoff next(point)
+        y(0d500) next(point)
+        x(0d456) next(character)
+        type340 "\UWAIT"
+        scale(0) lpoff next(vector)
+        right deltax(0d127)
+        left deltax(0d127)
+        right deltax(0d127)
+        left deltax(0d127)
+        right deltax(0d127)
+        left deltax(0d127)
+        right deltax(0d127)
+        left deltax(0d127) end
+        lpoff next(subroutine)
+        jump waitL:1 next(parameter)
+
+// TAPE's list, beside its bar item.
+lsTape,
+rT1,    ITEM(ROWY1, 0d672)
+        type340 "\UPUNCH"
+rT2,    ITEM(ROWY1-ROWPITCH, 0d672)
+        type340 "\UREAD"
+        next(subroutine)
+        jump boxJmp:1 next(subroutine)
+
+// The status words, by status (stTab), and FULL and blanks for the counter: 4 words each, an
+// upper shift, 10 characters and the end code in the last word, so that a frame never reads a
+// word after one as text.
+stPun,  type340 "\UPUNCHED   "
+stRd,   type340 "\UREAD      "
+stSav,  type340 "\USAVED     "
+stLd,   type340 "\ULOADED    "
+stDel,  type340 "\UDELETED   "
+stBad,  type340 "\UBAD TAPE  "
+stNo,   type340 "\UNO TAPE   "
+stNL,   type340 "\UNOT LIFE  "
+stLk,   type340 "\ULOCKED    "
+stFl,   type340 "\UTAPE FULL "
+txFull, type340 "\UFULL      "
+txBlank, type340 "\U\U\U\U\U\U\U\U\U\U\U"
+
+// The library screen's second row of keys, under the first, by the screen's mode (lifelib.ac's
+// libMode): the built-in pages', the tape's, the paper record's. Each goes on to the page.
+k2Built, ITEM(KEYY2, 0)
+        type340 "\UMICROTAPE"
+        next(subroutine)
+        jump scrPg:1 next(subroutine)
+k2Tape, ITEM(KEYY2, 0)
+        type340 "\UBUILTIN"
+        ITEM(KEYY2, 0d128)
+k2Drv,  type340 "\UD1"                 // its first word the drive's, from tpTape
+        ITEM(KEYY2, 0d256)
+        type340 "\USAVE"
+        ITEM(KEYY2, 0d384)
+        type340 "\UDELETE"
+        ITEM(KEYY2, 0d512)
+        type340 "\UFIELD"
+        next(subroutine)
+        jump scrPg:1 next(subroutine)
+k2Paper, ITEM(KEYY2, 0d512)
+        type340 "\UFIELD"
+        next(subroutine)
+        jump scrPg:1 next(subroutine)
+
+// A tape's page, written by tpgFill: its title, then 16 rows, two columns of 8, each its item's
+// 3 words and its name's run of NAMEWDS, then on to the preview. Set 2 is enabled for the
+// names' lower case.
+tpgBuf, charsets(2) intensity(LBLI) next(point)
+        y(BARY) next(point)
+        x(0d160) next(character)
+tpgT,
+        table 7
+        ITEM(SROWY1, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d36, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d72, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d108, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d144, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d180, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d216, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1-0d252, 0d32)
+        table NAMEWDS
+        ITEM(SROWY1, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d36, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d72, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d108, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d144, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d180, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d216, 0d272)
+        table NAMEWDS
+        ITEM(SROWY1-0d252, 0d272)
+        table NAMEWDS
+        next(subroutine)
+        jump scrPv:1 next(subroutine)
+
+// The paper record's page, its one row the record read.
+ppgBuf, charsets(2) intensity(LBLI) next(point)
+        y(BARY) next(point)
+        x(0d160) next(character)
+        type340 "\UPAPER TAPE"
+ppgRow, ITEM(SROWY1, 0d32)
+ppgNm,
+        table NAMEWDS
+        next(subroutine)
+        jump scrPv:1 next(subroutine)
+
+// The record's preview text, written by recSetup: width X height, the size, the edge and the
+// generation.
+recInfo, ITEM(INFOY, PVTX)
+recTxt,
+        table 0d12
+        next(subroutine)
+        jump tail:0 next(parameter)
+
+// A record's packed words, read from or written to a slot's 4 blocks; block 0's sink.
+recBuf,
+        table (SLOTBLKS*0400)
+
+// The directory of the drive's tape, its 3 blocks, in bank 3.
+bank 3
+dirBuf,
+        table DIRWDS
+
+bank 6

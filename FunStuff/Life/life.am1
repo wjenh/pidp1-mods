@@ -4,7 +4,9 @@ Conway's Game of Life on the Type 340
 // generation counter at the top right.
 // The light pen works the menu and, while stopped, paints and erases cells on a dim lattice.
 // lifemenu.ac has the menu and the pen's actions, lifelib.ac the pattern library and the placing
-// of its patterns, and lifefield.ac the field's size and edges.
+// of its patterns, lifefield.ac the field's size and edges, and lifetape.ac the saving and
+// loading of the field on paper tape and on the Microtape, its names typed on the pen keyboard
+// (MiscTasks' PENKBD library).
 // life.ah has the settings, such as the pen's apertures, the intensities and the speeds.
 // It starts running the four guns at the largest size with dead edges and the fastest speed.
 //
@@ -18,24 +20,30 @@ Conway's Game of Life on the Type 340
 // last chosen stay, and that field is loaded again.
 // The pen and the menu go back to how a load leaves them (lifelib.ac's startOver).
 //
-// Needs a PDP-1D (lia), the BBN clock, the Type 340 on SBS channel 0, and banks 0 to 5.
+// Needs a PDP-1D (lia), the BBN clock, the Type 340 on SBS channel 0, and banks 0 to 6; the
+// paper tape punch and reader and the Type 550 Microtape for saving and loading.
 // Bank 0 holds the code and the break routine.
 // Bank 1 holds the menu's display words, the lattice and the library's screen and ghost, which
 // the display reaches by jump.
 // Banks 5 and 2 hold the two lists of the cells, one shown while the other is built.
 // Bank 3 holds the library, its code and patterns, and the code that sets the size and edges.
-// Bank 4 holds the field, with a spare row before and after it, its row flags and UNDO's copy.
+// Bank 4 holds the field, with a spare row before and after it, its row flags and UNDO's copy,
+// and the scratch field a tape's record is read into.
+// Bank 6 holds the tape's code and buffers and the pen keyboard's code.
 // Extend mode is on throughout, so every pointer holds a full address.
 //
 // 03-Nov-2026 Claude: the engine and the display.
 // 03-Nov-2026 Claude: the menu, the pen and the field sizes, with lifemenu.ac.
 // 04-Nov-2026 Claude: comments of every file cleaned for release, no code changed.
+// 06-Nov-2026 Claude: saving and loading on paper tape and the Microtape, with lifetape.ac.
 
 #include <TYPE340/type340defs.ah>
 #include <CLOCK/clockdefs.ah>
 #include <AIDS/skipmacros.ah>
 #include <LIGHTPEN/lightpen.ah>
+#include <MICROTAPE/type550defs.ah>
 #include "life.ah"
+#include <PENKBD/penkbd.ah>
 
 #define ROWS        0d120
 #define FIELDWORDS  0d840               // 7 words a row, 18 cells a word, the high bit leftmost
@@ -655,7 +663,7 @@ build,  dap bdx
         EMIT
         lac lpp
         dac cntp
-        add [5]                         // the counter's words, written last
+        add [7]                         // the counter's words, written last
         dac lpp
         lac [scale(3) intensity(CELLI)]
         EMIT
@@ -841,8 +849,9 @@ emVis,  EMIT
         EMIT
 enx,    jmp .
 
-// Writes the five counter words at cntp.
-// They hold an upper shift, the seven digits, then FULL or four blanks, and the end character.
+// Writes the seven counter words at cntp.
+// They hold an upper shift, the seven digits and a space, then the 4 words of the status word
+// (lifetape.ac's), or of FULL or blanks, the end character in the last.
 // Called via jsp. AC and IO are clobbered.
 #define DIGCH(n) lac dig+n; add [060]
 #define EMITC dac i cntp; idx cntp
@@ -875,18 +884,21 @@ cntWr,  dap cwx
         ral 6s
         ior [040]
         EMITC
-        lac full
+        lac stTxt
         SKIP_NEXT_IF_AC_ZERO
-        jmp cwFull
-        lac [0404040]                   // blanks
+        jmp cw1
+        lac [txBlank:1]
+        lio full
+        SKIP_NEXT_IF_IO_IS_ZERO
+        lac [txFull:1]
+cw1,    dac pp
+        law i 4
+        dac pcnt
+cw2,    lac i pp
         EMITC
-        lac [0403737]                   // a blank, then the end
-        EMITC
-        jmp cwx
-cwFull, lac [0062514]                   // F U L
-        EMITC
-        lac [0143737]                   // L, then the end
-        EMITC
+        idx pp
+        isp pcnt
+        jmp cw2
 cwx,    jmp .
 
 #include <TYPE340/type340halt.ac>
@@ -1134,7 +1146,8 @@ patTest,
 #include "lifetest.ah"
 #endif
 
-// The whole fields, by patSel, as libLoad reads them.
+// The whole fields, by patSel, as libLoad reads them, then the cells a tape's record too large
+// for the pen shows in its preview (lifetape.ac's recSetup), which libLoad never reads.
 patTab, patGuns:3
         patAlg:3
 #ifdef LIFE_TESTPATTERN
@@ -1143,6 +1156,7 @@ patTab, patGuns:3
         patGuns:3
 #endif
         patGuns:3
+        recList:4
 
 #include "lifelib.ac"
 #include "lifefield.ac"
@@ -1170,6 +1184,27 @@ rowFlag,
 // UNDO's copy of the field, the spare row after it and its row flags, written by lifelib.ac.
 fldU,
         table FIELDSPAN
+
+// The scratch field a tape's record is read into, held until the record is placed (lifetape.ac),
+// with room for the flags so that UNDO can park a field there (lifelib.ac's libUndo).
+scrFld,
+        table FIELDSPAN
+
+// A tape's record's cells, as the library's lists hold them, for PLACE or its preview.
+recList,
+        table (PVCAP+1)
+
+// The tape's code and the pen keyboard's, in bank 6, with their literals.
+bank 6
+0/
+#include <PENKBD/penkbd.ac>
+#include "lifetape.ac"
+
+        constants
+
+// The pen keyboard's list, in bank 1.
+bank 1
+#include <PENKBD/penkbdlist.ac>
 
 bank 0
 

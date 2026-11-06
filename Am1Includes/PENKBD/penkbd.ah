@@ -1,0 +1,235 @@
+// penkbd.ah -- the pen keyboard's definitions: the open block's words, the kinds, the answers
+// pkHit gives, and every constant of the keyboard's layout and timing. Each constant in
+// #ifndef may be defined by the program before the include to change it. penkbd.ac (the code)
+// and penkbdlist.ac (the display list) include this file; README.md is the usage document.
+// 04-Nov-2026, Claude: the library, from Sketchpad's pen keyboard.
+
+#ifndef PENKBD_AH
+#define PENKBD_AH
+
+#include <TYPE340/type340cmds.ah>
+
+// The time difference both pen libraries take: AC = now - then, modulo PUI_WRAP, the clock's
+// count in ms; the BBN clock's rck counts 0 to 59999 and wraps (Docs/UsingTimesharingClock.md).
+// Entry: AC = now. Two instructions and a constant; AC is the difference, IO is untouched.
+#ifndef PUI_WRAP
+#define PUI_WRAP 0d60000
+#endif
+#ifndef PUI_SINCE
+#define PUI_SINCE(then) \
+    sub then; \
+    spa; \
+    add [PUI_WRAP]
+#endif
+
+// The open block, five words, whose 16-bit address pkOpen takes in IO: the kind, the limit in
+// characters (PKMAX at most), the 16-bit addresses of the prompt (340 text) and of the buffer
+// (340 text: the starting value, and the text typed at OK), and the buffer's run in codes, which
+// OK pads the text to, or 0 for a text ended at its end code.
+#define PKBKIND 0
+#define PKBLIM 1
+#define PKBPROMPT 2
+#define PKBBUF 3
+#define PKBRUN 4
+#define PKBLOCK 5
+
+// The kinds: text (letters in both cases, digits and punctuation, Shift and Space), number
+// (digits and -), decimal (a number with the point).
+#define PKTEXT 0
+#define PKNUM 1
+#define PKDEC (PKNUM | PKKNUM)
+
+// What pkHit answers: the keyboard still open, OK (the buffer written), Cancel (the buffer as
+// it was). Either answer means the keyboard has closed.
+#define PKSTILL 0
+#define PKOK 1
+#define PKCANCEL 2
+
+// The text: at most PKMAX characters. A buffer of PKBUFW words holds any text of PKMAX
+// characters as OK writes it: an upper shift, a shift before each character at worst, and the
+// end code; PKBUFC is that run in codes, for the block's fifth word.
+#ifndef PKMAX
+#define PKMAX 0d24
+#endif
+#define PKBUFW ((0d2 * PKMAX + 0d4) / 0d3)
+#define PKBUFC (PKBUFW * 0d3)
+
+// The list's prompt, a run of PKPW words (PKPW * 3 - 1 codes shown), and its field, room for
+// the text as in a buffer with the cursor and its shift.
+#ifndef PKPW
+#define PKPW 4
+#endif
+#define PKPWC (PKPW * 0d3)
+#define PKFW ((0d2 * PKMAX + 0d6) / 0d3)
+#define PKFWC (PKFW * 0d3)
+
+// Where things are drawn, in the 340's units. Keys at scale 2, PKADV apart along a text and PKH
+// high, on a pitch of PKDX across from PKX0 and PKDY down from PKY0; the action keys' row at
+// PKYB, each from its own x. The prompt's line at PKPY, the field's at PKFY, both from PKX0.
+#ifndef PKX0
+#define PKX0 0d112
+#endif
+#ifndef PKDX
+#define PKDX 0d80
+#endif
+#ifndef PKY0
+#define PKY0 0d720
+#endif
+#ifndef PKDY
+#define PKDY 0d80
+#endif
+#ifndef PKYB
+#define PKYB 0d280
+#endif
+#ifndef PKPY
+#define PKPY 0d880
+#endif
+#ifndef PKFY
+#define PKFY 0d820
+#endif
+#ifndef PKXSHIFT
+#define PKXSHIFT 0d48
+#endif
+#ifndef PKXSPACE
+#define PKXSPACE 0d228
+#endif
+#ifndef PKXBACK
+#define PKXBACK 0d408
+#endif
+#ifndef PKXCLEAR
+#define PKXCLEAR 0d560
+#endif
+#ifndef PKXOK
+#define PKXOK 0d740
+#endif
+#ifndef PKXCANCEL
+#define PKXCANCEL 0d836
+#endif
+#define PKADV 0d28
+#define PKH 0d26
+
+// A hit answers a key from PKR left of it and below it, and PKRX right of it and PKR above it,
+// the pen's reach and some. At the default pitch no pen position reaches two keys.
+#ifndef PKR
+#define PKR 0d24
+#endif
+#ifndef PKRX
+#define PKRX 0d12
+#endif
+
+// A key acts at the first hit of a press; a press ends after PKGAPMS with no hit, the pen taken
+// for lifted (the pen reports no lift), so a drag crossing the blank between keys in less is
+// still the one press and types nothing more. A key that acts is lit for PKFLASHMS.
+#ifndef PKGAPMS
+#define PKGAPMS 0d250
+#endif
+#ifndef PKFLASHMS
+#define PKFLASHMS 0d150
+#endif
+
+// The intensities, a key and a key lit, 0 to 7.
+#ifndef PKNORMI
+#define PKNORMI 5
+#endif
+#ifndef PKLITI
+#define PKLITI 7
+#endif
+
+// The list's last word, which ends the keyboard's frame. The default raises the 340's break, for
+// a program whose break routine restarts the frame; a program that polls dss may define it as
+// lpoff halt.
+#ifndef PKHALT
+#define PKHALT lpoff halt interrupt
+#endif
+
+// The parameter words: a key, a key lit, and the prompt and the field, with the pen off.
+#define PKKEY (charsets(2) | scale(2) | intensity(PKNORMI) | lpon | next(point))
+#define PKLIT (charsets(2) | scale(2) | intensity(PKLITI) | lpon | next(point))
+#define PKTXT (charsets(2) | scale(2) | intensity(PKNORMI) | lpoff | next(point))
+
+// 340 codes: the shifts, the end, a space, the point and the cursor (set 2's underline); a run's
+// pad (three upper shifts, which neither draw nor move the beam) and its last word (two and the
+// end).
+#define PKCUP 035
+#define PKCLOW 036
+#define PKCEND 037
+#define PKCSPACE 040
+#define PKCDOT 056
+#define PKCURSOR 060
+#define PKPAD 0353535
+#define PKBLANK 0353537
+
+// A key's code word: the 340 code it types, PKLET for a letter, PKKNUM for a key of the number
+// keyboard, PKHIDE for Shift and Space, which the number keyboards blank; or PKSPEC and the
+// action. A character kept in the text is its code, PKLOWER for a lower-case letter.
+#define PKLOWER 0100
+#define PKLET 0200
+#define PKKNUM 0400
+#define PKSPEC 01000
+#define PKHIDE 02000
+#define PKASHIFT 0
+#define PKABACK 1
+#define PKACLEAR 2
+#define PKAOK 3
+#define PKACANCEL 4
+#define PKSHIFTC (PKSPEC | PKHIDE | PKASHIFT)
+
+// Where the key in column c and row r has its character drawn, its x and its y.
+#define PKCX(c) (PKX0 + (c) * PKDX)
+#define PKRY(r) (PKY0 - (r) * PKDY)
+
+// The keys, one line each: K(name, x, y, characters, code, text). The order is the order the
+// keys are searched for a hit, and the order of every table made from this list.
+#define PK_KEYS(K) \
+    K(k1, PKCX(0d0), PKRY(0d0), 1, PKKNUM | 061, "1") \
+    K(k2, PKCX(0d1), PKRY(0d0), 1, PKKNUM | 062, "2") \
+    K(k3, PKCX(0d2), PKRY(0d0), 1, PKKNUM | 063, "3") \
+    K(k4, PKCX(0d3), PKRY(0d0), 1, PKKNUM | 064, "4") \
+    K(k5, PKCX(0d4), PKRY(0d0), 1, PKKNUM | 065, "5") \
+    K(k6, PKCX(0d5), PKRY(0d0), 1, PKKNUM | 066, "6") \
+    K(k7, PKCX(0d6), PKRY(0d0), 1, PKKNUM | 067, "7") \
+    K(k8, PKCX(0d7), PKRY(0d0), 1, PKKNUM | 070, "8") \
+    K(k9, PKCX(0d8), PKRY(0d0), 1, PKKNUM | 071, "9") \
+    K(k0, PKCX(0d9), PKRY(0d0), 1, PKKNUM | 060, "0") \
+    K(kQ, PKCX(0d0), PKRY(0d1), 1, PKLET | 021, "Q") \
+    K(kW, PKCX(0d1), PKRY(0d1), 1, PKLET | 027, "W") \
+    K(kE, PKCX(0d2), PKRY(0d1), 1, PKLET | 005, "E") \
+    K(kR, PKCX(0d3), PKRY(0d1), 1, PKLET | 022, "R") \
+    K(kT, PKCX(0d4), PKRY(0d1), 1, PKLET | 024, "T") \
+    K(kY, PKCX(0d5), PKRY(0d1), 1, PKLET | 031, "Y") \
+    K(kU, PKCX(0d6), PKRY(0d1), 1, PKLET | 025, "U") \
+    K(kI, PKCX(0d7), PKRY(0d1), 1, PKLET | 011, "I") \
+    K(kO, PKCX(0d8), PKRY(0d1), 1, PKLET | 017, "O") \
+    K(kP, PKCX(0d9), PKRY(0d1), 1, PKLET | 020, "P") \
+    K(kA, PKCX(0d0), PKRY(0d2), 1, PKLET | 001, "A") \
+    K(kS, PKCX(0d1), PKRY(0d2), 1, PKLET | 023, "S") \
+    K(kD, PKCX(0d2), PKRY(0d2), 1, PKLET | 004, "D") \
+    K(kF, PKCX(0d3), PKRY(0d2), 1, PKLET | 006, "F") \
+    K(kG, PKCX(0d4), PKRY(0d2), 1, PKLET | 007, "G") \
+    K(kH, PKCX(0d5), PKRY(0d2), 1, PKLET | 010, "H") \
+    K(kJ, PKCX(0d6), PKRY(0d2), 1, PKLET | 012, "J") \
+    K(kK, PKCX(0d7), PKRY(0d2), 1, PKLET | 013, "K") \
+    K(kL, PKCX(0d8), PKRY(0d2), 1, PKLET | 014, "L") \
+    K(kMinus, PKCX(0d9), PKRY(0d2), 1, PKKNUM | 055, "-") \
+    K(kZ, PKCX(0d0), PKRY(0d3), 1, PKLET | 032, "Z") \
+    K(kX, PKCX(0d1), PKRY(0d3), 1, PKLET | 030, "X") \
+    K(kC, PKCX(0d2), PKRY(0d3), 1, PKLET | 003, "C") \
+    K(kV, PKCX(0d3), PKRY(0d3), 1, PKLET | 026, "V") \
+    K(kB, PKCX(0d4), PKRY(0d3), 1, PKLET | 002, "B") \
+    K(kN, PKCX(0d5), PKRY(0d3), 1, PKLET | 016, "N") \
+    K(kM, PKCX(0d6), PKRY(0d3), 1, PKLET | 015, "M") \
+    K(kDot, PKCX(0d7), PKRY(0d3), 1, PKCDOT, ".") \
+    K(kComma, PKCX(0d8), PKRY(0d3), 1, 054, ",") \
+    K(kSlash, PKCX(0d9), PKRY(0d3), 1, 057, "/") \
+    K(kLPar, PKCX(0d0), PKRY(0d4), 1, 050, "(") \
+    K(kRPar, PKCX(0d1), PKRY(0d4), 1, 051, ")") \
+    K(kColon, PKCX(0d2), PKRY(0d4), 1, 072, ":") \
+    K(kEq, PKCX(0d3), PKRY(0d4), 1, 075, "=") \
+    K(kShift, PKXSHIFT, PKYB, 5, PKSHIFTC, "Shift") \
+    K(kSpace, PKXSPACE, PKYB, 5, PKHIDE | PKCSPACE, "Space") \
+    K(kBack, PKXBACK, PKYB, 4, PKSPEC | PKKNUM | PKABACK, "Back") \
+    K(kClear, PKXCLEAR, PKYB, 5, PKSPEC | PKKNUM | PKACLEAR, "Clear") \
+    K(kOK, PKXOK, PKYB, 2, PKSPEC | PKKNUM | PKAOK, "OK") \
+    K(kCancel, PKXCANCEL, PKYB, 6, PKSPEC | PKKNUM | PKACANCEL, "Cancel")
+
+#endif

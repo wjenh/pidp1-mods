@@ -44,6 +44,7 @@
  *    emulator thread only.
  *    TRUESTEAL's spreading is computed rather than accumulated.
  * 3-Oct-2026 wje properly handle pdp-1 timing in the middle of a 2 cycle instruction.
+ * 7-Nov-2026 wje add hscCore.h
 */
 
 #include <unistd.h>
@@ -61,6 +62,7 @@
 #include "pdp1.h"
 #include "logger.h"
 #include "highSpeedChannels.h"
+#include "hscCore.h"
 
 // Stretch any lamp request of < HSC_STRETCH passes to this.
 // Otherwise, we would rarely see the light when using the type340 which

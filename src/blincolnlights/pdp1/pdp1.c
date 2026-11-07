@@ -83,6 +83,7 @@
 #define NOTIOTH
 #include "dynamicIots.h"
 #include "configuration.h"
+#include "pdp1core.h"
 
 bool audioEnabled = false;
 bool lailiaEnabled = true;

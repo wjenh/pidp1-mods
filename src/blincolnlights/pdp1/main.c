@@ -56,6 +56,8 @@
  * wje 2-Nov-2026 motion prediction control removed, it is now always enabled.
  * Claude 06-Nov-2026 the command port's run, cont and halt press the Start, Continue and Stop keys, and
  *    run ? reports the machine's state (console.c).
+ * Claude 07-Nov-2026 the channel and PDP-1D calls and flags come from hscCore.h and pdp1core.h, not
+ *    externs of its own.
 */
 
 #include <errno.h>
@@ -83,6 +85,8 @@
 #define NOTIOTH
 #include "dynamicIots.h"
 #include "highSpeedChannels.h"
+#include "hscCore.h"
+#include "pdp1core.h"
 #include "ad1server.h"
 #include "papertape.h"
 #include "console.h"
@@ -127,10 +131,6 @@ void sigReconfigure(int);
 
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
-extern bool processHSCchannels(bool mayTake);
-extern bool hscBreakAllowed(void);
-extern void hscBreak(PDP1 *pdp);
-
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
 static u64 configThrottleDuration(char *nameP, u64 unitNs, u64 defaultNs);
@@ -149,9 +149,6 @@ static void timingCtxSwitches(long *voluntaryP, long *involuntaryP);
 
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
 
-extern bool lailiaEnabled;
-extern bool core1DEnabled;
-extern bool all1DEnabled;
 static bool timingEnabled;
 
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe

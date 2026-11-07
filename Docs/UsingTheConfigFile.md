@@ -2,9 +2,9 @@
 
 This document describes /opt/pidp1-mods/pidp1.config and how to use it.
 
-This is version 1.5; it will be updated as needed.\
-Edit date 2-Nov-2026\
-motion prediction is always on, setting here removed
+This is version 1.6; it will be updated as needed.\
+Edit date 7-Nov-2026\
+Default throttleburst changed to 10 usec
 
 ## What is the configuration file?
 
@@ -78,7 +78,7 @@ plugin that has an update function re-reads its own. The exceptions:
 
 | Setting | Reader | What it does |
 |---|---|---|
-| throttleburst | pdp1 | How far, in microseconds, simulated time must lead the wall clock before the throttle waits; 100 by default, 0 to 250 |
+| throttleburst | pdp1 | How far, in microseconds, simulated time must lead the wall clock before the throttle waits; 0 to 250, default 10 |
 | throttlequantum | pdp1 | The longest single wait, in microseconds |
 | throttlespin | pdp1 | The end of each wait, in microseconds, spent spinning instead of sleeping |
 | throttlemaxlag | pdp1 | How far, in milliseconds, the emulator may fall behind before the rest is forgiven |

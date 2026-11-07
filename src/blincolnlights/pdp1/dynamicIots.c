@@ -45,6 +45,8 @@
  * so the report can say which device's code the emulator thread's cycle time is going to.
  * 4-Oct-2026 claude the power switch's off edge disarms every deadline and calls the optional
  * iotPowerClear(), so a device can tell a power cycle from a STOP.
+ * 7-Oct-2026 claude the power switch's off edge disarms every deadline and calls the optional
+ * 7-Nov-2026 wje fix incorrect type, only a warning
  */
 
 #include <unistd.h>
@@ -557,7 +559,7 @@ char fname[256];
     entryP->startP = (IotStartP)dlsym(entryP->dlHandleP, "iotStart");
     entryP->stopP = (IotStopP)dlsym(entryP->dlHandleP, "iotStop");
     entryP->powerClearP = (IotPowerClearP)dlsym(entryP->dlHandleP, "iotPowerClear");
-    entryP->updateP = (IotStopP)dlsym(entryP->dlHandleP, "iotUpdate");
+    entryP->updateP = (IotUpdateP)dlsym(entryP->dlHandleP, "iotUpdate");
 
     entryP->pollP = (IotPollP)dlsym(entryP->dlHandleP, "iotPoll");
     if( entryP->pollP )

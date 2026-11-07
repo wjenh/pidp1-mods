@@ -28,12 +28,9 @@
 
 # throttleburst is how far, in microseconds, simtime must get ahead of the wall clock before the
 # throttle waits at all.
-# The default, 100, runs about 20 cycles between waits, so the host wakes the emulator far less
-# often.
-# 0 waits whenever simtime is ahead at all, one to five cycles between waits, the behavior before
-# this setting.
-# The most is 250, since the Type 340 runs on the wall clock and can absorb a lead only up to that.
-#throttleburst=100
+# 0 waits whenever simtime is ahead at all, one to five cycles between waits.
+# The most is 250, since the Type 340 can absorb a lead only up to that.
+#throttleburst=10
 
 # throttlespin is the final stretch of each wait, in microseconds, that busy-spins on the CPU
 # instead of sleeping to avoid the scheduler's wakeup latency at very short quanta.

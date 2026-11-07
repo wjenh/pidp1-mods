@@ -68,6 +68,9 @@
  *    in every mode but character.
  * 3-Nov-2026 Claude - an edge sets only its edge flag, never the stop flag, so dss no longer skips at
  *    an edge (H-340 p. 3-4). A vector continue's edge flag is cleared at once, as its RFD does.
+ * 7-Nov-2026 Claude - a lightpen hit in increment mode pauses after its nibble, 1.0 us, with the rest of
+ *    the word undrawn, and the resume goes on with the next nibble (H-340 p. 3-7).
+ * 7-Nov-2026 Claude - curState is declared as States, not Modes.
  */
 
 #include <stdlib.h>
@@ -136,6 +139,10 @@
 // The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay,
 // before the display goes on where it left off (H-340 pp. 3-6, 3-27).
 #define RESUME_TIME 1500
+// The 342 steps the beam one COUNT every 1.5 us, lit or not, and at the character's end NEXT CHAR
+// starts the next character 0.5 us later (H-340 pp. 3-11, 3-34).
+#define CHAR_STEP_TIME 1500
+#define CHAR_NEXT_TIME 500
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -164,6 +171,7 @@
 #define CHARWIDTH 5     // char width for scale 0, pixels
 #define CHARHEIGHT 7    // char height for scale 0, pixels
 #define CHARDELTA 2     // spacing between characters for scale 0, pixels
+#define LINEFEED 12     // line feed, scale 0 pixels (340 Programming Manual, Table 2)
 
 // Convert a command word mode field to one of the mode enum values
 #define MODE(x) (((x) >> 13) & 07)
@@ -299,8 +307,10 @@ static sem_t waitSemaphore; // how we wait for commands
 
 // Primary state
 static Modes curMode = PARAMETER;
-static Modes curState = STOPPED;
+static States curState = STOPPED;
 static BRMState brmState;
+static int incWord;         // the increment word being drawn, kept while a lightpen hit pauses in it
+static int incShift;        // the shift of incWord's next nibble, 12 down to 0; below 0 when none is left
 static int pendingDelay;
 static uint64_t dueNs;      // getNow() at which the modeled time so far is used up
 static volatile int curAddress;      // the address set by the dla command, where we will fetch data from
@@ -1042,20 +1052,26 @@ uint64_t idleT0;
                 break;
 
             case INCREMENT:
-                curState = RUNNING;             // not necessary, but do it for consistency
-                word = getWord(ctlP->pdp1P);
-
-                if( ESCAPE(word) )
+                // RUNNING here means a lightpen hit paused the 340 inside incWord, and the resume
+                // goes on with its next nibble; otherwise a new word is fetched.
+                if( curState != RUNNING )
                 {
-                    sawEscape = true;
-                    iotCondLog(LOG_INCREMENT, "increment escape\n");
+                    curState = RUNNING;
+                    incWord = getWord(ctlP->pdp1P);
+                    incShift = 12;
+
+                    if( ESCAPE(incWord) )
+                    {
+                        sawEscape = true;
+                        iotCondLog(LOG_INCREMENT, "increment escape\n");
+                    }
                 }
 
                 // The word contains 4, 4 bit fields, each moves up, down, left, or right, or diagonally
                 // one dotSpacing location. The high bit determines visible/invisible.
-                for( tmp = 12; tmp >= 0; tmp -= 4)
+                for( ; incShift >= 0; incShift -= 4 )
                 {
-                    if( (status = doIncrement(curScale, (word >> tmp) & 0xF)) != COMPLETED )
+                    if( (status = doIncrement(curScale, (incWord >> incShift) & 0xF)) != COMPLETED )
                     {
                         // Edge violation
                         iotCondLog(LOG_STOP, "Increment set stop\n");
@@ -1063,26 +1079,26 @@ uint64_t idleT0;
                         needBreak = true;
                         break;
                     }
-                    else
+
+                    if( INTENSIFY(incWord) && drawAndCheck(true, curX, curY, curIntensity) )
                     {
-                        // Actually want to draw it
-                        // The hardware always takes 1.5 us per nibble (0.5 us intensify-s
-                        // delay + 1.0 us sequence delay), whether or not the beam is unblanked.
-                        pendingDelay += 1500;
-                        if( INTENSIFY(word) )
-                        {
-                            if( drawAndCheck(true, curX, curY, curIntensity) )
-                            {
-                                // Lp hit, will take effect on the next word
-                                isPaused = true;
-                                iotCondLog(LOG_PAUSE, "LP hit in increment, pausing\n");
-                            }
-                        }
+                        // The nibble's COUNT Y sets the LP flag as a vector's pulse does (H-340
+                        // p. 3-7), so the intensify delay never starts: the 340 halts after the
+                        // 1.0 us sequence delay with the rest of the word undrawn.
+                        pendingDelay += BRM_HALT_PULSE_TIME;
+                        isPaused = true;
+                        incShift -= 4;
+                        iotCondLog(LOG_PAUSE, "LP hit in increment, pausing\n");
+                        break;
                     }
+
+                    // The hardware always takes 1.5 us per nibble (0.5 us intensify
+                    // delay + 1.0 us sequence delay), whether or not the beam is unblanked.
+                    pendingDelay += 1500;
                 }
 
-                // Don't lose the edge violation stop
-                if( curState != STOPPED )
+                // Don't lose the edge violation stop, and keep the word while paused in it
+                if( (curState != STOPPED) && !isPaused )
                 {
                     curState = INITIALIZE;
                 }
@@ -1623,6 +1639,30 @@ static unsigned char charSet[128][6] = {
     { 0376, 0376, 0376, 0376, 0376, CH_SUP } // 77 superscript
 };
 
+// COUNTs the 342 takes for each charSet[] entry: the 342's paths are not documented, so this is
+// a model, the shortest path from the start through the lit dots to the next character's start
+// (Projects/CoreEnhancements/char-time/path_model.py --table writes it; edit charSet[] and rerun
+// it). LF 12, CR 9, the shifts and escape 0, sub- and superscript 4, backspace 0 (it ends where
+// it started); the ??? placeholders' 38 is a 2-opt bound, too many dots for the exact search.
+static const unsigned char charSteps[128] = {
+    19, 22, 24, 20, 22, 26, 20, 22,   // 000 blob A B C D E F G
+    24, 17, 16, 20, 19, 20, 21, 20,   // 010 H I J K L M N O
+    20, 23, 21, 20, 19, 22, 21, 24,   // 020 P Q R S T U V W
+    20, 18, 26, 12,  9,  0,  0,  0,   // 030 X Y Z LF CR HORIZ VERT ESC
+     7, 14, 14, 25, 23, 23, 20, 13,   // 040 space ! " # $ % & '
+    15, 13, 19, 14, 11, 10,  9, 10,   // 050 ( ) * + , - . /
+    23, 15, 22, 19, 18, 22, 22, 17,   // 060 0 1 2 3 4 5 6 7
+    22, 20, 14, 16, 15, 16, 13, 17,   // 070 8 9 : ; < = > ?
+    19, 16, 21, 16, 21, 18, 16, 21,   // 100 blob a b c d e f g
+    18, 16, 14, 18, 16, 20, 15, 16,   // 110 h i j k l m n o
+    21, 20, 12, 17, 18, 19, 16, 18,   // 120 p q r s t u v w
+    16, 23, 20, 12,  9,  0,  0,  0,   // 130 x y z LF CR HORIZ VERT ESC
+     7, 38, 38, 14, 38, 38, 17, 14,   // 140 space ??? ??? ~ ??? ??? up right
+    17, 14, 12, 18, 17, 15, 13, 38,   // 150 down left backslash [ ] { } ???
+     8, 38, 14, 38, 38, 38, 12, 12,   // 160 _ ??? | ??? ??? ??? ` ^
+    38, 38,  0,  4, 38, 38, 38,  4   // 170 ??? block? backspace subscript ??? ??? ??? superscript
+};
+
 /*
  * Draw one character.
  * The 340 could have one or two character sets.
@@ -1638,6 +1678,7 @@ int x, y;
 int xTmp, yTmp;
 int chFlags;
 int curChar;
+int steps;
 bool sawHit;
 
     if( ch > 63 )
@@ -1653,12 +1694,17 @@ bool sawHit;
     // Each char has 5 data bytes plus one flag byte.
     chFlags = charSet[curChar][5];
 
-    iotCondLog(LOG_CHARACTER,"curChar %o flags %o\n", curChar, chFlags);
+    // The whole character's time, charged here so that an escape, a stop or an edge violation pays
+    // it too. A vertical character takes the same COUNTs: its path is the same, turned.
+    steps = charSteps[curChar];
+    pendingDelay += ((steps * CHAR_STEP_TIME) + CHAR_NEXT_TIME);
+
+    iotCondLog(LOG_CHARACTER,"curChar %o flags %o steps %d\n", curChar, chFlags, steps);
     switch( chFlags )
     {
     case CH_LF:
         // Down one line dotSpacing
-        curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
+        curY -= LINEFEED * dotSpacing;
 
         if( checkBounds(curX, curY) )
         {
@@ -1742,17 +1788,14 @@ bool sawHit;
     }
 
     // Finally!
-    // The Type 342 character generator didn't scan the display across every point in the 5x7 matrix.
-    // Instead, it moved from each 'on' bit position directly to the next, only doing an intensify
-    // if in visible mode.
+    // The dots are drawn column by column. The 342's own order is not known; its time, a model of
+    // its path through the dots, was charged above from charSteps[].
     for( x = 0; x < 5; x++ )
     {
         // columns 0 to 4, left to right
         for( y = 0; y < 7; y++ )
         {
             // Rows 0 to 6, bottom to top.
-            // The delay time is 1.5 usecs per drawm bit.
-            // As noted above, there were no moves to undrawn bit positions.
             if( charSet[curChar][x] & (2 << y) )
             {
                 // Bit on, draw it
@@ -1764,7 +1807,6 @@ bool sawHit;
                     return(EDGEVIOLATION);
                 }
 
-                pendingDelay += 1500;
                 if( drawAndCheck(true, xTmp, yTmp, type340Intensity(curIntensity)) )
                 {
                     sawHit = true;
@@ -1817,8 +1859,8 @@ bool sawHit;
 // Display 0 is always the primary display.
 // Set the LP flag if a hit occurred.
 // Return true if an lp hit occurred, else false.
-// Only the first hit counts until the 340 is resumed or restarted: the rest of the word is still
-// drawn after a hit, and a pen held on it would otherwise hit again and move lpX and lpY along.
+// Only the first hit counts until the 340 is resumed or restarted: the rest of a character word is
+// still drawn after a hit, and a pen held on it would otherwise hit again and move lpX and lpY along.
 bool
 drawAndCheck(bool tryLightpen, int x, int y, int intensity)
 {

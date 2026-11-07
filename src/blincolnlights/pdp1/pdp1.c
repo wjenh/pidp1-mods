@@ -53,6 +53,7 @@
  * 6-Nov-2026 Claude a 16-channel break cycle one with no channel requesting goes to channel 0's
  *   location 0, as the Type 20's encoder would; before, the channel search never ended.
  * 7-Nov-2026 wje rand() was never seeded, so initial start condition never changed.
+ * 7-Nov-2026 wje the default throttleburst is now 10 usecs
 */
 #include "common.h"
 #include "pdp1.h"
@@ -2546,15 +2547,15 @@ cycle(PDP1 *pdp)
 static uint64_t throttleQuantumNs = 1000000;    // 1000us: today's cadence by default
 static uint64_t throttleSpinNs;                 // 0 = off by default
 static uint64_t throttleMaxLagNs = 20000000;    // 20ms: see throttle()'s header comment below
-static uint64_t throttleBurstNs = 100000;       // 100us: see throttleConfigure()
+static uint64_t throttleBurstNs = 10000;        // 10us: see throttleConfigure()
 long throttleCapFirings;
 
-#define THROTTLE_BURST_DEFAULT_US 100
+#define THROTTLE_BURST_DEFAULT_US 10
 #define THROTTLE_BURST_MAX_US 250       // the 340's PACE_MAX_LAG (type340emu.c)
 
 // Set the pacing tunables and reduce this thread's timer slack so a short wait lands close
-// to where it was asked for (precedent: newpanel.c's absolute-deadline clock_nanosleep loop,
-// panel_pidp1/newpanel.c). Called from configure() (main.c), which parses the throttlequantum/
+// to where it was asked for.
+//Called from configure() (main.c), which parses the throttlequantum/
 // throttlespin/throttlemaxlag config extras and runs on the emulator thread -- prctl(
 // PR_SET_TIMERSLACK) is per-thread, so it must land there -- both at startup and on every SIGHUP
 // reconfigure. quantumNs of 0 is treated as 1000ns rather than literally zero, which would turn

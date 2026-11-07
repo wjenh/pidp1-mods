@@ -14,7 +14,7 @@
 # Docs/UsingTheConfigFile.md describes each setting; pidp1.config.example explains it.
 ad1port|Debugger|port|0..65535|1044|pdp1|restart||The loopback port ad1 and fastload connect to; 0 or off disables it
 ad1remoteport|Debugger|port|0..65535|off|pdp1|restart||A port on all interfaces as well; it has no authentication, so enable it only on a network you trust
-throttleburst|Throttle|int|0..250|100|pdp1|reload||How far, in microseconds, simulated time must lead the wall clock before the throttle waits
+throttleburst|Throttle|int|0..250|10|pdp1|reload||How far, in microseconds, simulated time must lead the wall clock before the throttle waits
 throttlequantum|Throttle|int|0..1000000|1000|pdp1|reload||The longest single wait, in microseconds
 throttlespin|Throttle|int|0..1000000|0|pdp1|reload||The end of each wait, in microseconds, spent spinning instead of sleeping
 throttlemaxlag|Throttle|int|0..1000000|20|pdp1|reload||How far, in milliseconds, the emulator may fall behind before the rest is forgiven

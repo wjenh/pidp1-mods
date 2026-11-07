@@ -556,7 +556,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
 // Extended pidp1timing support.
 // The throttle() code in pdp1.c runs the CPU in bursts, flat out until simtime leads the
-// wall clock by throttleburst, 100us by default, then a wait chunked to at most throttlequantum,
+// wall clock by throttleburst, 10us by default, then a wait chunked to at most throttlequantum,
 // 1000us by default.
 // These functions record what the one-line summary cannot show, how cycle times are distributed,
 // whether slow cycles are the first after a sleep, how much untimed

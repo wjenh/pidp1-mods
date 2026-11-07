@@ -54,6 +54,8 @@
  * Claude 10-Oct-2026 the audio, display and panel calls come from audio.h, display.h and panel1.h, not
  *    externs of its own.
  * wje 2-Nov-2026 motion prediction control removed, it is now always enabled.
+ * Claude 06-Nov-2026 the command port's run, cont and halt press the Start, Continue and Stop keys, and
+ *    run ? reports the machine's state (console.c).
 */
 
 #include <errno.h>
@@ -228,6 +230,7 @@ bool prev_examine_sw;
 bool prev_deposit_sw;
 bool prev_readin_sw;
 bool prev_power_sw;
+int keyRequest;         // a RUN_REQ_ value from the command port
 
 FILE *tmpfP;    // used for timing
 u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if throttle() slept
@@ -305,6 +308,30 @@ bool ran;               // the pass ran the machine, a stolen cycle included
         {
             prev_continue_sw = 0;
             pdp->continue_sw = 1;
+        }
+
+        // The command port's run, cont and halt press the panel's keys, each forcing its edge as
+        // ad1's do. A start keeps the ta updateswitches() read, so it starts at the address
+        // switches as the Start key does. With the power off a key does nothing, and a forced
+        // start there could meet the shutdown combination below, so a late request is dropped.
+        keyRequest = consoleTakeRunRequest();
+        if( pdp->power_sw )
+        {
+            if( keyRequest == RUN_REQ_START )
+            {
+                prev_start_sw = 0;
+                pdp->start_sw = 1;
+            }
+            else if( keyRequest == RUN_REQ_CONTINUE )
+            {
+                prev_continue_sw = 0;
+                pdp->continue_sw = 1;
+            }
+            else if( keyRequest == RUN_REQ_STOP )
+            {
+                prev_stop_sw = 0;
+                pdp->stop_sw = 1;
+            }
         }
 
         if( pdp->power_sw )

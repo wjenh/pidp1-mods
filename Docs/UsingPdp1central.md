@@ -2,15 +2,16 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.11\
-Edit date 30-Oct-2026\
-Added the scroll bar for short displays.
+This is version 1.12\
+Edit date 06-Nov-2026\
+Added Run, Continue and Halt, the panel's Start, Continue and Stop keys; Reload config is now Reload.
 
 ## What is pdp1central?
 
 pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do from a desktop:
 - it shows which of the emulator's programs are running;
 - it starts, stops, restarts and reloads the emulator;
+- it runs, continues and halts the pdp-1, as the panel's Start, Continue and Stop keys do;
 - it keeps the start-time choices: the interface, the t30dpy display, the front panel and the USB
   paper tape;
 - it mounts paper tapes in the reader and saves what the punch punches;
@@ -71,10 +72,21 @@ A light for each program the chosen start-time choices run, green when it is run
 
 Then the buttons:
 - Start, Stop and Restart run pdp1control start, stop and restart.
-- Reload config runs pdp1control reload, the emulator rereads pidp1.config.
+  They start and stop the emulator, not the programs.
+- Run, Continue and Halt operate the pidp-1 through the emulator's command port.
+  - Run is the Start key, execution starts at the address set by the address switches;
+  - Continue is the Continue key
+  - Halt is the Stop key
+- Reload runs pdp1control reload, the emulator rereads pidp1.config.
 - Exit leaves pdp1central.
 
-While one of these runs, the buttons are disabled and the strip shows what is running and for how long.
+Run and Continue can be clicked only while the emulator is halted, and Halt only while it runs.
+Pdp1central asks the emulator once a second whether it is running, so a halt by the program, by
+the panel, or by ad1 shows within a second.
+With the power switch off, all three are disabled.
+Each key does just what the panel's does.
+
+While running, the buttons are disabled and the strip shows what opration is running and for how long.
 An error is shown under the strip, staying until another occurs.
 
 Stop ends the emulator first, then the t30dpy display, which normally closes by itself when the

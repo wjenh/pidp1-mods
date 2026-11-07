@@ -9,14 +9,14 @@
 #define DEFAULT_ACCELERATION_TAU 0.005  // 5ms fast acceleration ramping
 #define DEFAULT_DECELERATION_TAU 0.080  // 80ms heavy deceleration damping to prevent overshoots
 #define DEFAULT_REVERSAL_TAU 0.002      // ~2ms near-instant snap tau used only when a genuine
+                                        // direction reversal is detected (see motionFilterAdd())
 
-#define DELTA_TIME_CLAMP 0.025          // If a requested prediction time is too far from the last one, clamp tp this.
+#define ACCELERATION_DAMPING 0.1        // Factor to adjust acceleration by for slow speeds, fine tracking.
+#define DELTA_TIME_CLAMP 0.025          // If a requested prediction time is too far from the last one, clamp to this.
 #define FINE_MAGNITUDE_LIMIT 50.0       // If a movement is less than this, use a finer scale adjustment.
 #define REVERSAL_THRESHOLD 5.0          // Minimum |filtered acceleration| (px/sec^2) before an opposing-sign
                                         // instantaneous sample is treated as a genuine reversal rather than
                                         // noise dithering around zero.
-
-                                         // direction reversal is detected (see motionFilterAdd())
 
 // Per-axis motion prediction filter state.
 // Two of these (x and y) are needed for every display that is using motion prediction.

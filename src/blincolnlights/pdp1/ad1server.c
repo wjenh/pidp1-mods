@@ -16,6 +16,7 @@
 // 20-Sep-2026 Claude: written to replace the shared-memory link.
 // 28-Sep-2026 Claude: the HELLO reply's build text no longer carries the build date.
 // 13-Oct-2026 Claude: a breakpoint or watch can carry a condition on one core word.
+// 07-Nov-2026 Claude: setting the PC makes the next cycle a fetch from it.
 
 #define _GNU_SOURCE
 
@@ -1289,6 +1290,17 @@ uint32_t value;
         pdp->pc = (value & ADDRMASK);
         pdp->epc = (value & EXTMASK);
         pdp->exd = (pdp->epc != 0);
+
+        // A user who sets the PC means "fetch from here next", but Continue resumes in whatever
+        // cycle the control flip-flops call for, and after a power-on they come up random: a
+        // break cycle, a defer or cycle 1 of IR. Clear the part of Start's clearing that picks
+        // the next cycle, so it is a fetch at this PC. Nothing else is cleared, so AC, IO, the
+        // flags, the break system and an in-out wait (ioh, ihs) are as the program left them.
+        pdp->cyc = 0;
+        pdp->df1 = 0;
+        pdp->df2 = 0;
+        pdp->bc = 0;
+        pdp->rim = 0;
         break;
 
     case AD1P_REG_PF:

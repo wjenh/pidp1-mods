@@ -50,6 +50,9 @@
  *   Panel lamps are sampled once a cycle at TP9a, not at a random timing pulse.
  *   TP(n) is now a no-op, kept only to comment which cycle the code belongs to.
  * 17-Oct-2026 wje cmi was not masking to 18 bits, that confused the later end-around carry for add.
+ * 6-Nov-2026 Claude a 16-channel break cycle one with no channel requesting goes to channel 0's
+ *   location 0, as the Type 20's encoder would; before, the channel search never ended.
+ * 7-Nov-2026 wje rand() was never seeded, so initial start condition never changed.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -330,6 +333,7 @@ static void memclr(PDP1 *pdp)
 void
 pwrclr(PDP1 *pdp)
 {
+    srand((unsigned int)time(NULL));    // the original code never seeded, so hardly random
     IR = rand() & 077;
     PC = rand() & 07777;
     MA = rand() & 07777;
@@ -2315,7 +2319,9 @@ int r;
     {
         be = 0;
 
-        for(r = pdp->sbs_seq; !(r & 1); r >>= 1)
+        // With no channel requesting (a Continue from a power-on that left bc at 1), no SEQ level
+        // drives the encoder and it reads as channel 0 (F17 6-9b(2)); searching on would never end.
+        for(r = pdp->sbs_seq; (r != 0) && !(r & 1); r >>= 1)
         {
             be++;
         }

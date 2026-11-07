@@ -16,6 +16,7 @@
  *    The acceleration cascade now forces a fast-snap alpha whenever the instantaneous
  *    acceleration sign flips against the currently filtered acceleration, instead of
  *    coasting through a direction change on the slower asymmetric taus.
+ * 7-Nov-26 wje acceleration damping now configurabe via lpPredictor.h
  *
 */
 
@@ -178,7 +179,7 @@ double predictedPos;
     }
     else if( velocityMagnitude < FINE_MAGNITUDE_LIMIT )
     {
-        accelerationModifier = 0.1;         // Dampen the curve when approaching fine adjustments
+        accelerationModifier = ACCELERATION_DAMPING;         // Dampen the curve when approaching fine adjustments
     }
 
     // Taylor-series expansion to pinpoint the exact coordinate at this specific time.

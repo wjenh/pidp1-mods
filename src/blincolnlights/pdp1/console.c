@@ -15,6 +15,11 @@
  * tape into a staged image, and cli() applies it between two cycles, after stopping a running
  * machine the way ad1's load does (AD1_SET_STOP, then wait for run to drop).
  *
+ * run, cont and halt press the panel's Start, Continue and Stop keys. The command thread only
+ * posts the request; the main loop takes it (consoleTakeRunRequest()) and forces the key's edge,
+ * since the switch state and the ad1 flags are the emulator thread's. run ? reads a snapshot of
+ * the machine's state that cli() publishes every pass, for the same reason.
+ *
  * 27-Sep-2026 Claude moved out of pdp1.c; commands run off the emulator thread, and l stops the
  * machine before it changes core.
  * 10-Oct-2026 Claude handlecmd() parses the caller's line, it no longer gives split() a padded
@@ -30,6 +35,7 @@
 #include "common.h"
 #include "pdp1.h"
 #include "audio.h"
+#include "console.h"
 #include "display.h"
 #include "papertape.h"
 
@@ -48,6 +54,11 @@
 #define LOAD_POSTED 1
 #define LOAD_DONE 2
 #define LOAD_NOSTOP 3
+
+// The machine's state as cli() publishes it for run ?.
+#define MACHINE_POWER_OFF 0
+#define MACHINE_HALTED 1
+#define MACHINE_RUNNING 2
 
 typedef struct
 {
@@ -78,10 +89,18 @@ static bool loadWasRunning;
 static bool loadStopIssued;
 static u64 loadDeadline;
 
+// run, cont and halt's request, a RUN_REQ_ value; a second request before the main loop takes
+// the first replaces it. Written by the command thread, exchanged for RUN_REQ_NONE by the main loop.
+static int runRequest = RUN_REQ_NONE;
+
+// A MACHINE_ value, written by cli() on the emulator thread, read by run ?.
+static int machineState = MACHINE_POWER_OFF;
+
 static int getwrd(int fd);
 static int readRimImage(int fd, RimImage *imageP, int *badWordP);
 static int stagedLoad(void);
 static void serviceLoad(PDP1 *pdp);
+static void postRunRequest(int request, char *respP, size_t respLen);
 static void *consoleThread(void *argP);
 
 // Read one 18-bit word from a RIM-format tape: each word is encoded as three 6-bit characters,
@@ -223,14 +242,18 @@ int i;
     __atomic_store_n(&loadState, LOAD_DONE, __ATOMIC_RELEASE);
 }
 
-// Runs on the emulator thread every pass: applies a staged load, and every CLIPASSES passes
-// hands a waiting stdin line to the console thread. A stdin that is not a terminal and has
-// reached its end is not polled again.
+// Runs on the emulator thread every pass: publishes the machine's state for run ?, applies a
+// staged load, and every CLIPASSES passes hands a waiting stdin line to the console thread. A
+// stdin that is not a terminal and has reached its end is not polled again.
 void
 cli(PDP1 *pdp)
 {
 static int timer;
 int n;
+int state;
+
+    state = (!pdp->power_sw?MACHINE_POWER_OFF:(pdp->run?MACHINE_RUNNING:MACHINE_HALTED));
+    __atomic_store_n(&machineState, state, __ATOMIC_RELAXED);
 
     if( __atomic_load_n(&loadState, __ATOMIC_RELAXED) == LOAD_POSTED )
     {
@@ -309,6 +332,28 @@ pthread_t th;
     }
 }
 
+// Take the request run, cont or halt posted, leaving none. Emulator thread, every pass.
+// Returns a RUN_REQ_ value, RUN_REQ_NONE when nothing is waiting.
+int
+consoleTakeRunRequest(void)
+{
+    return( __atomic_exchange_n(&runRequest, RUN_REQ_NONE, __ATOMIC_ACQUIRE) );
+}
+
+// Post a key press for the main loop, or refuse it with the power off, as the keys do nothing
+// then. Writes the reply into respP. Command thread, with cmdLock held.
+static void
+postRunRequest(int request, char *respP, size_t respLen)
+{
+    if( __atomic_load_n(&machineState, __ATOMIC_RELAXED) == MACHINE_POWER_OFF )
+    {
+        snprintf(respP, respLen, "the power is off");
+        return;
+    }
+
+    __atomic_store_n(&runRequest, request, __ATOMIC_RELEASE);
+}
+
 // Parse and execute one console command line. Supported commands:
 //   r [file]         mount/unmount the paper-tape reader
 //   p [file]         mount/unmount the paper-tape punch
@@ -316,6 +361,7 @@ pthread_t th;
 //   d [host] [port]  connect to an external display program
 //   muldiv [on/off]  toggle the type-10 multiply/divide option
 //   audio ...        configure/query the audio output subsystem
+//   run, cont, halt  press the panel's Start, Continue or Stop key; run ? reports the state
 //   ?/help           list commands
 // Any thread but the emulator's. Writes into line: its first CR and its first LF end it.
 // Returns the calling thread's own response buffer.
@@ -452,7 +498,37 @@ static __thread char resp[CMDLINEMAX];
             p += sprintf(p, "l filename            stop the machine, load memory from RIM-file\n");
             p += sprintf(p, "d [host] [port]       connect to display program\n");
             p += sprintf(p, "muldiv [on/off]       set/toggle type 10 mul-div option\n");
-            p += sprintf(p, "audio [on/off]        set/toggle audio output");
+            p += sprintf(p, "audio [on/off]        set/toggle audio output\n");
+            p += sprintf(p, "run                   the Start key: start at the address switches\n");
+            p += sprintf(p, "run ?                 the machine's state: running, halted or power off\n");
+            p += sprintf(p, "cont                  the Continue key: go on from the PC\n");
+            p += sprintf(p, "halt                  the Stop key: halt the machine");
+        }
+        // The panel's keys, pressed by the main loop: the switch state is the emulator thread's.
+        else if( strcmp(args[0], "run") == 0 )
+        {
+            if( !args[1] )
+            {
+                postRunRequest(RUN_REQ_START, resp, sizeof(resp));
+            }
+            else if( strcmp(args[1], "?") == 0 )
+            {
+                state = __atomic_load_n(&machineState, __ATOMIC_RELAXED);
+                snprintf(resp, sizeof(resp), "%s",
+                    ((state == MACHINE_RUNNING)?"running":((state == MACHINE_HALTED)?"halted":"power off")));
+            }
+            else
+            {
+                snprintf(resp, sizeof(resp), "run takes no argument but ?");
+            }
+        }
+        else if( strcmp(args[0], "cont") == 0 )
+        {
+            postRunRequest(RUN_REQ_CONTINUE, resp, sizeof(resp));
+        }
+        else if( strcmp(args[0], "halt") == 0 )
+        {
+            postRunRequest(RUN_REQ_STOP, resp, sizeof(resp));
         }
         else if( strcmp(args[0], "muldiv") == 0 )
         {

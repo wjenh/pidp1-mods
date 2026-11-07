@@ -1,6 +1,7 @@
 // pdp1central, one desktop window to control the PiDP-1 emulator.
 // It shows what is running, starts, stops, restarts and reloads the emulator through
-// bin/pdp1control.sh, keeps the script's start-time choices in pdp1control.config, mounts and
+// bin/pdp1control.sh, runs, continues and halts the machine through the emulator's command port,
+// keeps the script's start-time choices in pdp1control.config, mounts and
 // saves paper tapes, fast loads a tape through fastload, or through ovlload when it has drum
 // overlays, mounts microtapes through mtp, picks and saves drum images, turns the
 // sound on and off, starts the typewriter, t30dpy and console windows, and edits pidp1.config
@@ -33,6 +34,8 @@
 // 25-Oct-2026 wje (Claude) - the Control tab's Companions row starts the typewriter, t30dpy and
 //     the console detached, with the commands of their desktop launchers.
 // 30-Oct-2026 wje - add vertical scrolling for small displays
+// 06-Nov-2026 wje (Claude) - Run, Continue and Halt set the emulator start, continue, and stop states
+//     through the emulator's command port; Reload config is now Reload.
 
 #include <errno.h>
 #include <limits.h>
@@ -66,6 +69,8 @@
 #define ROW_H 26
 #define AUDIO_RESTORE_MS 1000   // after a reload ends, time for the emulator to take its SIGHUP
 #define MULDIV_POLL_MS 2000     // how often the Live tab reads multiply and divide
+#define RUN_POLL_MS 1000        // how often the machine's run state is read
+#define RUN_AFTER_MS 200        // after Run, Continue or Halt, how soon the state is read again
 #define AD1_DEFAULT_PORT 1044   // the debugger link's port when pidp1.config does not set ad1port
 #define MT_NAME_MAX 255         // the longest tape path mtp and the plugin take
 #define OVL_MAX_SKEW 5          // seconds a tape's and its .ovl's modification times may differ
@@ -97,6 +102,15 @@ typedef enum
     CMD_UNMOUNT,
     CMD_SAVEPUNCH
 } Command;
+
+// The machine's state as the emulator's run ? gives it.
+typedef enum
+{
+    RUN_UNKNOWN,                // not read, or an emulator with no run ?
+    RUN_POWER_OFF,
+    RUN_HALTED,
+    RUN_RUNNING
+} RunState;
 
 typedef enum
 {
@@ -267,6 +281,9 @@ static char overflowNote[160];  // the last reply to audio overflow
 
 static int muldivState = -1;    // multiply and divide as the last read gave it: 1 on, 0 off, -1 not known
 static Uint32 muldivMs;         // when it was last read, 0 to read it at once
+
+static RunState runState = RUN_UNKNOWN;
+static Uint32 runMs;            // when the run state was last read, 0 to read it at once
 
 static Tab tab = TAB_CONTROL;
 static float tabHeight[TAB_COUNT];      // the height each tab's rows took when last drawn
@@ -2006,6 +2023,86 @@ char note[160];
     }
 }
 
+// The machine's state in a reply to run ?. An emulator older than the command replies ok to it.
+// Returns RUN_UNKNOWN for any other reply.
+static RunState
+runFromReply(const char *replyP)
+{
+    if( !strcmp(replyP, "running") )
+    {
+        return(RUN_RUNNING);
+    }
+
+    if( !strcmp(replyP, "halted") )
+    {
+        return(RUN_HALTED);
+    }
+
+    if( !strcmp(replyP, "power off") )
+    {
+        return(RUN_POWER_OFF);
+    }
+
+    return(RUN_UNKNOWN);
+}
+
+// Read the machine's state every RUN_POLL_MS while the emulator answers, for the strip's Run,
+// Continue and Halt. A program, a panel or ad1 can change it, so it is read, never assumed from
+// a click. Only a change is logged.
+// Called on every pass of the event loop.
+static void
+pollRun(void)
+{
+char reply[64];
+RunState state;
+
+    if( (pdp1Count == 0) || !portUp )
+    {
+        runState = RUN_UNKNOWN;
+        runMs = 0;
+        return;
+    }
+
+    if( (runMs != 0) && ((SDL_GetTicks() - runMs) < RUN_POLL_MS) )
+    {
+        return;
+    }
+
+    runMs = (SDL_GetTicks() | 1);       // never 0, which means read at once
+    state = ((portCommand(EMU_PORT, "run ?", reply, sizeof(reply)) == 0)?runFromReply(reply):RUN_UNKNOWN);
+    if( (state != RUN_UNKNOWN) && (state != runState) )
+    {
+        appLog("the machine is %s", reply);
+    }
+    runState = state;
+}
+
+// Press a panel key through the emulator: wordP is run, cont or halt. The state is read again
+// RUN_AFTER_MS later, by when the emulator's main loop has taken the key.
+static void
+runKey(const char *wordP)
+{
+char reply[128];
+int result;
+
+    result = portCommand(EMU_PORT, wordP, reply, sizeof(reply));
+    if( result != 0 )
+    {
+        appError("\"%s\" not sent: %s", wordP, ((result == -1)?"the emulator is not running" :
+            ((result == -2)?"no answer":"port error")));
+    }
+    else if( strcmp(reply, "ok") )
+    {
+        appError("\"%s\": %s", wordP, reply);
+    }
+    else
+    {
+        appLog("sent \"%s\" to the emulator on %d", wordP, EMU_PORT);
+    }
+
+    runMs = ((SDL_GetTicks() - RUN_POLL_MS + RUN_AFTER_MS) | 1);
+}
+
 // Put the audio back after a reload, and forget it when the emulator goes. It is never read,
 // since a read can start the sound (audioCommand).
 // Called on every pass of the event loop.
@@ -2341,7 +2438,7 @@ bool clicked;
 static void
 drawStatus(struct nk_context *ctxP)
 {
-static const float stripRatios[] = { 0.14f, 0.14f, 0.14f, 0.14f, 0.14f, 0.30f };
+static const float stripRatios[] = { 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.24f };
 const char *panelP, *interfaceP;
 char panelBuf[CONF_MAX_VALUE + 1];
 char interfaceBuf[CONF_MAX_VALUE + 1];
@@ -2376,8 +2473,10 @@ bool usb, t30, idle, running;
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
     running = (pdp1Count > 0);
-    // Five buttons, and the rest of the row for the running job and its seconds.
-    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 6, stripRatios);
+    // Eight buttons, and the rest of the row for the running job and its seconds.
+    // Start, Stop and Restart are the processes'; Run, Continue and Halt the machine's panel keys,
+    // each offered only in the state the emulator last reported, since a key's effect depends on it.
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 9, stripRatios);
     if( button(ctxP, "Start", (idle && !running)) )
     {
         queueScript("start");
@@ -2390,7 +2489,19 @@ bool usb, t30, idle, running;
     {
         queueScript("restart");
     }
-    if( button(ctxP, "Reload config", (idle && running)) )
+    if( button(ctxP, "Run", (idle && running && (runState == RUN_HALTED))) )
+    {
+        runKey("run");
+    }
+    if( button(ctxP, "Continue", (idle && running && (runState == RUN_HALTED))) )
+    {
+        runKey("cont");
+    }
+    if( button(ctxP, "Halt", (idle && running && (runState == RUN_RUNNING))) )
+    {
+        runKey("halt");
+    }
+    if( button(ctxP, "Reload", (idle && running)) )
     {
         queueScript("reload");
     }
@@ -4070,6 +4181,7 @@ int opt, width, height, y;
         }
         pollAudio();
         pollMuldiv();
+        pollRun();
 
         if( pendingScheme[0] )
         {

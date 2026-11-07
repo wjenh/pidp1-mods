@@ -11,8 +11,8 @@ John Horton Conway, a mathematician at Cambridge, devised Life in 1970, and Mart
 in his *Mathematical Games* column in the October 1970 *Scientific American*.
 It is not a game one plays, it is a universe with one rule that plays itself.
 
-The universe is a grid of square cells, each a sinble point and each alive or dead.\
-Each cell has eight neighbors, touching it on the sides and at each corner.\
+The universe is a grid of square cells, each a single point and each alive or dead.
+Each cell has eight neighbors, touching it on the sides and at each corner.
 At every tick, a generation, every cell changes at once:
 - A dead cell with exactly three live neighbors is born.
 - A live cell with two or three live neighbors survives.
@@ -26,7 +26,7 @@ Conway offered a prize for a pattern that grows without limit, and in November 1
 group at MIT (Go Tech!) won it with the glider gun, a pattern that fires a new glider every 30 generations.
 
 It quickly captivated countless people, and computers of the day soon ran it for hours on end to see what
-new patterns culd be discovered.
+new patterns could be discovered.
 
 This version runs Life on a field of up to 126 by 120 cells, one dot a cell.
 A real computer's field has to end somewhere, and what happens at its edges is a choice.
@@ -45,7 +45,7 @@ make
 make install
 ```
 
-If intall is used, the predefined library tape, LifeLibrary.mtp is also copied to /opt/pidp1-mods/Microtapes.
+If install is used, the predefined library tape, LifeLibrary.mtp is also copied to /opt/pidp1-mods/Microtapes.
 If you don't want to install the tape, it's in Tapes here.
 
 It also includes the pen keyboard library, PENKBD, from am1's include directory for the pop-up keyboard.
@@ -56,7 +56,7 @@ It needs:
 - The Type 340 display with a display client that supports the light pen, *t30dpy* is preferred.
 - The BBN timesharing clock, IOT 32, for its 1 ms counter.
 - Seven banks of memory, banks 0 to 6.
-- For saving and loadingi libraries the Type 550 Microtape is neeed.
+- For saving and loading libraries the Type 550 Microtape is needed.
   Life runs without them, only the commands that use them need them.
 
 It starts running four glider guns, each firing at the center, on the largest field with dead edges
@@ -118,7 +118,7 @@ Touching any menu item closes a list open under another item and ends placing a 
 - Touching the item again closes the list with nothing chosen.
 - If no selection is made within 4 seconds, the list will close.
 
-The pen can slide down a list highlightin rows, but it has to be lifted before touching the box,
+The pen can slide down a list highlighting rows, but it has to be lifted before touching the box,
 sliding over it chooses nothing.
 
 ### EDIT
@@ -290,7 +290,7 @@ so a set of patterns can be placed with the same orientation.
 | `DIEHARD` | Dies out completely at generation 130 |
 | `BHEPTO`, `PIHEPTO` | The B- and pi-heptominos |
 | `GUNS` | The whole field Life starts with, four guns firing at the center |
-| `ALGOL` | A whole field, the pattern from the ALGOL 68 Roseatta Code |
+| `ALGOL` | A whole field, the pattern from the ALGOL 68 Rosetta Code |
 
 The generation counts of the methuselahs are on an unbounded grid.
 Here the field is limited, so they can come out differently, especially on a small field;
@@ -371,9 +371,9 @@ Touch `TAPE` on the menu, then a row and its box, as for any list.
   The punch is slow, about 18 ms a line.
   The four guns take about 7 s, with the blank leader and trailer, a glider about 2 s,
   and a field packed with cells at 126 by 120 about 40 s.
-  Remember to save the tape using *pdp1central*, the desktop icon, or the *save_ptr* utility.
+  Remember to save the tape using *pdp1central*, the desktop icon, or the *save_ptp.sh* utility.
 - **`READ`** reads a record from the reader.
-  Load the tape in the reader first, as for any tape, with *pdp1central* or *load_ptr*.
+  Load the tape in the reader first, as for any tape, with *pdp1central* or *load_ptr.sh*.
   A reader with nothing in it gives `NO TAPE` after 2 seconds.
 
 A tape starts with 60 blank lines, about 6 inches, originally to have enough blank tape to load it, and ends with 30.
@@ -399,15 +399,14 @@ A blank tape, or a new image file, is an empty library, ready to save to.
 *LifeLibrary.mtp* is a library of 64 patterns, the 29 built-in ones and 35 more.
 Mounting it locked write-protects the drive, so it won't be modified.
 
-On the library screen, `MICROTAPE` open the Microtape's display and reads the drive's directory.
+On the library screen, `MICROTAPE` opens the Microtape's display and reads the drive's directory.
 The page's title gives the drive and the page, `MICROTAPE D1  1/8`.
 The upper row of selections is then:
 
 | Selection | What it does |
 |---|---|
 | `BUILTIN` | Back to the built-in pages |
-| `D1` to `D8` | The drive. Each press steps to the next, wrapping from 8 to 1, and reads that drive's directory.
-  Life starts with drive 1 selected. |
+| `D1` to `D8` | The drive. Each press steps to the next, wrapping from 8 to 1, and reads that drive's directory. Life starts with drive 1 selected. |
 | `SAVE` | Opens the keyboard for the name and writes the field's record to the first free slot nearest the directory |
 | `DELETE` | Deletes the highlighted entry, its slot is then free for a later save |
 | `FIELD` | Replaces the field with the highlighted record, at its saved size, edges and generation |
@@ -421,7 +420,7 @@ The upper row of selections is then:
 - A slot that gives `BAD TAPE` is read again only when the pen is lifted and put down on it again.
 - A tape that is not a Life library gives `NOT LIFE` and is never written.
 
-The directory is read again at each `TAPE` and each press of the drive key so a tape changed on a drive is seen.
+The directory is read again at each `MICROTAPE` and each press of the drive key so a tape changed on a drive is seen.
 `PATTERN` on the menu always opens on the built-in pages.
 
 The Microtape is reasonably quick near the directory, in the middle of the tape, where the first records go,

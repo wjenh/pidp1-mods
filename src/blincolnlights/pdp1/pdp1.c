@@ -61,6 +61,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <time.h>
 #include <sys/prctl.h>
 
 //#define DOLOGGING

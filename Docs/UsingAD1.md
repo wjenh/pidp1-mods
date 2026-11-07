@@ -2,9 +2,9 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 2.7 and covers up through ad1 version 2.7; it will be updated as needed.\
-Edit date 20-Oct-2026
-Add overlay and new am1 cpp replacement handling
+This is version 2.8 and covers up through ad1 version 2.7; it will be updated as needed.\
+Edit date 7-Nov-2026\
+Minor change for set PC behavior
 
 ## What is **ad1**?
 
@@ -41,7 +41,8 @@ Features
 - Watches can have a value to match on write, or match on any write
 - Memory locations can be interrogated and set
 - Has full read access to the PC, PF, SS, TW, TA, MA, MB, IO, and AC registers
-- Can set AC, IO, PC, and PF
+- Can set AC, IO, PC, and PF.
+  Setting PC also makes the next cycle a fetch from it, as a Start would
 - Can read the test switches and sense switches
 - Fully supports multi-bank operations
 - Numeric values can be in base 2, 8, 10, and 16

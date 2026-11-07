@@ -747,14 +747,17 @@
 #define DRAWLISTSIZE (NGROUPS * GROUPWORDS + 2)
 
 // Tracking is lost, Sutherland's termination signal, once LOSTMS have passed since the last
-// target hit and the target has been presented at least LOSTMIN times since. The pen can be
-// seen only when the target is drawn, so a display that stops showing it must not read as a
-// lift. A label fires again only after REARM frame ends with no menu hit, a count for the same
-// reason. A frame lasts from about 1.4 ms with no lines to about 15 ms with 64 short ones, 44 ms
-// with 192 short ones and about 0.3 s with 192 lines across the screen. What is for the eye is
-// timed on the 1 ms clock too; a pressed label stays lit FLASHMS, and the display is restarted
-// if no frame ends for WATCHDOGMS and its address stands still over two ticks of the clock (a
-// frame drawing for longer is left to end).
+// target hit and the target has been presented at least LOSTMIN times since, counted from the
+// second frame end after the hit. The pen can be seen only when the target is drawn, so a
+// display that stops showing it must not read as a lift; and a pen gone to the bar is seen only
+// when the bar is drawn, first in a frame, so a frame drawn whole after the hit must have shown
+// it the bar before the loss, however long the frame (192 lines across the screen). A label
+// fires again only after REARM frame ends with no menu hit, a count for the same reason (the
+// pen's not being seen). A frame lasts from about 1.4 ms with no lines to about 15 ms with 64
+// short ones, 44 ms with 192 short ones and about 0.3 s with 192 lines across the screen.
+// What is for the eye is timed on the 1 ms clock too; a pressed label stays lit FLASHMS, and
+// the display is restarted if no frame ends for WATCHDOGMS and its address stands still over
+// two ticks of the clock (a frame drawing for longer is left to end).
 #define LOSTMS 0d100
 #define LOSTMIN 0d4
 #define REARM 0d3

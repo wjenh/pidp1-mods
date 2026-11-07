@@ -998,9 +998,9 @@ rtn, jmp .
 // points that nothing else is on (the arc module's arcOrphans); or, with Show on, a
 // constraint, by its mark (the constraint module's cDel). A loss with no target hit since the
 // selection or the last deletion does nothing, and so does one with nothing locked. So does a
-// loss after a menu hit that came since the target's last (penISR's lastTgt 0): the pen went to
-// the menu, Stop most likely, whose hit a long pass (the lines' search at 192) has not read yet.
-// The program stays in delete mode. A deletion of parts wakes the constraint module while it
+// loss after a menu hit that came since the target's last, which checkLost finds with the stroke
+// dropped: the pen went to the menu, Stop most likely, whose hit a long pass (the lines' search
+// at 192) has not read yet. The program stays in delete mode. A deletion of parts wakes the constraint module while it
 // has entries, so that its next pass drops those the deletion spoiled, the N's and C's of a line
 // or an arc deleted among them (cGone).
 // AC and IO are clobbered. Called via jsp.
@@ -1008,7 +1008,6 @@ deleteLost,
     local rtn, dlParts, dlInst, dlDone
     dap rtn
     lac strokeLive
-    and i [lastTgt:0]   // each 1 or 0
     sza i               // skip if the target was hit since the selection, deletion and menu hit
     jmp rtn
     dzm strokeLive
@@ -1286,8 +1285,12 @@ rtn, jmp .
 // the view module drops (a pen carried to the bar moved the target).
 // Pan mode, tracking lost (a lifted pen), likewise. The view module moves the view's center
 // against the target's move since the stroke's start, so the drawing moves with the target.
-// Center mode's lift centers the view on the pseudo pen location. A lift with no target hit
-// since the selection or the last lift does nothing. The program stays in the mode.
+// Center mode's lift centers the view on the pseudo pen location. Every loss reaches the view
+// module, the stroke dropped: one comes only after a target hit, which sets lastTgt, or after a
+// mode's entry or a menu hit, which leave it 0 (checkLost dropping the stroke), and a loss with
+// lastTgt 0, the pen having carried the target to the bar, pans and centers nothing, the view
+// module only noting the start again where the target rests (vePan). The program stays in the
+// mode.
 // Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
 actView,
     local rtn, vwGo, vwLost
@@ -1301,9 +1304,6 @@ panLost,
     lio [VWPAN]
 vwLost,
     dap rtn
-    lac strokeLive
-    sza i               // skip if the target was hit since the selection or last lift
-    jmp rtn
     dzm strokeLive
 vwGo,
     jsp i [vwEntry:014]

@@ -180,7 +180,9 @@ canvas,
     lac isrY
     dac tgtY
     idx tgtHits
-    dzm trackMiss
+    lac callsPerFrame   // the frame this hit is in counts none: a lift needs two frame ends,
+    cma                 // so a frame is drawn whole, the bar first, under a pen gone there
+    dac trackMiss
     law 1
     dac lastTgt         // AC is taken again from the drc below
     rck

@@ -69,11 +69,15 @@ var menuHits, menuX, menuY, menuArmed
 var tgtHits, tgtX, tgtY
 
 // Kept by penISR from frame to frame, frame ends since the last menu hit, saturating at REARM,
-// target presentations since the last target hit, saturating at LOSTMIN, and the clock's
-// reading at the last target hit (the main loop also sets it when it restarts the count).
+// target presentations since the last target hit, saturating at LOSTMIN, counted from the
+// second frame end after it (the hit's own frame's are taken off: trackMiss starts at minus
+// callsPerFrame), and the clock's reading at the last target hit (the main loop also sets it
+// when it restarts the count, trackMiss at 0).
 // lastTgt is 1 when the pen's last hit was the target's, 0 once a menu, list or keyboard hit
-// has come after it, whatever the main loop's snapshot holds: delete mode's loss deletes only
-// at 1 (deleteLost), so the pen jumped to Stop deletes nothing.
+// has come after it, whatever the main loop's snapshot holds: a loss at 0 is no lift in any
+// mode (checkLost drops the stroke first), so the pen jumped to Stop deletes nothing and the
+// target carried to the bar commits, fixes or sizes nothing, and Pan's and Center's loss at 0
+// only notes the start again (the view module's vwEntry), so the trip moves no view.
 var menuGap, trackMiss, lastHitAt, lastTgt
 
 // Nonzero while the target is displayed; penISR moves the target only then.

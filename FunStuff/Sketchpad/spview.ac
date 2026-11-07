@@ -30,7 +30,9 @@
 // and VWSCALE then note the next stroke's start (vwMark); VWMARK only notes it. A scale row in
 // Pan or Center mode also drops the stroke under way (the main bank's strokeLive). A pen
 // carried to the bar takes the target with it, and the loss after the list closes would pan or
-// center by that trip.
+// center by that trip: a VWPAN or VWCENTER with a menu hit since the target's last (penISR's
+// lastTgt 0) only notes the start, as VWMARK does, so the trip's move is forgotten, not kept
+// for the next stroke.
 // Entry: IO = VWSCALE, VWPAN, VWCENTER or VWMARK; the main bank's lastItem and mode, the target's
 // place, or penX and penY. AC and IO are clobbered. Called via jsp i [vwEntry:014].
 vwEntry,
@@ -53,6 +55,10 @@ veNote,
     jsp vwMark
     jmp veSet
 vePan,
+    lac i [lastTgt:0]   // 0 once a menu hit came after the target's last
+    sza i               // skip if the target's hit was the last
+    jmp veMark          // a lift after a trip to the menu only notes the start again
+    lai                 // the entry's code again
     sad [VWCENTER]      // skip unless VWCENTER
     jmp veCtr
     sas [VWPAN]         // skip if VWPAN

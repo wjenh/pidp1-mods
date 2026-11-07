@@ -8,4 +8,4 @@ sketchpad.rim: sketchpad.am1
 
 clean:
 	rm -f sketchpad.rim >/dev/null 2>&1
-	cd Render; make clean
+	cd Render && make clean

@@ -6,22 +6,25 @@
 // Part of sketchpad.am1, included where it stands.
 
 // A hit in the menu region, the bar or, below it, the open list. A bar column comes from the raw
-// x. A column fires when the pen comes to it from another column, or when penISR saw REARM
-// frame ends with no menu hit before this one, so a pen resting on a label fires it once
-// however far behind the main loop runs. With a list open, another column closes it before
-// acting; the list's column is passed over on the way in, and a fresh press there cancels.
+// x. A hit begins a press (listFresh not negative) only when both KBGAPMS has passed with no
+// menu hit and penISR saw REARM frame ends with none before it (sMenuArmed): the frames alone
+// pass in a few ms of a held press whose hits pause, which fired the column again or cancelled
+// the list it had just opened, and the clock alone passes when a long pass delays the main
+// loop under a resting pen. A column fires when the pen comes to it from another column, or on
+// a press, so a pen resting on a label fires it once however far behind the main loop runs.
+// With a list open, another column closes it before acting; the list's column is passed over
+// on the way in, and a press there cancels.
 // While the pen keyboard is open every hit is its (kbKey); when it closes, tracking comes back
 // if it was on, and the caller's resume runs, IO 1 for OK or 0 for Cancel. Otherwise listFresh
-// says whether the hit begins a press, KBGAPMS having passed with no menu hit, for the Select
-// box (onListHit), and a press's first hit hides the status word (msgHide) before it acts, so
-// that a word the hit raises survives it. A pen resting on a label posts a hit every frame, so
-// only a fresh press hides; the word's writers stamp lastMenuMs, so that the hits of a pen
+// also serves the Select box (onListHit), and a press's first hit hides the status word
+// (msgHide) before it acts, so that a word the hit raises survives it. A pen resting on a
+// label posts a hit every frame, so only a fresh press hides; the word's writers stamp lastMenuMs, so that the hits of a pen
 // still resting where the word's command was given (a keyboard's OK, whose hits leave
 // lastMenuMs alone) are not one.
 // Entry: sMenuX, sMenuY = raw position of the latest hit; sMenuArmed; now = the clock. AC and
 // IO are clobbered. Called via jsp.
 onMenuHit,
-    local rtn, fire, bar, fresh, own, mhCol, mhPtr, mhCall, mhKey, mhGo
+    local rtn, fire, bar, fresh, own, mhCol, mhPtr, mhCall, mhKey
     dap rtn
     lac i [kbOn:0]
     sza                 // skip unless the pen keyboard is open
@@ -29,11 +32,12 @@ onMenuHit,
     lac lastMenuMs
     jda elapsed
     sub [KBGAPMS]
+    sma                 // skip unless KBGAPMS has passed with no menu hit
+    lac i [sMenuArmed:0] // 1 if REARM frame ends passed with none too, else 0
+    sub [1]             // not negative only when both say the pen lifted (1 - 1 is +0)
     dac listFresh
-    spa                 // skip on a fresh press
-    jmp mhGo
+    sma                 // skip unless the hit begins a press
     jsp msgHide
-mhGo,
     lac now
     dac lastMenuMs
     lac i [sMenuY:0]
@@ -53,8 +57,8 @@ bar,
     sad openCol         // skip unless it is the open list's column
     jmp own
 fresh,
-    lac i [sMenuArmed:0]
-    sza                 // skip unless this is a fresh press
+    lac listFresh       // a press, or a column other than the last
+    sma                 // skip unless the hit begins a press
     jmp fire
     lac mhCol
     sad lastMenuCol     // skip if the pen moved to another column
@@ -63,11 +67,10 @@ fire,
     lac i [listOpen:0]
     sza                 // skip unless a list is open
     jsp closeNone
+    idx fireCount
     lac mhCol
     dac lastMenuCol
     dac lastAction
-    idx fireCount
-    lac mhCol
     add [barTable:3]
     dac mhPtr
     lac i mhPtr
@@ -87,9 +90,8 @@ mhKey,
     jsp i mhPtr
     jmp rtn
 own,
-    lac i [sMenuArmed:0]
-    sza i               // skip on a fresh press
-    jmp rtn
+    lac listFresh       // a press on the open list's column
+    sma                 // skip unless the hit begins a press
     jsp closeNone
 rtn, jmp .
 mhCol, 0

@@ -568,7 +568,7 @@ spK, 0
 // splitDY, splitK, stepAbsX, stepAbsY, splitRemX and splitRemY. Exit: AC = the address of the
 // first word written. IO is preserved. Called via jsp i [emitVecs:014].
 emitVecs,
-    local rtn, evYNeg, evXSign, evXNeg, evSteps, evLoop, evX, evY, evLast, \
+    local rtn, evXSign, evSteps, evLoop, evX, evY, evLast, \
         evPtr, evFirst, evVec, evBase, evAccX, evAccY, evK, evRemX, evRemY, evI
     dac rtn
     lac i [splitK:4]
@@ -588,10 +588,8 @@ emitVecs,
     sal 8s
     dac evBase
     lac i [splitDY:4]
-    spa                 // skip if dy is plus
-    jmp evYNeg
+    sma                 // skip if dy is minus
     jmp evXSign
-evYNeg,
     lac evBase
     ior [0100000]
     dac evBase
@@ -601,10 +599,8 @@ evXSign,
     ior [visible]
     dac evBase
     lac i [splitDX:4]
-    spa                 // skip if dx is plus
-    jmp evXNeg
+    sma                 // skip if dx is minus
     jmp evSteps
-evXNeg,
     lac evBase
     ior [0200]
     dac evBase
@@ -680,7 +676,7 @@ emitArea, 0
 // Entry: IO = nonzero to call, zero to step over. AC and IO are clobbered. Called via
 // jsp i [writeCalls:014].
 writeCalls,
-    local rtn, wcAll, wcCall0, wcLoop, wcBres, wcKeep, wcLive, wcCount, wcOver, wcPut, wcArcs, \
+    local rtn, wcAll, wcCall0, wcLoop, wcKeep, wcLive, wcCount, wcOver, wcPut, wcArcs, \
         wcInsts, wcFlag, wcSite, wcGap, wcS, wcN, wcAcc, wcLim, wcStep, wcR, wcKind
     dac rtn
     dio wcFlag
@@ -746,10 +742,8 @@ wcLoop,
     sma                 // skip if the site is below wcLim
     jmp wcCount
     lac wcStep
-    sza                 // skip if every site below wcLim calls
-    jmp wcBres
+    sza i               // skip unless every site below wcLim calls
     jmp wcLive
-wcBres,
     add wcAcc
     sub i [spreadG:4]
     spa                 // skip once the accumulator reaches spreadG; this site calls

@@ -3,8 +3,13 @@
 // The typewriter's port, 1041, is typtelnet.c's.
 // netthread() listens on them for the life of the process and runs the fd hand-overs on its own
 // thread; serveN() (pollfd.c) gives the command port's handler a thread per connection.
+//
+// 8-Nov-2026 wje - start history, original code never had it, fix an issue with nonterminated lines.
 
+#include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "common.h"
@@ -13,42 +18,115 @@
 #include "papertape.h"
 #include "netPorts.h"
 
+// How long a command with no newline waits for more bytes before it runs as it stands.
+// pdp1audio sends its command with no newline and waits for the reply on the open connection.
+#define CMDQUIETMS 50
+
+// Runs one command line and writes the response back followed by a newline.
+// Returns 0, or -1 when the write fails.
+static int
+runnetcmd(int fd, PDP1 *pdp, char *lineP)
+{
+char *r;
+int n;
+
+    r = handlecmd(pdp, lineP);
+    n = strlen(r);
+
+    // handlecmd() returns a pointer to this thread's 1024-byte response buffer.
+    // Only append our newline terminator when doing so cannot walk past the end
+    // of that buffer, otherwise send the response as-is.
+    if( (n + 2) <= 1024 )
+    {
+        r[n] = '\n';
+        r[n + 1] = '\0';
+        n++;
+    }
+
+    return( (write(fd, r, n) < 0) ? -1 : 0 );
+}
+
 // Network command-port connection handler.
-// Reads lines from fd, a connected socket, passes each to handlecmd() for processing,
-// and writes the response back followed by a newline.
-// Loops until the peer closes the connection then closes fd.
+// Reads from fd, a connected socket, and runs each newline-ended line as one command, however
+// TCP splits or joins them: two commands in one read() both run, and a command split across
+// reads runs once, whole. A tail with no newline runs when the client closes, or once no more
+// bytes come for CMDQUIETMS. A line that fills the buffer with no newline runs as it stands.
+// Loops until the peer closes the connection or a write fails, then closes fd.
 void
 handlenetcmd(int fd, void *arg)
 {
 PDP1 *pdp = (PDP1*)arg;
-char *r;
-char line[1024];
-int n;
+char buf[1024];
+char *lineP;
+char *endP;
+char *nlP;
+struct pollfd pfd;
+size_t have;
+ssize_t n;
+int failed;
 
-    while( (n = read(fd, line, (sizeof(line) - 1))), n > 0 )
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    have = 0;
+    failed = 0;
+
+    while( !failed )
     {
-        line[n] = 0;
-        r = handlecmd(pdp, line);
-        n = strlen(r);
-
-        // handlecmd() returns a pointer to this thread's 1024-byte response buffer.
-        // Only append our newline terminator when doing so cannot walk past the end
-        // of that buffer, otherwise send the response as-is.
-        if( (n + 2) <= 1024 )
+        // Nothing pending: wait as long as it takes. A partial command: only the quiet time.
+        n = poll(&pfd, 1, ((have > 0) ? CMDQUIETMS : -1));
+        if( n < 0 )
         {
-            r[n] = '\n';
-            r[n + 1] = '\0';
-            if( write(fd, r, (n + 1)) < 0 )
+            if( errno == EINTR )
             {
-                break;      // peer gone or socket error; stop feeding it more commands
+                continue;
             }
+            break;
         }
-        else
+
+        if( n == 0 )
         {
-            if( write(fd, r, n) < 0 )
+            buf[have] = '\0';
+            have = 0;
+            failed = (runnetcmd(fd, pdp, buf) < 0);
+            continue;
+        }
+
+        n = read(fd, (buf + have), (sizeof(buf) - 1 - have));
+        if( (n < 0) && (errno == EINTR) )
+        {
+            continue;
+        }
+
+        if( n <= 0 )
+        {
+            // The client closed its side: a pending command still runs, and a client that only
+            // shut down its writing still gets the reply.
+            if( (n == 0) && (have > 0) )
             {
-                break;
+                buf[have] = '\0';
+                runnetcmd(fd, pdp, buf);
             }
+            break;
+        }
+
+        have += n;
+        lineP = buf;
+        endP = (buf + have);
+        while( !failed && ((nlP = memchr(lineP, '\n', (endP - lineP))) != nil) )
+        {
+            *nlP = '\0';
+            failed = (runnetcmd(fd, pdp, lineP) < 0);
+            lineP = (nlP + 1);
+        }
+
+        have = (endP - lineP);
+        memmove(buf, lineP, have);
+
+        if( !failed && (have == (sizeof(buf) - 1)) )
+        {
+            buf[have] = '\0';
+            have = 0;
+            failed = (runnetcmd(fd, pdp, buf) < 0);
         }
     }
 

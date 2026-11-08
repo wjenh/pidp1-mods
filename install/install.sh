@@ -219,28 +219,27 @@ while true; do
 		make -C $INSTALLDIR/Tools install
             
 		echo Setting required access privileges to pidp1 simulator
-		# make sure pidp1 panel driver has the right privileges
-            	# to access GPIO with root privileges:
-            	# sudo chmod +s $INSTALLDIR/src/panel_pidp1
-            	# to run as a RT thread:
-                # The old panel is no longer built or installed
-            	# sudo setcap cap_sys_nice+ep $INSTALLDIR/src/panel_pidp1/panel_pidp1
-                # newpanel does not require running as an RT thread, but it has the option of doing so
-            	sudo chmod +s $INSTALLDIR/src/panel_pidp1/newpanel
-            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/panel_pidp1/newpanel
+        # make sure pidp1 panel driver has the right privileges
+        # to access GPIO with root privileges:
+        # sudo chmod +s $INSTALLDIR/src/panel_pidp1
+        # to run as a RT thread:
+        # The old panel is no longer built or installed
+        # sudo setcap cap_sys_nice+ep $INSTALLDIR/src/panel_pidp1/panel_pidp1
+        # newpanel does not require running as an RT thread, but it has the option of doing so
+        sudo chmod +s $INSTALLDIR/src/panel_pidp1/newpanel
+        sudo setcap cap_sys_nice+ep $INSTALLDIR/src/panel_pidp1/newpanel
 
-                ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
-                ln -sf $INSTALLDIR/src/ptytools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
-                ln -sf $INSTALLDIR/src/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
-                ln -sf $INSTALLDIR/src/pdp1/pdp1 $INSTALLDIR/bin/pdp1
-                ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
-                ln -sf $INSTALLDIR/src/pdp1central/pdp1central $INSTALLDIR/bin/pdp1central
-                ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor
-                ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
-                ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
-                ln -sf $INSTALLDIR/src/tapevis/tapevis $INSTALLDIR/bin/tapevis
-                ln -sf $INSTALLDIR/src/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
-	    	echo Done.
+        ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
+        ln -sf $INSTALLDIR/src/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
+        ln -sf $INSTALLDIR/src/pdp1/pdp1 $INSTALLDIR/bin/pdp1
+        ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
+        ln -sf $INSTALLDIR/src/pdp1central/pdp1central $INSTALLDIR/bin/pdp1central
+        ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor
+        ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
+        ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
+        ln -sf $INSTALLDIR/src/tapevis/tapevis $INSTALLDIR/bin/tapevis
+        ln -sf $INSTALLDIR/src/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
+        echo Done.
 		break
 		;;
         [Nn]* ) 

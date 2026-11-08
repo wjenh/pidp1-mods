@@ -1,6 +1,6 @@
 // Client side of the emulator's debugger link: connection, handshake, framing, one request in
 // flight, and a typed wrapper per request.
-// The protocol is in src/pdp1/ad1proto.h and the server is ad1server.c.
+// The protocol is in src/blincolnlights/pdp1/ad1proto.h and the server is ad1server.c.
 // Every frame is built and read field by field, so nothing here depends on the emulator's PDP1 struct.
 //
 // 20-Sep-2026 Claude: written to replace the shared-memory link.

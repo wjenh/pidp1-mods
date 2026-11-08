@@ -106,10 +106,11 @@
  * 06-Apr-2026 wje - Add -n flag to eliminate multiple outputs of an address
  * 09-Apr-2026 wje - Add deduction of more meaningful label names
  * 14-Jul-2026 wje - Am1 loader was not handling multi-block loads properly
- * 24-Oct-2026 Claude - am1 and macro output now assemble back to the tape's original words,
+ * 24-Oct-2026 Claude - Version 2.5: am1 and macro output now assemble back to the tape's original words,
  *                  labels follow the target's bank and use, the loader is found from the RIM block, and
  *                  binloader.c checks checksums, am1loader.c and kloader.c end blocks correctly.
- * 06-Nov-2026 Claude - a tape that is a RIM block only is the program, its jmp the start
+ * 06-Nov-2026 Claude - Version 2.6: a tape that is a RIM block only is the program, its jmp the start;
+ *                  a symbol file's bad line is reported by its own number.
  *
  */
 

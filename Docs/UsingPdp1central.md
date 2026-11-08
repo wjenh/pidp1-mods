@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.12\
-Edit date 06-Nov-2026\
-Added Run, Continue and Halt, the panel's Start, Continue and Stop keys; Reload config is now Reload.
+This is version 1.13\
+Edit date 07-Nov-2026\
+Added launching Soroban
 
 ## What is pdp1central?
 
@@ -12,15 +12,15 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - it shows which of the emulator's programs are running;
 - it starts, stops, restarts and reloads the emulator;
 - it runs, continues and halts the pdp-1, as the panel's Start, Continue and Stop keys do;
-- it keeps the start-time choices: the interface, the t30dpy display, the front panel and the USB
-  paper tape;
+- it keeps the start-time choices: the interface, the t30dpy display, the Soroban typewriter, the
+  front panel and the USB paper tape;
 - it mounts paper tapes in the reader and saves what the punch punches;
 - it fast loads a tape straight into the running pdp-1's memory, with fastload or with ovlload
   for a program with drum overlays;
 - it mounts and unmounts microtapes on the Type 550 drives, with mtp, choosing from a tape library;
 - it puts drum images from a library onto the Type 23 drum, and saves the drum to the library;
 - it turns the emulator's sound on and off;
-- it opens the typewriter, t30dpy and console windows;
+- it opens the Soroban typewriter, t30dpy and console windows;
 - it sets the running emulator's gain, audio filters, tuning and sample rate, and its multiply and
   divide option, on the Live tab;
 - it edits /opt/pidp1-mods/pidp1.config, the configuration file, setting by setting;
@@ -28,7 +28,7 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 
 It runs on the machine that runs the emulator.
 The scripts stay, and can still be used on a system without a desktop.
-Pdp1central starts, stops, and reloads the emulator and starts t30dpy by running bin/pdp1control.sh
+Pdp1central starts, stops, and reloads the emulator and starts t30dpy and Soroban by running bin/pdp1control.sh
 so the two always do the same thing.
 
 ## Starting it
@@ -66,7 +66,7 @@ A light for each program the chosen start-time choices run, green when it is run
 - pdp1, the emulator;
 - the panel driver: panel_pidp1 for the PiDP-1 hardware, vpanel_pdp1 for the on-screen panel;
 - the front end: pdp1_periphES for gui, pdpsrv for web, t30dpy for apps;
-- t30dpy, when *also start t30dpy* is checked with gui or web;
+- t30dpy, when *Also launch: t30dpy* is checked with gui or web;
 - the USB tape monitor, when USB paper tape is chosen;
 - port 1040, the emulator's command port, green when it accepts a connection.
 
@@ -86,22 +86,24 @@ the panel, or by ad1 shows within a second.
 With the power switch off, all three are disabled.
 Each key does just what the panel's does.
 
-While running, the buttons are disabled and the strip shows what opration is running and for how long.
+While running, the buttons are disabled and the strip shows what operation is running and for how long.
 An error is shown under the strip, staying until another occurs.
 
 Stop ends the emulator first, then the t30dpy display, which normally closes by itself when the
 emulator stops.
 Either still open after 3 seconds is ended.
+A Soroban window closes by itself when the emulator stops.
 
 ### The Control tab
 
 **Start-time choices.**
 
-Interface (gui, web or apps), Type 30 display (also start t30dpy),
+Interface (gui, web or apps), Also launch (t30dpy, Soroban),
 Front panel (PiDP-1 hardware or virtual) and USB paper tape (yes or no).
 A click saves the choice at once, and it is used at the next start or restart.
+The area after the Also launch boxes shows who has the display and who has the typewriter.
 
-*Also start t30dpy* starts the t30dpy display beside the gui or web front end.
+*t30dpy* starts the t30dpy display in addition to the gui or web front end.
 Apps always starts t30dpy, the box is shown checked and cannot be changed.
 The emulator sends the display to one window at a time, the last one to connect:
 - with gui, t30dpy starts once pdp1_periphES has connected; t30dpy has the display and the
@@ -111,7 +113,19 @@ The emulator sends the display to one window at a time, the last one to connect:
 
 t30dpy starts only once the emulator is ready for it, at most 5 seconds after the emulator
 starts, it closes if it cannot connect.
-The line beside the box says which.
+
+*Soroban* opens the typewriter terminal at start, as the Soroban desktop icon does,
+lxterminal -e "telnet localhost 1041".
+The emulator gives the typewriter to one window at a time, the first one to connect, and
+refuses the others:
+- with apps there is no other typewriter, Soroban is the only one;
+- with web, Soroban is the typewriter and the browser's typewriter panel does nothing while
+  the Soroban window is open;
+- with gui, pdp1_periphES needs the typewriter to start at all so Soroban is not started; the
+  box is grayed and keeps its value for when web or apps is chosen again.
+
+Soroban starts once the emulator is ready for it, at most 5 seconds after the emulator starts,
+and is not started on a system without a desktop.
 
 **Fast load.**
 
@@ -182,7 +196,7 @@ A reload made elsewhere, by pdp1control reload, is not undone.
 
 The three buttons open the windows that go with the emulator using the same commands as the
 desktop icons:
-- Typewriter opens a terminal on the typewriter,
+- Soroban opens a terminal on the typewriter,
   lxterminal -e "telnet localhost 1041".
 - t30dpy opens the t30dpy display, /opt/pidp1-mods/bin/t30dpy.
 - Pdp1 monitor opens the emulator's screen console, not generally useful except to see
@@ -195,7 +209,7 @@ If a program cannot be started, the message line under the top strip reports why
 
 The buttons work only while the emulator runs, otherwise they are disabled and the row reads
 "pidp1 not running".
-Typewriter and t30dpy also wait for the emulator to respond since they would close with
+Soroban and t30dpy also wait for the emulator to respond since they would close with
 nothing to connect to.
 Pdp1 monitor needs only the emulator running.
 
@@ -204,10 +218,10 @@ The emulator sends the display to the last window to connect.
 T30dpy will take it from the gui's display window or the browser's display panel,
 the line beside the buttons says which one, if either.
 
-Typewriter has no indicator, and a second click opens a second terminal.
+Soroban has no indicator, and a second click opens a second terminal.
 The typewriter takes one connection at a time, the second terminal's telnet is refused and its
 window closes at once.
-Once the first terminal is closed, Typewriter opens a new one.
+Once the first terminal is closed, Soroban opens a new one.
 
 **Window colors**
 
@@ -419,12 +433,13 @@ What the scripts printed, what the command ports answered, and any errors, the l
 
 ## The start-time choices file
 
-The interface, t30dpy, front panel and USB paper tape choices are kept in
+The interface, t30dpy, Soroban, front panel and USB paper tape choices are kept in
 /opt/pidp1-mods/pdp1control.config with lines of the form name=value:
 
 ```
 interface=web
 t30dpy=n
+soroban=n
 frontpanel=virtual
 usbtape=n
 ```
@@ -432,6 +447,8 @@ usbtape=n
 - interface: gui, web or apps.
   The default is web. apps starts the t30dpy display.
 - t30dpy: y or n, start t30dpy beside the gui or web front end.
+  The default is n.
+- soroban: y or n, start the Soroban typewriter terminal with web or apps, not with gui.
   The default is n.
 - frontpanel: pidp or virtual.
   The default is virtual.
@@ -448,6 +465,7 @@ Commands used are:
 ```
 pdp1control set gui
 pdp1control t30dpy y
+pdp1control soroban y
 pdp1control panel pidp
 pdp1control usbtape y
 ```

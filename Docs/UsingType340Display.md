@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.15
+This is version 1.21
 
-Edit date 5-Nov-2026\
-Update for typos and out-of-date information
+Edit date 7-Nov-2026\
+Timing figures updated
 
 ## What is it?
 
@@ -431,6 +431,8 @@ a *sequence break*, assuming the SBS system has been enabled.
 
 If enabled, a lightpen hit will also immediately halt the display, but it *can* be resumed via the *drs* IOT.
 If given before a new *dla*, display list execution will resume from where it left off.
+In increment mode the display stops after the move whose point was hit, with the rest of that word's
+moves not yet drawn; *drs* draws them.
 A mandatory interrupt will also be issued, the same as for an edge violation, unless disabled with the
 nonstandard *specialinterrupt* flag.
 
@@ -478,18 +480,41 @@ Here are some of the basic timings:
 - every command fetch from main memory takes 5 usecs via high speed channel 3
 - every command executed has a setup time, as noted above
 - a point command always takes 35 usecs, but see below
-- vector and vector continue x take 1 usec for each position moved, plus 0.5 usec per displayed position
-- increment is similar, each move takes 1 usec, plus 0.5 usecs if the point is displayed
-- character takes 1 microsecond per position move in the 5x7 matrix plus 0.5 usecs for intensification
+- vector and vector continue take 1.5 usecs for each step of the display's rate multiplier, whether or
+  not the point is displayed, a 1 usec move, then a 0.5 usec intensify delay.
+  A vector runs 2^n steps, n being the number of bits in the larger of its x and y lengths, at least 3
+  regardkess, the last step is free.
+  With its setup time a vector of length 7 or less takes 11 usecs and one of 64 to 127 takes 191 usecs,
+  plus its word fetch
+- increment takes 1.5 usecs for each move, whether or not the point is displayed.
+  A move whose point is hit by the lightpen takes only 1 usec before the display stops
+- a *drs* that resumes the display after a lightpen hit takes 1.5 usecs before the display continues
+  in every mode but character.
+  There is no existing documentation on the time for a character resume.
+- character takes 1.5 usecs for each step the Type 342 character generator moves the beam whether or not
+  the point is displayed, a 1 usec move, then a 0.5 usec intensify delay.
+  A character takes up to 30 steps,along a path the 342 sets for each character then the next character
+  starts 0.5 usecs after it ends.
+  The 342's paths are not documented, so the emulator charges each character the shortest path from its
+  start through its displayed points to the next character's start.
+  A space takes 7 steps, 11 usecs with the 0.5 usecs end.
+  An I taked 17 steps, 26 usecs; an H 24 steps, 36.5 usecs; the longest real character takes 26.
+  A carriage return takes 9 steps and a line feed 12.
+  The shifts and the end character take only 0.5 usecs.
+  A backspace takes 7 steps, as a space does.
+  An accent goes back over the previous character and returns, so ` takes 12 steps and ^ 15.
+  A vertical character takes the same steps as a horizontal one.
+  Note that where 342 actually starts the next vertical character is not documented.
+  The points are still drawn column by column, left to right, each column bottom to top
+  so the assumption here is likely valid.
 
-When using the point command, the order the x and y coordinates drastically affects the timing.
+When using the point command, the order of the x and y coordinates drastically affects the timing.
 
-Setting the y position does not incur the 35 usec delay as long as it does not have the display flag set,
+Setting the y position does not incur the norma 35 usec delay as long as it does not have the display flag set,
 which should generally be the case.
-
 Setting the x position *always* causes a 35 usec delay.
 
-So, if moving in both axes, set y without visible first, then x.
+If moving in both axes, set y without visible first, then x.
 If moving only in the y axis, then visible will be set and the 35 usec delay will occur.
 
 Setting both x and y with visible set on both will cause a 70 usec delay!
@@ -509,7 +534,7 @@ Both character sets have special escape characters with specific meanings:
 
 | Character code | Meaning |
 |-----------------|-----------|
-| 033 | linefeed |
+| 033 | linefeed, 12 units down |
 | 034 | carriage return |
 | 035 | upper shift |
 | 036 | lower shift |
@@ -667,8 +692,8 @@ Character set 2
 | 63 | ??? |
 | 64 | ??? |
 | 65 | ??? |
-| 66 | ` |
-| 67 | ^ |
+| 66 | ` accent |
+| 67 | ^ accent |
 | 70 | ??? |
 | 71 | block? |
 | 72 | backspace |
@@ -678,8 +703,14 @@ Character set 2
 | 76 | ??? |
 | 77 | superscript |
 
-For the second character set, the *subscript* and *superscript* characters are modal, like the shift characters.
+For the second character set, the *subscript* and *superscript* characters are modal like the shift characters.
 They stay in effect until the opposite one is used.
+
+The *backspace* moves the beam back one character so the next character is drawn over the last.
+The two accents, ` and ^, are drawn over the character before them, and the beam stays where it was:
+a, \`, b puts the accent over the a with the b as the next character after a.
+At the left edge, less than a character from x = 0, neither moves the beam back.
+A backspace leaves it where it is and an accent is drawn where the beam is.
 
 ## A real example
 

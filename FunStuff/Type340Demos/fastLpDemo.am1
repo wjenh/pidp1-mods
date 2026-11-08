@@ -1,6 +1,7 @@
 Demo of lightpen tracking for the Type 340
-// This uses an interrupt-driven lightpen handlear.
+// This uses an interrupt-driven lightpen handler.
 // 7-Nov-2026 wje - rename and cleanup
+// 8-Nov-2026 Claude - the break routine restarts the list after an edge, and the target is held on the screen.
 #include <TYPE340/type340defs.ah>
 #include <TYPE340/trackingTarget.ah>
 
@@ -11,6 +12,12 @@ Demo of lightpen tracking for the Type 340
 #define MSGX 0d100
 #define MSGY 0d100
 
+// The target's arms reach TGTHALF from its center on the screen, so its center is held that far
+// inside the screen. drp's coordinates are even, 0 to 1022.
+#define TGTHALF (TARGETARM << TARGETSCALE)
+#define TGTMIN TGTHALF
+#define TGTMAX (0d1022 - TGTHALF)
+
 // Set up the interrupt vector
 0/
     0                   // loc 0 SBS saves the pre-break AC here
@@ -19,11 +26,11 @@ Demo of lightpen tracking for the Type 340
     jmp penISR          // loc 3 isr executes from here
 
 100/
-    // Be sure interrupts are off, flush any pending to avoid spurius lightpen data.
+    // Be sure interrupts are off, flush any pending to avoid spurious lightpen data.
     lsm
     cbs
 
-    // And intialize the 340 location
+    // And initialize the 340 location
     lac [y(TARGETY) next(point)
     dac tgtY
     lac [x(TARGETX) next(parameter)
@@ -38,18 +45,24 @@ Demo of lightpen tracking for the Type 340
 top,            // just loop forever, 340 and the interrupt are doing all the work.
     jmp top
 
-// penISR is entered directly on an interrupt from a lightpen hit
+// penISR is entered directly on the 340's break: a lightpen hit, or an edge violation.
 penISR,
     local curhitX, curhitY
+    // No pen flag: the 340 halted at an edge, which drs cannot resume.
+    dsp
+    jmp penEdge
+
     // Drp, like drc, drops the last bit of the coordinates, get back to the full 10 bits
     drp
     lai
     and [0777]
     sal 1s
+    jda clamp
     dac curhitY
     lai
     sar 8s
     and [01776
+    jda clamp
     dac curhitX
 
     // Reposition the target and resume the display, now curhitX is in AC
@@ -64,6 +77,14 @@ penISR,
     // Restarting the 340 at the target here instead loops on the target while the pen rests on
     // it, since a held pen hits on every pass, and the prompt is never drawn.
     drs
+    jmp penExit
+
+    // Start the list again; dla clears the edge flags.
+penEdge,
+    lio [target
+    dla
+
+penExit,
     lio 2               // restore the pre-break IO
     lac 0               // restore the pre-break AC -- must be last before DEBREAK
     jmp i 1             // DEBREAK
@@ -71,6 +92,29 @@ penISR,
 curhitX, 0
 curhitY, 0
     endloc
+
+// clamp: hold a target coordinate where the whole target stays on the screen.
+// Entered by jda with AC = the coordinate, 0 to 1022.
+// Returns AC = the coordinate, held to TGTMIN..TGTMAX. IO preserved.
+clamp, 0
+    dap clampx
+    lac clamp
+    sub [TGTMIN
+    sma                             // below TGTMIN: hold it there
+    jmp clamp1
+    lac [TGTMIN
+    jmp clampx
+clamp1,
+    lac clamp
+    sub [TGTMAX
+    sma sza                         // above TGTMAX: hold it there
+    jmp clamphi
+    lac clamp
+    jmp clampx
+clamphi,
+    lac [TGTMAX
+clampx,
+    jmp .
 
 // The 340 program
 target, lpon scale(1) intensity(6) next(point)

@@ -74,6 +74,9 @@
  * 7-Nov-2026 wje - adjust timing for character mode to match deduced performance.
  *    Note that no actual documentation survives, the timing is a best guess from the typical
  *    way DEC did character generation at the time.
+ * 7-Nov-2026 Claude - the 0.5 us setup is charged only before vector, vector continue, increment,
+ *    subroutine and slave words, and a dla start no longer charges 1.5 us: on the PDP-1 the 340's
+ *    setup delay runs inside the word's own 5 us cycle (H-340 p. 2-9, F17 p. 6-35).
  */
 
 #include <stdlib.h>
@@ -129,21 +132,26 @@
 #define LOG_CACHE 0
 #define LOG_HSCTIMING 0    // measure getWord() HSC fetch latency
 
-// This defines the time each command takes to initialize, 0.5 usecs. This might not be accurate.
+// The 0.5 us intensify S delay that ends in IDP.
+// Every word incurs it after the setup delay that DATA/ SYNC starts.
+// On the PDP-1 both run inside the word's 5 us channel cycle.
+// The word arrives in about 1.5 us, and a parameter word or an undrawn Y point word
+// still asks for the next word in time for the next cycle, so the setup delay is about 1.0 us
+// and the fetch's 5 us covers it.
+// Only the modes whose time is counted from IDP incur the additional 0.5 us, vector, vector continue and increment.
+// Subroutine and slave words also incur it since their devices' own times are not known.
+// A character word's delays are in CHAR_NEXT_TIME.
 #define SETUP_TIME 500
-// This defines the time it takes to initialize after a start via dla.
-// The documentation is vague, 2.8 us for a PDP-4, 'faster' for others. Pick 1.5 us.
-#define START_TIME 1500
-// A vector's COUNT BRM pulse starts the 1.0 us sequence delay, whose end starts the 0.5 us
-// intensify delay that ends in the next pulse (H-340 p. 3-6). A pulse that ends the loop at an
-// edge or a lightpen hit costs only the sequence delay.
+// A vector's COUNT BRM pulse starts the 1.0 us sequence delay whose end starts the 0.5 us
+// intensify delay that ends in the next pulse.
+// A pulse that ends the loop at an/ edge or a lightpen hit costs only the sequence delay.
 #define BRM_PULSE_TIME 1500
 #define BRM_HALT_PULSE_TIME 1000
-// The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay,
-// before the display goes on where it left off (H-340 pp. 3-6, 3-27).
+// The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay
+// before the display continues from where it left off.
 #define RESUME_TIME 1500
-// The 342 steps the beam one COUNT every 1.5 us, lit or not, and at the character's end NEXT CHAR
-// starts the next character 0.5 us later (H-340 pp. 3-11, 3-34).
+// The 342 steps the beam one COUNT every 1.5 us, drawn or not, and at the character's end NEXT CHAR
+// starts the next character 0.5 us later.
 #define CHAR_STEP_TIME 1500
 #define CHAR_NEXT_TIME 500
 
@@ -701,7 +709,7 @@ uint64_t idleT0;
             sawEscape = false;          // be sure there's no dangling escape
             curAddress = cmdAddress;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
-            pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
+            pendingDelay = 0;           // DPY GO requests the first word at once (H-340 p. 3-1)
             twoCharsets = origCharsets; // we revert on each DPY-GO
             iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
             break;
@@ -772,7 +780,7 @@ uint64_t idleT0;
                     reset340();                 // sets curmode to PARAMETER, state to INITIALIZE
                     curAddress = cmdAddress;
                     curState = INITIALIZE;              // override STOPPED so the inner loop continues
-                    pendingDelay = START_TIME;
+                    pendingDelay = 0;
                     dueNs = getNow();
                     twoCharsets = origCharsets;
                     iotCondLog(LOG_RUN, "Received start while running, new addr %o\n", curAddress);
@@ -780,9 +788,10 @@ uint64_t idleT0;
                 }
             }
 
-            // Delay time is accumulated to the end of a cycle, then done.
-            // Every command has a setup time in addition to the hsc request delay,
-            if( curState == INITIALIZE )
+            // Delay time is accumulated then done at the end of a cycle.
+            // A parameter, point or character word's setup fits in its fetch's cycle (SETUP_TIME).
+            if( (curState == INITIALIZE) && (curMode != PARAMETER) && (curMode != POINT) &&
+                (curMode != CHARACTER) )
             {
                 pendingDelay += SETUP_TIME;
             }

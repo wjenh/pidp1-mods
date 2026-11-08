@@ -222,7 +222,7 @@ descEdit,
     ed1:0 + LEADROW(6)
     ed2:0 + LEADROW(7)
     ed3:0 + LEADROW(6)
-    ed4:0 + LEADROW(5)
+    ed4:0 + LEADROW(7)
     ed5:0 + LEADROW(7)
     ed6:0 + LEADROW(6)
     ed7:0 + LEADROW(6)
@@ -286,6 +286,17 @@ descSize,
     sz1:0 + LEADROW(2)
     sz2:0 + LEADROW(2)
     sz3:0 + LEADROW(2)
+descScale,
+    listScale:0
+    3
+    ISCPART
+    0
+    0
+    chBox:0 + 1         // Change's box, shared
+    SUBEDGE(CEDIT * COLPITCH + SUBDX + BOXDX)
+    sl0:0 + LEADROW(4)
+    sl1:0 + LEADROW(6)
+    sl2:0 + LEADROW(3)
 descConstr,
     listConstr:0
     SUBROWS
@@ -397,7 +408,7 @@ subsEdit,
     0
     descConstr:3
     descSize:3
-    0
+    descScale:3
     descChange:3
     0
     descKeep:3

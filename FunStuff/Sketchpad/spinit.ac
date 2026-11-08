@@ -69,9 +69,9 @@ igP, 0
 // pick-up hides it, as the tape's results do, its name's line blank, lastMenuMs stamped as
 // tapeCall stamps it; the gesture under way ends and the program is left idle, as
 // tapeCall leaves it; tracking comes back if the pen keyboard's load failed (kbOpening) and
-// kbStart had turned it off; and the main loop goes on from its top. The call that failed is abandoned
-// with every return pending in it, which nothing keeps, since each routine returns by the address
-// its own entry saved; the user's next selection tries the load again. A failed load of the
+// kbStart had turned it off; and the main loop goes on from its top. The call that failed is
+// abandoned with every return pending in it, which nothing keeps, since each routine returns by the
+// address its own entry saved; the user's next selection tries the load again. A failed load of the
 // truss, from its stub's call at the end of a main loop's pass (taLoading, sptruss.ac), ends no
 // gesture and leaves the mode: the main loop goes on, and the stub tries again after TAFAILMS
 // (taFailAt). A failed swap (OV_ERR_SWAP), a stop during an eviction of the truss, W's one
@@ -84,7 +84,7 @@ drumFail,
     local dfCopy, dfPad, dfLoad, dfMode, dfMain, dfP, dfQ, dfN
     dac drumErr
     idx drumFails
-    lac [drumText:013]
+    lac [drumText:3]
     dac dfP
     lac [msgText:0]
     dac dfQ
@@ -153,8 +153,7 @@ dfQ, 0
 dfN, 0
     endloc
 
-// The status word's text for a failed load, nine characters as the tape's are (sptape.ac,
-// tpMsgs); the last error, and the failures counted since the program's start.
-drumText, type340 "DRUM     "
+// The last error, and the failures counted since the program's start; the status word's text for
+// a failed load, drumText, is in bank 3 (sketchpad.am1), for bank 11's room.
 drumErr, 0
 drumFails, 0

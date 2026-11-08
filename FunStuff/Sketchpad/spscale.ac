@@ -13,7 +13,8 @@
 // first (setMode, scDone). Entered from the main bank by jsp i [X:6] through the six root stubs
 // at the end of this file, which keep the entries' names and call the overlay's, Ov added:
 // scAct, scTarget, scLost and scEnd from the mode's gates (spmodes.ac), scDone from setMode, and
-// scUndo from actUndo; a seventh, vaWalkOv, is the variants' root code's (spvar.ac). Runs with the extend window open, reaching the other banks' words through
+// scUndo from actUndo; a seventh, vaWalkOv, is the variants' root code's (spvar.ac). Runs with the
+// extend window open, reaching the other banks' words through
 // their 16-bit addresses. The main bank's routines, whose returns cannot leave bank 4, are
 // called through its trampoline mainCall (scMain); the constraint and instance modules' entries
 // directly (scCon, scIEnt); bank 12's linePick and lineApply and bank 11's lkOff by their own jsp
@@ -21,16 +22,11 @@
 // reach the manager from inside the overlay (ovErrNest).
 // Part of sketchpad.am1, included where it stands.
 
-// The slider's vector words at its scale: a doubling's level run, and the tick between two
-// runs, rising SCZIG steps; with down, falling.
-#define SCRUN (visible | deltay(0) | deltax(SCDOUBLE / (1 << SLIDESCALE)))
-#define SCTICK (visible | deltay(SCZIG) | deltax(0))
-
 // The root's words. What is picked up: scOn nonzero while a part is, which the stub scDone
 // tests, scKind what (SCKLINE, SCKARC, SCKSTEP, SCKINST), for a text or digits the size now (0 to
-// 3, x1 to x8) and for an instance the word its size will take. The slider's dot at the pick (the knob's at a factor of 1), the pen's
-// offsets bounded to the doublings each side (scLo, scHi), and the offset and the factor applied
-// (scD, scFq, the factor in SCFRAC parts).
+// 3, x1 to x8) and for an instance the word its size will take. The slider's dot at the pick (the
+// knob's at a factor of 1), the pen's offsets bounded to the doublings each side (scLo, scHi), and
+// the offset and the factor applied (scD, scFq, the factor in SCFRAC parts).
 scOn, 0
 scKind, 0
 scSize, 0
@@ -1971,13 +1967,13 @@ rtn, jmp .
 // Put down the part picked up, if any; its scale is finished. A line's Lengths (the constraint
 // table's L entries on its two ends) take its length at the factor applied, as Dismem's Length
 // takes a new size, and its Changes (Y) their reference lengths the same way, so a Change's
-// reading scales with the line; their values before kept for Undo, and the solver wakes. The change is
-// Undo's record (USCALE), kept with what scUndo needs; a pick whose only change was refused after
-// the places were kept (cSnap) has spoiled the record those places belonged to, which is cleared.
-// The drag's words are let go (dragIdx, bandIdx, dragLine), a line's ends staying held by the
-// solver while the figure settles, as Move's line drop leaves them; the status word's block goes
-// back under the bar, hidden, the slider is put away and the dot dimmed for the hunt. Every way
-// out of Scale mode comes here (setMode's hook), and a lift, Locate and Undo; with nothing
+// reading scales with the line; their values before kept for Undo, and the solver wakes. The change
+// is Undo's record (USCALE), kept with what scUndo needs; a pick whose only change was refused
+// after the places were kept (cSnap) has spoiled the record those places belonged to, which is
+// cleared. The drag's words are let go (dragIdx, bandIdx, dragLine), a line's ends staying held by
+// the solver while the figure settles, as Move's line drop leaves them; the status word's block
+// goes back under the bar, hidden, the slider is put away and the dot dimmed for the hunt. Every
+// way out of Scale mode comes here (setMode's hook), and a lift, Locate and Undo; with nothing
 // picked up it returns at once, and it clears scOn first, so that a call back finds none.
 // AC and IO are clobbered. Called via jsp, or through the root stub scDone, by the manager.
 scDoneOv,
@@ -2337,13 +2333,17 @@ rtn, jmp .
 // Which row entered Scale mode, kept in szKind for the lifts that follow.
 // Entry: lastItem. Exit: AC = the row's list's column. IO is clobbered. Called via jsp.
 szItem,
-    local rtn, siDim
+    local rtn, siDim, siOwn
     dap rtn
     lac i [lastItem:4]
     sad [IDSIZE]        // skip unless Dim's Size
     jmp siDim
-    sub [IKEEP]
-    spa                 // skip if a Keep row, the last items of all
+    sub [ISCPART]
+    sma                 // skip unless a row of Scale's sublist, the items after Keep's
+    jmp siOwn
+    add [ISCPART - IKEEP]
+    spa                 // skip if a Keep row
+siOwn,
     law i 1
     add [1]
     dac i [szKind:3]
@@ -3654,32 +3654,54 @@ rtn, jmp .
 %%endoverlay
 
 // The main bank's six entries, root stubs calling the overlay's (scActOv to scUndoOv) through
-// the drum overlay manager, which reads the overlay into W first if W holds another. IO passes
-// through to the entry and AC comes back from it. scDone calls nothing with
-// no part held, so a mode change loads nothing, and the one call of it from inside the overlay,
-// when scActOv's call of setMode reaches setMode's hook, finds scOn 0, put down by scActOv, and
-// returns; it has its own return word, since it then runs inside scAct's call.
-// Entry and exit as the overlay's entry. Called via jsp i [X:6], from the main bank.
+// the drum overlay manager, which reads the overlay into W first if W holds another. With
+// Scale's Figure or All chosen (scSel SCSGROUP) they call the overlay gscale's one entry instead
+// (spgscale.ac's gsEntOv, scGrp), through bank 5's root loop gsRun, which writes the instances
+// again between its calls, and an Undo of a group's scale (scUKind SCKGROUP) calls it whatever
+// scSel is. IO passes through to the entry; no caller reads the AC that comes back.
+// scDone calls nothing with no part held (scOn, which gscale keeps too), so a mode change loads
+// nothing, and the one call of it from inside an overlay, when its act entry's call of setMode
+// reaches setMode's hook, finds scOn 0, put down by the act entry, and returns; it has its own
+// return word, since it then runs inside scAct's call. scAct puts down a part held, in the
+// overlay that holds it, before it changes scSel for the row chosen.
+// Entry: IO as the overlay's entry. Called via jsp i [X:6], or a jmp i from a routine so called,
+// from the main bank.
 scAct,
     dac saStubR
+    jsp scDone
+    lac i [lastItem:4]
+    sub [ISCFIG]
+    dzm scSel
+    sma                 // skip unless Scale's Figure or All, the items from ISCFIG on
+    idx scSel
+    law 0
+    jda scGrp
     %%ovcall scale, scActOv
     jmp i saStubR
 scTarget,
     dac saStubR
+    law 1
+    jda scGrp
     %%ovcall scale, scTargetOv
     jmp i saStubR
 scLost,
     dac saStubR
+    law 2
+    jda scGrp
     %%ovcall scale, scLostOv
-    jsp i [vaRec:2]   // the record of an instance just picked up
+    jsp i [vaRec:2]   // the record of an instance just picked up, none after a group
     jmp i saStubR
 scEnd,
     dac saStubR
+    law 3
+    jda scGrp
     %%ovcall scale, scEndOv
     jmp i saStubR
 scUndo,
     dac saStubR
     lac scUKind
+    sad [SCKGROUP]      // skip unless a group's scale goes back
+    jmp suGrp
     sas [SCKINST]       // skip if an instance's size goes back
     jmp suStub
     lac scUInst
@@ -3689,12 +3711,41 @@ suStub,
     %%ovcall scale, scUndoOv
     jsp i [szUnd:013]   // the sizes of a group it moved
     jmp i saStubR
+suGrp,
+    law 4
+    dac scGrp           // the entry gsEntOv runs, Undo
+    jsp i [gsRun:5]
+    jmp i saStubR
 scDone,
     dac sdStubR
     lac scOn
     sza i               // skip if a part is picked up
     jmp i sdStubR
+    law 5
+    jda scGrp
     %%ovcall scale, scDoneOv
     jmp i sdStubR
 saStubR, 0
 sdStubR, 0
+
+// Which overlay Scale mode runs, SCSPART's scale or SCSGROUP's gscale, set by scAct from the row
+// chosen.
+scSel, 0
+
+// A stub's call of gscale. With scSel SCSGROUP, call gscale's entry n through bank 5's root loop
+// gsRun, which calls it through the manager, and return past the stub's own call of scale's
+// entry, the 4 words after the jda; else return at once. The word scGrp keeps n for gsEntOv: 0
+// act, 1 target, 2 lost, 3 end, 4 undo, 5 done.
+// Entry: AC = n. Exit: AC and IO clobbered. Called via jda, from the stubs.
+scGrp, 0
+    local rtn
+    dap rtn
+    lac scSel
+    sza i               // skip if a group's scale runs
+    jmp rtn
+    jsp i [gsRun:5]
+    lac rtn
+    add [4]             // past the stub's call of scale's entry
+    dac rtn
+rtn, jmp .
+    endloc

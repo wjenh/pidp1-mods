@@ -477,7 +477,8 @@ tgtVec,
 // block, highlighted by patching its parameter word. A list's tail word jumps to the lists'
 // Select box, listBox, after Draw's list, which placeBox moves beside the open list, or to the
 // open sublist, which ends in its box, shared with the list's other sublists. A shut box's gate
-// jumps to menuEnd, an open one's tail to the leader, okLead, which falls into it. Define's label is cut to 7 characters, "Define>", to keep its gap to the list's
+// jumps to menuEnd, an open one's tail to the leader, okLead, which falls into it. Define's label
+// is cut to 7 characters, "Define>", to keep its gap to the list's
 // Select box, and Constr's likewise.
 listDraw,
 dr0, LBLNORM
@@ -527,7 +528,7 @@ ed3, LBLNORM
 ed4, LBLNORM
     y(ROWY0 - ROWSCALE * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + LABELMARGIN) next(character)
-    type340 "Scale"
+    type340 "Scale >"
 ed5, LBLNORM
     y(ROWY0 - ROWCHANGE * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + LABELMARGIN) next(character)
@@ -577,8 +578,8 @@ pcTail, jump listBox next(parameter)
 
 // The sublists, reached from their lists' tail words, each beside the row that owns it. The
 // sublists of one list stand in one column and only one is open at a time, so they share one
-// Select box, to spare bank 0's room. Size's and Constr's jump to Change's, chBox, Copy's and
-// Define's to Inst's; Library's, in Misc's column, to Drive's, dvBox. Each descriptor names
+// Select box, to spare bank 0's room. Size's, Scale's and Constr's jump to Change's, chBox, Copy's
+// and Define's to Inst's; Library's, in Misc's column, to Drive's, dvBox. Each descriptor names
 // the box its sublist uses. Every sublist's box is assembled beside row 0, where placeBox parks
 // a hidden one, so a closed list's box words stay as assembled whichever sublist used it.
 listSize,
@@ -598,6 +599,24 @@ sz3, LBLNORM
     y(ROWY0 - (ROWSIZE + 0d3) * ROWPITCH) next(point)
     x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
     type340 "x8"
+    lpoff next(subroutine)
+    jump chBox next(parameter)
+
+// Scale's rows: Part, the one part the pen picks; Figure, the parts joined to it; and All, the
+// whole drawing.
+listScale,
+sl0, LBLNORM
+    y(ROWY0 - ROWSCALE * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Part"
+sl1, LBLNORM
+    y(ROWY0 - (ROWSCALE + 0d1) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "Figure"
+sl2, LBLNORM
+    y(ROWY0 - (ROWSCALE + 0d2) * ROWPITCH) next(point)
+    x(CEDIT * COLPITCH + SUBDX + LABELMARGIN) next(character)
+    type340 "All"
     lpoff next(subroutine)
     jump chBox next(parameter)
 

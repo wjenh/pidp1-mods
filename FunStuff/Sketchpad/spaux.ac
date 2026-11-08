@@ -927,7 +927,7 @@ pbBand,
     lac i pbPtr         // the row's address, its label's class in bits 0 and 1
     ral 2s
     and [3]
-    add [leadTab:014]   // its full address: the window is open
+    add [leadTab:5]     // its full address: the window is open
     dac pbPtr
     lac i pbPtr
     dac i [leadVec:0]
@@ -950,12 +950,6 @@ pbPtr, 0
 pbWord, 0
 pbGate, 0
 pbX, 0
-// The leader's vector by the class of the label's length (LEADROW): the longest length in each.
-leadTab,
-    deltax(LEADLEN(3)) deltay(0) left visible end
-    deltax(LEADLEN(5)) deltay(0) left visible end
-    deltax(LEADLEN(7)) deltay(0) left visible end
-    deltax(LEADLEN(0d8)) deltay(0) left visible end
     endloc
 
 // Move's drag of a whole line, its pick-up, each step's move and the arcs that follow it, and
@@ -1899,7 +1893,7 @@ szKbGo,
     local kdRtnW
     dac kdRtnW
     dzm i [szDirty:3]
-    lac [szBlk:3]
+    lac [szBlk:6]
     dac i [mcA:4]
     lio [MCJDA(kbStart:4)]
     jsp i [mainCall:4]

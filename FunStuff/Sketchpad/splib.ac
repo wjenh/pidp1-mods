@@ -5,8 +5,8 @@
 // Bank 11, after the tape module. The root part first: the words the library keeps between
 // calls, which its callers set. Then the overlay library, read into the window W, in bank 6,
 // from the drum when it is called (Docs/UsingOverlays.md): the save, the load, Dir and Delete,
-// their helpers, and the words used within one call, the entry buffer last; it reaches the
-// root's words through their 16-bit addresses, and the tape through the tape module's
+// their helpers, and the words used within one call; it reaches the root's words, and the
+// entry buffer in bank 14, through their 16-bit addresses, and the tape through the tape module's
 // primitives in this bank's root (sptape.ac, tpMount to tpReadR). Then the root stub libEntry,
 // to which the tape module's stub tapeEntry passes the library's entries, so that the main
 // bank's tapeCall runs them as it runs the tape's. Last libStep, the steps of Library's rows,
@@ -18,16 +18,28 @@
 //
 // An entry (sketchpad.ah, the library's constants) is one master: the header, the master's
 // words held outside its record among them, then its texts, then its record's tables, from a
-// block's first word, the rest of its last block zeros. A save gathers it all into the entry
-// buffer, lbEBuf, and writes it in one pass; a load reads it whole into lbEBuf, checking every
-// block's sum, and judges the header before anything changes, so a load that fails leaves the
-// master as it was. Its tables are copied one table at a time, in and out of lbEBuf, since the
-// word loops cannot keep up with short runs in a row. The master's record is made resident by
-// the stub, before the overlay runs, since an overlay cannot make it so (spinst.ac, mrLoad).
+// block's first word, the rest of its last block zeros. A master holding sub-instances is saved
+// as a nested entry: a header of its own, then a part for it and for each master it calls at
+// any depth, each laid out as a flat entry and followed by its nesting and its sub-instances. A
+// save gathers it all into the entry buffer, lbEBuf, and writes it in one pass; a load reads it
+// whole into lbEBuf, checking every block's sum, and judges every header before anything
+// changes, so a load that fails leaves the masters as they were. lbEBuf is the start of banks 14
+// and 15, which the truss's direct solve uses between main-loop passes (sketchpad.am1), so a
+// save or a load starts the truss's analysis again (taReset) before it writes there; Dir and
+// Delete leave it alone. Its tables are copied one table at a time, in and out of lbEBuf, since
+// the word loops cannot keep up with short runs in a row. A master's record is made resident by
+// the stub, before the overlay runs, since an overlay cannot make it so (spinst.ac, mrLoad): so
+// a nested entry's save or load copies one part's record at a call and returns TSMORE with tpK
+// the next part's master, and the stub makes its record resident and calls again with TELMORE.
+// What it keeps across those calls is in lbEBuf's header (LBECUR to LBEOP), since nothing runs
+// between them but the stub. Every refusal of a nested entry comes in its first call, before any
+// record but the master's is touched.
 // A master loaded leaves the master store (mStart MNOPOOL), its old words there stale; its
 // caller loads only a master the drawing does not call. Its old texts leave the masters' texts'
 // table, the others closing up in order, and the entry's go in after the last, as Define's do
-// (sptext.ac, txDefine).
+// (sptext.ac, txDefine). A nested entry's other parts each take an empty master, in their order
+// among the masters (ruling L2: never one matched by name), and its sub-instances name those
+// masters (SBM, mUses).
 //
 // The tape's directory (sketchpad.ah, the library's directory): the header in block LBDIRBLK,
 // where a picture tape keeps its directory, so that each kind of tape refuses the other's
@@ -36,11 +48,14 @@
 // run of free blocks long enough in the map, and writes its entry, then the header, then the
 // page; a delete writes the page, then the header; so one cut short between the two leaves
 // blocks taken that no entry names, never an entry whose blocks another save may take. A blank
-// tape reads as an empty library, which the first save writes.
+// tape, its directory's block all zeros, reads as an empty library, which the first save writes;
+// another program's tape is refused, NOT BLANK, by every command (lbRdHdr), when its directory's
+// block holds any word.
 
 // The library's words kept between calls.
 lbK, 0                  // the master saved, or loaded into
-lbSlot, 0               // the entry's slot, 0 to LBSLOTS - 1: a save sets it, a load or delete is given it
+lbSlot, 0               // the entry's slot, 0 to LBSLOTS - 1: a save sets it, a load or delete is
+                        // given it
 lbPage, 0               // the page Dir shows, which it brings back to the last with an entry
 lbBlk, 0                // the entry's first block, from its slot's word or the map
 lbBlkN, 0               // the entry's blocks
@@ -58,18 +73,22 @@ lbEAt, 0                // lbEBuf's 16-bit address, which a load's first call gi
 
 // Run entry n, TELSAVE to TELDEL, on drive tapeDrive: a save of master lbK, its record resident;
 // a load of slot lbSlot's entry into master lbK, its record resident; Dir, page lbPage; a delete
-// of slot lbSlot's entry. As the tape's entries (sptape.ac, tapeEntryOv): the break system is
+// of slot lbSlot's entry; or TELMORE, a nested entry's save or load going on with its next part,
+// the drive already selected, that part's master's record resident. As the tape's entries
+// (sptape.ac, tapeEntryOv): the break system is
 // turned off first and the display set to WAIT (waitList), off the frame; the tape is stopped at
 // the end, whatever happened; and the status word's text and the name's line under it are
 // written for the result. A load's call that only shows a refusal (lbPhase LBPSHOW, libEntry)
 // writes them for lbRes, a holder's name on the line, and does nothing else.
 // Entry: IO = n; AC = the return address, which carries the main bank. Exit: AC = the result,
-// TSSAVED, TSLLOADED, TSOPEN, TSDELETED, TSHELD, or a refusal or failure, TSNOTAPE to TSFULL or
-// TSNESTED to TSDIGIT; the window open, the display showing WAIT and the break system off. IO is
+// TSSAVED, TSLLOADED, TSOPEN, TSDELETED, TSHELD, or a refusal or failure, TSNOTAPE to TSFULL,
+// TSSLOW to TSOTHER or TSSLOTS; the window open, the display showing WAIT and the break system
+// off; or TSMORE, for master tpK's record, teArg TELMORE and no word set for the status. IO is
 // clobbered.
 // Called through the root stub libEntry, by the manager.
 libEntryOv,
     local leRtn, leSel, leRes, leGo, leJmp, leTab, leStop, leNm0, leNm1, leNm2, leNm3, leNmH
+    addlocal leMore, leMS
     dac leRtn
     dio leSel
     lsm
@@ -83,6 +102,9 @@ libEntryOv,
 leGo,
     lac i [lbK:013]
     dac lbMk
+    lac leSel
+    sad [TELMORE]       // skip unless a nested entry's next part, the drive selected
+    jmp leMore
     jsp i [tpMount:013]
     sza                 // skip if the drive has a tape
     jmp leStop
@@ -97,10 +119,21 @@ leTab,
     jmp lbLoad          // TELLOAD
     jmp lbShow          // TELDIR
     jmp lbDel           // TELDEL
+leMore,
+    lac i [lbEBuf:016 + LBEOP]
+    sad [TELSAVE]       // skip unless a save's
+    jmp leMS
+    jsp lbLdMore
+    jmp leStop
+leMS,
+    jsp lbSvMore
 leStop,
     dac leRes
     cli
     mlc                 // stop, since a moving tape runs off its reel
+    lac leRes
+    sad [TSMORE]        // skip unless the stub is to make a record resident
+    jmp i leRtn
 
     // The status word's text for the result, while the display shows WAIT.
     lac leRes
@@ -112,9 +145,9 @@ leStop,
     law 4
     jda lbMove
 
-    // And the name's line under it: the name saved, or the entry's loaded or deleted, which
-    // lbLoad and lbDel leave in the header's place in lbEBuf, or a holder's for its refusal of a
-    // load, blank otherwise.
+    // And the name's line under it: the name saved, or the entry's loaded, which lbLoad leaves
+    // in the header's place in lbEBuf, or deleted, which lbDel leaves in lbTmp, or a holder's
+    // for its refusal of a load, blank otherwise.
     lac i [lbPhase:013]
     sad [LBPSHOW]       // skip unless a holder's refusal
     jmp leNmH
@@ -125,11 +158,13 @@ leStop,
     jmp leNm3
 leNm1,
     sas [TSLLOADED]     // skip if loaded
-    sad [TSDELETED]     // skip unless deleted
     jmp leNm0
-    jmp leNm2
+    lac [lbEBuf:016 + LBHNAME]
+    jmp leNm3
 leNm0,
-    lac [lbEBuf:6 + LBHNAME]
+    sas [TSDELETED]     // skip if deleted
+    jmp leNm2
+    lac [lbTmp:6]
     jmp leNm3
 leNm2,
     lac [lbBlank:6]
@@ -153,20 +188,26 @@ leSel, 0
 leRes, 0
     endloc
 
-// Save master lbMk as a new entry: refused, EMPTY, when it has no words, NESTED when it holds
-// sub-instances (mNSub), which an entry cannot carry, TOO BIG when its entry would take more
-// blocks than the buffer holds, and TAPE FULL when no slot is free or no run of free blocks is
-// long enough, before anything is written. Its words outside the record (lbHead)
-// and its texts' count go into the header first, from which its size is taken (lbSize); then
-// the directory's header read (lbRdHdr), the first free slot found (lbRoom) and the first run
-// of blocks long enough (lbFit), lbBlk; then the header's own words, its texts and its record's
-// tables into lbEBuf, the run list (lbList), all before the seek to its first block, since the
-// seek leaves 400 us to start the transfer; then its blocks written, and the entry put into the
-// directory (lbEnter), lbSlot its slot. lbBlkN is its blocks.
-// Exit: AC = TSSAVED, TSEMPTY, TSNESTED, TSTOOBIG, TSFULL, or lbRdHdr's, lbRoom's, a transfer's
-// failure. IO is clobbered. Called via jsp.
+// Save master lbMk as a new entry: refused, EMPTY, when it has no words, TOO BIG when its entry
+// would take more blocks than the buffer holds, and TAPE FULL when no slot is free or no run of
+// free blocks is long enough, before anything is written. A master holding sub-instances
+// (mNSub) is saved as a nested entry, with every master it calls at any depth (lbSet). Each
+// part's header, texts and nesting go into lbEBuf first, from the root's words (lbPartHd), and
+// give the entry's size; then the directory's header read (lbRdHdr), the first free slot found
+// (lbRoom) and the first run of blocks long enough (lbFit), lbBlk; then each part's record's
+// tables, the master's first, here, and each other part's in a call of its own (lbSvMore),
+// once the stub has made its master's record resident; then, after the last part, the run list
+// (lbList), all before the seek to the entry's first block, since the seek leaves 400 us to
+// start the transfer; then its blocks written, and the entry put into the directory (lbEnter),
+// lbSlot its slot. lbBlkN is its blocks. A blank directory's tape is taken as blank: the blocks
+// the save writes are not read first, since reading them, and blocks 0 and 1 where other
+// programs start, costs about 35 s; the user guide warns instead.
+// Exit: AC = TSSAVED, TSEMPTY, TSTOOBIG, TSFULL, TSMORE for the next part's record, or
+// lbRdHdr's, lbRoom's, a transfer's failure. IO is clobbered. Called via jsp; lbSvMore, the next
+// part's call, the same.
 lbSave,
-    local rtn, lsGo, lsFlat, lsDir, lsFit, lsTx, lsNext, lsSkip, lsEnd, lsI, lsW
+    local rtn, lsGo, lsLay, lsLay1, lsNm, lsNmK, lsSized, lsDir, lsFit, lsHd, lsPart, lsP0, lsP1
+    addlocal lsLast, lsZero, lsTape, lsW, lsK
     dap rtn
     lac lbMk
     add [mLen:5]
@@ -177,21 +218,63 @@ lbSave,
     lac [TSEMPTY]
     jmp rtn
 lsGo,
+    law 1               // the truss starts again, since lbEBuf is its scratch
+    dac i [taReset:013]
+    lac [lbEBuf:016]
+    dac lbE
+    dzm lbNest
     lac lbMk
     add [mNSub:5]
     dac lbT
     lac i lbT
-    sza i               // skip if the master holds sub-instances
-    jmp lsFlat
-    lac [TSNESTED]
-    jmp rtn
-lsFlat,
-    dzm lbDir
-    jsp lbHead
-    jsp lbCount
-    dac i [lbEBuf:6 + LBHNTX]
-    jsp lbSize
-    dac lsW
+    sza i               // skip if the master holds sub-instances, a nested entry
+    jmp lsLay
+    law 1
+    dac lbNest
+    jsp lbSet
+    lac [lbEBuf:016 + LBEHW]
+    dac lbE
+
+    // Each part's header, texts and nesting, the first part's name the one typed, the others
+    // their masters'; lbE left past the last.
+lsLay,
+    dzm lsK
+lsLay1,
+    lac lbNest
+    sza i               // skip if a nested entry
+    jmp lsNm
+    lac lsK
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    dac lbMk
+    lac lsK
+    sza                 // skip if the first part
+    jmp lsNmK
+lsNm,
+    lac [lbName:013]
+    jmp lsHd
+lsNmK,
+    lac lbMk
+    add [mpkBlkT:013 + 1]
+    dac lbT
+    lac i lbT
+    add [MPKTAG]
+lsHd,
+    dac lbFrom
+    jsp lbPartHd
+    add lbE
+    dac lbE
+    lac lbNest
+    sza i               // skip if a nested entry
+    jmp lsSized
+    idx lsK
+    sas i [lbEBuf:016 + LBENP] // skip once every part is laid out
+    jmp lsLay1
+lsSized,
+    lac lbE
+    sub [lbEBuf:016]
+    dac lsW             // the entry's words
     add [0377]
     sar 8s
     dac lbEN            // its blocks
@@ -214,47 +297,106 @@ lsDir,
     jmp rtn
 lsFit,
     dac i [lbBlk:013]
-lsTx,
+    lac lbNest
+    sza i               // skip if a nested entry, which has a header of its own
+    jmp lsPart
+
+    // A nested entry's header, and what the next calls keep, the part in hand the first.
     lac [LBMAGIC]
-    dac i [lbEBuf:6]
-    lac [LBFORMAT]
-    dac i [lbEBuf:6 + 1]
+    dac i [lbEBuf:016]
+    law LBFORMAT2
+    dac i [lbEBuf:016 + 1]
     lac lsW
-    dac i [lbEBuf:6 + LBHWORDS]
+    dac i [lbEBuf:016 + LBHWORDS]
     rck
-    dio i [lbEBuf:6 + 3] // the generation
+    dio i [lbEBuf:016 + 3] // the generation
     lac [lbName:013]
     dac lbFrom
-    lac [lbEBuf:6 + LBHNAME]
+    lac [lbEBuf:016 + LBHNAME]
     dac lbTo
     law NAMEW
     jda lbMove
+    lac lbPg
+    dac i [lbEBuf:016 + LBEPG]
+    lac lbSl
+    dac i [lbEBuf:016 + LBESL]
+    law TELSAVE
+    dac i [lbEBuf:016 + LBEOP]
+    dzm i [lbEBuf:016 + LBECUR]
+    jmp lsPart
 
-    // Its texts, in their order in the masters' texts' table, then its record's tables.
-    lac [lbEBuf:6 + LBHDRW]
-    dac lbB
-    dzm lsI
-lsNext,
-    lac lsI
-    sad i [mtN:012]     // skip while the masters' texts remain
-    jmp lsEnd
-    add [mtM:013]
+    // The next part, its master's record resident: a nested entry's.
+lbSvMore,
+    dap rtn
+    law 1
+    dac lbNest
+
+    // The part in hand's record's tables (lbRec), the master's record resident; then the next
+    // part's call, or the tape.
+lsPart,
+    lac lbNest
+    sza i               // skip if a nested entry
+    jmp lsP0
+    lac i [lbEBuf:016 + LBECUR]
+    jda lbPart
+    lac i [lbEBuf:016 + LBECUR]
+    add [lbEBuf:016 + LBESRC]
     dac lbT
     lac i lbT
-    sas lbMk            // skip if the master's
-    jmp lsSkip
-    lac lsI
-    jda lbText
-lsSkip,
-    idx lsI
-    jmp lsNext
-lsEnd,
-    jsp lbTabs
+    dac lbMk
+    jmp lsP1
+lsP0,
+    lac [lbEBuf:016]
+    dac lbE
+    lac i [lbK:013]
+    dac lbMk
+lsP1,
+    dzm lbDir
+    jsp lbRec
+    lac lbNest
+    sza i               // skip if a nested entry
+    jmp lsTape
+    idx i [lbEBuf:016 + LBECUR]
+    sad i [lbEBuf:016 + LBENP] // skip unless every part is in
+    jmp lsLast
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    dac i [tpK:013]
+    law TELMORE
+    dac i [teArg:013]
+    lac [TSMORE]
+    jmp rtn
+
+    // The last part in: the directory's page and slot back, as lbRoom left them in lbDPage, the
+    // words kept across the calls zeros on the tape, and the entry's size from its header.
+lsLast,
+    lac i [lbEBuf:016 + LBEPG]
+    dac lbPg
+    lac i [lbEBuf:016 + LBESL]
+    dac lbSl
+    jda lbEnt
+    dac lbSE
+    lac [lbEBuf:016 + LBEMAP]
+    dac lbT
+    law i LBEHW - LBEMAP
+    dac lsK
+lsZero,
+    dzm i lbT
+    idx lbT
+    isp lsK             // skip once every word is zero
+    jmp lsZero
+    lac i [lbEBuf:016 + LBHWORDS]
+    dac lsW
+    add [0377]
+    sar 8s
+    dac lbEN
 
     // The tape: the entry's words, then zeros to its last block's end; then the directory.
+lsTape,
     lac lbEN
     dac lbNB
-    lac [lbEBuf:6]
+    lac [lbEBuf:016]
     dac lbFirst
     lac [lbZero:6]
     dac lbPad
@@ -277,30 +419,203 @@ lsEnd,
     jmp rtn
     jsp lbEnter
 rtn, jmp .
-lsI, 0
 lsW, 0
+lsK, 0
+    endloc
+
+// The parts of master lbMk's nested entry: the master, then each master it calls at any depth,
+// in their order among the masters, into lbEBuf's header (LBESRC), their count LBENP. Its
+// masters, stR, are found as mCalled's are, the other way: its bit, then the masters each one
+// in it holds (mUses), until a pass adds none.
+// AC and IO are clobbered. Called via jsp.
+lbSet,
+    local rtn, stPass, stJ1, stJn, stL, stLn, stR, stX, stJ, stB, stN
+    dap rtn
+    lac lbMk
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    dac stR
+stPass,
+    lac stR
+    dac stX
+    dzm stJ
+    law 1
+    dac stB             // master j's bit, M1's first
+stJ1,
+    lac stR
+    and stB
+    sza i               // skip if master j is among them
+    jmp stJn
+    lac stJ
+    add [mUses:5]
+    dac lbT
+    lac i lbT
+    ior stR
+    dac stR
+stJn,
+    lac stB
+    ral 1s
+    dac stB
+    idx stJ
+    sas [NMASTER]       // skip once every master is looked at
+    jmp stJ1
+    lac stR
+    sas stX             // skip if the pass added none
+    jmp stPass
+
+    // The list, the master first.
+    lac lbMk
+    dac i [lbEBuf:016 + LBESRC]
+    law 1
+    dac stN
+    dzm stJ
+    law 1
+    dac stB
+stL,
+    lac stR
+    and stB
+    sza i               // skip if master j is among them
+    jmp stLn
+    lac stJ
+    sad lbMk            // skip unless the master itself, already first
+    jmp stLn
+    lac stN
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac stJ
+    dac i lbT
+    idx stN
+stLn,
+    lac stB
+    ral 1s
+    dac stB
+    idx stJ
+    sas [NMASTER]       // skip once every master is looked at
+    jmp stL
+    lac stN
+    dac i [lbEBuf:016 + LBENP]
+rtn, jmp .
+stR, 0
+stX, 0
+stJ, 0
+stB, 0
+stN, 0
+    endloc
+
+// Part lbE's header for master lbMk, the name's run at lbFrom: the magic, the format, the
+// generation and the name; its words held outside its record (lbHead) and its texts' count;
+// its texts after the header; and for a nested entry's part (lbNest), its nesting after its
+// tables' place, mNSub to mTxOwn. Its words go into its header (LBHWORDS): a flat entry's, from
+// its counts (lbSize), and a part's, its nesting and its sub-instances' too, which lbRec copies
+// with the tables.
+// Exit: AC = the part's words. IO is clobbered. Called via jsp.
+lbPartHd,
+    local rtn, phNext, phSkip, phEnd, phOut, phI, phW
+    dap rtn
+    law LBHNAME
+    jda lbHA
+    dac lbTo
+    law NAMEW
+    jda lbMove
+    lac [LBMAGIC]
+    dac i lbE
+    law 1
+    jda lbHA
+    dac lbT
+    law LBFORMAT
+    dac i lbT
+    law 3
+    jda lbHA
+    dac lbT
+    rck
+    dio i lbT           // the generation
+    dzm lbDir
+    jsp lbHead
+    jsp lbCount
+    dac phW
+    law LBHNTX
+    jda lbHA
+    dac lbT
+    lac phW
+    dac i lbT
+
+    // Its texts, in their order in the masters' texts' table.
+    law LBHDRW
+    jda lbHA
+    dac lbB
+    dzm phI
+phNext,
+    lac phI
+    sad i [mtN:012]     // skip while the masters' texts remain
+    jmp phEnd
+    add [mtM:013]
+    dac lbT
+    lac i lbT
+    sas lbMk            // skip if the master's
+    jmp phSkip
+    lac phI
+    jda lbText
+phSkip,
+    idx phI
+    jmp phNext
+phEnd,
+    jsp lbSize
+    dac phW
+    lac lbNest
+    sza i               // skip if a nested entry's part
+    jmp phOut
+    lac phW
+    add lbE
+    dac lbB
+    law NMASTER
+    dac lbStep
+    lac lbMk
+    add [mNSub:5]
+    dac lbAt
+    law LBNESTW
+    jda lbRun
+    law SUBW
+    dac lbM
+    lac lbMk
+    add [mNSub:5]
+    dac lbT
+    lac i lbT
+    jda lbTimes
+    add [LBNESTW]
+    add phW
+    dac phW
+phOut,
+    law LBHWORDS
+    jda lbHA
+    dac lbT
+    lac phW
+    dac i lbT
+rtn, jmp .
+phI, 0
+phW, 0
     endloc
 
 // Load slot lbSlot's entry into master lbMk: the directory's header and the slot's page read,
 // the slot's word giving its blocks, lbBlkN from lbBlk (lbRdSlot), EMPTY for a free slot. Its
-// blocks are read whole
-// into lbEBuf, every block's sum checked; then its header judged: the magic and the format, or
-// it is not an entry (EMPTY); its counts each one a master can have (lbSane), the words its
-// counts give its header's, and its blocks those words' (BAD BLOCK); and room for its texts in
-// the masters' texts' table, with the master's old ones gone (NO ROOM). Only then do the
-// tables change: the master's old texts out (lbDrop), its words outside the record back
-// (lbHead), its nesting words a master's with no sub-instances, since an entry holds none (the
-// instance module's mFlat), and every text its own (mTxOwn), its texts after the last, its
-// record's tables into the resident record (lbTabs), the master out of the store, the texts'
-// list to be written again, and the entry's name the master's, on its line of the masters'
-// picker (mpkL).
+// blocks are read whole into lbEBuf, every block's sum checked; then its header judged: the
+// magic and the format, or it is not an entry (EMPTY). A flat entry's counts each one a master
+// can have (lbSane), the words its counts give its header's, and its blocks those words' (BAD
+// BLOCK); and room for its texts in the masters' texts' table, with the master's old ones gone
+// (NO ROOM). A nested entry's every part judged so, its sub-instances' masters among the
+// entry's, and its parts' words the entry's (llNest); then the texts' room over every part; then
+// an empty master for each part but the first, which is lbMk (SLOTS), each saved master's in
+// lbEBuf's map (LBEMAP). Only then do the tables change, a part at a time (lbIn): a flat entry's
+// here; a nested entry's first part here and each other in a call of its own (lbLdMore), once
+// the stub has made its master's record resident; then the texts' list to be written again.
 // On a load's first call for a master others hold (lbPhase LBPFIRST, libEntry), the tables are
-// not changed: it stops once the entry is judged, TSHELD.
-// Exit: AC = TSLLOADED, TSHELD, TSEMPTY, TSBAD, TSNOROOM, or lbRdSlot's, tpSeek's or tpRead's
-// failure.
-// IO is clobbered. Called via jsp.
+// not changed: it stops once the entry is judged, TSHELD, lbEAt the first part's header.
+// Exit: AC = TSLLOADED, TSHELD, TSEMPTY, TSBAD, TSNOROOM, TSSLOTS, TSMORE for the next part's
+// record, or lbRdSlot's, tpSeek's or tpRead's failure.
+// IO is clobbered. Called via jsp; lbLdMore, the next part's call, the same.
 lbLoad,
-    local rtn, llRead, llOK, llGo, llTx, llTabs, llEmpty, llBad, llW, llN
+    local rtn, llRead, llOK, llGo, llNG, llRoom, llNoRm, llEmpty, llBad, llW, llNest, llSrc
+    addlocal llPt, llSb, llPtE, llMap, llMp, llMapE, llFree, llFrN, llSlots, llPart, llDone
+    addlocal llS, llK, llB, llQ, llP, llC, llX, llT, llJ
     dap rtn
     jsp lbRdSlot
     sza                 // skip if the slot holds an entry
@@ -317,7 +632,9 @@ llEmpty,
     lac [TSEMPTY]
     jmp rtn
 llRead,
-    lac [lbEBuf:6]
+    law 1               // the truss starts again, since lbEBuf is its scratch
+    dac i [taReset:013]
+    lac [lbEBuf:016]
     dac lbFirst
     lac [lbSink:6]
     dac lbPad
@@ -343,71 +660,359 @@ llRead,
     jmp llBad
 
     // The header.
-    lac i [lbEBuf:6]
+    lac [lbEBuf:016]
+    dac lbE
+    dzm lbNest
+    lac i [lbEBuf:016]
     sas [LBMAGIC]       // skip if an entry's magic
     jmp llEmpty
-    lac i [lbEBuf:6 + 1]
-    sas [LBFORMAT]      // skip if this format
+    lac i [lbEBuf:016 + 1]
+    sad [LBFORMAT2]     // skip unless a nested entry
+    jmp llNest
+    sas [LBFORMAT]      // skip if a flat entry
     jmp llEmpty
     jsp lbSane
     sza                 // skip if its counts are a master's
     jmp llBad
-    lac i [lbEBuf:6 + LBHLEN]
+    lac i [lbEBuf:016 + LBHLEN]
     sza i               // skip if the master has words
     jmp llEmpty
     jsp lbSize
     dac llW
-    sas i [lbEBuf:6 + LBHWORDS] // skip if the header's words
+    sas i [lbEBuf:016 + LBHWORDS] // skip if the header's words
     jmp llBad
     lac llW
     add [0377]
     sar 8s
     sas lbNB            // skip if its blocks
     jmp llBad
+    lac i [lbEBuf:016 + LBHNTX]
+    dac llT
 
-    // The room for its texts: the masters' texts, less the master's, and the entry's.
+    // The room for its texts: the masters' texts, less the master's, and the entry's (a nested
+    // entry's every part's); then a nested entry's masters (llMap).
+llRoom,
     jsp lbCount
     cma
     add i [mtN:012]
-    add i [lbEBuf:6 + LBHNTX]
+    add llT
     sub [NMTEXT+1]
-    spa                 // skip unless past NMTEXT
-    jmp llOK
-    lac [TSNOROOM]
-    jmp rtn
+    sma                 // skip unless past NMTEXT
+    jmp llNoRm
+    lac lbNest
+    sza                 // skip if a flat entry
+    jmp llMap
 
     // A master others hold: on the first call, nothing more (libEntry's trial follows).
 llOK,
     lac i [lbPhase:013]
     sas [LBPFIRST]      // skip if the first call for a master others hold
     jmp llGo
-    lac [lbEBuf:6]
+    lac lbE
     dac i [lbEAt:013]
     lac [TSHELD]
     jmp rtn
 
-    // The tables change from here on.
+    // The tables change from here on: a flat entry's in one, a nested entry's a part at a call.
 llGo,
+    lac lbNest
+    sza                 // skip if a flat entry
+    jmp llNG
+    jsp lbIn
+    jmp llDone
+llNG,
+    dzm i [lbEBuf:016 + LBECUR]
+    law TELLOAD
+    dac i [lbEBuf:016 + LBEOP]
+    jmp llPart
+
+    // The next part, its master's record resident: a nested entry's.
+lbLdMore,
+    dap rtn
+    law 1
+    dac lbNest
+llPart,
+    lac i [lbEBuf:016 + LBECUR]
+    jda lbPart
+    lac i [lbEBuf:016 + LBECUR]
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    add [lbEBuf:016 + LBEMAP]
+    dac lbT
+    lac i lbT
+    dac lbMk
+    jsp lbIn
+    idx i [lbEBuf:016 + LBECUR]
+    sad i [lbEBuf:016 + LBENP] // skip unless every part is in
+    jmp llDone
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    add [lbEBuf:016 + LBEMAP]
+    dac lbT
+    lac i lbT
+    dac i [tpK:013]
+    law TELMORE
+    dac i [teArg:013]
+    lac [TSMORE]
+    jmp rtn
+llDone,
+    law 1
+    dac i [txDirty:012]
+    lac [TSLLOADED]
+    jmp rtn
+
+    // A nested entry: its parts' count, then their masters, each a master and none twice, llS
+    // their bits.
+llNest,
+    law 1
+    dac lbNest
+    lac i [lbEBuf:016 + LBENP]
+    sub [1]
+    spa                 // skip if at least one part
+    jmp llBad
+    sub [NMASTER]
+    sma                 // skip if at most NMASTER
+    jmp llBad
+    dzm llS
+    dzm llK
+llSrc,
+    lac llK
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    spa                 // skip unless negative
+    jmp llBad
+    sub [NMASTER]
+    sma                 // skip if a master
+    jmp llBad
+    lac i lbT
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    dac llB
+    and llS
+    sza                 // skip unless a master twice
+    jmp llBad
+    lac llB
+    ior llS
+    dac llS
+    idx llK
+    sas i [lbEBuf:016 + LBENP] // skip once every part's master is judged
+    jmp llSrc
+
+    // Each part: a flat entry's header, its counts a master's and its words some; then its
+    // nesting, its sub-instances' count at most NSUB, each one's master one of the parts' and
+    // not the part's own; its words its header's. llT the parts' texts.
+    lac [lbEBuf:016 + LBEHW]
+    dac lbE
+    dzm llK
+    dzm llT
+llPt,
+    lac i lbE
+    sas [LBMAGIC]       // skip if a part's magic
+    jmp llBad
+    law 1
+    jda lbHW
+    sas [LBFORMAT]      // skip if a part's format
+    jmp llBad
+    jsp lbSane
+    sza                 // skip if its counts are a master's
+    jmp llBad
+    law LBHLEN
+    jda lbHW
+    sza i               // skip if the master has words
+    jmp llBad
+    jsp lbSize
+    add lbE
+    dac llQ             // its nesting
+    add [LBNESTW]
+    dac llP             // its sub-instances
+    lac i llQ
+    spa                 // skip unless negative
+    jmp llBad
+    sub [NSUB+1]
+    sma                 // skip if at most NSUB
+    jmp llBad
+    lac llK
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    dac llB             // the part's own master's bit
+    lac i llQ
+    sza i               // skip if it has sub-instances
+    jmp llPtE
+    cma
+    dac llC
+llSb,
+    lac i llP           // SBM
+    spa                 // skip unless negative
+    jmp llBad
+    sub [NMASTER]
+    sma                 // skip if a master
+    jmp llBad
+    lac i llP
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    dac llX
+    and llS
+    sza i               // skip if one of the parts' masters
+    jmp llBad
+    lac llX
+    sad llB             // skip unless the part's own
+    jmp llBad
+    lac llP
+    add [SUBW]
+    dac llP
+    isp llC             // skip once every sub-instance is judged
+    jmp llSb
+llPtE,
+    lac llP
+    sub lbE
+    dac llX             // the part's words
+    law LBHWORDS
+    jda lbHW
+    sas llX             // skip if its header's
+    jmp llBad
+    law LBHNTX
+    jda lbHW
+    add llT
+    dac llT
+    lac llP
+    dac lbE
+    idx llK
+    sas i [lbEBuf:016 + LBENP] // skip once every part is judged
+    jmp llPt
+
+    // The entry's words, the parts', and its blocks, those words'.
+    lac lbE
+    sub [lbEBuf:016]
+    sas i [lbEBuf:016 + LBHWORDS] // skip if the header's words
+    jmp llBad
+    add [0377]
+    sar 8s
+    sas lbNB            // skip if its blocks
+    jmp llBad
+    jmp llRoom
+
+    // The masters, after the texts' room: the first part's lbMk, each other's the next empty
+    // master, never lbMk; lbE left at the first part, which the trial reads (lbEAt).
+llMap,
+    lac i [lbEBuf:016 + LBESRC]
+    add [lbEBuf:016 + LBEMAP]
+    dac lbT
+    lac lbMk
+    dac i lbT
+    law 1
+    dac llK
+    dzm llJ
+llMp,
+    lac llK
+    sad i [lbEBuf:016 + LBENP] // skip unless every part has its master
+    jmp llMapE
+llFree,
+    lac llJ
+    sad [NMASTER]       // skip unless past the last master
+    jmp llSlots
+    sad lbMk            // skip unless the master loaded into
+    jmp llFrN
+    add [mLen:5]
+    dac lbT
+    lac i lbT
+    sza                 // skip if the master is empty
+    jmp llFrN
+    lac llK
+    add [lbEBuf:016 + LBESRC]
+    dac lbT
+    lac i lbT
+    add [lbEBuf:016 + LBEMAP]
+    dac lbT
+    lac llJ
+    dac i lbT
+    idx llJ
+    idx llK
+    jmp llMp
+llFrN,
+    idx llJ
+    jmp llFree
+llMapE,
+    lac [lbEBuf:016 + LBEHW]
+    dac lbE
+    jmp llOK
+llSlots,
+    lac [TSSLOTS]
+    jmp rtn
+llNoRm,
+    lac [TSNOROOM]
+    jmp rtn
+llBad,
+    lac [TSBAD]
+rtn, jmp .
+llW, 0
+llS, 0
+llK, 0
+llB, 0
+llQ, 0
+llP, 0
+llC, 0
+llX, 0
+llT, 0
+llJ, 0
+    endloc
+
+// Part lbE's tables into master lbMk, its record resident: its old texts out (lbDrop), its words
+// outside the record back (lbHead); its nesting words, a flat entry's a master's with no
+// sub-instances (the instance module's mFlat) and every text its own (mTxOwn), a part's its
+// nesting's, mUses made again from its sub-instances; its texts after the last; its record's
+// tables and a part's sub-instances into the resident record (lbRec), each sub-instance's master
+// the one its saved master took (LBEMAP); the master out of the store, and the part's name the
+// master's, on its line of the masters' picker (mpkL).
+// AC and IO are clobbered. Called via jsp.
+lbIn,
+    local rtn, liNest, liTx0, liTx, liTabs, liSb, liUse, liEnd, liN, liU, liP, liW
+    dap rtn
     jsp lbDrop
     law 1
     dac lbDir
     jsp lbHead
+    law LBHNTX
+    jda lbHW
+    dac liW             // its texts' count
+    lac lbNest
+    sza                 // skip if a flat entry
+    jmp liNest
     lac lbMk
     dac i [mFlat:7]
     jsp i [mFlat:7+1]
     lac lbMk
     add [mTxOwn:5]
     dac lbT
-    lac i [lbEBuf:6 + LBHNTX]
-    dac i lbT           // every text its own, since an entry holds no sub-instances
-    lac [lbEBuf:6 + LBHDRW]
+    lac liW
+    dac i lbT           // every text its own, since a flat entry holds no sub-instances
+    jmp liTx0
+liNest,
+    jsp lbSize
+    add lbE
     dac lbB
-    lac i [lbEBuf:6 + LBHNTX]
+    law NMASTER
+    dac lbStep
+    lac lbMk
+    add [mNSub:5]
+    dac lbAt
+    law LBNESTW
+    jda lbRun           // mNSub to mTxOwn, mUses made again below
+liTx0,
+    law LBHDRW
+    jda lbHA
+    dac lbB
+    lac liW
     sza i               // skip if it has texts
-    jmp llTabs
+    jmp liTabs
     cma
-    dac llN
-llTx,
+    dac liN
+liTx,
     lac i [mtN:012]
     add [mtM:013]
     dac lbT
@@ -416,37 +1021,154 @@ llTx,
     lac i [mtN:012]
     jda lbText
     idx i [mtN:012]
-    isp llN             // skip once every text is in
-    jmp llTx
-llTabs,
-    jsp lbTabs
+    isp liN             // skip once every text is in
+    jmp liTx
+liTabs,
+    jsp lbRec
+    lac lbNest
+    sza i               // skip if a nested entry's part
+    jmp liEnd
+
+    // Its sub-instances' masters, those their saved masters took, and mUses from them.
+    dzm liU
+    lac lbMk
+    add [mNSub:5]
+    dac lbT
+    lac i lbT
+    sza i               // skip if it has sub-instances
+    jmp liUse
+    cma
+    dac liN
+    lac [cpSub:5]
+    dac liP
+liSb,
+    lac i liP           // SBM, the saved master
+    add [lbEBuf:016 + LBEMAP]
+    dac lbT
+    lac i lbT
+    dac i liP
+    dac i [masterBit:7]
+    jsp i [masterBit:7+1]
+    ior liU
+    dac liU
+    lac liP
+    add [SUBW]
+    dac liP
+    isp liN             // skip once every sub-instance is mapped
+    jmp liSb
+liUse,
+    lac lbMk
+    add [mUses:5]
+    dac lbT
+    lac liU
+    dac i lbT
+liEnd,
     lac lbMk
     add [mStart:5]
     dac lbT
     lac [MNOPOOL]
     dac i lbT
-    law 1
-    dac i [txDirty:012]
-    lac lbMk            // the master takes the entry's name, on its picker's line
+    lac lbMk            // the master takes the part's name, on its picker's line
     add [mpkBlkT:013 + 1]
     dac lbT
     lac i lbT
     add [MPKTAG]
     dac lbTo
-    lac [lbEBuf:6 + LBHNAME]
+    law LBHNAME
+    jda lbHA
     dac lbFrom
     law NAMEW
     jda lbMove
-    lac [TSLLOADED]
-    jmp rtn
-llBad,
-    lac [TSBAD]
 rtn, jmp .
-llW, 0
-llN, 0
+liN, 0
+liU, 0
+liP, 0
+liW, 0
     endloc
 
-// Master lbMk's words held outside its record, between the tables and the header in lbEBuf, in
+// Part lbE's master lbMk's record's tables (lbTabs), and a nested entry's part's sub-instances
+// (cpSub, as many as its nesting's first word, mNSub), between the resident record and the
+// buffer after the part's texts, in or out by lbDir.
+// AC is clobbered, IO preserved. Called via jsp.
+lbRec,
+    local rtn, rcN
+    dap rtn
+    law LBTXW
+    dac lbM
+    law LBHNTX
+    jda lbHW
+    jda lbTimes
+    add [LBHDRW]
+    add lbE
+    dac lbB
+    jsp lbTabs
+    lac lbNest
+    sza i               // skip if a nested entry's part
+    jmp rtn
+    law SUBW
+    dac lbM
+    lac i lbB           // its nesting's first word, its sub-instances' count
+    jda lbTimes
+    dac rcN
+    lac lbB
+    add [LBNESTW]
+    dac lbB
+    lac [cpSub:5]
+    dac lbAt
+    lac rcN
+    jda lbRun
+rtn, jmp .
+rcN, 0
+    endloc
+
+// Part k's first word, from the nested entry's first part by each part's words (LBHWORDS), into
+// lbE.
+// Entry: AC = k. AC is clobbered, IO preserved. Called via jda.
+lbPart, 0
+    local rtn, lpLoop, lpN
+    dap rtn
+    lac [lbEBuf:016 + LBEHW]
+    dac lbE
+    lac lbPart
+    sza i               // skip unless the first part
+    jmp rtn
+    cma
+    dac lpN
+lpLoop,
+    law LBHWORDS
+    jda lbHW
+    add lbE
+    dac lbE
+    isp lpN             // skip once past k parts
+    jmp lpLoop
+rtn, jmp .
+lpN, 0
+    endloc
+
+// The address of the word at offset n in part lbE.
+// Entry: AC = n. Exit: AC = its 16-bit address. IO is preserved. Called via jda.
+lbHA, 0
+    local rtn
+    dap rtn
+    lac lbHA
+    add lbE
+rtn, jmp .
+    endloc
+
+// The word at offset n in part lbE.
+// Entry: AC = n. Exit: AC = the word. IO is preserved. Called via jda.
+lbHW, 0
+    local rtn, hwP
+    dap rtn
+    lac lbHW
+    add lbE
+    dac hwP
+    lac i hwP
+rtn, jmp .
+hwP, 0
+    endloc
+
+// Master lbMk's words held outside its record, between the tables and part lbE's header, in
 // or out by lbDir: its directory words, mLen to cpNA, a word of each table NMASTER apart; its
 // attachers, cpAtt, cpAX and cpAY, NATT each, and cpNAtt; its constraints' count; its texts'
 // cost. The texts' count's word, between the last two, is the caller's. lbB is left past them.
@@ -454,7 +1176,8 @@ llN, 0
 lbHead,
     local rtn, lhA
     dap rtn
-    lac [lbEBuf:6 + LBHDIR]
+    law LBHDIR
+    jda lbHA
     dac lbB
     law NMASTER
     dac lbStep
@@ -573,41 +1296,52 @@ ltP, 0
 ltN, 0
     endloc
 
-// The entry's words, from the counts in the header in lbEBuf: the header, LBTXW a text, and its
-// record's tables as lbRecT takes them, mLen's words, two of each point and line, CPATAB of each
-// arc and CW of each constraint.
+// A flat entry's words, or a part's without its nesting, from the counts in part lbE's header:
+// the header, LBTXW a text, and its record's tables as lbRecT takes them, mLen's words, two of
+// each point and line, CPATAB of each arc and CW of each constraint.
 // Exit: AC = the words. IO is preserved. Called via jsp.
 lbSize,
-    local rtn, lzW
+    local rtn, lzW, lzT
     dap rtn
     law LBTXW
     dac lbM
-    lac i [lbEBuf:6 + LBHNTX]
+    law LBHNTX
+    jda lbHW
     jda lbTimes
     add [LBHDRW]
-    add i [lbEBuf:6 + LBHLEN]
     dac lzW
-    lac i [lbEBuf:6 + LBHNP]
-    add i [lbEBuf:6 + LBHNL]
+    law LBHLEN
+    jda lbHW
+    add lzW
+    dac lzW
+    law LBHNP
+    jda lbHW
+    dac lzT
+    law LBHNL
+    jda lbHW
+    add lzT
     sal 1s
     add lzW
     dac lzW
     law CPATAB
     dac lbM
-    lac i [lbEBuf:6 + LBHNA]
+    law LBHNA
+    jda lbHW
     jda lbTimes
     add lzW
     dac lzW
     law CW
     dac lbM
-    lac i [lbEBuf:6 + LBHNCON]
+    law LBHNCON
+    jda lbHW
     jda lbTimes
     add lzW
 rtn, jmp .
 lzW, 0
+lzT, 0
     endloc
 
-// Whether the counts in the header in lbEBuf are each one a master can have: each of lbBnd's,
+// Whether the counts in part lbE's header are each one a master can have: each of lbBnd's,
 // from 0 to its largest.
 // Exit: AC = 0 if they are, 1 otherwise. IO is preserved. Called via jsp.
 lbSane,
@@ -619,7 +1353,7 @@ lnLoop,
     lac i lnP           // the count's offset in the header, 0 past the last
     sza i               // skip unless every count is judged
     jmp rtn
-    add [lbEBuf:6]
+    add lbE
     dac lnQ
     idx lnP
     lac i lnQ
@@ -835,11 +1569,12 @@ lmN, 0
 
 // Dir: the directory's header read, and page lbPage, brought back to the last page with an entry
 // (the first with none), into lbDPage; then the screen's sixteen lines (splibdir.ac, lbsL)
-// written from it, each its entry's number and its name, lit (KBKEY), or "-" and dim with the
-// pen off (KBDIM) for a free slot, so that a picker never takes one.
+// written from it, each its entry's number, a plus after it for a nested entry (LBNESTL), and
+// its name, lit (KBKEY), or "-" and dim with the pen off (KBDIM) for a free slot, so that a
+// picker never takes one.
 // Exit: AC = TSOPEN, or lbRdHdr's or lbPgIO's failure. IO is clobbered. Called via jsp.
 lbShow,
-    local rtn, lwLast, lwHave, lwRd, lwLine, lwDash, lwCopy, lwL, lwN, lwP
+    local rtn, lwLast, lwHave, lwRd, lwLine, lwDash, lwCopy, lwFlat, lwL, lwN, lwP, lwX
     dap rtn
     jsp lbRdHdr
     sza                 // skip if the directory's header was read
@@ -891,6 +1626,20 @@ lwLine,
     lac lbSl
     jda lbEnt
     dac lbSE
+    lac [DIRLBLX]
+    dac lwX
+    lac i lbSE
+    and [LBDNEST]
+    sza i               // skip if a nested entry
+    jmp lwFlat
+    lac [LBNESTL]
+    dac lwX
+lwFlat,
+    lac lwL
+    add [1]
+    dac lbT
+    lac lwX
+    dac i lbT           // the label's second word
     lac lwL
     sub [LBLABEL]
     dac lwP             // the line's parameter word
@@ -924,10 +1673,12 @@ rtn, jmp .
 lwL, 0
 lwN, 0
 lwP, 0
+lwX, 0
     endloc
 
 // Delete: slot lbSlot's entry out of the directory, refused, EMPTY, for a free slot. Its name
-// is kept in the header's place in lbEBuf for the name's line; its slot's word and name cleared
+// is kept in lbTmp for the name's line, not in lbEBuf, which is the truss's while the truss
+// runs; its slot's word and name cleared
 // in its page and the page written; then its blocks freed in the map and its page's count down,
 // and the header written (the file's comment: a cut between the two only loses blocks).
 // Exit: AC = TSDELETED, TSEMPTY, or lbRdSlot's or a transfer's failure. IO is clobbered. Called
@@ -941,7 +1692,7 @@ lbDel,
     lac lbSE
     add [1]
     dac lbFrom
-    lac [lbEBuf:6 + LBHNAME]
+    lac [lbTmp:6]
     dac lbTo
     law NAMEW
     jda lbMove
@@ -979,11 +1730,11 @@ rtn, jmp .
 
 // A saved entry into the directory, lbBlkN blocks from lbBlk in slot lbSl of page lbPg, which
 // lbRoom read into lbDPage: its blocks taken in the map and its page's count up, the header
-// written; then its slot's word and its name, lbName, in the page, the page written (the file's
-// comment). lbSlot is the slot.
+// written; then its slot's word, LBDNEST in it for a nested entry (lbEBuf's format), and its
+// name, lbName, in the page, the page written (the file's comment). lbSlot is the slot.
 // Exit: AC = TSSAVED, or a transfer's failure. IO is clobbered. Called via jsp.
 lbEnter,
-    local rtn
+    local rtn, leW, leFlat
     dap rtn
     law 1
     dac lbSetF
@@ -1000,9 +1751,27 @@ lbEnter,
     jsp lbHdrIO
     sza                 // skip if the header was written
     jmp rtn
+    lac i [lbBlkN:013]  // the blocks' bits past the low four, at bit 14
+    and [060]
+    sal 9s
+    sal 1s
+    dac leW
+    lac i [lbBlkN:013]
+    and [017]
+    ior leW
+    dac leW
     lac i [lbBlk:013]
     sal 4s
-    add i [lbBlkN:013]
+    ior leW
+    dac leW
+    lac i [lbEBuf:016 + 1]
+    sas [LBFORMAT2]     // skip if a nested entry
+    jmp leFlat
+    lac leW
+    ior [LBDNEST]
+    dac leW
+leFlat,
+    lac leW
     dac i lbSE
     lac [lbName:013]
     dac lbFrom
@@ -1022,6 +1791,7 @@ lbEnter,
     dac i [lbSlot:013]
     lac [TSSAVED]
 rtn, jmp .
+leW, 0
     endloc
 
 // The first free slot: the first page whose count is below LBLINES, read into lbDPage, and its
@@ -1178,12 +1948,16 @@ lbtM, 0
     endloc
 
 // Read the directory's header into lbDHdr and judge it: a sum that fails, BAD BLOCK; the picture
-// tape's magic, NOT LIB; the library's magic, format and LBDHW, kept; anything else, a blank tape
-// among it, an empty library: every count 0, and the map with block 0 and the directory's blocks
-// taken, which the first save writes.
-// Exit: AC = 0, TSBAD, TSNOTLIB, or the transfer's failure. IO is clobbered. Called via jsp.
+// tape's magic, NOT LIB; the library's magic, format and LBDHW, kept; a header all zeros, a blank
+// tape, an empty library: every count 0, and the map with block 0 and the directory's blocks
+// taken, which the first save writes. Anything else is another program's tape, NOT BLANK, for
+// every command, since its pages would read as entries; a word not zero, in the header or the
+// block's rest (lbRest), is found as the empty library is made, so a library's magic of another
+// format is refused too.
+// Exit: AC = 0, TSBAD, TSNOTLIB, TSOTHER, or the transfer's failure. IO is clobbered. Called via
+// jsp.
 lbRdHdr,
-    local rtn, lhPic, lhLib, lhFresh, lhZero, lhOK
+    local rtn, lhPic, lhLib, lhFresh, lhZero, lhRest, lhOK, lhOther
     dap rtn
     dzm lbWr
     jsp lbHdrIO
@@ -1193,6 +1967,9 @@ lbRdHdr,
     sza i               // skip if its sum failed
     jmp lhPic
     lac [TSBAD]
+    jmp rtn
+lhOther,
+    law TSOTHER
     jmp rtn
 lhPic,
     lac i [lbDHdr:5]
@@ -1215,10 +1992,23 @@ lhFresh,
     law i LBDHW
     dac lbM
 lhZero,
-    dzm i lbT
+    lac i lbT
+    sza                 // skip if the word is zero
+    jmp lhOther
     idx lbT
-    isp lbM             // skip once every word is 0
+    isp lbM             // skip once every word is found 0
     jmp lhZero
+    lac [lbRest:6]
+    dac lbT
+    law i LBDREST
+    dac lbM
+lhRest,
+    lac i lbT
+    sza                 // skip if the word is zero
+    jmp lhOther
+    idx lbT
+    isp lbM             // skip once every word is found 0
+    jmp lhRest
     lac [LBMAGIC]
     dac i [lbDHdr:5]
     law LBFORMAT
@@ -1237,13 +2027,23 @@ lhOK,
 rtn, jmp .
     endloc
 
-// The header, LBDHW words of lbDHdr, to or from block LBDIRBLK: written while lbWr is set, read
-// otherwise, the rest of the block zeros or passed over.
+// The header, LBDHW words of lbDHdr, to or from block LBDIRBLK: written while lbWr is set, the
+// rest of the block zeros; read otherwise, the rest into lbRest (lbHdRRuns), where lbRdHdr tests
+// it.
 // Exit: AC = 0, or the transfer's failure; a read's failed sum is tpBad's. IO is clobbered.
 // Called via jsp.
 lbHdrIO,
-    local rtn
+    local rtn, lhiW
     dap rtn
+    lac lbWr
+    sza                 // skip if a read
+    jmp lhiW
+    lac [lbHdRRuns:6]
+    dac i [tpList:013]
+    law LBDIRBLK
+    jda lbBlkIO
+    jmp rtn
+lhiW,
     lac [lbDHdr:5]
     dac lbFirst
     law LBDHW
@@ -1286,7 +2086,7 @@ rtn, jmp .
 // Entry: AC = b. Exit: AC = 0, or tpSeek's, tpRead's or tpWrite's failure. IO is clobbered.
 // Called via jda.
 lbXfer, 0
-    local rtn, lxRd, lxPad, lxGo
+    local rtn, lxPad
     dap rtn
     law 1
     dac lbNB
@@ -1300,22 +2100,34 @@ lbXfer, 0
 lxPad,
     lac lbXN
     jda lbList
+    lac [lbTpL:6]
+    dac i [tpList:013]
     lac lbXfer
+    jda lbBlkIO
+rtn, jmp .
+    endloc
+
+// One block, b, to or from the run list at tpList, which the caller sets: written while lbWr is
+// set, read otherwise.
+// Entry: AC = b. Exit: AC = 0, or tpSeek's, tpRead's or tpWrite's failure. IO is clobbered.
+// Called via jda.
+lbBlkIO, 0
+    local rtn, lbiRd
+    dap rtn
+    lac lbBlkIO
     dac i [tpWant:013]
     dzm i [tpRev:013]
     law i 1
     dac i [tpBlk:013]
-    lac [lbTpL:6]
-    dac i [tpList:013]
     jsp i [tpSeek:013]
     sza                 // skip if at the block
     jmp rtn
     lac lbWr
     sza i               // skip if a write
-    jmp lxRd
+    jmp lbiRd
     jsp i [tpWrite:013]
     jmp rtn
-lxRd,
+lbiRd,
     jsp i [tpRead:013]
 rtn, jmp .
     endloc
@@ -1334,7 +2146,8 @@ rtn, jmp .
     endloc
 
 // The directory's header and slot lbSlot's page read, and the slot's entry found: lbPg its page,
-// lbSl its place, lbSE its word's address in lbDPage, lbBlk and lbBlkN its first block and blocks.
+// lbSl its place, lbSE its word's address in lbDPage, lbBlk and lbBlkN its first block and blocks
+// (sketchpad.ah, the library's directory: the blocks' low four bits, and two more at bit 14).
 // Exit: AC = 0, TSEMPTY for a free slot, or lbRdHdr's or lbPgIO's failure. IO is clobbered.
 // Called via jsp.
 lbRdSlot,
@@ -1363,9 +2176,16 @@ lbRdSlot,
     jmp rtn
 lrUsed,
     sar 4s
+    and [01777]
     dac i [lbBlk:013]
     lac i lbSE
+    sar 9s
+    sar 1s
+    and [060]
+    dac lbT
+    lac i lbSE
     and [017]
+    ior lbT
     dac i [lbBlkN:013]
     cla
 rtn, jmp .
@@ -1429,9 +2249,10 @@ ldT, 0
 ldW, 0
     endloc
 
-// The status word's texts, four words each, by the result, TSSAVED to TSHELD, as the tape's
-// (sptape.ac, tpMsgs). TSOPEN's, TSMORE's and TSHELD's are never shown, nor TSNOTPIC's, the
-// tape's, nor Plot's three, TSPLOTTED to TSNOPLOT, which only hold their places.
+// The status word's texts, four words each, by the result, TSSAVED to TSSLOTS, as the tape's
+// (sptape.ac, tpMsgs). TSOPEN's and TSMORE's are never shown, nor TSNOTPIC's, the tape's, nor
+// Plot's three, TSPLOTTED to TSNOPLOT, nor TSNESTED's, no longer given, nor TSHELD's, which only
+// hold their places.
 lbMsgs,
     type340 "SAVED    "
     type340 "LOADED   "
@@ -1456,7 +2277,9 @@ lbMsgs,
     type340 "NESTED   "
     type340 "TOO SLOW "
     type340 "DIGITS   "
+    type340 "NOT BLANK"
     type340 "         "
+    type340 "SLOTS    "
 
 // A blank name's run, which the name's line shows after any result but SAVED, LOADED and
 // DELETED, and which a deleted slot's name becomes; and "-" for a free slot on the screen, as the
@@ -1519,13 +2342,21 @@ lbSl, 0                 // a slot's place in its page
 lbSE, 0                 // its word in lbDPage, a 16-bit pointer
 lbSetF, 0               // lbMark's choice: 1 takes the blocks, 0 frees them
 lbMN, 0                 // lbMark's blocks
+lbE, 0                  // the part in hand's first word in lbEBuf, a 16-bit pointer: a flat
+                        // entry's lbEBuf, a nested entry's part's after the entry's header
+                        // (lbPart)
+lbNest, 0               // 1 for a nested entry, 0 for a flat one
 lbBW, 0                 // lbBit's word in the map, a 16-bit pointer
 lbTpL,                  // the run list on tape (lbList): the words, the padding, the closing
     table 3 * 3, 0
-lbTmp,                  // a text on its way to another slot (lbDrop)
+lbHdRRuns,              // the header's read: its words, the block's rest, the closing
+    TPRUN(lbDHdr:5, LBDHW)
+    TPRUN(lbRest:6, LBDREST)
+    lbSink:6; 0 - 1; 0
+lbRest,                 // the rest of the header's block, as read (lbHdrIO)
+    table LBDREST, 0
+lbTmp,                  // a text on its way to another slot (lbDrop), or a deleted entry's name
     table LBTXW, 0
-lbEBuf,                 // the entry, one word after another
-    table LBBUFW, 0
 
 %%endoverlay
 
@@ -1533,10 +2364,13 @@ lbEBuf,                 // the entry, one word after another
 // jumps here with teStubR and teArg set, Plot's (TEPLOT) going on to its stub (spplot.ac,
 // plotEntry): for a save or a load, master lbK's record made resident
 // (the instance module's mrLoad, through mrLoadX); then the overlay's entry, through the manager,
-// which reads it into W first if W holds another.
+// which reads it into W first if W holds another. While a nested entry's save or load asks for
+// its next part's master's record (TSMORE), lyCall makes master tpK's record resident and calls
+// the overlay again with teArg, which the overlay has made TELMORE; nothing calls the overlay
+// after such a loop but with teArg set again.
 // A load into a master others hold (mUses) runs in calls of the overlay (lbPhase; owner's ruling
 // C5, TASK-NESTED-C.md): the first reads and judges the entry and stops there (TSHELD); then,
-// while lbEBuf is still in W (at lbEAt, since the root cannot name it), the entry's words go
+// from lbEBuf (at lbEAt, which the first call gives), the entry's words go
 // into the master's slot in the store (the instance module's poolRoom), its count before its
 // crosses worked out from its attachers (its mDrawOf), and its texts' count and digits set for
 // the trial (rwTx, rwDig), which runs with the entry's length and count in the master's place
@@ -1547,8 +2381,8 @@ lbEBuf,                 // the entry, one word after another
 // AC = the overlay's result. IO is clobbered. Reached by jmp, from tapeEntry.
 libEntry,
     local lyRec, lyGo, lyLoad, lyHl, lyHeld, lyTx, lyTxN, lyTxD, lyCp, lyNoRm, lyRef, lyEnd, \
-        lyCall, lyCr, lyBack, lyBr, lyWd, lyWr, lyWp, lyB, lyK, lyT, lyN, lyOL, lyOD, lyP, lyQ, \
-        lyC
+        lyCall, lyCl, lyCr, lyBack, lyBr, lyWd, lyWr, lyWp, lyB, lyK, lyT, lyN, lyOL, lyOD, lyP, \
+        lyQ, lyC
     lac teArg
     sad [TEPLOT]        // skip unless Plot's
     jmp plotEntry
@@ -1557,8 +2391,8 @@ libEntry,
     sas [TELSAVE]       // skip if a save
     jmp lyGo
 lyRec,
-    lio lbK
-    jsp i [mrLoadX:7]
+    jsp lyCall
+    jmp i teStubR
 lyGo,
     lio teArg
     %%ovcall library, libEntryOv
@@ -1715,14 +2549,19 @@ lyEnd,
     dzm lbPhase
     jmp i teStubR
 
-    // The overlay's load, the master's record resident. Exit: AC = its result. Called via jsp.
+    // The overlay's save or load, the master's record resident, and each record it asks for
+    // after. Exit: AC = its result. Called via jsp.
 lyCall,
     dap lyCr
     lio lbK
+lyCl,
     jsp i [mrLoadX:7]
     lio teArg
     %%ovcall library, libEntryOv
+    sas [TSMORE]        // skip if the overlay asks for master tpK's record
 lyCr, jmp .
+    lio tpK
+    jmp lyCl
 
     // The master's own length and count before its crosses back, and it out of the store.
     // Called via jsp.

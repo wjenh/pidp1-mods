@@ -23,7 +23,9 @@ vaNew, 0
 vaHold, 0
 
 // Instance i's words' offset in the master store, its master's or, with a c, its variant's, built
-// here if the instance has none yet (a load's rebuild).
+// here if the instance has none yet (a load's rebuild); a master out of the store is brought into
+// it the same way, as a load leaves one whose saved place the store's regions no longer hold
+// (sptape.ac's tpPool). Neither while an overlay runs, which cannot read the drum.
 // Entry: vaOf = i. Exit: AC = the offset, or MNOPOOL when not there. IO is clobbered. Called by
 // dac i [vaOf:011] and jsp i [vaOf:011+1].
 vaOf, 0
@@ -58,6 +60,16 @@ vfM,
     add [mStart:5]
     dac vfT
     lac i vfT
+    sas [MNOPOOL]       // skip if out of the store
+    jmp i vfRtnW
+    lac i [ovActive:013]
+    sza                 // skip unless an overlay runs, which cannot read the drum
+    jmp vfNo
+    lac vaK
+    dac i [poolFor:7]
+    cli                 // the master itself, no code c
+    jsp i [poolFor:7+1]
+    lac i vfT           // its place now, or MNOPOOL with no room
     jmp i vfRtnW
 vfRtnW, 0
 vfT, 0

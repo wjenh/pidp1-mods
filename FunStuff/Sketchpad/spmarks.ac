@@ -9,7 +9,8 @@
 // from its cMarks and at mkNear from its cNear, each by jsp i [X:015], each returning by jmp i.
 // Runs with the extend window open, as bank 8 does, so every indirect address is a 16-bit one.
 // Bank 8's words are reached as OP i [X:010], the constraint table and the per-type tables in
-// bank 9 as OP i [X:011], the point and line tables, mkHid and ptRay as OP i [X:3], the main
+// bank 9 as OP i [X:011] (but cOfX, this bank's, after this file, as OP i [X:015]), the point
+// and line tables, mkHid and ptRay as OP i [X:3], the main
 // bank's words as OP i [X:4], the view's words as OP i [X:014], and bank 0's fixList through
 // pointers made from [X:0]. Calls nothing outside bank 13 but the view module's arOne, which
 // writes a mark's arms, by jsp i [X:014], and the overlay ranks (spranks.ac), through the
@@ -264,7 +265,7 @@ mkEq,
 mkRoll,
     lac mkP
     jda cRlDir
-    add [cRlTab:011]
+    add [cRlTab:5]
     jmp mkCall
 
     // A designation's mark is its rank's circled digit (cDgTab), the first in the table 1.
@@ -588,7 +589,7 @@ mpDir,
     sub [2]
     jda cRlDir          // k, from the line's ends, which cRlDir reads 2 and 3 words on
     dac mpK
-    add [cOfX:011]
+    add [cOfX:015]
     dac mpT
     lac i mpT
     mul mpS

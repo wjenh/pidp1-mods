@@ -3053,7 +3053,7 @@ sbGap,
     add [txSc:012]
     dac sbT
     lac i sbT
-    add [cGapTab:5]
+    add [cGapTab:6]
     dac sbT
     lac sbP
     add [5]

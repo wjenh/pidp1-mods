@@ -2507,8 +2507,8 @@ cfP, 0
 
 // The cycles' step, from the main loop while an instance cycles. Once the step's dwell (cyDur)
 // has passed on the clock, the position moves to the next entry of the sequence, or the next
-// master with none, that some cycling instance can take, and each cycling instance takes that master
-// (instTo) or stays as it is; the step lasts that master's dwell. So every cycling instance
+// master with none, that some cycling instance can take, and each cycling instance takes that
+// master (instTo) or stays as it is; the step lasts that master's dwell. So every cycling instance
 // steps together. A step never moves a tie point; a master whose attachers lie elsewhere is
 // refused. It goes on while an instance is carried, a carried one's
 // handle following its origin (instTo). The texts' list is written again only at a step
@@ -2911,7 +2911,7 @@ instKbOpen, 0
     law 1
     dac cyKbS
     jsp cySeqOut
-    lac [cySqBlk:3]
+    lac [cySqBlk:6]
     jmp rtn
 xoPick,
     law 2
@@ -3438,7 +3438,7 @@ instStOpen, 0
     cla                 // no skip means overflow, which a division by 10 cannot make
     dio cyFrac
     jda cyPutNum
-    lac [stBlk:3]
+    lac [stBlk:6]
 rtn, jmp .
     endloc
 
@@ -4644,13 +4644,14 @@ mxRtnW, 0
 // Refused first, nothing mapped, while an instance cycles, or with the masters' texts' table
 // short of room for the canvas's (the text module's txDefRoom).
 // Refused too, by DEFNROOM, for an instance with a code c whose variant a load left unbuilt.
-// Exit: AC = 0, or DEFCONS with too many constraints, or DEFCYCLE, DEFNROOM or DEFTEXT. IO is clobbered.
-// Called by the manager, from its stub (instMap).
+// Exit: AC = 0, or DEFCONS with too many constraints, or DEFCYCLE, DEFNROOM or DEFTEXT.
+// IO is clobbered. Called by the manager, from its stub (instMap).
 instMapOv,
     local rtn, mpLn, mpArc0, mpArc, mpAn0, mpAn, mpAnNx, mpNum, mpNm, mpNmNx, mpAtt, mpPick, \
         mpScan, mpScNx, mpGot, mpTie0, mpTie, mpTieA, mpTieB, mpTieNx, mpSub0, mpSub, mpSbT, \
         mpTx, mpTxT, mpTxNx, mpTxEnd, \
-        mpSbN, mpSbNx, mpDone, mpFew, mpCyc, mpSbA, mpNoV, mpI, mpT, mpU, mpE, mpEnd, mpLast, mpBest, mpBP, \
+        mpSbN, mpSbNx, mpDone, mpFew, mpCyc, mpSbA, mpNoV, mpI, mpT, mpU, mpE, mpEnd, mpLast, \
+        mpBest, mpBP, \
         mpX, mpY, mpK, mpM, mpP, rtnW
     dac rtnW
     lac i [cycN:4]
@@ -6156,14 +6157,14 @@ msD, 0
 // dismOn is set, for copyMerge. Its master's sub-instances become instances on the canvas, one
 // level taken apart (copySubsOv). Refused, nothing changed, with no instance locked, with the
 // tables short of room (copyRoom), with a sub-instance's scale composed with the instance's
-// outside x1/4 to x8 (DMSCALE), with a part off the canvas (the copy box, cMinX to cMaxY, at the scale about the
-// origin, beyond TRKXMIN to TRKXMAX or TRKYMIN to TRKYMAX, where the target cannot reach), or
-// with an arc whose radius at the scale passes ARCRMAX (its center's and start's offsets in the
-// store, compared squared, dismSquare). Its slot, master, origin, scale,
+// outside x1/4 to x8 (DMSCALE), with a part off the canvas (the copy box, cMinX to cMaxY, at the
+// scale about the origin, beyond TRKXMIN to TRKXMAX or TRKYMIN to TRKYMAX, where the target cannot
+// reach), or with an arc whose radius at the scale passes ARCRMAX (its center's and start's offsets
+// in the store, compared squared, dismSquare). Its slot, master, origin, scale,
 // cycle flag and tie list are kept for Undo (instUndism) and for copyMerge (dismTie). The main
 // bank's dismLost then runs Copy's drop, which removes the instance.
-// Exit: AC = 0, COPYROOM, 2 with no instance locked, DMSCALE with a scale out of range, DMOFF with a
-// part off the canvas, DMARC with an arc too large. IO is clobbered. Called by the manager, from
+// Exit: AC = 0, COPYROOM, 2 with no instance locked, DMSCALE with a scale out of range, DMOFF with
+// a part off the canvas, DMARC with an arc too large. IO is clobbered. Called by the manager, from
 // its stub (instDism).
 instDismOv,
     local rtn, idNone, rtnW
@@ -6541,8 +6542,8 @@ csL, 0
 // of room for their points, lines, arcs and constraints at once, or the instance list for the
 // instances added (DEFNROOM: copyRoom's sums, an attacher's point counted though its merge takes
 // it back), and the canvas for their texts (the text module's txNestRoom); one with a
-// sub-instance's scale composed with its own out of range, a part off the canvas or an arc too large
-// at its scale (dismAt's checks: DEFNSCALE, DEFNOFF, DEFNARC). With no instances, nothing is
+// sub-instance's scale composed with its own out of range, a part off the canvas or an arc too
+// large at its scale (dismAt's checks: DEFNSCALE, DEFNOFF, DEFNARC). With no instances, nothing is
 // checked. The last, dismAt's, the stub makes for each instance of k in turn after this answers
 // 0, through instNestChkOv, since each reads its instance's master's record, which only the
 // root loads.
@@ -6815,8 +6816,8 @@ nsDgP, 0
 
 // Define's check of instance j, which the stub instNest makes for each instance in turn once
 // instNestOv has answered 0, the instance's master's record resident: dismAt's checks, a
-// sub-instance's scale composed with the instance's out of range, a part off the canvas or an arc too
-// large at its scale, its answer named as Define's refusal (DEFNSCALE, DEFNOFF, DEFNARC;
+// sub-instance's scale composed with the instance's out of range, a part off the canvas or an arc
+// too large at its scale, its answer named as Define's refusal (DEFNSCALE, DEFNOFF, DEFNARC;
 // COPYROOM, which instNestOv's sums and txNestRoom have ruled out, would be DEFCONS).
 // Entry: IO = j. Exit: AC = 0, or why not. IO is clobbered. Called by the manager, from its
 // stub (instNest).
@@ -7279,7 +7280,8 @@ wmD, 0
 // A dismember (instDism). dismOn is nonzero while the drop under way is one, which the arc
 // module's copyMerge reads through its 16-bit address, and dismShift is its scale word, which
 // copyParts, copySubsOv, the constraint module's cCopy and the text module's txParts read through
-// ieShOf or ieSize; both are Copy's (0) after copyRoom. The instance taken apart, for Undo (instUndism), is its slot, master, origin,
+// ieShOf or ieSize; both are Copy's (0) after copyRoom. The instance taken apart, for Undo
+// (instUndism), is its slot, master, origin,
 // scale and cycle flag; the last slot, which instRemove moved into its slot; and its tie list,
 // which copyMerge reads too. dismNest: nonzero while Define takes apart an instance after its
 // first, which cCopy reads through its 16-bit address; copyRoom clears it.

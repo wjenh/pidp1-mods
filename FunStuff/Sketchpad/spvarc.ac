@@ -28,7 +28,7 @@ vaSlot,
     lac i [frameTicks:0]
     dac vaTicks
     dzm vaBandM
-    jsp vaBuild
+    jsp vaBandW
     sza                 // skip if a run shows
     jmp svDone
     jsp vaWords
@@ -55,7 +55,7 @@ rtn, 0
 
 // One pass of Circle's band through the view (arcBandPass, when magnified, or after a change of
 // view at x1). After arcSweep, arcEnd and arcSnap, it points the band at the run nearest its end.
-// The band's vectors are written whole (vaBuild, the gate first closed) only when a direction
+// The band's vectors are written whole (vaBandW, the gate first closed) only when a direction
 // is chosen anew, the arc is not the one they were written for, the view changed (arcRebase),
 // or the run the end is on is not the one they hold; otherwise only the head moves. Either way
 // the head's words, and the word the last entry took over, are posted for penISR (vaPost),
@@ -117,7 +117,7 @@ bdBuild,
     dac i [arcBand:0+ARCVEC-1]
     lac i [frameTicks:0]
     dac vaTicks
-    jsp vaBuild
+    jsp vaBandW
     sza                 // skip if a run shows, else the gate stays closed
     jmp bdOut
     lac vaDir
@@ -190,7 +190,7 @@ rtn, 0
 // Entry: vaSlotA, vaBandM, vaTicks; the slot's gate jumping past it. Exit: AC = 0 and vaHead's
 // results; or AC nonzero, nothing written, when none of the arc is on the screen. IO is
 // clobbered. Called via jsp.
-vaBuild,
+vaBandW,
     local rtn
     dap rtn
     jsp vaSetup
@@ -396,7 +396,7 @@ stI, 0
 
 // The sine and cosine of i 512ths of a turn in the arc's direction (counterclockwise when vaDir
 // is plus), from the quarter table vaSin; any i from 0 to 1023.
-// Entry: AC = i. Exit: vaS, vaC. AC is clobbered, IO preserved. Called via jda.
+// Entry: AC = i. Exit: vaS, vaCo. AC is clobbered, IO preserved. Called via jda.
 vaSinCos, 0
     local rtn, scEven, scHalf, scJ, scP, scA
     dap rtn
@@ -412,16 +412,16 @@ vaSinCos, 0
     sub scJ
     dac scP
     lac i scP           // sin(128 - j), cos j
-    dac vaC
+    dac vaCo
     lac vaSinCos
     and [0200]
     sza i               // skip in quadrants 1 and 3, where the two trade places, cosine negated
     jmp scEven
-    lac vaC
+    lac vaCo
     dac vaS
     lac scA
     cma
-    dac vaC
+    dac vaCo
 scEven,
     lac vaSinCos
     and [0400]
@@ -430,9 +430,9 @@ scEven,
     lac vaS
     cma
     dac vaS
-    lac vaC
+    lac vaCo
     cma
-    dac vaC
+    dac vaCo
 scHalf,
     lac vaDir
     sma                 // skip if clockwise, when the sine negates
@@ -456,7 +456,7 @@ vaVtx, 0
     lac vaVtx
     jda vaSinCos
     lac vaU
-    mul vaC
+    mul vaCo
     dac vxT
     lac vaV
     mul vaS
@@ -471,7 +471,7 @@ vaVtx, 0
     mul vaS
     dac vxT
     lac vaV
-    mul vaC
+    mul vaCo
     add vxT
     dac vaVk            // U sin + V cos
     add vaY32
@@ -1142,7 +1142,7 @@ vaNX, 0
 vaNY, 0
 // vaSinCos's and vaVtx's results.
 vaS, 0
-vaC, 0
+vaCo, 0
 vaUk, 0
 vaVk, 0
 vaX, 0

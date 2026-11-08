@@ -36,6 +36,8 @@
 // 30-Oct-2026 wje - add vertical scrolling for small displays
 // 06-Nov-2026 wje (Claude) - Run, Continue and Halt set the emulator start, continue, and stop states
 //     through the emulator's command port; Reload config is now Reload.
+// 07-Nov-2026 wje (Claude) - the "Also launch:" row: t30dpy and Soroban, the typewriter terminal,
+//     started by pdp1control.sh; the Companions row's Typewriter is now Soroban.
 
 #include <errno.h>
 #include <limits.h>
@@ -2613,10 +2615,10 @@ char error[PATH_MAX + 64];
     statusMs = 0;               // count t30dpy again at once, so its button is disabled
 }
 
-// The Companions row: the typewriter, t30dpy and the screen console, with the commands of their
-// desktop launchers (tty.desktop, t30dpy.desktop) and, for the console, pdp1.sh's. There are no
-// lamps for the typewriter and the console: lxterminal serves every window from one process, so
-// whether one is open cannot be told, and a second click opens a second window.
+// The Companions row: Soroban, the typewriter terminal, t30dpy and the screen console, with the
+// commands of their desktop launchers (tty.desktop, t30dpy.desktop) and, for the console,
+// pdp1.sh's. There are no lamps for Soroban and the console: lxterminal serves every window from
+// one process, so whether one is open cannot be told, and a second click opens a second window.
 static void
 drawCompanions(struct nk_context *ctxP)
 {
@@ -2633,9 +2635,9 @@ bool answering;
     answering = (portUp && (pdp1Count > 0));
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 5, companionRatios);
     nk_label(ctxP, "Companions", NK_TEXT_LEFT);
-    if( button(ctxP, "Typewriter", answering) )
+    if( button(ctxP, "Soroban", answering) )
     {
-        launchCompanion("Typewriter", typewriterArgv);
+        launchCompanion("Soroban", typewriterArgv);
     }
     // pdp1control.sh never starts a second t30dpy, and neither does this.
     if( button(ctxP, "t30dpy", (answering && (t30Count == 0))) )
@@ -2668,6 +2670,31 @@ bool answering;
     }
 }
 
+// The note beside the "Also launch:" boxes: who has the display and who the typewriter. The
+// emulator serves each to one client: the display to the last to connect, the typewriter to
+// the first, refusing the rest. gui is neither apps nor web; there Soroban is never started.
+static const char *
+alsoLaunchNote(bool apps, bool web, bool t30, bool soroban)
+{
+    if( apps )
+    {
+        return("apps starts t30dpy");
+    }
+    if( !web )
+    {
+        return(t30 ? "t30dpy has the display; the gui has the typewriter" : "the gui has the typewriter");
+    }
+    if( t30 && soroban )
+    {
+        return("browser takes the display; Soroban has the typewriter");
+    }
+    if( t30 )
+    {
+        return("the browser display takes it while open");
+    }
+    return(soroban ? "Soroban keeps the typewriter from the browser" : "");
+}
+
 // The Control tab: start-time choices, paper tape, audio, the companions and the window's colors.
 static void
 drawControl(struct nk_context *ctxP)
@@ -2679,11 +2706,12 @@ static const char *panelLabels[] = { "PiDP-1 hardware", "virtual" };
 static const char *usbs[] = { "y", "n" };
 static const char *usbLabels[] = { "yes", "no" };
 static const float choiceRatios[] = { 0.25f, 0.25f, 0.50f };    // a label, a control, a note
+static const float alsoRatios[] = { 0.25f, 0.125f, 0.125f, 0.50f }; // two boxes in a control's room
 float ratios[MAX_SCHEMES + 1];
 char valueBuf[CONF_MAX_VALUE + 1];
 const char *whyP, *nameP, *withP;
-nk_bool t30;
-bool idle, apps, web;
+nk_bool t30, soroban;
+bool idle, apps, web, gui;
 int i, count;
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
@@ -2703,18 +2731,21 @@ int i, count;
         }
     }
 
-    // t30dpy beside the gui or web front end; apps starts it anyway. The emulator serves one
-    // client per display port, the last to connect, so the note says who has the display.
+    // t30dpy beside the gui or web front end; apps starts it anyway. Soroban, the typewriter
+    // terminal, beside web or apps; gui's window takes the typewriter at its start and quits
+    // without it, so the box is disabled there, its value kept for a switch back.
     apps = !strcmp(controlChoice("interface", "web", valueBuf), "apps");
     web = !strcmp(valueBuf, "web");
+    gui = !strcmp(valueBuf, "gui");
     t30 = (apps || !strcmp(controlChoice("t30dpy", "n", valueBuf), "y"));
-    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, choiceRatios);
-    nk_label(ctxP, "Type 30 display", NK_TEXT_LEFT);
+    soroban = !strcmp(controlChoice("soroban", "n", valueBuf), "y");
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, alsoRatios);
+    nk_label(ctxP, "Also launch:", NK_TEXT_LEFT);
     if( apps )
     {
         styleDisableBegin(ctxP);
     }
-    if( nk_checkbox_label(ctxP, "also start t30dpy", &t30) && !apps )
+    if( nk_checkbox_label(ctxP, "t30dpy", &t30) && !apps )
     {
         setControlChoice("t30dpy", (t30?"y":"n"));
     }
@@ -2722,9 +2753,19 @@ int i, count;
     {
         styleDisableEnd(ctxP);
     }
-    nk_label(ctxP, (apps?"apps starts t30dpy":(!t30?"":(web ?
-        "the browser display takes it while open":"t30dpy has it, not the gui's window"))),
-        NK_TEXT_LEFT);
+    if( gui )
+    {
+        styleDisableBegin(ctxP);
+    }
+    if( nk_checkbox_label(ctxP, "Soroban", &soroban) && !gui )
+    {
+        setControlChoice("soroban", (soroban?"y":"n"));
+    }
+    if( gui )
+    {
+        styleDisableEnd(ctxP);
+    }
+    nk_label(ctxP, alsoLaunchNote(apps, web, t30, soroban), NK_TEXT_LEFT);
 
     controlChoice("frontpanel", "virtual", valueBuf);
     nk_layout_row_dynamic(ctxP, ROW_H, 4);

@@ -9,7 +9,9 @@
 #    stop lets t30dpy end on its own when pdp1 goes
 # 02-Oct-26 wje (Claude) the t30dpy choice: start t30dpy beside the gui or web front end
 # 05-Oct-26 wje (Claude) only one pdp1 runs at a time, stop waits for pdp1 to exit,
-#    start refuses while one is alreay running, restart no longer sleeps
+#    start refuses while one is already running, restart no longer sleeps
+# 07-Nov-26 wje (Claude) the soroban choice: start the Soroban typewriter terminal with web or
+#    apps, when there is a desktop
 
 # The install directory; PIDP1_ROOT points it elsewhere, for testing.
 root="${PIDP1_ROOT:-/opt/pidp1-mods}"
@@ -19,13 +21,16 @@ root="${PIDP1_ROOT:-/opt/pidp1-mods}"
 #   frontpanel=virtual  pidp or virtual
 #   usbtape=n           y to use the USB ports for the paper tape reader and punch
 #   t30dpy=n            y to start t30dpy beside the gui or web front end (apps starts it anyway)
-# A missing file or line keeps the default below. The set, panel, usbtape and t30dpy commands
-# write it.
+#   soroban=n           y to start the Soroban typewriter terminal (not with gui, which has
+#                       the typewriter)
+# A missing file or line keeps the default below. The set, panel, usbtape, t30dpy and soroban
+# commands write it.
 settings="$root/pdp1control.config"
 interface="web"
 frontpanel="virtual"
 usb_paper_tape="n"
 t30dpy="n"
+soroban="n"
 
 argc=$#
 pidp1="$root/bin/pdp1"
@@ -69,7 +74,9 @@ read_settings() {
 			usb_paper_tape="$value" ;;
 		t30dpy=y|t30dpy=n)
 			t30dpy="$value" ;;
-		interface=*|frontpanel=*|usbtape=*|t30dpy=*)
+		soroban=y|soroban=n)
+			soroban="$value" ;;
+		interface=*|frontpanel=*|usbtape=*|t30dpy=*|soroban=*)
 			echo "pdp1control.config: invalid value '$value' for $name, ignored" >&2 ;;
 		*)
 			echo "pdp1control.config: unknown setting '$name', ignored" >&2 ;;
@@ -98,7 +105,7 @@ write_setting() {
 
 read_settings
 
-# Check if pidp1 is already runnning under screen.
+# Check if pidp1 is already running under screen.
 #
 is_running() {
 	procs=`screen -ls pidp1 | egrep '[0-9]+\.pidp1' | wc -l`
@@ -152,6 +159,51 @@ wait_display_client() {
 		sleep 0.1
 	done
 	echo "no display client connected in 5 seconds; starting t30dpy anyway"
+}
+
+# Start Soroban, the typewriter terminal, with tty.desktop's command. pdp1 serves the
+# typewriter, port 1041, to one client at a time, and pdp1_periphES takes it at its start and
+# quits without it, so with gui Soroban is not started. Nor is it without a desktop, so this
+# script still works where there is none. telnet ends at once if 1041 is not listening, and
+# its window would open and close, so Soroban starts only once pdp1 listens, at most 5 seconds.
+# Then up to 3 seconds for it to connect, so it is there before the boot program types.
+# Without ss, a fixed 2 seconds before and after.
+start_soroban() {
+	if [ "$interface" = "gui" ]; then
+		echo "Soroban not started: the gui has the typewriter"
+		return
+	fi
+	if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+		echo "Soroban not started: no desktop"
+		return
+	fi
+	if ! command -v lxterminal > /dev/null; then
+		echo "Soroban not started: lxterminal not found"
+		return
+	fi
+	if command -v ss > /dev/null; then
+		for i in $(seq 50); do
+			ss -Htln '( sport = :1041 )' | grep -q . && break
+			sleep 0.1
+		done
+		if ! ss -Htln '( sport = :1041 )' | grep -q .; then
+			echo "Soroban not started: pdp1 not listening on the typewriter port in 5 seconds"
+			return
+		fi
+	else
+		sleep 2
+	fi
+	echo start Soroban
+	nohup lxterminal -e "telnet localhost 1041" > /dev/null 2>&1 &
+	if command -v ss > /dev/null; then
+		for i in $(seq 30); do
+			ss -Htn state established '( dport = :1041 )' | grep -q . && return
+			sleep 0.1
+		done
+		echo "Soroban not connected to the typewriter in 3 seconds"
+	else
+		sleep 2
+	fi
 }
 
 do_start() {
@@ -225,6 +277,10 @@ do_start() {
 		fi
 		echo start /usr/local/bin/t30dpy
 		nohup /usr/local/bin/t30dpy >/dev/null 2>&1 &
+	fi
+
+	if [ "$soroban" = "y" ]; then
+		start_soroban
 	fi
 
 	sleep 1 # 0.3
@@ -406,6 +462,29 @@ do_t30dpy() {
 	esac
 }
 
+do_soroban() {
+	if [ -z "$2" ]; then
+		echo "Error: No soroban option specified. Use 'y' or 'n'." >&2
+		return 1
+	fi
+
+	case "$2" in
+		y|n)
+			if write_setting soroban "$2"; then
+				echo "soroban set to '$2', used at the next start"
+				exit 0
+			else
+				echo "Error: Failed to update $settings" >&2
+				return 1
+			fi
+			;;
+		*)
+			echo "Error: Invalid soroban option '$2'. Use 'y' or 'n'." >&2
+			return 1
+			;;
+	esac
+}
+
 
 case "$1" in
   start)
@@ -445,6 +524,9 @@ case "$1" in
   t30dpy)
 	do_t30dpy $1 $2
 	;;
+  soroban)
+	do_soroban $1 $2
+	;;
 
   status)
 	screen -ls pidp1 | egrep '[0-9]+\.pidp1'
@@ -454,7 +536,7 @@ case "$1" in
 	do_stat
 	;;
   ?)
-	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|usbtape|t30dpy|status|stat}" || true
+	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|usbtape|t30dpy|soroban|status|stat}" || true
 	echo "       pdp1control {reloadt30|reloadpanel}" || true
 	exit 1
 	;;

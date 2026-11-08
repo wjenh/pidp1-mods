@@ -1,5 +1,8 @@
 // Utility for monitoring and changing values for the PDP-1 music output.
 // Read the documentation in Docs!
+//
+// 8-Nov-2026 wje - terminate commands with newline, not strictly needed but the faster and correct method.
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -50,11 +53,11 @@ float fval;
     if( argc == 3 )
     {
         fval = atof(argv[2]);
-        snprintf(cmd, sizeof(cmd), "audio %s %f", argv[1], fval);
+        snprintf(cmd, sizeof(cmd), "audio %s %f\n", argv[1], fval);
     }
     else
     {
-        snprintf(cmd, sizeof(cmd), "audio %s", argv[1]);
+        snprintf(cmd, sizeof(cmd), "audio %s\n", argv[1]);
     }
 
     answerP = emucmd(cmd);

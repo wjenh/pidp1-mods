@@ -58,6 +58,8 @@
  *    run ? reports the machine's state (console.c).
  * Claude 07-Nov-2026 the channel and PDP-1D calls and flags come from hscCore.h and pdp1core.h, not
  *    externs of its own.
+ * Claude 08-Nov-2026 the network ports, the core image file and the pidp1timing report move to
+ *    netPorts.c, coreImage.c and timingReport.c.
 */
 
 #include <errno.h>
@@ -68,11 +70,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <signal.h>
-#include <limits.h>
 #include <math.h>
-#include <locale.h>
-#include <time.h>
-#include <sched.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
 
@@ -93,6 +91,9 @@
 #include "audio.h"
 #include "display.h"
 #include "panel1.h"
+#include "netPorts.h"
+#include "coreImage.h"
+#include "timingReport.h"
 
 //#define DOLOGGING
 #include "logger.h"
@@ -104,25 +105,7 @@
 // If present, will set the startup state of audio, etc.
 // See the distributed one for all settings.
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
-#define TIMING_FILE "/tmp/pidp1-timing.txt"
 
-// Extended timing histograms.
-// Each is an array of bucket edges in ns:
-// Bucket 0 counts values below the first edge.
-// Bbucket i counts [edge[i-1], edge[i]).
-// The final bucket counts everything at or above the last edge.
-// A histogram has (number of edges + 1) buckets.
-// Cycle and gap times use 1-2-5 steps, which puts 5us, one machine cycle, exactly on an edge.
-#define TIMING_CYCLE_EDGES 17
-// Throttle sleeps are nominally usleep(1000), fine steps just above 1ms show timer slack and
-// wakeup latency, coarse ones above that show the preempted tail.
-#define TIMING_SLEEP_EDGES 10
-// Lag is how far simtime trails the wall clock at the start of a cycle.
-#define TIMING_LAG_EDGES 10
-#define TIMING_LABEL_SIZE 32        // room for one formatted bucket label, e.g. "1.02ms"
-#define TIMING_STATUS_FILE "/proc/thread-self/status"   // this thread's context switch counts
-
-#define NIL 0
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
 void configure(void);
@@ -136,83 +119,17 @@ static bool checkWatches(PDP1 *pdp1P);
 static u64 configThrottleDuration(char *nameP, u64 unitNs, u64 defaultNs);
 static float configCutoff(char *nameP, float fallback);
 
-static void timingRunStart(void);
-static void timingNoteCycle(PDP1 *pdp, u64 startNs, u64 deltaNs);
-static void timingNoteSleep(u64 wakeNs);
-static void timingReport(FILE *fP);
-static void timingReset(void);
-static int timingBucket(u64 value, const u64 *edgesP, int numEdges);
-static void timingLabel(u64 ns, char *bufP, size_t bufSize);
-static void timingPrintHist(FILE *fP, const char *titleP, const long *histP, const u64 *edgesP, int numEdges);
-static u64 timingThreadCpuNs(void);
-static void timingCtxSwitches(long *voluntaryP, long *involuntaryP);
-
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
-
-static bool timingEnabled;
 
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
 
 ConfigurationP configurationP;  // from the config file
 
-// Used to track how long a cycle actually takes if timing is enabled
-static long precycleTime;
-static long cycleDeltaTime;
-static long slowestTime;
-static long fastestTime = LONG_MAX;
-static long overflowCount;
-static long totalTime;
-static long totalCycles;
-
-// Extended timing (11-Sep-2026, see the file header).
-// All of it is gathered only while pidp1timing is on and the machine is running, written by
-// timingReport() after the one-line summary above, and cleared by timingReset().
-static const u64 cycleEdges[TIMING_CYCLE_EDGES] =
-{
-    250, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000,
-    1000000, 2000000, 5000000, 10000000, 20000000, 50000000
-};
-static const u64 sleepEdges[TIMING_SLEEP_EDGES] =
-{
-    1000000, 1020000, 1050000, 1100000, 1200000, 1500000, 2000000, 5000000, 10000000, 20000000
-};
-static const u64 lagEdges[TIMING_LAG_EDGES] =
-{
-    500000, 1000000, 1500000, 2000000, 3000000, 5000000, 10000000, 20000000, 50000000, 100000000
-};
-static long cycleHist[TIMING_CYCLE_EDGES + 1];      // every timed cycle
-static long firstCycleHist[TIMING_CYCLE_EDGES + 1]; // only the first cycle after a throttle sleep
-static long gapHist[TIMING_CYCLE_EDGES + 1];        // untimed loop work between two cycles, no sleep between
-static long sleepHist[TIMING_SLEEP_EDGES + 1];      // wall length of each throttle sleep
-static long lagHist[TIMING_LAG_EDGES + 1];          // simtime lag at the start of every timed cycle
-static u64 lastCycleEnd;        // gettime() at the end of the previous timed cycle, 0 = none yet this run
-static bool sleptSinceCycle;    // a throttle sleep came after the previous timed cycle
-static u64 gapTotal;            // sum of the gapHist samples, ns
-static long gapCount;           // number of gapHist samples
-static long stealCycles;        // timed cycles that were high-speed-channel steals, not cycle()
-static long burstCount;         // completed bursts, runs of cycles between two throttle sleeps
-static long burstCycles;        // cycles so far in the current burst
-static long burstCyclesMin;
-static long burstCyclesMax;
-static long burstCyclesTotal;
-static u64 burstStart;          // wall time the current burst began (the last wakeup), 0 = none yet
-static u64 burstWallTotal;      // wall ns of all completed bursts
-static u64 burstWallMax;
-static long sleepCount;         // throttle sleeps seen while running
-static u64 sleepTotal;          // wall ns of all of them
-static u64 sleepMin;
-static u64 sleepMax;
-static long long lagMax;        // largest lag seen, ns (signed, simtime can be ahead of the wall clock)
-static u64 runStartWall;        // gettime() at the first timed cycle of this run
-static u64 runStartCpu;         // emulator thread CPU time then, ns
-static long runStartVoluntary;  // this thread's voluntary context switches then, -1 if unknown
-static long runStartInvoluntary;// and involuntary ones (preemptions), -1 if unknown
-
 // The main emulator loop.
 // Runs forever or until exit() or the SIGTERM handler ends the process.
 // Each iteration applies any pending remote debugger overrides of the front-panel
 // switches and services start/stop/continue/examine/deposit/readin switch edges via
-// spec()/cycle()/start_readin()/readin1()/readin2(), runs one machine cycle  or steals one for an active
+// spec()/cycle()/start_readin()/readin1()/readin2(), runs one machine cycle or steals one for an active
 // high-speed-channel DMA transfer when pdp->run is set, services the panel lights in all states,
 // then services file-descriptor-backed I/O via handleio() and dynamicIotProcessorDoIOPoll(), and
 // the console's cli(), which applies a staged load and passes stdin lines to the console thread.
@@ -229,7 +146,6 @@ bool prev_readin_sw;
 bool prev_power_sw;
 int keyRequest;         // a RUN_REQ_ value from the command port
 
-FILE *tmpfP;    // used for timing
 u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if throttle() slept
 u64 passStartSim;       // simtime at the top of a powered pass
 u64 passNs;             // the pass's simtime up to throttle(), its mul/div time, not the lag cap
@@ -372,7 +288,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
             if( Edge(readin_sw) )
             {
-                HSCreset();         // Stop any transfer, makes no sense to run if reloading memoery
+                HSCreset();         // Stop any transfer, makes no sense to run if reloading memory
                 dynamicIotProcessorStart(); // might be in stop state, run switch won't be toggled
                 start_readin(pdp);
             }
@@ -416,14 +332,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
                 if( timingEnabled )
                 {
-                    // First timed cycle of a run, snapshot thread CPU time and context switches.
-                    // Done before precycleTime is taken so its /proc read is not charged to the cycle.
-                    if( totalCycles == 0 )
-                    {
-                        timingRunStart();
-                    }
-
-                    precycleTime = gettime();
+                    timingCycleBegin();
                 }
 
                 // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
@@ -435,7 +344,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
                     updatelights_pwm(panel, 1);     // tally one stolen cycle for new panel driver
                     if( timingEnabled )
                     {
-                        ++stealCycles;
+                        timingNoteSteal();
                     }
                 }
                 else
@@ -446,49 +355,16 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
                 if( timingEnabled )
                 {
-                    cycleDeltaTime = gettime() - precycleTime;
-                    if( cycleDeltaTime > 5000 )
-                    {
-                        ++overflowCount;
-                    }
-
-                    if( cycleDeltaTime > slowestTime )
-                    {
-                        slowestTime = cycleDeltaTime;
-                    }
-                    if( cycleDeltaTime < fastestTime )
-                    {
-                        fastestTime = cycleDeltaTime;
-                    }
-
-                    totalTime += cycleDeltaTime;
-                    ++totalCycles;
-
-                    timingNoteCycle(pdp, (u64)precycleTime, (u64)cycleDeltaTime);
+                    timingCycleEnd(pdp);
                 }
 
                 logger(LOG_BREAK, "Post-cycle PC %06o\n", pdp->epc | pdp->pc);
             }
             else
             {
-                if( timingEnabled && totalCycles )
+                if( timingEnabled && timingRunActive() )
                 {
-                    if( (tmpfP = fopen(TIMING_FILE, "a")) )
-                    {
-                        setlocale(LC_NUMERIC,"en_US.utf-8");
-                        fprintf(tmpfP,
-                            "Fastest time %'ldns; slowest %'ldns; avg %'ldns; cycles %'ld; overflows %'ld:%4.02f%%\n",
-                            fastestTime, slowestTime, totalTime/totalCycles, totalCycles,
-                            overflowCount, ((float)overflowCount/(float)totalCycles) * 100.0);
-                        timingReport(tmpfP);                // extended data, after the old line
-                        fclose(tmpfP);
-                    }
-                    slowestTime = 0;
-                    fastestTime = LONG_MAX;
-                    totalTime = 0;
-                    overflowCount = 0;
-                    totalCycles = 0;
-                    timingReset();
+                    timingRunEnd();
                 }
 
                 updatelights(pdp, panel);
@@ -504,7 +380,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
             // throttle() only refreshes pdp->realtime after a sleep so a change means it slept.
             // Only tracked inside a timed run (totalCycles is cleared when the run's report is written).
-            if( timingEnabled && totalCycles && (pdp->realtime != realtimeBefore) )
+            if( timingEnabled && timingRunActive() && (pdp->realtime != realtimeBefore) )
             {
                 timingNoteSleep(pdp->realtime);
             }
@@ -521,8 +397,8 @@ bool ran;               // the pass ran the machine, a stolen cycle included
         {
             stopaudio();
 
-            // This branch runs on every pass until the power switch is onr.
-            // IOTs get powerclear once at the off edge and before the stop notification/
+            // This branch runs on every pass until the power switch is on.
+            // IOTs get powerclear once at the off edge and before the stop notification.
             // A device that has not been stopped can still finish with its files.
             // Any 16-channel special SBS enable a program has done via an IOT will be
             // reset to the config file setting.
@@ -549,637 +425,6 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
         cli(pdp);
     }
-}
-
-// Extended pidp1timing support.
-// The throttle() code in pdp1.c runs the CPU in bursts, flat out until simtime leads the
-// wall clock by throttleburst, 10us by default, then a wait chunked to at most throttlequantum,
-// 1000us by default.
-// These functions record what the one-line summary cannot show, how cycle times are distributed,
-// whether slow cycles are the first after a sleep, how much untimed
-// loop work sits between cycles, how long the sleeps really are, how far simtime trails the wall
-// clock, and how much CPU and how many preemptions the emulator thread took.
-// All run on the emulator thread only.
-
-// Snapshot the start of a timed run: wall time, the emulator thread's CPU time and its context
-// switch counts so timingReport() can give this run's deltas.
-static void
-timingRunStart(void)
-{
-    runStartWall = gettime();
-    runStartCpu = timingThreadCpuNs();
-    timingCtxSwitches(&runStartVoluntary, &runStartInvoluntary);
-}
-
-// Record one timed cycle that started at wall time startNs and took deltaNs of C time.
-// Also records the untimed gap since the previous cycle but only when no throttle sleep came
-// between since that gap would just be the sleep, and the simtime lag at the cycle's start.
-static void
-timingNoteCycle(PDP1 *pdp, u64 startNs, u64 deltaNs)
-{
-long long lag;
-
-    ++(cycleHist[timingBucket(deltaNs, cycleEdges, TIMING_CYCLE_EDGES)]);
-
-    if( sleptSinceCycle )
-    {
-        // First cycle of a burst, kept separately to test whether slow cycles follow sleeps
-        // rather than landing anywhere.
-        ++(firstCycleHist[timingBucket(deltaNs, cycleEdges, TIMING_CYCLE_EDGES)]);
-    }
-    else if( lastCycleEnd )
-    {
-        // Everything the main loop does between cycles, switch and ad1 handling, breakpoint
-        // checks, handleio(), IO polls, cli(), plus any preemption that lands here.
-        ++(gapHist[timingBucket((startNs - lastCycleEnd), cycleEdges, TIMING_CYCLE_EDGES)]);
-        gapTotal += (startNs - lastCycleEnd);
-        ++gapCount;
-    }
-
-    sleptSinceCycle = false;
-    lastCycleEnd = (startNs + deltaNs);
-    ++burstCycles;
-
-    // Positive lag, simtime is behind the wall clock, the throttle's normal state right after a
-    // sleep, which it then runs flat out to close.
-    // Negative lag, simtime is ahead.
-    lag = ((long long)startNs - (long long)pdp->simtime);
-    if( lag > lagMax )
-    {
-        lagMax = lag;
-    }
-
-    ++(lagHist[(lag < 0)?0:timingBucket((u64)lag, lagEdges, TIMING_LAG_EDGES)]);
-}
-
-// Record a throttle sleep that ended (woke) at wall time wakeNs.
-// The sleep began when the previous timed cycle ended, the loop does nothing measurable between
-// the end of a cycle and throttle().
-// A sleep also ends a burst, measured from the previous/ wakeup to the end of the burst's last cycle.
-// Cycles before a run's first sleep are not a complete burst and are not counted as one.
-static void
-timingNoteSleep(u64 wakeNs)
-{
-u64 sleptNs;
-u64 burstWallNs;
-
-    if( !lastCycleEnd )
-    {
-        return;     // no timed cycle yet this run, no known start for the sleep
-    }
-
-    sleptNs = (wakeNs - lastCycleEnd);
-    ++sleepCount;
-    sleepTotal += sleptNs;
-    if( sleptNs < sleepMin )
-    {
-        sleepMin = sleptNs;
-    }
-
-    if( sleptNs > sleepMax )
-    {
-        sleepMax = sleptNs;
-    }
-
-    ++(sleepHist[timingBucket(sleptNs, sleepEdges, TIMING_SLEEP_EDGES)]);
-
-    if( burstStart )
-    {
-        burstWallNs = (lastCycleEnd - burstStart);
-        ++burstCount;
-        burstCyclesTotal += burstCycles;
-        burstWallTotal += burstWallNs;
-        if( burstCycles < burstCyclesMin )
-        {
-            burstCyclesMin = burstCycles;
-        }
-
-        if( burstCycles > burstCyclesMax )
-        {
-            burstCyclesMax = burstCycles;
-        }
-
-        if( burstWallNs > burstWallMax )
-        {
-            burstWallMax = burstWallNs;
-        }
-    }
-
-    burstStart = wakeNs;
-    burstCycles = 0;
-    sleptSinceCycle = true;
-}
-
-// Append the extended timing data for the run that just ended to fP, an open writable stream.
-// Called on the emulator thread.
-static void
-timingReport(FILE *fP)
-{
-u64 wallNs;
-u64 cpuNs;
-long voluntary;
-long involuntary;
-int policy;
-const char *policyP;
-struct sched_param param;
-time_t clock;
-struct tm localTm;
-char stamp[64];
-
-    wallNs = (gettime() - runStartWall);
-    cpuNs = (timingThreadCpuNs() - runStartCpu);
-    timingCtxSwitches(&voluntary, &involuntary);
-
-    // The emulator thread's scheduling class, matters because the panel driver's threads run
-    // SCHED_FIFO and the Type 30 display worker runs SCHED_RR when they have the privilege.
-    policy = sched_getscheduler(0);
-    if( policy == SCHED_FIFO )
-    {
-        policyP = "SCHED_FIFO";
-    }
-    else if( policy == SCHED_RR )
-    {
-        policyP = "SCHED_RR";
-    }
-    else if( policy == SCHED_OTHER )
-    {
-        policyP = "SCHED_OTHER";
-    }
-    else
-    {
-        policyP = "other";
-    }
-
-    param.sched_priority = 0;
-    (void)sched_getparam(0, &param);
-
-    clock = time(NULL);
-    stamp[0] = '\0';
-    if( localtime_r(&clock, &localTm) )
-    {
-        strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &localTm);
-    }
-
-    fprintf(fP, "  run ended %s; wall %.3fs; %ld CPUs online; emulator thread %s priority %d\n",
-        stamp, ((double)wallNs / 1e9), sysconf(_SC_NPROCESSORS_ONLN), policyP, param.sched_priority);
-
-    // CPU time covers ALL of the thread's loop work, timed or not so CPU per cycle is the
-    // real host cost of one simulated 5us cycle.
-    // Wall percent is the thread's share of a core.
-    fprintf(fP, "  emulator thread CPU %.3fs (%.1f%% of wall), %lluns per cycle\n",
-        ((double)cpuNs / 1e9),
-        ((wallNs) ? (((double)cpuNs * 100.0) / (double)wallNs):0.0),
-        (unsigned long long)((totalCycles) ? (cpuNs / (u64)totalCycles):0));
-
-    if( (voluntary >= 0) && (involuntary >= 0) && (runStartVoluntary >= 0) && (runStartInvoluntary >= 0) )
-    {
-        fprintf(fP, "  emulator thread context switches: %ld involuntary (preempted), %ld voluntary (slept or blocked)\n",
-            (involuntary - runStartInvoluntary), (voluntary - runStartVoluntary));
-    }
-    else
-    {
-        fprintf(fP, "  emulator thread context switches: not available (%s unreadable)\n", TIMING_STATUS_FILE);
-    }
-
-    fprintf(fP, "  hsc steal cycles %ld\n", stealCycles);
-    timingPrintHist(fP, "cycle", cycleHist, cycleEdges, TIMING_CYCLE_EDGES);
-    timingPrintHist(fP, "first cycle after a sleep", firstCycleHist, cycleEdges, TIMING_CYCLE_EDGES);
-
-    fprintf(fP, "  gap (untimed loop work between cycles, no sleep between): avg %lluns\n",
-        (unsigned long long)((gapCount) ? (gapTotal / (u64)gapCount) : 0));
-    timingPrintHist(fP, "gap", gapHist, cycleEdges, TIMING_CYCLE_EDGES);
-
-    if( burstCount )
-    {
-        fprintf(fP, "  bursts %ld: cycles avg %ld min %ld max %ld; wall avg %lluus max %lluus\n",
-            burstCount, (burstCyclesTotal / burstCount), burstCyclesMin, burstCyclesMax,
-            (unsigned long long)((burstWallTotal / (u64)burstCount) / 1000),
-            (unsigned long long)(burstWallMax / 1000));
-    }
-    else
-    {
-        fprintf(fP, "  bursts 0\n");
-    }
-
-    if( sleepCount )
-    {
-        fprintf(fP, "  throttle sleeps %ld: avg %lluus min %lluus max %lluus\n",
-            sleepCount,
-            (unsigned long long)((sleepTotal / (u64)sleepCount) / 1000),
-            (unsigned long long)(sleepMin / 1000),
-            (unsigned long long)(sleepMax / 1000));
-    }
-    else
-    {
-        fprintf(fP, "  throttle sleeps 0\n");
-    }
-
-    timingPrintHist(fP, "sleep", sleepHist, sleepEdges, TIMING_SLEEP_EDGES);
-
-    fprintf(fP, "  lag (wall clock minus simtime at cycle start): max %lldus\n",
-        ((lagMax == LLONG_MIN) ? 0LL : (lagMax / 1000)));
-    timingPrintHist(fP, "lag", lagHist, lagEdges, TIMING_LAG_EDGES);
-
-    // How often the throttle's/ lag cap forgave simulated time instead of running an
-    // unpaced burst to catch up.
-    // A nonzero count here is the only sign that this happened, since a
-    // firing does not show up as a burst or a slow cycle.
-    fprintf(fP, "  throttle lag-cap firings %ld\n", throttleCapFirings);
-}
-
-// Clear all extended timing data and give minimums and maximums their starting values.
-// Also clears the per-device data in dynamicIots.c in case its report was never written.
-static void
-timingReset(void)
-{
-    memset(cycleHist, 0, sizeof(cycleHist));
-    memset(firstCycleHist, 0, sizeof(firstCycleHist));
-    memset(gapHist, 0, sizeof(gapHist));
-    memset(sleepHist, 0, sizeof(sleepHist));
-    memset(lagHist, 0, sizeof(lagHist));
-    lastCycleEnd = 0;
-    sleptSinceCycle = false;
-    gapTotal = 0;
-    gapCount = 0;
-    stealCycles = 0;
-    burstCount = 0;
-    burstCycles = 0;
-    burstCyclesMin = LONG_MAX;
-    burstCyclesMax = 0;
-    burstCyclesTotal = 0;
-    burstStart = 0;
-    burstWallTotal = 0;
-    burstWallMax = 0;
-    sleepCount = 0;
-    sleepTotal = 0;
-    sleepMin = UINT64_MAX;
-    sleepMax = 0;
-    lagMax = LLONG_MIN;
-    runStartWall = 0;
-    runStartCpu = 0;
-    runStartVoluntary = -1;
-    runStartInvoluntary = -1;
-    throttleCapFirings = 0;
-}
-
-// Find the histogram bucket for value given numEdges ascending bucket edges.
-// Returns 0 for a value below the first edge, i for a value in
-// [edge[i-1], edge[i]), and numEdges for a value at or above the last edge.
-static int
-timingBucket(u64 value, const u64 *edgesP, int numEdges)
-{
-int i;
-
-    for( i = 0; i < numEdges; ++i )
-    {
-        if( value < edgesP[i] )
-        {
-            return(i);
-        }
-    }
-
-    return(numEdges);
-}
-
-// Format a duration of ns nanoseconds into bufP as a short label in the largest whole unit
-// (ns, us or ms), with two decimals only when it is not a whole number of that unit.
-static void
-timingLabel(u64 ns, char *bufP, size_t bufSize)
-{
-    if( ns < 1000 )
-    {
-        snprintf(bufP, bufSize, "%lluns", (unsigned long long)ns);
-    }
-    else if( ns < 1000000 )
-    {
-        if( (ns % 1000) == 0 )
-        {
-            snprintf(bufP, bufSize, "%lluus", (unsigned long long)(ns / 1000));
-        }
-        else
-        {
-            snprintf(bufP, bufSize, "%.2fus", ((double)ns / 1e3));
-        }
-    }
-    else
-    {
-        if( (ns % 1000000) == 0 )
-        {
-            snprintf(bufP, bufSize, "%llums", (unsigned long long)(ns / 1000000));
-        }
-        else
-        {
-            snprintf(bufP, bufSize, "%.2fms", ((double)ns / 1e6));
-        }
-    }
-}
-
-// Write one histogram to fP on a single line: its title and sample total, then every non-empty
-// bucket as "<edge:count(percent)" for the lowest bucket or "edge+:count(percent)" for the rest,
-// where edge is the bucket's lower bound. histP has numEdges + 1 buckets.
-static void
-timingPrintHist(FILE *fP, const char *titleP, const long *histP, const u64 *edgesP, int numEdges)
-{
-int i;
-long total;
-char label[TIMING_LABEL_SIZE];
-
-    total = 0;
-    for( i = 0; i <= numEdges; ++i )
-    {
-        total += histP[i];
-    }
-
-    fprintf(fP, "  %s histogram (%ld):", titleP, total);
-    if( total == 0 )
-    {
-        fprintf(fP, " empty\n");
-        return;
-    }
-
-    for( i = 0; i <= numEdges; ++i )
-    {
-        if( histP[i] == 0 )
-        {
-            continue;
-        }
-
-        if( i == 0 )
-        {
-            timingLabel(edgesP[0], label, sizeof(label));
-            fprintf(fP, " <%s:%ld", label, histP[i]);
-        }
-        else
-        {
-            timingLabel(edgesP[i - 1], label, sizeof(label));
-            fprintf(fP, " %s+:%ld", label, histP[i]);
-        }
-
-        fprintf(fP, "(%.3f%%)", (((double)histP[i] * 100.0) / (double)total));
-    }
-
-    fprintf(fP, "\n");
-}
-
-// Returns the calling thread's CPU time (user plus system) in ns, or 0 if it can't be read.
-static u64
-timingThreadCpuNs(void)
-{
-struct timespec tm;
-
-    if( clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tm) != 0 )
-    {
-        return(0);
-    }
-
-    return( (((u64)tm.tv_sec) * 1000000000ULL) + (u64)tm.tv_nsec );
-}
-
-// Read the calling thread's voluntary and involuntary context switch counts from
-// /proc/thread-self/status into *voluntaryP and *involuntaryP.
-// Either is set to -1 if the file or its line can't be read.
-// Involuntary switches are preemptions, another thread took
-// the core while this one could still run.
-static void
-timingCtxSwitches(long *voluntaryP, long *involuntaryP)
-{
-FILE *statusP;
-char line[256];
-long value;
-
-    *voluntaryP = -1;
-    *involuntaryP = -1;
-    if( !(statusP = fopen(TIMING_STATUS_FILE, "r")) )
-    {
-        return;
-    }
-
-    while( fgets(line, sizeof(line), statusP) )
-    {
-        if( sscanf(line, "voluntary_ctxt_switches: %ld", &value) == 1 )
-        {
-            *voluntaryP = value;
-        }
-        else if( sscanf(line, "nonvoluntary_ctxt_switches: %ld", &value) == 1 )
-        {
-            *involuntaryP = value;
-        }
-    }
-
-    fclose(statusP);
-}
-
-// Network command-port connection handler.
-// Reads lines from fd, a connected socket, passes each to handlecmd() for processing,
-// and writes the response back followed by a newline.
-// Loops until the peer closes the connection then closes fd.
-void
-handlenetcmd(int fd, void *arg)
-{
-PDP1 *pdp = (PDP1*)arg;
-char *r;
-char line[1024];
-int n;
-
-    while( (n = read(fd, line, (sizeof(line) - 1))), n > 0 )
-    {
-        line[n] = 0;
-        r = handlecmd(pdp, line);
-        n = strlen(r);
-
-        // handlecmd() returns a pointer to this thread's 1024-byte response buffer.
-        // Only append our newline terminator when doing so cannot walk past the end
-        // of that buffer, otherwise send/ the response as-is/
-        if( (n + 2) <= 1024 )
-        {
-            r[n] = '\n';
-            r[n + 1] = '\0';
-            if( write(fd, r, (n + 1)) < 0 )
-            {
-                break;      // peer gone or socket error; stop feeding it more commands
-            }
-        }
-        else
-        {
-            if( write(fd, r, n) < 0 )
-            {
-                break;
-            }
-        }
-    }
-
-    close(fd);
-}
-
-// Attaches a newly-connected display client's socket fd to display screen screenNo (0-3) and
-// puts it in nonblocking mode.
-void
-connectdpy(int screenNo, int fd)
-{
-    nodelay(fd);
-    setDisplayFD(screenNo, fd);
-}
-
-// Called when a connection request comes in on the screen-0 display port
-// Hooks fd up as screen 0's display client via connectdpy().
-void
-handledpy(int fd, void *arg)
-{
-    (void)arg;      // signature matched to the pollfd accept-callback type; not needed here
-    connectdpy(0, fd);
-}
-
-// Same as handledpy() above, but for display screen 1.
-void
-handledpy2(int fd, void *arg)
-{
-    (void)arg;
-    connectdpy(1, fd);
-}
-
-// Same as handledpy() above, but for display screen 2.
-void
-handledpy3(int fd, void *arg)
-{
-    (void)arg;
-    connectdpy(2, fd);
-}
-
-// Same as handledpy() above, but for display screen 3.
-void
-handledpy4(int fd, void *arg)
-{
-    (void)arg;
-    connectdpy(3, fd);
-}
-
-// Called when a connection request comes in on the paper-tape-reader network port.
-// Connects the newly-connected fd in the reader in place of whatever it had.
-// The fd is made/ non-blocking so a client that pauses or stops reading the echoes
-// cannot hold the emulator thread, and it is handed over with mountReader() in pdp1.c.
-// at its next pass.
-void
-handleptr(int fd, void *arg)
-{
-    (void)arg;      // signature matched to the pollfd accept-callback type; not needed here
-    nodelay(fd);
-    fcntl(fd, F_SETFL, (fcntl(fd, F_GETFL, 0) | O_NONBLOCK));
-    mountReader(fd);
-}
-
-// Same as handleptr() above, but for the paper-tape punch (p_fd) instead of the reader.
-void
-handleptp(int fd, void *arg)
-{
-    (void)arg;
-    nodelay(fd);
-    fcntl(fd, F_SETFL, (fcntl(fd, F_GETFL, 0) | O_NONBLOCK));
-    mountPunch(fd);
-}
-
-// Thread entry point that listens on all the network command/display/reader/punch ports
-//  and dispatches accepted connections to the matching handler.
-// Runs for the life of the process, serveN() only returns if its poll() fails.
-// Returns nil, the thread's exit value is unused.
-void*
-netthread(void *arg)
-{
-    // The command port's handler keeps its connection so it runs threaded.
-    // The others just hand the fd over.
-    struct PortHandler ports[] =
-    {
-        { 1040, handlenetcmd, 1 },
-        // 1041 is typewriter
-        { 1042, handleptr, 0 },
-        { 1043, handleptp, 0 },
-        { 3400, handledpy, 0 },
-        { 3401, handledpy2, 0 },
-        { 3402, handledpy3, 0 },
-        { 3403, handledpy4, 0 },
-    };
-    serveN(ports, nelem(ports), arg);
-    return( nil );
-}
-
-// Read a memory file produced by dumpmem() into working memory.
-// Reworked by wje to keep the address and data on one line, much more readable.
-void
-readmem(const char *filenameP, Word *mem, Word size)
-{
-int val;
-Word addr;
-Word word;
-char *strP;
-FILE *fileP;
-char buf[100];
-
-    if( (fileP = fopen(filenameP, "r")) == NIL )
-    {
-        return;
-    }
-
-    // Handle both old and new file formats.
-    // New is addr: word, old has each on a separate line.
-    addr = 0;
-    while( (strP = fgets(buf, 100, fileP)) )
-    {
-        val = strtol(strP, &strP, 8);
-        if( strP && (*strP == ':') )
-        {
-            addr = val;         // address part
-            if( addr >= size )
-            {
-                fprintf(stderr, "Address out of range: %o\n", addr);
-                break;
-            }
-        }
-
-        if( !strP || (*strP == '\n') )
-        {
-            // must be old format memory
-            if( addr < size)
-            {
-                mem[addr] = val;
-            }
-        }
-        else
-        {
-            // We'll assume the line is OK if we got the firt part
-            word = strtol(strP+1, &strP, 8);
-            if( addr < size)
-            {
-                mem[addr] = word;
-            }
-        }
-    }
-
-    fclose(fileP);
-}
-
-// Dump working memory to the memory image file.
-// Reworked by wje to keep the address and data on one line, much more readable.
-void
-dumpmem(const char *fileNameP, Word *mem, Word size)
-{
-FILE *fP;
-Word i;
-
-    if( !(fP = fopen(fileNameP, "w")) )
-    {
-        return;
-    }
-
-    for(i = 0; i < size; i++)
-    {
-        if( mem[i] != 0 )
-        {
-            // Just put it on one line, jeez
-            // Support for the old format removed by wje 7-Oct-2026.
-            fprintf(fP, "%06o: %06o\n", i, mem[i]);
-        }
-    }
-
-    fclose(fP);
 }
 
 // a bit ugly...
@@ -1364,7 +609,7 @@ BreakpointP brkP;
         {
             brkP->curCount++;
             logger(LOG_BREAK, "breakpoint %d seen curcount %d\n", i+1, brkP->curCount);
-            if( brkP->curCount >= brkP->count )    // a count of 0 or 1 are wquivalent
+            if( brkP->curCount >= brkP->count )    // a count of 0 or 1 are equivalent
             {
                 brkP->curCount = 0;     // for next time
                 AD1_SET_BREAKPOINT_HIT(pdp1P);
@@ -1505,7 +750,7 @@ ConfigurationSettingP configSettingP;
     all1DEnabled = configurationP->all1DEnabled;
 
     // This will only be used if called from sigint.
-    // pdp1P won't be set yet in the prmary call from main()
+    // pdp1P won't be set yet in the primary call from main()
     if( pdp1P )
     {
         pdp1P->muldiv_sw = configurationP->muldivEnabled;

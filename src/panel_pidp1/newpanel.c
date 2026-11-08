@@ -14,7 +14,8 @@
  * Bloch's law.
  *
  * Here, the emulator tallies the on state once per 5us emulated cycle by incrementing panelP->pwmcount[][].
- * This driver periodically reads and resets those counts and uses them directly as the PWM
+ * This driver periodically reads those counts, takes each one's difference from its last read
+ * (it never writes them, see panel_pidp1.h), and uses the differences as the PWM
  * phase-count threshold for lightRow(), after capping against maxBrightness (a 0-100 percent
  * ceiling -- values below the cap are left untouched, only the top end is clamped).
  *
@@ -56,6 +57,8 @@
  *    This lets a chip batch every entry into a handful of bank-masked SET/CLR register writes.
  *    Real batching is implemented for the BCM2835/2711 (Pi 4 and earlier) and RP1 (Pi 5's).
  * wje 22-Sep-26 wje update for ppporch's power off change
+ * 8-Nov-2026 Claude - pwmthread() takes each count's difference from its last read instead of
+ *    resetting the count, so a reset can no longer be lost to pdp1's concurrent increment.
  */
 #include <stdlib.h>
 #include <stdarg.h>
@@ -637,10 +640,11 @@ static u32 cycle = 0;
     (&panelP->sw0)[i] = readRow(8 + i);
 }
 
-// Background thread: every ~pwmCycleTime, read and reset panelP->pwmcount[row][col]
-// for each of the 10x18 light bits, scale to the 0-numLevels range based on the actual number
-// of emulated cycles elapsed, clamp to 0-numLevels, clamp again to the maxBrightness ceiling,
-// and store into p->lights[row][col] for lightRow() to use as its phase-count threshold.
+// Background thread: every ~pwmCycleTime, read panelP->pwmcount[row][col] for each of the
+// 10x18 light bits, take its difference from the last read, scale to the 0-numLevels range
+// based on the actual number of emulated cycles elapsed, clamp to 0-numLevels, clamp again to
+// the maxBrightness ceiling, and store into p->lights[row][col] for lightRow() to use as its
+// phase-count threshold.
 void *
 pwmthread(void *arg)
 {
@@ -649,6 +653,8 @@ int i, j;
 int writeIdx;
 int intensity;
 u16 count;
+u16 now;
+u16 lastCount[10][18];
 u64 lastCycleCount;
 u64 currentCycleCount;
 u64 expectedCycles;
@@ -672,6 +678,7 @@ struct sched_param sp;
     }
 
     lastCycleCount = panelP->cyclecount;
+    memcpy(lastCount, panelP->pwmcount, sizeof(lastCount));
     if( doTiming )
     {
         dbgLastTime = gettime();
@@ -694,12 +701,12 @@ struct sched_param sp;
 
         // The emulator stops advancing cyclecount when the physical POWER switch is off.
         // Do not leave the last computed PWM image displayed in that state: clear the
-        // filter, the inactive display buffer, and any counts accumulated before the
-        // emulator observed the switch transition. Publishing the cleared buffer keeps
-        // the panel thread's double-buffer handoff intact.
+        // filter and the inactive display buffer, and take the current counts as the new base so
+        // any accumulated before the emulator observed the switch transition are dropped.
+        // Publishing the cleared buffer keeps the panel thread's double-buffer handoff intact.
         if( !(panelP->sw0 & SW_POWER) )
         {
-            memset(panelP->pwmcount, 0, sizeof(panelP->pwmcount));
+            memcpy(lastCount, panelP->pwmcount, sizeof(lastCount));
             memset(lightsP->lightsF, 0, sizeof(lightsP->lightsF));
 
             writeIdx = 1 - atomic_load_explicit(&lightsP->lightsReadyIdx, memory_order_relaxed);
@@ -725,13 +732,17 @@ struct sched_param sp;
 
         lastCycleCount = currentCycleCount;
 
+        // The u16 counts may have wrapped more than once in a pass this long (a host stall), so their
+        // differences mean nothing: take the current counts as the new base and keep the lights as
+        // they are for this pass.
+        if( expectedCycles > 65535 )
+        {
+            memcpy(lastCount, panelP->pwmcount, sizeof(lastCount));
+            continue;
+        }
+
         // Compute this pass into the inactive buffer.
         writeIdx = 1 - atomic_load_explicit(&lightsP->lightsReadyIdx, memory_order_relaxed);
-
-        if(expectedCycles > 65535)
-        {
-            expectedCycles = 65535;
-        }
 
         if( doTiming )
         {
@@ -742,16 +753,17 @@ struct sched_param sp;
         {
             for(j = 0; j < 18; j++)
             {
-                // Read this light's "on" tally for the last period and reset it for the next one.
-                // Not synchronized against pdp1's concurrent increments.
-                // Worst case, an increment is occasionally lost or counted in the next period,
-                // which is not visible at this update rate.
-                count = panelP->pwmcount[i][j];
-                panelP->pwmcount[i][j] = 0;
+                // This light's "on" cycles since the last read.
+                // The u16 difference is right across the count's wrap.
+                now = panelP->pwmcount[i][j];
+                count = (u16)(now - lastCount[i][j]);
+                lastCount[i][j] = now;
 
+                // pdp1 adds to the counts before it advances cyclecount, which was read first,
+                // so a count can lead it by the cycles of the instruction being tallied.
                 if( count > expectedCycles )
                 {
-                    count = (u16)expectedCycles; // expectedCycles is already clamped to <=65535 above
+                    count = (u16)expectedCycles;    // expectedCycles is <= 65535 here
                 }
 
                 // Scale the duty fraction (count/expectedCycles, 0..1) to a phase threshold of
@@ -784,7 +796,7 @@ struct sched_param sp;
                 // strobes visibly against lightRow()'s scan period.
                 // Using a faster alpha when brightening and a slower alpha when
                 // dimming also models an incandescent lamp's filament
-                // which heats up faster than it cools, so lamps fade out rather than snapping off.
+                // which heats up faster than it cools, so lights fade out rather than snapping off.
                 float *fP = &lightsP->lightsF[i][j];
                 float alpha = ((float)intensity > *fP) ? onAlpha : offAlpha;
 

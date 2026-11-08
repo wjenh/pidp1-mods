@@ -62,6 +62,8 @@
  *    netPorts.c, coreImage.c and timingReport.c.
  * Claude 08-Nov-2026 a SIGTERM ends the process from the main loop, not in its handler, so the exit
  *    cleanup that writes coremem no longer runs in signal context.
+ * Claude 08-Nov-2026 the panel's lamp tallies wrap instead of saturating, and the panels read them as
+ *    differences instead of resetting them (panel1.c).
 */
 
 #include <errno.h>
@@ -463,7 +465,7 @@ sighandler(int sig)
 
 #define LOCKFILE "/tmp/pdp1.lock"
 
-// Only one pdp1 may run, a second one would drive the same panel lamps, take the first one's
+// Only one pdp1 may run, a second one would drive the same panel lights, take the first one's
 // ports when it exits, and overwrite coremem at its exit.
 // The lock is an flock() on a file in /tmp, the namespace the panel segment already shares.
 // The fd stays open for the life of the process.

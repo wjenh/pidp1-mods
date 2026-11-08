@@ -16,12 +16,14 @@
  * The brightess percentage is then collapsed to a boolean via a fixed threshold, PWM_ON_THRESHOLD,
  * once per frame, since this front end has no brightness ramp, only one on/off sprite pair per
  * lamp.
- * NOTE that this and the hardware panel cannot be run simultaneously, they would step on the pwm data.
+ * Neither this nor the hardware panel writes the pwm data, each keeps its own last read, so the two
+ * may run at the same time.
  *
  * 5-Jul-2026 wje rework to fix the incorrectly labeled H.S CYCLE light name, add the new pwm logic,refomat
  * 1-Oct-2026 Claude: draw a frame only when an element changed or the window needs repainting.
  * 1-Oct-2026 Claude: Makefile rebuilds on a change to any included file.
  * 4-Oct-2026 wje panel lights were not turning off when the power switch was turned off
+ * 8-Nov-2026 Claude: lights take each pwm count's difference from its last read instead of resetting the count.
  */
 #include <stdio.h>
 #include "common.h"
@@ -64,7 +66,7 @@ struct Grid
 };
 
 // One clickable/drawable panel element (a single lamp, toggle switch, or
-// key). `tex` points at a 2-entry (lamps/switches) or 3-entry (keys)
+// key). `tex` points at a 2-entry (lights/switches) or 3-entry (keys)
 // texture array indexed by `state`, so `state` doubles as both the visible
 // on/off (or up/down/neutral for keys) sprite index and the logical bit
 // value read back in getnswitches()/updatepanel(). `grid`+`x`,`y` are the
@@ -95,6 +97,10 @@ Panel *panel;
 // all seven main-panel rows, used to compute expectedcycles.
 u64 lastcyclecount;
 
+// Each panel->pwmcount[][] counter as of the same pass; a lamp's on-cycles are the u16
+// difference from it, since only pdp1 writes the counters.
+u16 lastcount[10][18];
+
 // Named sub-ranges into the `lights[]` array (elements.inc), one pointer per
 // PDP-1 register/indicator group. Each pointer is set in init() to point at
 // the first Element of its group; the group's element count is implied by
@@ -120,7 +126,7 @@ SDL_Texture *switchtex[2];
 SDL_Texture *hswitchtex[2];
 SDL_Texture *keytex[3];
 
-// grid1 covers the main panel body (PC/MA/MB/AC/IO/flip-flop lamps, the
+// grid1 covers the main panel body (PC/MA/MB/AC/IO/flip-flop lights, the
 // EXTEND/TA/TW switch rows, and the key row); grid2 covers the narrower
 // right-hand column (run/sstep/sinst, sense switches, program flags, IR).
 // Both are derived from the same `scl` mm-to-pixel factor in init().
@@ -248,7 +254,7 @@ changed(void)
 
 // Renders one complete frame: panel background, then every lamp, switch,
 // and key sprite on top in that order (so switches/keys visually sit above
-// the background art, and lamps are drawn first so a switch/key sprite at
+// the background art, and lights are drawn first so a switch/key sprite at
 // the same grid position -- e.g. the sense-switch lamp+toggle pair -- can
 // overlay it), then presents the frame. Called from the main loop only when
 // changed() or redrawNeeded says the window is out of date. Every frame is
@@ -288,7 +294,7 @@ unsigned i;
 // in elements.inc and encodes an implicit, unchecked dependency on that
 // file's element ordering and group sizes -- reordering or resizing a
 // group in elements.inc without updating the matching `e +=` line here (or
-// vice versa) will silently misattribute lamps/switches to the wrong
+// vice versa) will silently misattribute lights/switches to the wrong
 // register with no compile-time or run-time check.
 void
 init(void)
@@ -505,33 +511,34 @@ initpanel(void)
 	// real pass measures only cycles that elapse after this program attaches,
     // not cycles counted since whatever process created or last reset the segment.
 	lastcyclecount = panel->cyclecount;
+    memcpy(lastcount, panel->pwmcount, sizeof(lastcount));
 }
 
-// Reads and destructively resets one main-panel light row's worth (18
-// columns) of panel->pwmcount[][] and packs a boolean-per-column "on" word from
-// it, suitable for passing to setnlights().
+// Reads one main-panel light row's worth (18 columns) of panel->pwmcount[][], takes each
+// column's difference from lastcount[][] and moves lastcount[][] on, and packs a
+// boolean-per-column "on" word from the differences, suitable for passing to setnlights().
 //
 // Each column's fractional on-time over the last window (count/expectedcycles) is compared against PWM_ON_THRESHOLD.
 // Columns at or above it set their bit.
 //
-// Eexpectedcycles is the number of emulated cycles elapsed since this row was last drained.
-//
-// Not synchronized against pdp1's concurrent increments into pwmrow[].
-// Worst case, an increment is occasionally lost or counted in the next window, negligible.
+// Eexpectedcycles is the number of emulated cycles elapsed since this row was last read.
 int
 computeLightWord(Panel *panelP, int row, u64 expectedcycles)
 {
 int col, word;
 u16 *rowP;
 u16 count;
+u16 now;
 
 	word = 0;
     rowP = panelP->pwmcount[row];
 
 	for(col = 0; col < 18; col++)
     {
-		count = rowP[col];
-		rowP[col] = 0;
+        // The u16 difference is right across the count's wrap.
+        now = rowP[col];
+        count = (u16)(now - lastcount[row][col]);
+        lastcount[row][col] = now;
 
         // HSC hack.
         if( (row == HSC_ROW) && (col == HSC_COL) && (count >= HSC_STRETCH_THRESHOLD) )
@@ -611,7 +618,8 @@ updatepanel(void)
             lights[i].state = 0;
         }
 
-        memset(panel->pwmcount, 0, sizeof(panel->pwmcount));
+        // Counts accumulated before pdp1 saw the switch go off are dropped.
+        memcpy(lastcount, panel->pwmcount, sizeof(lastcount));
         lastcyclecount = panel->cyclecount;
         return;
     }
@@ -622,19 +630,23 @@ updatepanel(void)
 	expectedcycles = currentcyclecount - lastcyclecount;
 	if(expectedcycles != 0)
     {
-		if(expectedcycles > 65535)
+        lastcyclecount = currentcyclecount;
+
+        // The u16 counts may have wrapped more than once in a window this long (a stalled loop),
+        // so their differences mean nothing: take the current counts as the new base and keep
+        // the lights as they are for this pass.
+        if( expectedcycles > 65535 )
         {
-			expectedcycles = 65535;	// pwmcount[][] is u16; matches panel1.c's incrcount() saturation
+            memcpy(lastcount, panel->pwmcount, sizeof(lastcount));
+            return;
         }
 
-		lastcyclecount = currentcyclecount;
-
-		// Each row is drained into a word exactly once, then reused for
-		// every setnlights() call that reads that row (row 5 feeds both
-		// ff_l and misc_l; row 6 feeds ir_l, ss_l, and pf_l) --
-		// computeLightWord() destructively resets pwmcount[][] as it
-		// reads it, so calling it twice for the same row would see an
-		// already-drained zero the second time.
+        // Each row is read into a word exactly once, then reused for
+        // every setnlights() call that reads that row (row 5 feeds both
+        // ff_l and misc_l; row 6 feeds ir_l, ss_l, and pf_l) --
+        // computeLightWord() moves lastcount[][] on as it reads, so
+        // calling it twice for the same row would see a zero
+        // difference the second time.
 		w0 = computeLightWord(panel, 0, expectedcycles);
 		w1 = computeLightWord(panel, 1, expectedcycles);
 		w2 = computeLightWord(panel, 2, expectedcycles);
@@ -707,8 +719,8 @@ main()
 			}
         }
 
-        // updatepanel() runs every pass even when nothing is drawn: it drains
-        // pwmcount[][], and a skipped drain would put the skipped time into the
+        // updatepanel() runs every pass even when nothing is drawn: it reads
+        // pwmcount[][], and a skipped read would put the skipped time into the
         // next window's duty.
 		updatepanel();
 

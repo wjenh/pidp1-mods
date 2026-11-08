@@ -4,14 +4,16 @@
  * driver, updatelights() writes the indicator-light bits read by the panel
  * driver(s).
  *
- * wje 14-Jun-26 - in updatelights(), also tally each lamp bit into
+ * 14-Jun-26 wje - in updatelights(), also tally each lamp bit into
  *    panel->pwmcount[][] (see panel_pidp1.h) for the new
  *    lower-overhead lamp PWM scheme; lights0-lights9 unchanged
- * wje 14-Jun-26 - in updatelights(), also increment panel->cyclecount once
+ * 14-Jun-26 wje - in updatelights(), also increment panel->cyclecount once
  *    per call, so the panel driver can measure elapsed cycles
  *    directly instead of from wall-clock time
- * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
- * wje 6-Oct-2026 comment changes only
+ * 16-Jun-26 wje many changes so the CHM simple test program displays like the real PDP-1
+ * 6-Oct-2026 wje comment changes only
+ * 08-Nov-2026 wje the panel's lamp tallies wrap instead of saturating, and the panels read them as
+ *    differences instead of resetting them (panel1.c).
  */
 #include <unistd.h>
 #include <fcntl.h>
@@ -23,23 +25,19 @@
 
 #define PANELSEGMENT "/tmp/pdp1_panel"
 
-// Add 1 to cnt[i] for each bit i (0-17) of bits that is set, saturating at
-// 65535 instead of wrapping.
-// Used by updatelights() to tally per-cycle "on" counts into panel->pwmcount[][].
-// Saturation guards against the panel driver's read+reset interval occasionally running
-// longer than expected.
-// (65535 cycles = ~327m) without wrapping pwmcount back to a small value.
+// Add 1 to cnt[i] for each bit i (0-17) of bits that is set.
+// Used by updatelights_pwm() to tally per-cycle "on" counts into panel->pwmcount[][].
+// The counts wrap at 65536 and nothing else writes them: each panel reader takes the
+// 16-bit difference from its own last read (see panel_pidp1.h).
+// A saturating count would stop moving at 65535 and read as dark from then on.
 static void
 incrcount(u16 *cnt, u32 bits)
 {
     for(int i = 0; i < 18; i++)
     {
-        if((bits >> i) & 1)
+        if( ((bits >> i) & 1) )
         {
-            if(cnt[i] < 65535)
-            {
-                cnt[i]++;
-            }
+            cnt[i]++;
         }
     }
 }

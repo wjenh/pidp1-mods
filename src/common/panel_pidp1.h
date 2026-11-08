@@ -14,6 +14,7 @@
  * wje 4-Jul-25 - just formatting cleanup, no functional change
  * 1-Oct-2026 Claude: comments name the pwmcount[][] readers (newpanel, vpanel_pdp1); no code change
  * 6-Oct-2026 wje comment changes only
+ * 8-Nov-2026 Claude: pwmcount[][] wraps and readers take differences instead of resetting it; comments only here
  */
 enum {
     // sw0
@@ -87,18 +88,20 @@ struct Panel
     // panel), rows 7-9 to lights7-lights9 (I/O panel), and column i counts
     // the row's bit of value 1 << i.
     //
-    // The panel driver is expected to periodically read and then reset
-    // these counters and scale the result into a PWM "on" duration
-    // instead of polling lights0-lights9 at a high sample rate as the legacy
-    // panel_pidp1 did.
+    // The counters only ever count up, wrapping at 65536, and only pdp1 writes them.
+    // A reader keeps its own copy of every counter from its last read and takes
+    // (u16)(now - last) as the lamp's on-cycles since then, scaled against the
+    // cyclecount difference over the same read, instead of polling lights0-lights9
+    // at a high sample rate as the legacy panel_pidp1 did.
+    // A reader must never write them: a reset racing pdp1's read-modify-write is lost,
+    // and the lamp's next read then carries the previous read's count too.
+    // Since no reader writes, newpanel and vpanel_pdp1 may run at the same time.
     //
-    // Newpanel and vpanel_pdp1 both read and reset these counters, so only
-    // one of them may run at a time.
+    // The difference is exact only while a read covers fewer than 65536 cycles.
+    // A reader whose read covers more (a host stall) cannot know the counts and
+    // takes the current values as its new base instead; it does the same when the
+    // power switch is off.
     // Lights0-lights9 hold the snapshot the tally counts.
-    //
-    // Not synchronized against concurrent updates from pdp1, a reader may
-    // occasionally race an increment by +/-1, which is negligible given
-    // the intended read interval.
     u16 pwmcount[10][18];
 
     // Monotonically-incrementing count of emulated cycles, advanced by

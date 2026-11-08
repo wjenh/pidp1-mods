@@ -60,6 +60,8 @@
  *    externs of its own.
  * Claude 08-Nov-2026 the network ports, the core image file and the pidp1timing report move to
  *    netPorts.c, coreImage.c and timingReport.c.
+ * Claude 08-Nov-2026 a SIGTERM ends the process from the main loop, not in its handler, so the exit
+ *    cleanup that writes coremem no longer runs in signal context.
 */
 
 #include <errno.h>
@@ -122,11 +124,12 @@ static float configCutoff(char *nameP, float fallback);
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
 
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
+static volatile sig_atomic_t exitRequested;         // SIGTERM, acted on by the main loop
 
 ConfigurationP configurationP;  // from the config file
 
 // The main emulator loop.
-// Runs forever or until exit() or the SIGTERM handler ends the process.
+// Runs forever or until exit() ends the process, on the shutdown key combination or a SIGTERM.
 // Each iteration applies any pending remote debugger overrides of the front-panel
 // switches and services start/stop/continue/examine/deposit/readin switch edges via
 // spec()/cycle()/start_readin()/readin1()/readin2(), runs one machine cycle or steals one for an active
@@ -161,6 +164,14 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
     for(;;)
     {
+        // Here, not in the handler, the exit cleanup's stdio and malloc are safe: a signal that
+        // interrupted a thread holding their locks would hang it.
+        // A pass sleeps at most a throttle quantum, so the stop is prompt in every state.
+        if( exitRequested )
+        {
+            exit(0);
+        }
+
         if( reconfigRequested )
         {
             reconfigRequested = 0;
@@ -441,13 +452,13 @@ exitcleanup(void)
     lightsoff(panel);
 }
 
-// Signal handler registered for SIGTERM, exits cleanly (status 0), which triggers the
-// atexit()-registered exitcleanup() above.
+// Signal handler registered for SIGTERM. It only asks emu() to exit (status 0), which runs the
+// atexit()-registered exitcleanup() above in ordinary context.
 void
 sighandler(int sig)
 {
     (void)sig;
-    exit(0);
+    exitRequested = 1;
 }
 
 #define LOCKFILE "/tmp/pdp1.lock"

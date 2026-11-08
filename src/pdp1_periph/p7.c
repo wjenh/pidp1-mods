@@ -15,6 +15,7 @@
  * wje 4-Oct-26 add a fix so this works with the new emulator optimizations
  * Claude 03-Nov-26 pverts had no bounds check.
  *     A frame of more than 10,000 points overran it onto npoints and crashed the display thread.
+ * wje 7-Nov-26 fixes for various bugs from the original repo
  *
 */
 

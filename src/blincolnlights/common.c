@@ -5,6 +5,7 @@
 // 05-Oct-2026 Claude serveN() retries ports that cannot listen, gives a threaded port's
 //    connections their own threads, dial() times out, the segment fds are closed after mmap()
 // 06-Oct-2026 Claude dialQuietly(), dial() without its report, for a caller that retries
+// 07-Nov-2026 Claude split() frees its word block when the line is empty
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -587,17 +588,18 @@ isdelim( char c )
 }
 
 // Breaks line into words at blanks and ';', honoring quotes and backslash escapes. Returns a
-// malloc'd argv ending in nil; *pargc, if given, gets the word count.
+// malloc'd argv ending in nil; *pargc, if given, gets the word count. The words share one
+// malloc'd block that starts at argv[0]: a caller frees argv[0] when there is a word, then argv.
 char **
 split( char *line, int *pargc )
 {
 int argc, n;
-char **argv, *lp, delim;
+char **argv, *lp, *words, delim;
 
     n = strlen( line ) + 1;
 
     /* just allocate enough */
-    lp = (char *)malloc( 2 * n );
+    words = lp = (char *)malloc( 2 * n );
     argv = (char **)malloc( sizeof(char *) * n );
     argc = 0;
 
@@ -661,6 +663,12 @@ char **argv, *lp, delim;
         {
             break;
         }
+    }
+
+    // With no word, nothing points at the block, so no caller could free it.
+    if( argc == 0 )
+    {
+        free( words );
     }
 
     if( pargc )

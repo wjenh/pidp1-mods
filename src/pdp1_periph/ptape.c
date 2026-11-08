@@ -1,5 +1,7 @@
 #ifdef UNITY_BUILD
 
+#include <errno.h>
+
 unsigned char *ptrbuf;
 //unsigned char ptrbuf[200];
 int ptrbuflen;
@@ -342,6 +344,12 @@ cli(char *line, int n)
 			connectptp(&pfds[2]);
 		}
 	}
+        // split() puts every word in one block, which starts at args[0]. Neither mountptr() nor
+        // fileptp() keeps the name past its call.
+        if(n > 0) {
+                free(args[0]);
+        }
+        free(args);
 }
 
 void*
@@ -369,8 +377,17 @@ tapethread(void *arg)
                 // While the punch is unconnected, wake to dial it again: the emulator may not be
                 // listening yet, or may be restarting.
                 int ret = poll(pfds, nelem(pfds), ((pfds[2].fd < 0) ? PTP_REDIAL_MS : -1));
-		if(ret < 0)
-			exit(0);
+                if(ret < 0) {
+                        // Linux never restarts poll() after a signal handler runs on this thread,
+                        // so EINTR is no failure: wait again. revents are stale then, so skip them.
+                        if(errno == EINTR) {
+                                continue;
+                        }
+                        // Anything else (a bad descriptor, no memory) leaves the thread unable to
+                        // go on. Status 1, so a caller can tell it from a quit.
+                        fprintf(stderr, "tapethread: poll: %s\n", strerror(errno));
+                        exit(1);
+                }
                 if(pfds[2].fd < 0)
                         connectptp(&pfds[2]);
 		if(ret == 0)
@@ -380,6 +397,13 @@ tapethread(void *arg)
 		if(pfds[3].revents & POLLIN) {
 			struct sockaddr_in client;
 			socklen_t len = sizeof(client);
+                        // A newer client replaces one still connected: both callers write their
+                        // line at once and only linger, so the newest is the one with a command coming.
+                        if(pfds[4].fd >= 0) {
+                                close(pfds[4].fd);
+                                pfds[4].fd = -1;
+                                pfds[4].events = 0;
+                        }
 			pfds[4].fd = accept(pfds[3].fd, (struct sockaddr*)&client, &len);
 			if(pfds[4].fd >= 0)
 				pfds[4].events = POLLIN;
@@ -387,29 +411,32 @@ tapethread(void *arg)
 
 		// handle network cli
 		else if(pfds[4].revents & POLLIN) {
-                        n = read(pfds[4].fd, line, sizeof(line));
+                        // One byte short of the buffer, so the line can always be terminated.
+                        n = read(pfds[4].fd, line, (sizeof(line) - 1));
 			if(n <= 0) {
 				close(pfds[4].fd);
 				pfds[4].fd = -1;
 				pfds[4].events = 0;
+                                // A reset connection reads -1, and line still holds the last
+                                // command: it must not run again.
+                                continue;
 			}
-			if(n < sizeof(line))
-				line[n] = '\0';
+                        line[n] = '\0';
 			cli(line, n);
 			tapeUpdated = 1;
 		}
 
 		// handle cli
 		else if(pfds[0].revents & POLLIN) {
-			n = read(pfds[0].fd, line, sizeof(line));
+                        // One byte short of the buffer, so the line can always be terminated.
+                        n = read(pfds[0].fd, line, (sizeof(line) - 1));
 			if(n <= 0) {
 				close(pfds[0].fd);
 				pfds[0].fd = -1;
 				pfds[0].events = 0;
 				continue;
 			}
-			if(n < sizeof(line))
-				line[n] = '\0';
+                        line[n] = '\0';
 			cli(line, n);
 			tapeUpdated = 1;
 		}
@@ -434,7 +461,8 @@ tapethread(void *arg)
 				connectptp(&pfds[2]);
 				continue;
 			}
-			memcpy(ptpbuf+1, ptpbuf, (ptpbuflen-1)*sizeof(*ptpbuf));
+                        // The ranges overlap, so memmove(): memcpy() is undefined here.
+                        memmove(ptpbuf+1, ptpbuf, (ptpbuflen-1)*sizeof(*ptpbuf));
 			ptpbuf[0] = c&0377;
 			write(ptpfd, &c, 1);
 			tapeUpdated = 1;

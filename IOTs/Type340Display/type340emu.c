@@ -71,6 +71,9 @@
  * 7-Nov-2026 Claude - a lightpen hit in increment mode pauses after its nibble, 1.0 us, with the rest of
  *    the word undrawn, and the resume goes on with the next nibble (H-340 p. 3-7).
  * 7-Nov-2026 Claude - curState is declared as States, not Modes.
+ * 7-Nov-2026 wje - adjust timing for character mode to match deduced performance.
+ *    Note that no actual documentation survives, the timing is a best guess from the typical
+ *    way DEC did character generation at the time.
  */
 
 #include <stdlib.h>
@@ -1627,8 +1630,8 @@ static unsigned char charSet[128][6] = {
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 63 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 64 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 65 ???
-    { 0000, 0200, 0100, 0040, 0000, 0 },  // 66 `
-    { 0040, 0100, 0200, 0100, 0040, 0 },  // 67 ^
+    { 0000, 0200, 0100, 0040, 0000, CH_NSPC },  // 66 ` accent, over the previous character
+    { 0040, 0100, 0200, 0100, 0040, CH_NSPC },  // 67 ^ accent, over the previous character
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 70 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 71 block?
     { 0000, 0000, 0000, 0000, 0000, CH_BS },  // 72 backspace
@@ -1642,8 +1645,9 @@ static unsigned char charSet[128][6] = {
 // COUNTs the 342 takes for each charSet[] entry: the 342's paths are not documented, so this is
 // a model, the shortest path from the start through the lit dots to the next character's start
 // (Projects/CoreEnhancements/char-time/path_model.py --table writes it; edit charSet[] and rerun
-// it). LF 12, CR 9, the shifts and escape 0, sub- and superscript 4, backspace 0 (it ends where
-// it started); the ??? placeholders' 38 is a 2-opt bound, too many dots for the exact search.
+// it). LF 12, CR 9, the shifts and escape 0, sub- and superscript 4, backspace 7 (one character
+// back); an accent (CH_NSPC) goes from the beam back through its dots over the previous character
+// and returns; the ??? placeholders' 38 is a 2-opt bound, too many dots for the exact search.
 static const unsigned char charSteps[128] = {
     19, 22, 24, 20, 22, 26, 20, 22,   // 000 blob A B C D E F G
     24, 17, 16, 20, 19, 20, 21, 20,   // 010 H I J K L M N O
@@ -1659,8 +1663,8 @@ static const unsigned char charSteps[128] = {
     16, 23, 20, 12,  9,  0,  0,  0,   // 130 x y z LF CR HORIZ VERT ESC
      7, 38, 38, 14, 38, 38, 17, 14,   // 140 space ??? ??? ~ ??? ??? up right
     17, 14, 12, 18, 17, 15, 13, 38,   // 150 down left backslash [ ] { } ???
-     8, 38, 14, 38, 38, 38, 12, 12,   // 160 _ ??? | ??? ??? ??? ` ^
-    38, 38,  0,  4, 38, 38, 38,  4   // 170 ??? block? backspace subscript ??? ??? ??? superscript
+     8, 38, 14, 38, 38, 38, 12, 15,   // 160 _ ??? | ??? ??? ??? ` ^
+    38, 38,  7,  4, 38, 38, 38,  4   // 170 ??? block? backspace subscript ??? ??? ??? superscript
 };
 
 /*
@@ -1695,7 +1699,8 @@ bool sawHit;
     chFlags = charSet[curChar][5];
 
     // The whole character's time, charged here so that an escape, a stop or an edge violation pays
-    // it too. A vertical character takes the same COUNTs: its path is the same, turned.
+    // it too. A vertical character is charged the horizontal path's COUNTs, an approximation: it is
+    // drawn unturned, and where the 342 starts the next vertical character is not documented.
     steps = charSteps[curChar];
     pendingDelay += ((steps * CHAR_STEP_TIME) + CHAR_NEXT_TIME);
 
@@ -1758,6 +1763,26 @@ bool sawHit;
             }
         }
         break;
+
+    case CH_BS:
+        // Back one character, so the next one overprints the last, as simh's backspace does. It
+        // draws nothing, so at the left edge the beam stays where it is rather than stopping the
+        // display for an edge violation, as the non-spacing guard above does.
+        if( twoCharsets || (shiftState == 0) )
+        {
+            if( curX >= ((CHARWIDTH + CHARDELTA) * dotSpacing) )
+            {
+                curX -= (CHARWIDTH + CHARDELTA) * dotSpacing;
+            }
+        }
+        else if( !twoCharsets && (shiftState != 0) )
+        {
+            if( curY <= 1023 - ((CHARHEIGHT + CHARDELTA) * dotSpacing) )
+            {
+                curY += (CHARHEIGHT + CHARDELTA) * dotSpacing;
+            }
+        }
+        return(COMPLETED);
 
     case CH_D:
         curY -= 2 * dotSpacing;                     // descender
@@ -1824,24 +1849,7 @@ bool sawHit;
         curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
     }
 
-    if( chFlags == CH_BS )
-    {
-        if( twoCharsets || (shiftState == 0) )
-        {
-            curX -= (CHARWIDTH + CHARDELTA) * dotSpacing;  // backspace
-        }
-        else if( !twoCharsets && (shiftState != 0) )
-        {
-            curY += (CHARHEIGHT + CHARDELTA) * dotSpacing;  // backspace
-        }
-
-        if( checkBounds(curX, curY) )
-        {
-            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
-            return(EDGEVIOLATION);
-        }
-    }
-    else if( chFlags == CH_D )
+    if( chFlags == CH_D )
     {
         curY += 2 * dotSpacing;     // undo descender
     }

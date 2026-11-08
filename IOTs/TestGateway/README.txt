@@ -4,7 +4,7 @@ This is NOT a real PDP-1 peripheral. There is no Type 44 device, and the real Ty
 High Speed Channel hardware had no interface reachable from user code at all -- HSC was
 purely a private data path used internally by other devices. This IOT exists solely so an
 am1 test program can drive the emulator's internal HSC implementation
-(src/blincolnlights/pdp1/highSpeedChannels.c) directly, in order to test it. Device number
+(src/pdp1/highSpeedChannels.c) directly, in order to test it. Device number
 044 was picked arbitrarily from the unused range in IOTs/KnownIOTs.txt.
 
 Do not treat this as a model for how a real device IOT should be written -- see

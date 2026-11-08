@@ -4,14 +4,14 @@
 # IOT 71's alias for wavetable mode. room.h and edge.h are the room and the
 # voicing, shared with FunStuff/Dacmusic/render's dacrender.
 
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
+INC= -I../../src/common -I../../src/pdp1 -I.. -I../Lib
 CFLAGS= -Wall -Wextra -O2 -fPIC -shared
-DEPS= ../iotHandler.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/dynamicIots.h \
-      ../../src/blincolnlights/pdp1/highSpeedChannels.h ../../src/blincolnlights/pdp1/configuration.h \
-      ../../src/blincolnlights/pdp1/ad1intf.h
+DEPS= ../iotHandler.h ../../src/pdp1/pdp1.h ../../src/pdp1/dynamicIots.h \
+      ../../src/pdp1/highSpeedChannels.h ../../src/pdp1/configuration.h \
+      ../../src/pdp1/ad1intf.h
 # The emulator's Makefile writes sdl3.h and its clean removes it; IOT_71.c includes it only
 # if it is there, so it is a prerequisite only then.
-SDL3H= $(wildcard ../../src/blincolnlights/pdp1/sdl3.h)
+SDL3H= $(wildcard ../../src/pdp1/sdl3.h)
 
 all: IOT_71.so IOT_72.so
 

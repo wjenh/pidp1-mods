@@ -10,7 +10,7 @@
 //
 // Optionally pass a list of GPIO numbers on the command line to test a different pin set;
 // with no arguments it defaults to the exact 22 pins the PiDP-1 panel driver uses (COLUMNS[]/
-// ADDR[] in src/blincolnlights/panel_pidp1/newpanel.c).
+// ADDR[] in src/panel_pidp1/newpanel.c).
 //
 // WARNING: this program actively drives real GPIO outputs high and low. Do not run it with
 // anything other than the panel (or nothing at all) connected to the pins under test.
@@ -35,7 +35,7 @@
 #define MAX_TEST_PINS 32
 #define NUM_TRIALS 500
 
-// The 18 COLUMNS + 4 ADDR GPIO numbers newpanel.c drives (src/blincolnlights/panel_pidp1/
+// The 18 COLUMNS + 4 ADDR GPIO numbers newpanel.c drives (src/panel_pidp1/
 // newpanel.c's COLUMNS[]/ADDR[] arrays). Kept as a plain copy here rather than an #include of
 // newpanel.c/panel_pidp1.h, since this test has no need for the rest of that file's
 // dependencies (shared memory, configuration parsing, pthreads).

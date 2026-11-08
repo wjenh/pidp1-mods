@@ -1,4 +1,4 @@
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
+INC= -I../../src/common -I../../src/pdp1 -I.. -I../Lib
 GCC=gcc $(INC) -O3 -fPIC
 
 install: iotLogger.o asciitoflex.o flextoascii.o filenames.o display.o writeBehind.o
@@ -12,7 +12,7 @@ flextoascii.o: flextoascii.c flexlib.h
 asciitoflex.o: asciitoflex.c flexlib.h
 	$(GCC) -c asciitoflex.c
 
-filenames.o: filenames.c ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h
+filenames.o: filenames.c ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h
 	$(GCC) -c filenames.c
 
 display.o: display.c

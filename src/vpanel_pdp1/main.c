@@ -2,7 +2,7 @@
  * Browser/desktop-free "virtual" front panel for the pidp-1 emulator.
  *
  * Renders a bitmap image of the PDP-1 console, paneltex, baked in
- * from ../art/pdp1art.inc and overlays clickable lamp/switch/key sprites on
+ * from art/pdp1art.inc and overlays clickable lamp/switch/key sprites on
  * top of it at hand-tuned grid coordinates.
  * Mouse clicks toggle the on-screen switches and keys.
  * The resulting switch/key state is packed into the shared-memory Panel struct the emulator reads.
@@ -45,8 +45,8 @@
 // Baked-in PNG resource byte arrays for the panel background and lamp/switch/key
 // sprite pairs generated offline from source art and saved as C byte
 // arrays so this program has no runtime asset-file dependency.
-#include "../art/panelart.inc"
-#include "../art/pdp1art.inc"
+#include "art/panelart.inc"
+#include "art/pdp1art.inc"
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;

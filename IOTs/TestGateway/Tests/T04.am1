@@ -2,7 +2,7 @@ T04: HSC GATEWAY NORMAL (CYCLE-STEALING) MODE
 /*
  * T04.am1 -- Exercises HSC "normal" mode (neither HSC_MODE_IMMEDIATE nor HSC_MODE_THREADED
  *            set) via the IOT 44 Test Gateway. This is the real cycle-stealing path --
- *            src/blincolnlights/pdp1/highSpeedChannels.c's processChannel(), driven once per
+ *            src/pdp1/highSpeedChannels.c's processChannel(), driven once per
  *            main-loop iteration from main.c, transferring exactly one word per call at the
  *            hardware's real 5us-per-word rate -- and, per the project's HSC conformance
  *            review (02-Jul-26), it had NO exercise anywhere in the codebase before this

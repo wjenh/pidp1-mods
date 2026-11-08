@@ -417,7 +417,7 @@ func readTypewriterBytes(conn net.Conn, data chan byte, errCh chan error) {
 // 20-Jun-2026 wje: rewritten to fix the "TODO: we should only connect to the
 // emulator when the websocket is connected" left by the original implementation.
 // The typewriter is an exclusive-use device on the emulator side (port 1041 only
-// ever accepts one connection at a time -- see src/blincolnlights/common.c's
+// ever accepts one connection at a time -- see src/common/common.c's
 // serve1(), which closes its listening socket the moment it accepts one client).
 // The old version of this function dialed port 1041 unconditionally from
 // main(), the instant pdpsrv started, and retried every 5 seconds forever --

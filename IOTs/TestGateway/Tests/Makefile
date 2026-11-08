@@ -22,8 +22,8 @@ AM1     = am1
 AM1_SRCS = T01.am1 T02.am1 T03.am1 T04.am1 T05.am1
 AM1_RIMS = $(AM1_SRCS:.am1=.rim)
 
-PDP1DIR = ../../../src/blincolnlights/pdp1
-PDP1INC = -I../../../src/blincolnlights -I$(PDP1DIR)
+PDP1DIR = ../../../src/pdp1
+PDP1INC = -I../../../src/common -I$(PDP1DIR)
 
 .PHONY: all harness clean T01 T02 T03 T04 T05
 
@@ -46,7 +46,7 @@ T05: T05.rim
 
 harness: hscharness
 
-hscharness: hscharness.c $(PDP1DIR)/highSpeedChannels.c $(PDP1DIR)/highSpeedChannels.h $(PDP1DIR)/pdp1.h $(PDP1DIR)/ad1intf.h ../../../src/blincolnlights/common.h ../../../src/blincolnlights/logger.h
+hscharness: hscharness.c $(PDP1DIR)/highSpeedChannels.c $(PDP1DIR)/highSpeedChannels.h $(PDP1DIR)/pdp1.h $(PDP1DIR)/ad1intf.h ../../../src/common/common.h ../../../src/common/logger.h
 	$(CC) $(CFLAGS) $(PDP1INC) -o $@ hscharness.c $(PDP1DIR)/highSpeedChannels.c -lpthread -lrt
 
 clean:

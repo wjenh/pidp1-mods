@@ -13,8 +13,8 @@ CC      = gcc
 CFLAGS  = -Wall -Wextra -O2
 PYTHON  ?= python3
 
-PLUGIN_INC = -I../../../src/blincolnlights -I../../../src/blincolnlights/pdp1 -I../.. -I../../Lib -I..
-PLUGIN_HDRS = ../IOT_73.c ../pngWrite.h ../../iotHandler.h ../../../src/blincolnlights/pdp1/dynamicIots.h ../../../src/blincolnlights/pdp1/pdp1.h ../../../src/blincolnlights/pdp1/ad1intf.h ../../../src/blincolnlights/pdp1/configuration.h ../../Lib/iotLogger.h ../../Lib/writeBehind.h
+PLUGIN_INC = -I../../../src/common -I../../../src/pdp1 -I../.. -I../../Lib -I..
+PLUGIN_HDRS = ../IOT_73.c ../pngWrite.h ../../iotHandler.h ../../../src/pdp1/dynamicIots.h ../../../src/pdp1/pdp1.h ../../../src/pdp1/ad1intf.h ../../../src/pdp1/configuration.h ../../Lib/iotLogger.h ../../Lib/writeBehind.h
 
 AM1     ?= am1
 AM1INC  ?= ../../../Am1Includes

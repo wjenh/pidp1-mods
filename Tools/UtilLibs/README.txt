@@ -8,7 +8,7 @@ Code shared by more than one tool. Each tool's Makefile compiles what it uses fr
 in, so nothing here needs building first and no object file is left here.
 
 ad1link.c, ad1link.h     the client side of the emulator's debugger link: ad1, fastload, ovlload.
-                         The wire format is the emulator's src/blincolnlights/pdp1/ad1proto.h.
+                         The wire format is the emulator's src/pdp1/ad1proto.h.
                          ad1LinkIsRemote() says whether a -h host is another machine.
 tapeimage.c, tapeimage.h a bin or am1 tape read as read-in would, and sent over the link or
                          written to a core-memory file: fastload, ovlload.

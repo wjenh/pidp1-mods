@@ -169,10 +169,10 @@ while true; do
     read -p "Make required PiDP-1 binaries? " yn
     case $yn in
         [Yy]* )
-		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 all 	# panel driver
-		make -C $INSTALLDIR/src/blincolnlights/pdp1 	# simulator
+		make -C $INSTALLDIR/src/panel_pidp1 all 	# panel driver
+		make -C $INSTALLDIR/src/pdp1 	# simulator
 		make -C $INSTALLDIR/src/scanpf 			# returns sense switches
-		make -C $INSTALLDIR/src/blincolnlights/tapevis	# visualize a rim tape
+		make -C $INSTALLDIR/src/tapevis	# visualize a rim tape
 		make -C $INSTALLDIR/src/pidp1_test 		# hardware test program
 		make -C $INSTALLDIR/src/pdp1_periph		# unified peripherals
 		make -C $INSTALLDIR/src/pdp1central		# pdp1central, the desktop control app
@@ -180,7 +180,7 @@ while true; do
 		make -C $INSTALLDIR/IOTs all			# dynamic IOTs, all of them
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
-		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver
+		make -C $INSTALLDIR/src/vpanel_pdp1 	# panel driver
 
                 # The am1 macro assembler, also installs fastload
 		make -C $INSTALLDIR/Tools/AM1 install
@@ -221,25 +221,25 @@ while true; do
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges
             	# to access GPIO with root privileges:
-            	# sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1
+            	# sudo chmod +s $INSTALLDIR/src/panel_pidp1
             	# to run as a RT thread:
                 # The old panel is no longer built or installed
-            	# sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
+            	# sudo setcap cap_sys_nice+ep $INSTALLDIR/src/panel_pidp1/panel_pidp1
                 # newpanel does not require running as an RT thread, but it has the option of doing so
-            	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
-            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
+            	sudo chmod +s $INSTALLDIR/src/panel_pidp1/newpanel
+            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/panel_pidp1/newpanel
 
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
-                ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
-                ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
-                ln -sf $INSTALLDIR/src/blincolnlights/pdp1/pdp1 $INSTALLDIR/bin/pdp1
+                ln -sf $INSTALLDIR/src/ptytools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
+                ln -sf $INSTALLDIR/src/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
+                ln -sf $INSTALLDIR/src/pdp1/pdp1 $INSTALLDIR/bin/pdp1
                 ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
                 ln -sf $INSTALLDIR/src/pdp1central/pdp1central $INSTALLDIR/bin/pdp1central
                 ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor
                 ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
-                ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
-                ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
+                ln -sf $INSTALLDIR/src/tapevis/tapevis $INSTALLDIR/bin/tapevis
+                ln -sf $INSTALLDIR/src/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
 	    	echo Done.
 		break
 		;;

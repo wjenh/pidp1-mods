@@ -14,24 +14,24 @@ IOTs/Demos/demo57.mac                                   words
 IOTs/Demos/poll.mac                                     words
 IOTs/Type23Drum/Tests/drumdiag.mac                      words
 IOTs/Type23Drum/Tests/drumtest.mac                      words
-src/blincolnlights/pdp1/maindec/maindec1_01.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_02.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_03.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_04.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_05.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_06.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_07.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_10.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_11.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_12.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_13.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_14.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_15.mac         am1          macro1 never defines a tag named by a dummy (ck1-ck6)
-src/blincolnlights/pdp1/maindec/maindec1_16.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_17.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_20.mac         words
-src/blincolnlights/pdp1/maindec/maindec1_end.mac        words
-src/blincolnlights/pdp1/maindec/maindec4.mac            words
+src/pdp1/maindec/maindec1_01.mac         words
+src/pdp1/maindec/maindec1_02.mac         words
+src/pdp1/maindec/maindec1_03.mac         words
+src/pdp1/maindec/maindec1_04.mac         words
+src/pdp1/maindec/maindec1_05.mac         words
+src/pdp1/maindec/maindec1_06.mac         words
+src/pdp1/maindec/maindec1_07.mac         words
+src/pdp1/maindec/maindec1_10.mac         words
+src/pdp1/maindec/maindec1_11.mac         words
+src/pdp1/maindec/maindec1_12.mac         words
+src/pdp1/maindec/maindec1_13.mac         words
+src/pdp1/maindec/maindec1_14.mac         words
+src/pdp1/maindec/maindec1_15.mac         am1          macro1 never defines a tag named by a dummy (ck1-ck6)
+src/pdp1/maindec/maindec1_16.mac         words
+src/pdp1/maindec/maindec1_17.mac         words
+src/pdp1/maindec/maindec1_20.mac         words
+src/pdp1/maindec/maindec1_end.mac        words
+src/pdp1/maindec/maindec4.mac            words
 tapes/music/dpys5.mac                                   words-lf     lines end in CR
 tapes/music/hc1d.mac                                    words-lf     lines end in CR
 tapes/music/lives2.mac                                  words-lf     lines end in CR

@@ -1,4 +1,4 @@
-INC=-I.. -I../pdp1 -IPinctrl
+INC=-I../common -I../pdp1 -IPinctrl
 LIBS=-lpthread -lm
 CFLAGS= $(INC) -O3 -Wno-unused-result
 
@@ -10,8 +10,8 @@ newpanel: pinctrl newpanel.o common.o configuration.o
 newpanel.o: newpanel.c
 	cc -c $(CFLAGS) newpanel.c
 
-common.o: ../common.c
-	cc -c $(CFLAGS) ../common.c
+common.o: ../common/common.c
+	cc -c $(CFLAGS) ../common/common.c
 
 configuration.o: ../pdp1/configuration.c
 	cc -c $(CFLAGS) $(INC) ../pdp1/configuration.c

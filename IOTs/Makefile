@@ -1,9 +1,9 @@
-INC= -I../src/blincolnlights -I../src/blincolnlights/pdp1 -ILib
+INC= -I../src/common -I../src/pdp1 -ILib
 files := $(wildcard *.c)
 
 %.so:%.o
 	gcc -shared $< -o $@
-%.o:%.c iotHandler.h ../src/blincolnlights/pdp1/dynamicIots.h ../src/blincolnlights/pdp1/pdp1.h ../src/blincolnlights/pdp1/ad1intf.h
+%.o:%.c iotHandler.h ../src/pdp1/dynamicIots.h ../src/pdp1/pdp1.h ../src/pdp1/ad1intf.h
 	gcc $(INC) -fPIC -c $< -o $@
 
 all: dist $(files:.c=.so)

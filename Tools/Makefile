@@ -1,7 +1,7 @@
-INC= -I../src/blincolnlights -I../src/blincolnlights/pdp1
+INC= -I../src/common -I../src/pdp1
 
 pdp1audio: pdp1audio.c
-	gcc $(INC) pdp1audio.c ../src/blincolnlights/common.c -o pdp1audio
+	gcc $(INC) pdp1audio.c ../src/common/common.c -o pdp1audio
 
 tools:
 	echo making mactoam1 and disassemble

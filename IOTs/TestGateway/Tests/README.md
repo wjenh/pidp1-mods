@@ -1,7 +1,7 @@
 # HSC Test Gateway (IOT 44) Test Suite
 
 Tests for the High Speed Channel (HSC) implementation
-(`src/blincolnlights/pdp1/highSpeedChannels.c`), exercised through the test-only IOT 44
+(`src/pdp1/highSpeedChannels.c`), exercised through the test-only IOT 44
 gateway (`IOTs/TestGateway/IOT_44.c`, device 044). HSC is normally a private, internal
 interface used only by device IOTs (the Type 23 Drum and Type 340 Display) -- there is no
 real PDP-1 hardware IOT for it. This test-only gateway exists solely because there was
@@ -11,7 +11,7 @@ otherwise no way to reach HSC's `HSCallocateChannel`/`HSCfreeChannel`/`HSCexecut
 
 Written 02-Jul-2026 as part of the project's HSC conformance review, which found (and
 fixed) three real bugs in this code and noted that no code anywhere exercised "normal"
-(real cycle-stealing) mode at all -- see `src/blincolnlights/pdp1/CLAUDE.md`'s High Speed
+(real cycle-stealing) mode at all -- see `src/pdp1/CLAUDE.md`'s High Speed
 Channel section for that history. This suite is the first automated coverage of that mode.
 
 ## Building
@@ -142,7 +142,7 @@ undocumented behavior found while writing this suite -- a channel's status is re
 `HSC_OK` only the *first* time that channel number is ever allocated in the emulator
 process's lifetime, not on every `hga`. A later `hgf`+`hga` cycle leaves status exactly
 where the last operation left it (e.g. `HSC_DONE`) until a new transfer changes it. See
-`../IOT_44.c` and `src/blincolnlights/pdp1/CLAUDE.md` for more on this.
+`../IOT_44.c` and `src/pdp1/CLAUDE.md` for more on this.
 
 **Load:** `T05.rim`
 
@@ -177,7 +177,7 @@ genuinely busy at once is to drive `HSCexecute()` from two independent call site
 ## `hscharness.c` -- standalone C channel test
 
 This covers what the am1 suite above cannot provide itself. It links
-`../../../src/blincolnlights/pdp1/highSpeedChannels.c` directly as a plain `.c` file --
+`../../../src/pdp1/highSpeedChannels.c` directly as a plain `.c` file --
 no emulator binary, no SDL, no `dlopen`, no IOT plugin mechanism at all -- with stand-ins
 for `updatelights()`/`updatelights_pwm()` (which count calls, since the channel code must
 make none), `throttleCapFirings`, and the `pdp1P` global that file expects `main.c` to

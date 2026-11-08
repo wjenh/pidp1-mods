@@ -6,7 +6,7 @@ T05: HSC GATEWAY ERROR HANDLING, RESET, AND STATUS-PERSISTENCE QUIRK
  *            status is NOT reset to HSC_OK on every hga -- only the very first allocation of
  *            a given channel number, ever, in the emulator process's lifetime, initializes
  *            status to HSC_OK (see HSCallocateChannel()'s "if (!ctlP->isInitialized)"
- *            guard in src/blincolnlights/pdp1/highSpeedChannels.c). Every later hgf+hga
+ *            guard in src/pdp1/highSpeedChannels.c). Every later hgf+hga
  *            cycle on that same channel number leaves status exactly where the last
  *            operation left it (e.g. HSC_DONE from a completed transfer, or HSC_ABORT from
  *            a prior HSCreset()) until the next real transfer changes it.

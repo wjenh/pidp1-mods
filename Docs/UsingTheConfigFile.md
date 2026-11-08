@@ -23,7 +23,7 @@ Anything else is a string option, the string following the *=* is its value.
 
 Most options are built-in but new ones can be added for use in IOTs.\
 If an option that is not built in is seen, it is added to a list of extra options that
-can be accessed via functions in the .../src/blincolnlights/pdp1/configuration.c library.
+can be accessed via functions in the .../src/pdp1/configuration.c library.
 An example can be found in the source code for the IOT_45 line printers.
 
 - If it is a boolean setting, the onOff field in the extra option is set.

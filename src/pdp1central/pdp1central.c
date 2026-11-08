@@ -846,7 +846,7 @@ char path[PATH_MAX];
 }
 
 // The port the emulator's debugger link listens on, from pidp1.config as saved, read the way
-// the emulator reads it (configPort in src/blincolnlights/pdp1/ad1server.c): no line gives
+// the emulator reads it (configPort in src/pdp1/ad1server.c): no line gives
 // 1044; off, no, n, false or 0 close the link; on, yes, y, true and anything that is not a
 // port give 1044.
 // Returns the port, or 0 when the link is off.

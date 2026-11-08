@@ -204,7 +204,7 @@ control() {
     MTOA=$old/mactoam1
     # Both assemble cleanly in am1 after the old conversion, with words that differ (a space
     # that adds in macro1 ORs in am1).
-    for path in src/blincolnlights/pdp1/maindec/maindec1_14.mac src/blincolnlights/pdp1/maindec/maindec1_20.mac; do
+    for path in src/pdp1/maindec/maindec1_14.mac src/pdp1/maindec/maindec1_20.mac; do
         name=old_$(basename "$path" .mac)
         if check "$d" "$name" "$ROOT/$path"; then
             fail "old converter passes $path"
@@ -225,7 +225,7 @@ control() {
     # One word changed by hand in a passing conversion must fail the compare. The old
     # converter's maindec1_12 passes, so this leg does not depend on the converter under test.
     name=hand_maindec1_12
-    if check "$d" "$name" "$ROOT/src/blincolnlights/pdp1/maindec/maindec1_12.mac"; then
+    if check "$d" "$name" "$ROOT/src/pdp1/maindec/maindec1_12.mac"; then
         python3 -B -c '
 import sys
 lines = open(sys.argv[1]).read().split("\n")

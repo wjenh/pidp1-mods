@@ -7,7 +7,7 @@
 |                  In the style of a classic DEC reference                   |
 +----------------------------------------------------------------------------+
 |  SYSTEM: 64K Words (16 Banks), Type 23 Drum, BBN Clock, Type 550 Microtape |
-|  SOFTWARE: Version 2.0 (4-Nov-2026) by Bill Ezell & Claude Opus            |
+|  SOFTWARE: Version 2.1 (8-Nov-2026) by Bill Ezell & Claude Opus            |
 +----------------------------------------------------------------------------+
 ```
 
@@ -33,29 +33,46 @@ and locks onto items via prioritized proximity routing.
 ## 2. Nested Submenu Logic Matrix
 
 ```
-[Draw]           [Edit]          [Picture]   [Locate]  [Misc]    [stop]  [View]
-+-- Line         +-- Move        +-- Define            +-- Save          +-- x1
-+-- Circle       +-- Delete      +-- Inst              +-- Load          +-- x2
-+-- Truss >      +-- Constr >    +-- Copy              +-- Drive n >     +-- x4
-¦   +-- Beam     ¦   +-- Horv    +-- Clear             ¦   +-- D1-D8     +-- x8
-¦   +-- Load     ¦   +-- Equal   +-- Tie               +-- Dir           +-- Pan
-¦   +-- Roller   ¦   +-- Paral   +-- Desig             +-- Del cons      +-- Center
-¦   +-- Axis     ¦   +-- Perp    +-- Name              +-- Unfix
-¦   +-- Forces   ¦   +-- Length                        +-- Library >
-¦   +-- Stiff    ¦   +-- Mid                           ¦   +-- Load
-+-- Text         ¦   +-- Fix                           ¦   +-- Save
-+-- Dim >        ¦   +-- Show                          ¦   +-- Dir
-|   +-- Number   +-- Size >                            ¦   +-- Delete
-|   +-- Dist         ¦   +-- x1-x8                     +-- Plot
-|   +-- Change   +-- Scale
-|   +-- Gap      +-- Change >
-|   +-- Size        ¦   +-- Master
-                    ¦   +-- Cycle
-                    ¦   +-- Dwell
-                    ¦   +-- Seq
+Bar:  Draw   Edit   Picture   Misc   Locate   Undo   Stop   View
+
+Locate, Undo and Stop act at once (Undo is dim while there is nothing to undo).
+The other five open a list; a row ending in ">" opens its sublist beside it.
+Drive n shows the drive in use (Drive 1 at start). Show and Forces are
+toggles, lit while on.
+
+[Draw]          [Edit]          [Picture]   [Misc]          [View]
++-- Line        +-- Move        +-- Define  +-- Save        +-- x1
++-- Circle      +-- Delete      +-- Inst    +-- Load        +-- x2
++-- Truss >     +-- Constr >    +-- Copy    +-- Drive n >   +-- x4
+|   +-- Beam    |   +-- Horv    +-- Clear   |   +-- D1      +-- x8
+|   +-- Load    |   +-- Equal   +-- Tie     |   +-- D2      +-- Pan
+|   +-- Roller  |   +-- Paral   +-- Desig   |   +-- D3      +-- Center
+|   +-- Axis    |   +-- Perp    +-- Name    |   +-- D4
+|   +-- Forces  |   +-- Length              |   +-- D5
+|   +-- Stiff   |   +-- Mid                 |   +-- D6
++-- Text        |   +-- Fix                 |   +-- D7
++-- Dim >       |   +-- Show                |   +-- D8
+    +-- Number  +-- Size >                  +-- Dir
+    +-- Dist    |   +-- x1                  +-- Del cons
+    +-- Change  |   +-- x2                  +-- Unfix
+    +-- Gap     |   +-- x4                  +-- Library >
+    +-- Size    |   +-- x8                  |   +-- Load
+                +-- Scale >                 |   +-- Save
+                |   +-- Part                |   +-- Dir
+                |   +-- Figure              |   +-- Delete
+                |   +-- All                 +-- Plot
+                +-- Change >
+                |   +-- Master
+                |   +-- Cycle
+                |   +-- Dwell
+                |   +-- Seq
                 +-- Dismem
                 +-- Keep >
-                    +-- x1/3-x3
+                    +-- x1/3
+                    +-- x1/2
+                    +-- x1
+                    +-- x2
+                    +-- x3
                     +-- Full
                     +-- Inch
 ```
@@ -107,10 +124,10 @@ and locks onto items via prioritized proximity routing.
 
 ```
 MASTER (M1-M16)     Encapsulated drawing blueprint template.
-¦
+|
 +-- INSTANCE        Dynamic link pointer inside core display lane.
-¦                   Follows master updates globally. Rigid structure.
-¦
+|                   Follows master updates globally. Rigid structure.
+|
 +-- PLACED COPY     Expanded raw vector collection.
                     Breaks structural links to permit individual node edits.
 ```
@@ -119,7 +136,7 @@ MASTER (M1-M16)     Encapsulated drawing blueprint template.
   matching coordinates exactly to current parent scaling properties.
 * **Tie Points & Fastening:** Structural anchors (**Attachers**) link active elements.
   Overlapping shared tie points binds instances into a rigid, single body.
-* **Motion Animation:** Controlled via `Change > Master`, `Cycle`, `Dwell` (50–9999ms),
+* **Motion Animation:** Controlled via `Change > Master`, `Cycle`, `Dwell` (50-9999ms),
   and `Seq`. Loops sequence frames predictably.
 
 ---
@@ -131,7 +148,7 @@ Calculates true internal stress points across structural frame nodes via iterati
 * **Load:** Applies linear downward vector force equal to exactly 10x its drawn length.
 * **Roller (O):** Grants free lateral movement along a set path, resisting force only across its perpendicular axis.
 * **Axis:** Snaps a Roller's allowable travel orientation path parallel to a chosen guide line.
-* **Stiff:** Sets user-defined elasticity attributes (0.1–99.9) for resolving redundant truss nodes.
+* **Stiff:** Sets user-defined elasticity attributes (0.1-99.9) for resolving redundant truss nodes.
 * **Forces:** Overlays real-time numeric calculations directly onto vector middles.
   Pushing forces show compression (-), while pulling forces indicate standard structural tension (+).
 * **System Flags:** Defective matrix setups output a `3-dash (---)` fault map alongside an explicit
@@ -184,13 +201,6 @@ Activating `Edit > Constr > Show` displays the active contraints via circled ind
 
 ---
 
-## 10. Microtapes
-
-  Microtapes must be mounted on one of the 4 drives before use.
-  Use *mtp* or *pdp1central*.\
-  Remember that this uses a correct simulation of the time an actual drive took,
-  be patient.
-
 ## 9. Quick-Start: Operational Checklist
 
 ### Boot Code
@@ -212,3 +222,12 @@ Program starts at address 100
 2. Mark interface attachment nodes (Max 6).
 3. Select **Picture > Define** and pick target storage slot.
 4. Input label characters via pen keyboard array; press **OK**.
+
+---
+
+## 10. Microtapes
+
+  Microtapes must be mounted on one of the 8 drives before use.
+  Use *mtp* or *pdp1central*.\
+  Remember that this uses a correct simulation of the time an actual drive took,
+  be patient.

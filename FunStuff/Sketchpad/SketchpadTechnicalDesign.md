@@ -95,8 +95,8 @@ One pass of the main loop does, in order,
    Target hits are taken before menu hits, so a pen carried from the target to the menu acts in
    the order things happened.
 4. `onMenuHit` runs the menu.
-5. `checkLost` declares a lift once no target hit has come for 100 ms, and runs the mode's lift
-   handler.
+5. `checkLost` declares a lift once no target hit has come for 100 ms and two frames have ended
+   since the last, and runs the mode's lift handler.
 6. `onClock` runs the timed work, a cycle's step, a label's flash, an idle list's closing and
    the display watchdog, which restarts the display when no frame has ended for 500 ms and its
    address (`dra`) stands still over two clock ticks, so a frame drawing for longer than that is
@@ -124,7 +124,7 @@ Everything else is in modules, each in a separate bank, each entered through one
 |---|---|---|
 | `arcCall` | Arcs, the removal and merging of points and lines, Copy's geometry | 2 |
 | `tapeCall` | Saving and loading pictures, a drum overlay; its kept words and stubs in bank 11 | 6 |
-| direct calls | Scale, its slider and its Undo, a drum overlay | 6 |
+| direct calls | Scale, its slider and its Undo, a drum overlay; Figure and All a second one, the group scale | 6 |
 | direct calls | The pen keyboard, a drum overlay | 6 |
 | `instCall` | Instances, masters, Copy, Change, cycles; Define and Dismember a drum overlay | 7 |
 | `conCall` | Constraints and the solver | 8 |
@@ -256,7 +256,7 @@ A master is at most 128 lines, 530 words and 20 ms of drawing, about four period
 target's presentation, since the target cannot be called from inside a master: 20 ms is the most
 that still holds a pen moving at 1000 units/s, measured.
 Every master's words are kept in its record on the drum (see *Drum overlays*), and those the
-drawing calls are also in a store of two regions, 422 words of bank 0 and the last 530 of bank 1,
+drawing calls are also in a store of two regions, 398 words of bank 0 and the last 530 of bank 1,
 because `save` reaches only banks 0 and 1.
 A master lies whole in one region: the 340 returns from a `save` at its first escape from vector
 mode, so a master cannot `jump` on from one bank's part to the other's.
@@ -302,7 +302,12 @@ The thesis uses the same signal, the loss of tracking, as its termination signal
 operation (chapter IV, "Pen Tracking"), though there the user flicked the pen away rather than
 lifting it.
 Here a lift is declared 100 ms after the last target hit, and only once the target has been shown
-at least four times since, so that a display that stops showing the target is not taken for a lift.
+at least four times since, counted from the second frame end after the hit, so that a display
+that stops showing the target is not taken for a lift.
+The second frame end matters for a pen taken to the menu bar, which the pen sees only when the
+bar is drawn, first in each frame: a frame drawn whole after the hit has shown it the bar, so a
+trip to the bar is not taken for a lift however long a frame takes (about a third of a second
+with 192 lines across the screen, when a lift is declared up to two frames after it).
 
 ### The target
 
@@ -371,7 +376,7 @@ The program's dot does the same.
   lines' crossing.
 - An instance or a text is weighed by its middle against the nearest part.
 - In Scale it locks onto lines, arcs, instances, texts and numbers, never a point alone, so that
-  at a line's end the line locks.
+  at a line's end the line locks; in Scale > All nothing need be locked.
 
 The line search is the costly part, about 0.7 ms a line, so it is cut into slices of 30 ms, runs
 only once the target has paused for 60 ms, and always runs at a lift.
@@ -406,7 +411,7 @@ are the rows' sublists.
 | Number | Draw > Dim > Number |
 | Library, Library write | Misc > Library > Load, Misc > Library > Save; a whole picture by Misc > Load and Misc > Save |
 | Garbage, recentering on the pen | View > Center |
-| The scale and position knobs | View > x1 to x8, and Pan; Edit > Scale for one part's size |
+| The scale and position knobs | View > x1 to x8, and Pan; Edit > Scale > Part for one part's size, Figure and All for many parts' |
 | Toggle switches showing the constraints | Edit > Constr > Show |
 | Sheet of paper, the toggle choosing a picture | Define, a master picked and named, and Clear; Picture > Name renames a master |
 
@@ -528,7 +533,7 @@ the others.
 | 3 | The point, line and instance tables, the dispatch tables, the scalars, some of the truss's tables |
 | 4 | The main bank, the main loop, the menus, the modes, Undo, the gates |
 | 5 | The window MW, holding one master's record, its points, lines, arcs, constraints, display words and the instances it holds; after it, the masters' attachers, directory and nesting, the constraints' arms list, a saved copy of the arc module's working words, the library's screen and its directory's header and page, the masters' picker's list and lines, each line holding its master's name, what a master's remaking keeps, the offsets of an arc's first quarter, Scale's Undo record and the variants' tables |
-| 6 | The overlay window, holding the scale module, the pen keyboard, Define and Dismember, the tape module, the library, Plot or the truss analysis; after it, Scale's kept words and stubs, the pen keyboard's entries and kept words |
+| 6 | The overlay window, holding the scale module, the pen keyboard, the group scale, Define and Dismember, the tape module, the library, Plot or the truss analysis; after it, Scale's kept words and stubs, the pen keyboard's entries and kept words |
 | 7 | The instance module but its Define and Dismember parts, their stubs, which masters the drawing calls, the masters' name keyboards' blocks and the name typed |
 | 8 | The constraint module |
 | 9 | The constraint table, the solver's working tables, the masters' constraints' counts, the variants' lookup and sweep, which rows can act |
@@ -536,7 +541,7 @@ the others.
 | 11 | The overlay manager, the tape module's kept words, directory, screen and stubs, the tape's mount, seek, read and write, which the tape module and the library both call, the tape rows' steps, the library's kept words, stub and steps, the masters' picker's blocks, keys and hits, start-up's display gates, the menu rows' census, the truss's stubs, what a lift will take, the masters' texts and their numbers' digits, the overlay table |
 | 12 | The view, the target's clipping, start-up's first part, the texts' list buffers |
 | 13 | The truss's snapshot and readouts, the constraints' marks, the line search, arcs through the view |
-| 14, 15 | The truss's stiffness matrix |
+| 14, 15 | The truss's stiffness matrix, and the library's entry buffer from bank 14's start, which a library save or load takes over, starting the analysis again |
 
 Every bank but 2, 3 and 5 is close to full.
 When a bank runs short, more is moved out of it than the change needs, so that the next change
@@ -546,24 +551,25 @@ Bank 0's words 4 to 077, unused by the single-channel break, hold display words 
 
 ### Drum overlays
 
-The scale module, the pen keyboard, the instance module's Define and Dismember parts, the tape
-module (Save, Load, Dir), the library (its Load, Save, Dir and Delete), Plot, the marks' ranks
-and the truss analysis are drum overlays, kept on the Type 23 drum's tracks 11 to 20 octal, one a
-track, and
+The scale module, the pen keyboard, the group scale, the instance module's Define and Dismember
+parts, the tape module (Save, Load, Dir), the library (its Load, Save, Dir and Delete), Plot, the
+marks' ranks and the truss analysis are drum overlays, kept on the Type 23 drum's tracks 11 to 21
+octal, one a track, and
 read into one window, W, at bank 6's start when called, by am1's overlay manager
 (*UsingOverlays.md*).
-The window is 3,934 words, 8 more than the largest, the library's 3,926, the header included,
-its entry's buffer of 2,560 among them, so that an overlay growing by a few words still
-assembles; Scale's takes 3,114, the keyboard's 1,226, Define and
-Dismember's 3,857, the tape's 3,297, a master's entry's buffer of 1,643 among them, the truss's
-3,869, Plot's 2,743, its characters' strokes' table of 1,087 among them, and the ranks' 216.
+The window is 3,877 words, 8 more than the largest, the truss's 3,869, the header included, so
+that an overlay growing by a few words still assembles; Scale's takes 3,116, the keyboard's
+1,226, the group scale's 2,751, Define and Dismember's 3,857, the tape's 3,455, a master's entry's buffer among them,
+the library's 2,246, its entry's buffer being in banks 14 and 15, Plot's 2,743, its
+characters' strokes' table of 1,087 among them, and the ranks' 216.
 The ranks (*spranks.ac*), which set apart the constraints' letters that would stand at one place,
 run only when a constraint is added or removed, so their load waits on a command, never on a
 drag; called while another overlay holds the window, they are counted at Show's next pass.
 The tape's mount, seek, read and write are in bank 11's root, since an overlay cannot call
 another and both the tape module and the library need them.
-The sixteen masters' records are data overlays, packed two a track at their own length on tracks
-12 (after the keyboard's overlay) and 20 to 27 octal, read into a second window, MW, at bank 5's start, 1,636 words: a master's display words and Copy's store, its
+The sixteen masters' records are data overlays, packed two a track at their own length, one each
+after the keyboard's, the library's and the ranks' overlays on tracks 12, 16 and 21 octal, and
+the rest on 22 to 27, read into a second window, MW, at bank 5's start, 1,636 words: a master's display words and Copy's store, its
 points, lines, arcs and constraints, and the instances it holds, at the same addresses whichever
 record is resident.
 They are persistent, so Define writes the record in the window and the overlay manager writes it
@@ -577,21 +583,23 @@ words' count, which masters it holds, and how many of its texts are its own) sta
 the pickers read them with any record, or none, resident.
 The lowest tracks, 0 to 10 octal, are left to other programs (the owner, 21-Oct-2026), and am1
 places the overlays above them.
-W holds the truss, persistent, and swaps it in one transfer, so am1 gives each of W's overlays a
-track of its own at the same drum address, first; it packs the records, MW being two-pass, at
+W holds the truss and the group scale, persistent, and swaps them in one transfer, so am1 gives
+each of W's overlays a track of its own at the same drum address, first; it packs the records, MW being two-pass, at
 their own length after them, which leaves tracks 30 to 37 octal free.
 Define and Dismember are one overlay, since Define takes the instances of the master being
 defined apart as Dismember does; Define's words, and their composing, are in it too.
 Their stubs are in bank 7, and the words they keep between calls are bank 7's and bank 2's.
 Only Define's first call, a Dismember's first lift and Undo of a Dismember can read them.
-All but the truss are read-only, so a call that finds another in the window reads its own over
-it, the display dark for one frame gap of about 13 ms (Scale's, measured).
+All but the truss and the group scale are read-only, so a call that finds another in the window
+reads its own over it, the display dark for one frame gap of about 13 ms (Scale's, measured).
 What each keeps between calls stays outside the window: the tape's directory, the picture's
 name and the pen keyboard's blocks, Scale's knob, counts and Undo's record, so Undo of a Scale
 reads the module back after a Save, and the keyboard's press, lit key and pick.
 The truss keeps its tables, over a thousand words, in the window: it is persistent, written back
 to its track in the same transfer that reads the overlay taking its place, so an analysis goes
 on where it was after a Save or a Dir, and is not started again.
+The group scale is persistent for its Undo record, kept in the window, so a group's scale can
+be undone after the pen keyboard or a Save has taken W in between.
 Each entry its callers call is a stub under the entry's own name, in bank 6 for Scale and the
 keyboard, bank 7 for Define and Dismember, bank 11 for the tape, the library and the truss, which makes the
 manager's call, so the callers' code is the same as without overlays.
@@ -708,6 +716,28 @@ The digits beside the knob are the status word's block, moved.
 The scale module is in bank 6; it reaches the main bank's routines through a trampoline,
 `mainCall`, since their `dap` returns cannot leave bank 4.
 
+Edit > Scale is a sublist: Part is the above, Figure and All the group scale, a second overlay
+(*spgscale.ac*), the root's stubs choosing between the two by a word that Scale's sublist sets.
+All takes every part. Figure takes the parts joined to the one the pen locks onto: at the pick a
+union-find over the points and the instances' origins, with path halving, unites each line's
+ends, each arc's center with its start and end, each instance's origin with its tie points, and
+each number's anchor with the point or origin it reads, one pass of each table; every word is
+then made its root, and the seed's root marks the selection. A plain text is tied to nothing,
+so a Figure never takes one and All always does. About 0.1 s at 192 lines, once at the pick.
+A group is never rewritten live: a whole list's rebuild at each step would take 0.35 to 1.0 s,
+the target not following meanwhile. So while the pen slides only a box round the selection
+follows the factor, the instance's box's 9 words, and the lift applies the scale at once, about
+the box's middle or the selection's one fixed point (two at different places refuse the pick,
+CONFLICT). Every point and origin goes to its place at the factor exactly, texts and digits to
+the nearest of Size's sizes, instances to the slider's nearest (a cycling one the nearest power
+of two), the Lengths and Changes on lines in the selection scaled, then one rebuild and one
+settling of the solver. Everything that can refuse is checked before anything moves: a part off
+the screen (OFF EDGE), or more than the 16 variants' sizes in use after the scale, the instances
+outside the selection counted (NO ROOM). The instances' sizes are set in two passes, every
+selected instance's variant released first, so that the old and the new sizes never need the
+16 entries at once; the new variants are built from the root (bank 5's `gsRun`), since a
+variant is written into the master store, which an overlay in W cannot reach while it runs.
+
 ### Undo
 
 The thesis has no undo.
@@ -718,6 +748,11 @@ Undo removes everything past the counts and puts the moved points back.
 Anything that is not an addition clears the record, but a scale.
 Just before a scale's first step every point's and origin's place is kept (the constraint
 module's snapshot), and Undo puts them back, with the part's size and a Length's value.
+A group's scale keeps the same snapshot and the Lengths' and Changes' values as Part's does and,
+in the group scale's own words, every text's place and size and every instance's size word, a
+record that covers every table at its limit, so no scale is too large to undo; the overlay is
+persistent, so the record survives another overlay taking W, and one Undo takes the whole scale
+back.
 
 ## Masters, instances and copies
 
@@ -746,7 +781,8 @@ instances it holds become the new master's, counted against the eight with the o
 A master's own texts come first among its texts, the copied ones after them, and the master keeps
 their count, so that Dismember and Copy place only its own as texts and leave the rest to the
 instances they add.
-A library save does not take a master that holds instances, and refuses it.
+A library save of a master that holds instances carries every master it calls with it, see *The
+library tape*.
 
 Composed words go stale when an inner master changes, so a Define or a library load of a held
 master makes every master holding it again, at any depth, inner ones first.
@@ -771,8 +807,8 @@ runs out, or if the master it holds would carry digits, which a holder has no wa
 following their anchor; the refusal names the holder, by number under the menu, by name under a
 library load's status word.
 Then the commit writes each holder's record, and its copy in the store is given up.
-A library load holds its entry in an overlay's buffer that the trial's overlay overwrites, so it
-reads the entry from the tape again for the commit.
+A library load of a held master reads the entry from the tape twice, once for the trial and
+again for the commit, each a call of the library overlay complete in itself.
 
 A master's name, up to 12 characters, is kept in its line on the masters' picker, bank 5, a slot
 label and a name's run as the tape directory's screen keeps a picture's, so the picker shows the
@@ -1086,8 +1122,18 @@ written again from them.
   A save writes it after the picture, and Dir, Save and Load read it to show the twelve names,
   Save and Load picking a picture by a touch on its line.
   Only the pictures' headers say whether a picture is there.
-  A directory block that fails its checksum reads as twelve empty entries, and the next save
-  rewrites it.
+  A directory block that fails its checksum is refused, BAD BLOCK, by Dir, Save and Load, since
+  the pictures behind it may still be readable.
+- A save writes only on Sketchpad's own tapes or on blank ones.
+  The directory block tells them apart: a picture tape's magic, of any format, or a library's is
+  Sketchpad's; a block of zeros, every one of its 256 words, is a blank tape; anything else is
+  another program's, which Dir and Load show as twelve empty entries and a save refuses, NOT
+  BLANK, writing nothing.
+  Another program may leave block 283 alone and still use a slot's blocks (the Z-machine's saves
+  start at block 1), so a save onto a blank directory first reads every block it will write, in
+  a loop of its own that keeps nothing and only ORs the data words, and goes on only if all are
+  zeros or the first holds a picture's magic, left by a first save cut short.
+  That costs a few seconds, once per tape; a Sketchpad tape is trusted as its directory says.
 
 A load reads the first block for the header, then the whole picture forward once to check every
 block's checksum and both headers, and changes nothing unless all is well.
@@ -1130,18 +1176,40 @@ tape holds twelve pictures.
   generation word, its name), the master's directory words, attachers, constraint count and
   texts with their digits, then its record's tables as a picture's entry has them.
   The cycle's settings are the picture's and are not kept.
-  An entry is at most ten blocks, the size of the library's buffer, which a master at every
-  table's limit still fits with 38 texts; a larger one is refused, TOO BIG, before anything is
-  written.
-  A master that holds instances is refused, NESTED, since its entry would not carry the masters
-  it holds.
+- A master that holds instances is a nested entry, format 2: a header of its own (the magic,
+  the format, its size, the generation, the name, the count of parts and each part's master as
+  saved), then a part for the master and for every master it calls at any depth, through its
+  `mUses`, the master first and the others in their order among the masters.
+  Each part is laid out as a flat entry, followed by the master's nesting words and its
+  sub-instances, each naming its master as saved.
+  The masters it calls are carried whole, not flattened into it, so the hierarchy survives.
+- An entry is at most 32 blocks, the library's buffer: banks 14 and 15 from 14's start, the
+  truss's direct solve's scratch between its slices.
+  A save or a load sets the truss's analysis to start again from its map before it writes there,
+  so with Forces on the readouts go and come back within the solve's bound, about 10 s; Dir and
+  Delete leave the banks alone.
+  A larger entry is refused, TOO BIG, before anything is written.
+- A master's record can be made resident only from outside an overlay, so a nested save or load
+  is a round trip per part: the overlay returns with the next part's master named, bank 11's
+  stub makes its record resident and calls again, the state across the calls kept in the
+  buffer's header, which is written as zeros to the tape.
+  Every refusal comes in the first call, before any record but the first part's is touched.
 - The directory is at block 283, where a picture tape keeps its own, so that one block tells the
   two kinds apart, and a library command on a picture tape, or a picture command on a library
   tape, is refused before it writes.
   It is a header block (each page's count of entries and a map of the tape's blocks, a bit a
-  block) and sixteen pages after it, each naming sixteen entries by a slot word (its first block
-  and its length) and a name.
-  A blank tape is an empty library, written at its first save.
+  block) and sixteen pages after it, each naming sixteen entries by a slot word (its first block,
+  its length, up to 32 blocks, and a bit marking a nested entry, which Dir shows as a `+` before
+  the name) and a name.
+  A blank tape, its directory's block all zeros, is an empty library, written at its first save.
+  A directory block neither the library's nor all zeros, any word in it, is another program's
+  tape, refused, NOT BLANK, by every library command, Dir and Load too, since its pages would
+  read as entries.
+  The blocks a library save writes are not read first, as a picture tape's first save reads
+  them: such a scan took about 35 s of a blank tape's first save, so a tape whose directory block was never
+  written is taken as blank, and the user guide warns against using another program's tape.
+  The library's first save writes from just past the directory, so a Z-machine save tape, whose
+  saves start at the tape's beginning, is reached only at the wrap.
 - A save takes the first free run long enough, looking from just past the directory to the
   tape's end and then from block 1, so its seeks to the directory stay short.
   It writes the entry, then the header with its blocks taken, then the page with its slot, so a
@@ -1154,6 +1222,12 @@ tape holds twelve pictures.
   within the tables, its size, room for its texts) before anything changes; then it replaces the
   master's texts, puts its words back, writes its tables into the master's record and gives the
   master the entry's name.
+  A nested entry's every part is judged so, its sub-instances' masters among the entry's parts
+  and the texts' room over all of them; its first part goes to the master chosen, each other to
+  an empty master in order, never one matched by name, since two masters of one name may differ,
+  or the load is refused, SLOTS, before anything changes.
+  Each part's sub-instances are mapped to the masters the parts took, and its `mUses` made
+  again from them.
   It may replace only a master the drawing does not call, directly or through a master holding
   it at any depth, so the canvas never changes; Undo does not cover it.
 
@@ -1194,7 +1268,7 @@ Measured on the emulator.
 | A ring structure with generic blocks | Dense tables, the last entry moved into a hole | Far less code, and a picture saved as a few runs of words |
 | Circles by a difference equation | Each vertex rotated directly from the start | No error builds up, and every circle closes |
 | Instances rotate and scale continuously | Instances translate and scale from x1/4 to x8, 32 sizes to a doubling | The 340 scales only by powers of two, so the sizes between are copies of the display list, and it cannot rotate a subroutine |
-| A scale knob, exponential | Edit > Scale, a slider whose doublings are equal steps, for one part at a time | The PDP-1 here has no knobs; the slider keeps the thesis's exponential feel |
+| A scale knob, exponential | Edit > Scale, a slider whose doublings are equal steps, for one part, a figure or the whole drawing | The PDP-1 here has no knobs; the slider keeps the thesis's exponential feel |
 | A definition chosen by its number in toggle registers | A master picked on a screen of sixteen, each shown with its name | The PDP-1 here has no toggle registers to spare, and a name says what a slot holds |
 | Instances nest to any depth, expanded at display time | A master holds up to eight instances, its words composed from theirs; changing an inner master makes its holders again or is refused whole, at Define or a library load; Dismember and Copy place them as instances again | The 340 keeps one return address |
 | Fastened instances follow by satisfaction | A fastened group moves rigidly under the pen | Nothing is solved during a drag |
@@ -1234,7 +1308,7 @@ Ruled out, as covered another way or not needed here.
 
 Not built.
 - Whole canvases held in memory for a fast load
-- A library save of a master that holds instances, and numbers inside a held master
+- Numbers inside a held master
 - Saving as text
 
 ## The source files
@@ -1259,7 +1333,8 @@ Not built.
 | *spdrag.ac* | 2 | A drag's arcs |
 | *spdefine.ac* | 2 | Copy's arcs and merge, the gates through which Define's words reach the arcs |
 | *sparcdata.ac* | 2 | The arc tables, the sine table, Define's working words and the held instances' blocks |
-| *spscale.ac* | 6 | The scale module: Scale's pick, slider, steps, drop and Undo, and the constraints on size's rows and resolver |
+| *spscale.ac* | 6 | The scale module: Scale's pick, slider, steps, drop and Undo, and the constraints on size's rows and resolver; the stubs choosing it or the group scale |
+| *spgscale.ac* | 6 | The group scale, Scale > Figure and All: the selection, the box, the apply, the refusals and Undo's record, a persistent drum overlay |
 | *spkbd.ac* | 6 | The pen keyboard, and the directory's screen's touches: its entries, a drum overlay's stubs, and the overlay |
 | *spinst.ac* | 7, 6 | The instance module: its stubs, and Define and Dismember's overlay |
 | *spdefword.ac* | 6 | Define's words, the held instances' composed among them, in Define and Dismember's overlay |

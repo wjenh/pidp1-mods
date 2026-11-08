@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.21
+This is version 1.22
 
-Edit date 7-Nov-2026\
-Timing figures updated
+Edit date 8-Nov-2026\
+Include more timing info, clean up some wording.
 
 ## What is it?
 
@@ -328,7 +328,8 @@ For example, running off the right side of the screen will reset x to 0, the opp
 But why is there an invisible vector modoe? Why not just use *point*?
 
 It's because it takes the vector operation only 1 microsecond per pixel to move, while *point* takes
-a fixed 35 microseconds. So, for short moves, vector is faster.
+a fixed 35 microseconds.
+For short moves, vector is faster.
 
 **NOTE** A request with with a length of 0 will draw nothing, but is still a valid vector,
 execution continues as normal.
@@ -431,87 +432,95 @@ a *sequence break*, assuming the SBS system has been enabled.
 
 If enabled, a lightpen hit will also immediately halt the display, but it *can* be resumed via the *drs* IOT.
 If given before a new *dla*, display list execution will resume from where it left off.
-In increment mode the display stops after the move whose point was hit, with the rest of that word's
+In increment mode the display stops after the move whose point was hit with the rest of that word's
 moves not yet drawn; *drs* draws them.
 A mandatory interrupt will also be issued, the same as for an edge violation, unless disabled with the
 nonstandard *specialinterrupt* flag.
 
 When the display halts because of a lightpen hit, the location of the hit can be fetched via the *drc* IOT.
-When resumed, the lightpen is automatically disabled. It must be enabled again via a *parameter* command.
+When resumed, the lightpen is automatically disabled.
+It must be enabled again via a *parameter* command.
 
 **After a lightpen hit**, resume with *drs* if you want the rest of your display list to execute.
 
 A lightpen that is held down sees every lightpen-enabled point drawn within its aperture every time
-it's drawn, whether the pen is moving or not.
+the point is drawn, whether the pen is moving or not.
 A program tracking the pen gets a hit on each rendering of those points for as long as the pen is down.
 
-What the program does after the hit decides whether the rest of the display gets drawn.
-
-- *drs* resumes the display where it paused. The lightpen is disabled by the resume and the rest of
-  the display list is drawn without further hits.
+What the program does after the hit decides whether the rest of the display gets drawn:
+- *drs* resumes the display where it paused.
+  The lightpen is disabled by the resume and the rest of the display list is drawn without further hits.
   The pen is enabled only when a *parameter* command turns it on again.
   The result is one hit per pass through the display program.
 - *dla*, used to change the position of the points hit or to modify the display list, starts the
-  display again with the lightpen enabled. The pen is still on the display,
-  the display restarts at the new address, and if execution causes the points to be
-  redrawn, and the hit repeats until the lightpen is lifted.
-- The display loops on the points for as long as the pen touches them, and nothing after that
-  point in the display program ever gets a chance to be drawn.
+  display again with the lightpen enabled.
+  The pen is still on the display, the display restarts at the new address, and if execution causes the points to be
+  redrawn, the hit repeats until the lightpen is lifted.
+- Restarting from before the point that caused the hit with the lightpen enabled will loop on the point
+  for as long as the pen touches them and nothing after that point in the display program will be drawn.
 
-So after a lightpen hit, save the coordinates with *drc*, update the display list or or whatever
-the lightpen interrupt code is for, then resume with *drs*.
+After a lightpen hit, save the coordinates with *drc*, take whatever program action you want,
+then resume with *drs*.
 You can then reenable the lightpen in your next pass, allowing the entire display list to be processed.
 
 ## Timing
 
 The Type 340 has some fairly complex timing and most of the drawing commands have variable timing.
 Even more confusing, the timing differed depending upon which computer was the host.
-The PDP-4 was a slow machine and used a 2.8 usec setup time for a dla start command, the PDP-7 was a much faster
-machine, the PDP-1 was in the middle. It is unclear exactly what the setup time for the PDP-1 was, it is assumed
-to be 1.5 usecs.
+Every word the display fetches starts with a setup delay, which DEC adjusted from 1.0 to 2.8 usecs
+depending on the computer; the PDP-4, a slow machine, used 2.8.
 
-Each instruction also has a setup time of 500 nanosecods.
+On the PDP-1 the delay runs inside the 5 usec high speed channel word-fetch cycle,
+which puts the PDP-1's setting at about 1 usec.
+Therefore, a parameter or point word costs no setup time beyond its fetch, and a *dla* starts the display on
+its first word immediately.
 
-Interestingly, the scale factor does not affect the positioning time. The display could apparently
-move its beam up to 8 real pixels within the 1 usec move timing window.
+Vector, vector continue and increment words take a 0.5 usec setup time before their first move.
+Character words take their 0.5 usecs between characters instead, see below.
+
+On the hardware the display asked for its next word as soon as it was done, but the PDP-1 granted it only at the
+end of one of its 5 usec cycles, each word took a whole number of cycles.
+The emulator does not round to cycles, a parameter or point word takes exactly its cycle, as on the hardware,
+and a longer word averages about 1 usec less than the hardware's.
+
+Interestingly, the scale factor does not affect the positioning time.
+The display could apparently move its beam up to 8 real pixels within the 1 usec move timing window.
 
 Here are some of the basic timings:
 
 - every command fetch from main memory takes 5 usecs via high speed channel 3
-- every command executed has a setup time, as noted above
+- a vector, vector continue or increment word has the 0.5 usec setup time noted above
 - a point command always takes 35 usecs, but see below
 - vector and vector continue take 1.5 usecs for each step of the display's rate multiplier, whether or
-  not the point is displayed, a 1 usec move, then a 0.5 usec intensify delay.
-  A vector runs 2^n steps, n being the number of bits in the larger of its x and y lengths, at least 3
-  regardkess, the last step is free.
-  With its setup time a vector of length 7 or less takes 11 usecs and one of 64 to 127 takes 191 usecs,
-  plus its word fetch
-- increment takes 1.5 usecs for each move, whether or not the point is displayed.
-  A move whose point is hit by the lightpen takes only 1 usec before the display stops
-- a *drs* that resumes the display after a lightpen hit takes 1.5 usecs before the display continues
-  in every mode but character.
-  There is no existing documentation on the time for a character resume.
-- character takes 1.5 usecs for each step the Type 342 character generator moves the beam whether or not
-  the point is displayed, a 1 usec move, then a 0.5 usec intensify delay.
-  A character takes up to 30 steps,along a path the 342 sets for each character then the next character
+  not the point is displayed, a 1 usec move and a 0.5 usec intensify delay.
+  A vector runs 2^n steps, n the number of bits in the larger of its x and y lengths, at least 3,
+  regardless of the number of points drawn but the last point is free.
+  With its setup time a vector of length 7 or less takes 11 usecs, one of 64 to 127 takes 191 usecs plus its fetch
+- increment takes 1.5 usecs for each move, whether or not the point is displayed;
+  a move whose point is hit by the lightpen takes 1 usec before the display stops
+- a *drs* that resumes the display after a lightpen hit takes 1.5 usecs before the display resumes,
+  but there is no DEC documentation surviving for character, so the assumption is:
+- character takes 1.5 usecs for each step the Type 342 character generator moves the beam, whether or not
+  the point is displayed: a 1 usec move, then a 0.5 usec intensify delay.
+  A character takes up to 30 1.5 usec steps along a path the 342 hardwired for each character and the next character
   starts 0.5 usecs after it ends.
-  The 342's paths are not documented, so the emulator charges each character the shortest path from its
-  start through its displayed points to the next character's start.
-  A space takes 7 steps, 11 usecs with the 0.5 usecs end.
-  An I taked 17 steps, 26 usecs; an H 24 steps, 36.5 usecs; the longest real character takes 26.
+  The 342's paths are not documented, the emulator gives each character the shortest path from its
+  start through its displayed points to the next character's start: a space 7 steps, 11 usecs with the
+  0.5 usecs after it; an I 17 steps, 26 usecs; an H 24 steps, 36.5 usecs; the longest real character 26 steps.
   A carriage return takes 9 steps and a line feed 12.
   The shifts and the end character take only 0.5 usecs.
   A backspace takes 7 steps, as a space does.
-  An accent goes back over the previous character and returns, so ` takes 12 steps and ^ 15.
-  A vertical character takes the same steps as a horizontal one.
-  Note that where 342 actually starts the next vertical character is not documented.
+  An accent goes back over the previous character and returns to the current one, taking 12 steps for `
+  and 15 for ^.
+  A vertical character takes the same steps as a horizontal one, an approximation, where the 342
+  starts the next vertical character is not documented.
   The points are still drawn column by column, left to right, each column bottom to top
-  so the assumption here is likely valid.
 
 When using the point command, the order of the x and y coordinates drastically affects the timing.
 
-Setting the y position does not incur the norma 35 usec delay as long as it does not have the display flag set,
+Setting the y position does not incur the 35 usec delay as long as it does not have the display flag set,
 which should generally be the case.
+
 Setting the x position *always* causes a 35 usec delay.
 
 If moving in both axes, set y without visible first, then x.
@@ -703,14 +712,14 @@ Character set 2
 | 76 | ??? |
 | 77 | superscript |
 
-For the second character set, the *subscript* and *superscript* characters are modal like the shift characters.
+For the second character set, the *subscript* and *superscript* characters are modal, like the shift characters.
 They stay in effect until the opposite one is used.
 
-The *backspace* moves the beam back one character so the next character is drawn over the last.
+The *backspace* moves the beam back one character, the next character is drawn over the last.
 The two accents, ` and ^, are drawn over the character before them, and the beam stays where it was:
-a, \`, b puts the accent over the a with the b as the next character after a.
-At the left edge, less than a character from x = 0, neither moves the beam back.
-A backspace leaves it where it is and an accent is drawn where the beam is.
+a, \`, b puts the accent over the a and the b in the next place.
+At the left edge, less than a character from x = 0, neither moves the beam back: a backspace leaves it
+where it is, and an accent is drawn where the beam is and moves it on a place, as an ordinary character.
 
 ## A real example
 

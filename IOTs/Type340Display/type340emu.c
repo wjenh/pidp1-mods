@@ -133,7 +133,7 @@
 #define LOG_HSCTIMING 0    // measure getWord() HSC fetch latency
 
 // The 0.5 us intensify S delay that ends in IDP.
-// Every word incurs it after the setup delay that DATA/ SYNC starts.
+// Every word incurs it after the setup delay that DATA SYNC starts.
 // On the PDP-1 both run inside the word's 5 us channel cycle.
 // The word arrives in about 1.5 us, and a parameter word or an undrawn Y point word
 // still asks for the next word in time for the next cycle, so the setup delay is about 1.0 us
@@ -144,7 +144,7 @@
 #define SETUP_TIME 500
 // A vector's COUNT BRM pulse starts the 1.0 us sequence delay whose end starts the 0.5 us
 // intensify delay that ends in the next pulse.
-// A pulse that ends the loop at an/ edge or a lightpen hit costs only the sequence delay.
+// A pulse that ends the loop at an edge or a lightpen hit costs only the sequence delay.
 #define BRM_PULSE_TIME 1500
 #define BRM_HALT_PULSE_TIME 1000
 // The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay

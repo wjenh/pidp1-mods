@@ -38,6 +38,7 @@
 //     through the emulator's command port; Reload config is now Reload.
 // 07-Nov-2026 wje (Claude) - the "Also launch:" row: t30dpy and Soroban, the typewriter terminal,
 //     started by pdp1control.sh; the Companions row's Typewriter is now Soroban.
+// 09-Nov-2026 wje - add choice to the schema, clean out unused items, add missing ones
 
 #include <errno.h>
 #include <limits.h>

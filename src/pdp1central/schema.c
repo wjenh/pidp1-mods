@@ -2,10 +2,17 @@
 // checks a value against it before it is written.
 // The file has one setting per line, nine fields separated by '|':
 //     name|group|type|range|default|reader|applies|label|summary
-// '#' in column 1 starts a comment, and blank lines are skipped. A range is "low..high" or
-// empty; a default of "-" means no reader has a single one. Applies is reload, panel, run,
-// restart, program or none, and reload, panel or run may carry "-sticky". The label, usually
-// empty, is shown instead of the name.
+// '#' in column 1 starts a comment, and blank lines are skipped.
+// Name is the config file name and also what is displayed.
+// group identifies the roup it is displayed in, one listed when settings is selected.
+// type is the field datatype: book, int, float, text, port.
+// range is "lowval..highval" or empty.
+// default is the default value or "-" for none.
+// reader is the program that uses the setting, displayed when applies is 'program'.
+// applies is reload, panel, run, restart, program, or none,
+//    and reload, panel or run may also have "-sticky" appended.
+// label, if not empty, is shown instead of the name.
+// summary is what is shown as the "tip" when the name is hovered over.
 
 #include <ctype.h>
 #include <math.h>
@@ -80,6 +87,7 @@ int n;
     memset(entryP, 0, sizeof(*entryP));
     if( !copyField(entryP->name, sizeof(entryP->name), fieldsP[0]) || !fieldsP[0][0] ||
         !copyField(entryP->group, sizeof(entryP->group), fieldsP[1]) || !fieldsP[1][0] ||
+        !copyField(entryP->rangeStr, sizeof(entryP->rangeStr), fieldsP[3]) ||
         !copyField(entryP->defaultText, sizeof(entryP->defaultText), fieldsP[4]) || !fieldsP[4][0] ||
         !copyField(entryP->reader, sizeof(entryP->reader), fieldsP[5]) ||
         !copyField(entryP->label, sizeof(entryP->label), fieldsP[7]) ||
@@ -104,6 +112,10 @@ int n;
     {
         entryP->type = SCHEMA_TEXT;
     }
+    else if( !strcmp(fieldsP[2], "choice") )
+    {
+        entryP->type = SCHEMA_CHOICE;
+    }
     else if( !strcmp(fieldsP[2], "port") )
     {
         entryP->type = SCHEMA_PORT;
@@ -113,7 +125,7 @@ int n;
         return("the type is not bool, int, float, text or port");
     }
 
-    if( fieldsP[3][0] )
+    if( (entryP->type != SCHEMA_CHOICE) && fieldsP[3][0] )
     {
         if( !(dotsP = strstr(fieldsP[3], "..")) )
         {
@@ -130,7 +142,7 @@ int n;
         entryP->hasRange = true;
     }
 
-    // A "-sticky" setting's reader assigns it only when a line is there, so a new value applies
+    // A "-sticky" setting's reader assigns it only when a line is in the config file, a new value applies
     // as stated, but going back to the default needs the reader restarted.
     if( (p = strstr(fieldsP[6], "-sticky")) && !p[7] )
     {
@@ -325,6 +337,14 @@ double value;
         return(true);
 
     case SCHEMA_TEXT:
+        return(true);
+
+    case SCHEMA_CHOICE:
+        if( !strstr(entryP->rangeStr, valueP) )
+        {
+            snprintf(errorP, errorLen, "%s:one of %s", entryP->name, entryP->rangeStr);
+            return(false);
+        }
         return(true);
 
     case SCHEMA_PORT:

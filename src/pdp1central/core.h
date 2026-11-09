@@ -39,6 +39,7 @@ typedef enum
     SCHEMA_INT,
     SCHEMA_FLOAT,
     SCHEMA_TEXT,
+    SCHEMA_CHOICE,
     SCHEMA_PORT
 } SchemaType;
 
@@ -58,6 +59,7 @@ typedef struct
     char name[CONF_MAX_VALUE + 1];
     char group[32];
     SchemaType type;
+    char rangeStr[64];
     bool hasRange;
     double rangeLow;
     double rangeHigh;

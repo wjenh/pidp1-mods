@@ -32,15 +32,12 @@ typedef struct _ConfigurationSetting
 typedef struct
 {
     int penAperture;
-    bool lightpenEnabled;
     bool sdbEnabled;
     bool dpyShiftEnabled;
     bool audioEnabled;
     bool lailiaEnabled;
     bool core1DEnabled;
     bool all1DEnabled;
-    bool useShm;
-    bool newMemFile;
     bool sbs16Enabled;
     bool muldivEnabled;
     int sampleRate;

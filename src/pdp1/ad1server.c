@@ -13,10 +13,11 @@
 // Run control uses the same ad1flags the main loop already turns into front-panel switch
 // actions; here they are set and waited on by the emulator thread instead of by another process.
 //
-// 20-Sep-2026 Claude: written to replace the shared-memory link.
-// 28-Sep-2026 Claude: the HELLO reply's build text no longer carries the build date.
-// 13-Oct-2026 Claude: a breakpoint or watch can carry a condition on one core word.
-// 07-Nov-2026 Claude: setting the PC makes the next cycle a fetch from it.
+// 20-Sep-2026 Claude - written to replace the shared-memory link.
+// 28-Sep-2026 Claude - the HELLO reply's build text no longer carries the build date.
+// 13-Oct-2026 Claude - a breakpoint or watch can carry a condition on one core word.
+// 07-Nov-2026 Claude - setting the PC makes the next cycle a fetch from it.
+// 09-Nov-2026 wje - shared memory is no longer needed or supported
 
 #define _GNU_SOURCE
 
@@ -963,14 +964,7 @@ ad1ServerStart(PDP1 *pdp, ConfigurationP configP)
 pthread_t th;
 int localPort;
 int remotePort;
-
-    (void)pdp;
-
-    if( configP && configP->useShm )
-    {
-        fprintf(stderr, "pidp1: the 'shared' setting is obsolete and ignored; ad1 and fastload use the "
-            "network ports ad1port and ad1remoteport\n");
-    }
+(void)pdp;
 
     localPort = configPort(configP, "ad1port", AD1P_DEFAULT_LOCAL_PORT);
     remotePort = configPort(configP, "ad1remoteport", 0);

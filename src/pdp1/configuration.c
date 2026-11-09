@@ -174,15 +174,6 @@ char answer[64];
         {
             configSettings.muldivEnabled = onOff;
         }
-        else if( !strcmp(option,"newmemfile") )
-        {
-            configSettings.newMemFile = onOff;
-        }
-        else if(!strcmp(option, "shared"))
-        {
-            // Put the PDP1 struct in shared memory for use with other tools
-            configSettings.useShm = onOff;
-        }
         else
         {
             // unknown, put into other settings list after
@@ -225,15 +216,12 @@ char answer[64];
         configSettings.lailiaEnabled = true;
     }
 
-    logger(LOG_CONFIG, "lightpen %d\n", configSettings.lightpenEnabled);
     logger(LOG_CONFIG, "sdb %d\n", configSettings.sdbEnabled);
     logger(LOG_CONFIG, "dpy shift %d\n", configSettings.dpyShiftEnabled);
     logger(LOG_CONFIG, "audio %d\n", configSettings.audioEnabled);
     logger(LOG_CONFIG, "lailia %d\n", configSettings.lailiaEnabled);
     logger(LOG_CONFIG, "core 1D %d\n", configSettings.core1DEnabled);
     logger(LOG_CONFIG, "all 1D %d\n", configSettings.all1DEnabled);
-    logger(LOG_CONFIG, "shm %d\n", configSettings.useShm);
-    logger(LOG_CONFIG, "new mem file %d\n", configSettings.newMemFile);
 
     fclose(fP);
 

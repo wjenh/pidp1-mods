@@ -55,15 +55,15 @@ cutoff|Audio|float|1.0..100000.0|-|pdp1|reload||The low-pass cutoff of all four 
 cutoff1|Audio|float|1.0..100000.0|1020|pdp1|reload||Program flag 1's cutoff in Hz, default is CHM value
 cutoff2|Audio|float|1.0..100000.0|925|pdp1|reload||Program flag 2's cutoff in Hz, default is CHM value
 cutoff3|Audio|float|1.0..100000.0|423|pdp1|reload||Program flag 3's cutoff in Hz, default is CHM value
-cutoff4|Audio|float|1.0..100000.0|270|pdp1|reload||Program flag 4's cutoff in Hz, default is CHM value
+cutoff4|Audio|float|1.0..100000.0|220|pdp1|reload||Program flag 4's cutoff in Hz, default is CHM value
 gain|Audio|float|0.0..100.0|0.95|pdp1|reload||The mixer gain; too high and the sound clips
 tuning|Audio|float|0.001..100.0|1.0|pdp1|reload||Shifts the frequency; SDL3 only
 samplerate|Audio|int|8000..192000|48000|pdp1|reload||Samples a second sent to SDL
 audiodepth|Audio|int|10..500|40|pdp1|reload||Milliseconds of sound kept queued ahead of the device
 # The 4-channel DAC
 dacgain|Audio|float|0.0..100.0|1.0|DAC|reload||The DAC mixer gain
-dacroom|Audio|choice|voices,busch,hall,none|voices|DAC|reload||The DAC room setting, none is no room
-daconset|Audio|int|0..1000|8|DAC|reload||The DAC onset delay, in milliseconds
+dacroom|Audio|choice|voices,busch,hall,none|none|DAC|reload||The DAC room setting, none is no room
+daconset|Audio|int|0..1000|0|DAC|reload||The delay before an organ note starts, in milliseconds; 8 for the Flentrop
 
 # Misc device features
 fasttyo|Devices|bool||off|typewriter|reload||output at 200 characters a second instead of 10
@@ -85,9 +85,9 @@ plotterstep|Devices|int|0..100000|5000|Plotter|reload||The time in microsecs a p
 plotterpendown|Devices|int|0..1000|100|Plotter|reload||The time in millisecs a pen down takes
 plotterpenup|Devices|int|0..1000|100|Plotter|reload||The time in millisecs pen up takes
 plotterpen|Devices|int|1..50|1|Plotter|reload||The width of the line the pen draws
-plotteridle|Devices|int|0...30|5|Plotter|reload||The idle time in seconds before a print is saved, 0 is never
-plottersbs|Devices|int|0...15|0|Plotter|reload||The sbs channel the plotter uses, 1-15, 0 for none
-plottercks|Devices|int|0...17|7|Plotter|reload||The cks bit the plotter uses, 0-17
+plotteridle|Devices|int|0..30|5|Plotter|reload||The idle time in seconds before a print is saved, 0 is never
+plottersbs|Devices|int|0..15|0|Plotter|reload||The sbs channel the plotter uses, 1-15, 0 for none
+plottercks|Devices|int|0..17|7|Plotter|reload||The cks bit the plotter uses, 0-17
 plotterorigin|Devices|int|0..7|0|Plotter|reload||The steps from the paper left edge where the pen starts
 
 # Hardware panel features

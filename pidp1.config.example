@@ -273,16 +273,16 @@ fasttyo=false
 #dacgain=1.0
 
 # The room the waveform shaper uses, dacroom=voices lets the voices choose at each start,
-# Busch Hall when a piece playing asks for it, use with the Flentrop organ,
-# a generic hall otherwise.
-# dacroom=busch or dacroom=hall forces the room.
+# Busch Hall when a piece asks for it, a generic hall otherwise.
+# dacroom=busch, dacroom=hall, dacroom=none forces the room.
+# The Flentrop organ uses Busch Hall, the room it was designed for.
 # The default without the setting is no room.
 dacroom=voices
 
 # The onset.
 # daconset=MS starts each organ note up to MS milliseconds late,
 # as a tracker organ's pallets and pipes do.
-# Off by default or if at 0.
+# Off by default or if 0.
 # 8 ms is correct for the Flentrop, a tracker organ.
 daconset=8
 

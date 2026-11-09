@@ -38,7 +38,8 @@
 //     through the emulator's command port; Reload config is now Reload.
 // 07-Nov-2026 wje (Claude) - the "Also launch:" row: t30dpy and Soroban, the typewriter terminal,
 //     started by pdp1control.sh; the Companions row's Typewriter is now Soroban.
-// 09-Nov-2026 wje - add choice to the schema, clean out unused items, add missing ones
+// 09-Nov-2026 wje - add choice to the schema, clean out unused items, add missing ones.
+//    A choice setting is picked with option buttons in the Settings tab.
 
 #include <errno.h>
 #include <limits.h>
@@ -66,6 +67,8 @@
 #define MAX_OTHER 128           // names in pidp1.config the schema does not have
 #define MAX_QUEUE 4             // script commands waiting for the running child
 #define MAX_SCHEMES 8           // color schemes the Colors choice lists
+#define CHOICE_MAX 32           // values a choice can have: 64 characters of "a,b,..."
+#define CHOICE_BUTTONS_MAX 8    // a choice with more values gets a drop-down
 #define WINDOW_W 960
 #define WINDOW_H 680
 #define TITLE_MARGIN 32         // kept above a window that is opened to fit a short screen
@@ -2943,6 +2946,12 @@ startingValue(const SchemaEntry *entryP, char *outP, size_t outLen)
     case SCHEMA_TEXT:
         snprintf(outP, outLen, "0");
         break;
+    case SCHEMA_CHOICE:
+        if( !schemaChoiceAt(entryP, 0, outP, outLen) )
+        {
+            snprintf(outP, outLen, "0");
+        }
+        break;
     default:
         snprintf(outP, outLen, "%d", (entryP->hasRange?(int)entryP->rangeLow:0));
         break;
@@ -3018,24 +3027,96 @@ nk_flags flags;
     }
 }
 
+// A choice setting's values, split into choicesP; returns how many.
+// The widest value's text width goes to *widestP.
+static int
+splitChoices(struct nk_context *ctxP, const SchemaEntry *entryP, char choicesP[][sizeof(entryP->rangeStr)],
+    float *widestP)
+{
+const struct nk_user_font *fontP;
+float width;
+int n;
+
+    fontP = ctxP->style.font;
+    *widestP = 0.0f;
+    for( n = 0; (n < CHOICE_MAX) && schemaChoiceAt(entryP, n, choicesP[n], sizeof(choicesP[n])); n++ )
+    {
+        width = fontP->width(fontP->userdata, fontP->height, choicesP[n], (int)strlen(choicesP[n]));
+        if( width > *widestP )
+        {
+            *widestP = width;
+        }
+    }
+
+    return(n);
+}
+
 // One row of the settings editor: name, control, "default" box, when it applies.
+// A choice's control is a row of option buttons, not a drop-down: a combo's list opens only
+// downward, and in this scrolling group a row near the bottom would have it cut off by the
+// window. A choice with too many values to fit as buttons gets the drop-down anyway.
 static void
 drawSettingRow(struct nk_context *ctxP, int index, const SchemaEntry *entryP, const char *nameP)
 {
 static const float ratios[] = { 0.24f, 0.36f, 0.12f, 0.28f };
+float choiceRatios[3 + CHOICE_BUTTONS_MAX];
+char choices[CHOICE_MAX][sizeof(entryP->rangeStr)];
+const char *choicePs[CHOICE_MAX];
 char valueBuf[CONF_MAX_VALUE + 1];
 char newValue[CONF_MAX_VALUE + 1];
 char label[CONF_MAX_VALUE + 2];
 struct nk_rect bounds;
 const char *valueP;
 nk_bool isDefault, wasDefault, on;
-bool readOnly;
-int intValue, newInt;
+bool readOnly, buttons;
+int intValue, newInt, choiceCount, choiceIndex, picked, i;
+float widest, needed, spacing, space4, spaceN, buttonWidth;
 double floatValue, newFloat;
 
     valueP = getValue(editCfP, nameP, valueBuf);
     readOnly = (entryP && (entryP->applies == APPLIES_NONE));
-    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, ratios);
+
+    // A choice the file sets to one of its values gets the picker; any other value is shown in
+    // the text field, so a hand-edited one can be seen and corrected.
+    choiceCount = 0;
+    choiceIndex = -1;
+    buttons = false;
+    spaceN = space4 = buttonWidth = 0.0f;
+    if( entryP && (entryP->type == SCHEMA_CHOICE) && valueP && !readOnly &&
+        ((choiceIndex = schemaChoiceIndex(entryP, valueP)) >= 0) )
+    {
+        choiceCount = splitChoices(ctxP, entryP, choices, &widest);
+
+        // Nuklear shares a row's width less the gaps between its columns by the ratios, so a
+        // row with more columns has less to share. The ratios below put the name, default and
+        // applies columns where a four-column row has them, and the buttons, gaps included,
+        // fill the value column.
+        spacing = ctxP->style.window.spacing.x;
+        space4 = (nk_layout_widget_bounds(ctxP).w - (3.0f * spacing));
+        spaceN = (nk_layout_widget_bounds(ctxP).w - ((2 + choiceCount) * spacing));
+        buttonWidth = (((ratios[1] * space4) - ((choiceCount - 1) * spacing)) / choiceCount);
+
+        // Each button is its circle, the gap and the text.
+        needed = (widest + ctxP->style.font->height + ctxP->style.option.spacing +
+            (2.0f * ctxP->style.option.padding.x));
+        buttons = ((choiceCount <= CHOICE_BUTTONS_MAX) && (spaceN > 0.0f) && (buttonWidth >= needed));
+    }
+
+    if( buttons )
+    {
+        choiceRatios[0] = ((ratios[0] * space4) / spaceN);
+        for( i = 0; i < choiceCount; i++ )
+        {
+            choiceRatios[1 + i] = (buttonWidth / spaceN);
+        }
+        choiceRatios[1 + choiceCount] = ((ratios[2] * space4) / spaceN);
+        choiceRatios[2 + choiceCount] = ((ratios[3] * space4) / spaceN);
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, (3 + choiceCount), choiceRatios);
+    }
+    else
+    {
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, ratios);
+    }
 
     // The name, or its label, with the summary as its tooltip; a label's tooltip also gives the
     // name, since that is what the file holds.
@@ -3071,6 +3152,29 @@ double floatValue, newFloat;
     else if( readOnly )
     {
         nk_label(ctxP, valueP, NK_TEXT_LEFT);
+    }
+    else if( buttons )
+    {
+        for( i = 0; i < choiceCount; i++ )
+        {
+            if( nk_option_label(ctxP, choices[i], (i == choiceIndex)) && (i != choiceIndex) )
+            {
+                editSet(entryP, nameP, choices[i]);
+            }
+        }
+    }
+    else if( choiceIndex >= 0 )
+    {
+        for( i = 0; i < choiceCount; i++ )
+        {
+            choicePs[i] = choices[i];
+        }
+        picked = nk_combo(ctxP, choicePs, choiceCount, choiceIndex, ROW_H,
+            nk_vec2(nk_widget_width(ctxP), (float)(8 * (ROW_H + 4))));
+        if( picked != choiceIndex )
+        {
+            editSet(entryP, nameP, choices[picked]);
+        }
     }
     else if( !entryP || (entryP->type == SCHEMA_TEXT) )
     {
@@ -4086,6 +4190,7 @@ bool ok;
     else
     {
         ok = (ok && rootJoin(schemaPath, "src/pdp1central/pidp1config.schema"));
+        ok = (ok && rootJoin(schemaPath, "pidp1config.schema"));
     }
 
     return(ok);

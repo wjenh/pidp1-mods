@@ -4,9 +4,9 @@
 //     name|group|type|range|default|reader|applies|label|summary
 // '#' in column 1 starts a comment, and blank lines are skipped.
 // Name is the config file name and also what is displayed.
-// group identifies the roup it is displayed in, one listed when settings is selected.
-// type is the field datatype: book, int, float, text, port.
-// range is "lowval..highval" or empty.
+// group identifies the group it is displayed in, one listed when settings is selected.
+// type is the field datatype: bool, int, float, text, choice, port.
+// range is "lowval..highval" or empty; for a choice, its values, "str[,str...]".
 // default is the default value or "-" for none.
 // reader is the program that uses the setting, displayed when applies is 'program'.
 // applies is reload, panel, run, restart, program, or none,
@@ -122,14 +122,34 @@ int n;
     }
     else
     {
-        return("the type is not bool, int, float, text or port");
+        return("the type is not bool, int, float, text, choice or port");
     }
 
-    if( (entryP->type != SCHEMA_CHOICE) && fieldsP[3][0] )
+    // A choice's values are checked here, so the picker never meets an empty one.
+    if( entryP->type == SCHEMA_CHOICE )
+    {
+        if( !fieldsP[3][0] || (fieldsP[3][0] == ',') || strstr(fieldsP[3], ",,") ||
+            (fieldsP[3][strlen(fieldsP[3]) - 1] == ',') )
+        {
+            return("a choice's range is its values, comma separated, none empty");
+        }
+
+        if( strcmp(entryP->defaultText, "-") && (schemaChoiceIndex(entryP, entryP->defaultText) < 0) )
+        {
+            return("a choice's default is - or one of its values");
+        }
+    }
+    else if( fieldsP[3][0] )
     {
         if( !(dotsP = strstr(fieldsP[3], "..")) )
         {
             return("a range is low..high");
+        }
+
+        // "0...30" would read as 0 to .30.
+        if( dotsP[2] == '.' )
+        {
+            return("a range is low..high, with two dots");
         }
 
         *dotsP = '\0';
@@ -340,9 +360,10 @@ double value;
         return(true);
 
     case SCHEMA_CHOICE:
-        if( !strstr(entryP->rangeStr, valueP) )
+        // The whole value, not a piece of the list: "56" is not "560".
+        if( schemaChoiceIndex(entryP, valueP) < 0 )
         {
-            snprintf(errorP, errorLen, "%s:one of %s", entryP->name, entryP->rangeStr);
+            snprintf(errorP, errorLen, "%s: one of %s", entryP->name, entryP->rangeStr);
             return(false);
         }
         return(true);
@@ -372,6 +393,55 @@ double value;
     }
 
     return(true);
+}
+
+// A choice's value number index, from 0, copied to outP.
+// Returns false when the choice has no such value, or it does not fit.
+bool
+schemaChoiceAt(const SchemaEntry *entryP, int index, char *outP, size_t outLen)
+{
+const char *p;
+size_t len;
+int i;
+
+    for( i = 0, p = entryP->rangeStr; (i < index) && (p = strchr(p, ',')); i++ )
+    {
+        p++;
+    }
+
+    if( (index < 0) || !p || !*p )
+    {
+        return(false);
+    }
+
+    len = strcspn(p, ",");
+    if( len >= outLen )
+    {
+        return(false);
+    }
+
+    memcpy(outP, p, len);
+    outP[len] = '\0';
+    return(true);
+}
+
+// Which of a choice's values the value is, from 0.
+// Returns -1 when it is none of them.
+int
+schemaChoiceIndex(const SchemaEntry *entryP, const char *valueP)
+{
+char choice[sizeof(entryP->rangeStr)];
+int i;
+
+    for( i = 0; schemaChoiceAt(entryP, i, choice, sizeof(choice)); i++ )
+    {
+        if( !strcmp(choice, valueP) )
+        {
+            return(i);
+        }
+    }
+
+    return(-1);
 }
 
 // The words the editor shows for when a change takes effect. Save reloads whatever is running

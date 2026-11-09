@@ -2,9 +2,10 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.13\
-Edit date 07-Nov-2026\
-Added launching Soroban
+This is version 1.14\
+Edit date 09-Nov-2026\
+A setting with a fixed list of values, such as dacroom, is picked with a row of buttons in the
+Settings tab.
 
 ## What is pdp1central?
 
@@ -27,7 +28,6 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - its colors come from a choice of schemes, with single colors changeable in a file of its own.
 
 It runs on the machine that runs the emulator.
-The scripts stay, and can still be used on a system without a desktop.
 Pdp1central starts, stops, and reloads the emulator and starts t30dpy and Soroban by running bin/pdp1control.sh
 so the two always do the same thing.
 
@@ -101,9 +101,9 @@ A Soroban window closes by itself when the emulator stops.
 Interface (gui, web or apps), Also launch (t30dpy, Soroban),
 Front panel (PiDP-1 hardware or virtual) and USB paper tape (yes or no).
 A click saves the choice at once, and it is used at the next start or restart.
-The area after the Also launch boxes shows who has the display and who has the typewriter.
+The line beside the Also launch boxes says who has the display and who has the typewriter.
 
-*t30dpy* starts the t30dpy display in addition to the gui or web front end.
+*t30dpy* starts the t30dpy display beside the gui or web front end.
 Apps always starts t30dpy, the box is shown checked and cannot be changed.
 The emulator sends the display to one window at a time, the last one to connect:
 - with gui, t30dpy starts once pdp1_periphES has connected; t30dpy has the display and the
@@ -118,10 +118,10 @@ starts, it closes if it cannot connect.
 lxterminal -e "telnet localhost 1041".
 The emulator gives the typewriter to one window at a time, the first one to connect, and
 refuses the others:
-- with apps there is no other typewriter, Soroban is the only one;
-- with web, Soroban is the typewriter and the browser's typewriter panel does nothing while
+- with apps there is no other typewriter, Soroban is the one;
+- with web, Soroban keeps the typewriter, and the browser's typewriter panel gets nothing while
   the Soroban window is open;
-- with gui, pdp1_periphES needs the typewriter to start at all so Soroban is not started; the
+- with gui, pdp1_periphES needs the typewriter to start at all, so Soroban is not started; the
   box is grayed and keeps its value for when web or apps is chosen again.
 
 Soroban starts once the emulator is ready for it, at most 5 seconds after the emulator starts,
@@ -379,13 +379,17 @@ A tab for each group of settings, as in UsingTheConfigFile.md, then:
 Settings that nothing reads any more are not shown; UsingTheConfigFile.md lists them.
 
 Each row has:
-- the setting's name, hold the mouse over it for what it does.
+- the setting's name, hold the mouse over it for a tooltip explaining it.
   A few show a more understandable name, such
   as *audio enabled* for audio; the tooltip gives the name as used in the file.
-- its value, a checkbox for on and off, checked when on, with what a click does beside it,
+- its value, a checkbox for on and off, checked when on with what a click does,
   "click to turn off" or "click to turn on", a number or a text field.
   Press Enter or leave the field to set it.
-- a default box:, checked means pidp1.config does not set it, so the program that reads it uses
+  A setting with a fixed list of values, such as dacroom or plottermodel, has a button for each
+  value, click on one to set it.
+  A value not in the list, typed into pidp1.config by hand, is shown in a text field so it can be
+  corrected.
+- a default box, checked means pidp1.config does not set it, the program that reads it uses
   its own default, which is shown.
 - when a change takes effect.
 

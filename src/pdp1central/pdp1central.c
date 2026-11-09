@@ -298,7 +298,8 @@ static int group;
 static bool diskConflict;       // pidp1.config changed on disk while there are unsaved edits
 static char savedNote[512];     // after a save: what still needs a restart
 static bool savedNeedsRestart;
-static char statusNote[256];    // the last error, shown in the top strip
+static char statusNote[256];    // the last error, shown in the top strip until the next action
+static unsigned statusSeq;      // counts the errors shown, so an action keeps the error it raised
 static bool exitPending;        // leave once the running child and the queue are done
 static bool exitNow;
 
@@ -333,7 +334,7 @@ int slot;
     logCount++;
 }
 
-// Log an error and show it in the top strip until the next one.
+// Log an error and show it in the top strip until the next click or key press.
 static void
 appError(const char *fmtP, ...)
 {
@@ -342,6 +343,7 @@ va_list ap;
     va_start(ap, fmtP);
     vsnprintf(statusNote, sizeof(statusNote), fmtP, ap);
     va_end(ap);
+    statusSeq++;
     appLog("%s", statusNote);
 }
 
@@ -4190,7 +4192,6 @@ bool ok;
     else
     {
         ok = (ok && rootJoin(schemaPath, "src/pdp1central/pidp1config.schema"));
-        ok = (ok && rootJoin(schemaPath, "pidp1config.schema"));
     }
 
     return(ok);
@@ -4209,6 +4210,8 @@ const char *rootArgP, *schemaArgP;
 char error[512];
 struct stat st;
 int opt, width, height, y;
+unsigned actionSeq;     // statusSeq when the current click or key press began
+bool actionEnded;       // a click or key press ended in this frame
 
     rootArgP = DEFAULT_ROOT;
     schemaArgP = NULL;
@@ -4298,9 +4301,11 @@ int opt, width, height, y;
     appLog("pdp1central started; root %s", rootPath);
     loadStyle(ctxP);
     exitNow = false;
+    actionSeq = statusSeq;
     while( !exitNow )
     {
         nk_input_begin(ctxP);
+        actionEnded = false;
         if( SDL_WaitEventTimeout(&event, (redrawNow?0:250)) )
         {
             do
@@ -4308,6 +4313,16 @@ int opt, width, height, y;
                 if( event.type == SDL_QUIT )
                 {
                     requestExit();
+                }
+                // Nuklear acts on the press, so the count taken here lets the release keep an
+                // error the press raised. Pointer moves and the wheel act on nothing.
+                if( (event.type == SDL_MOUSEBUTTONDOWN) || (event.type == SDL_KEYDOWN) )
+                {
+                    actionSeq = statusSeq;
+                }
+                if( (event.type == SDL_MOUSEBUTTONUP) || (event.type == SDL_KEYDOWN) )
+                {
+                    actionEnded = true;
                 }
                 dragWindow(windowP, &event);
                 nk_sdl_handle_event(&event);
@@ -4338,6 +4353,15 @@ int opt, width, height, y;
 
         SDL_GetWindowSize(windowP, &width, &height);
         drawFrame(ctxP, width, height);
+
+        // The error goes once an action has ended with no newer error, after the frame that
+        // handled it: clearing it before would move the rows below the strip up under the
+        // pointer, and the click would land on the widget below the one aimed at.
+        if( actionEnded && statusNote[0] && (statusSeq == actionSeq) )
+        {
+            statusNote[0] = '\0';
+            redrawNow = true;
+        }
 
         SDL_SetRenderDrawColor(rendererP, styleColors[NK_COLOR_WINDOW].r, styleColors[NK_COLOR_WINDOW].g,
             styleColors[NK_COLOR_WINDOW].b, 255);

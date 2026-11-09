@@ -2,10 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.14\
+This is version 1.15\
 Edit date 09-Nov-2026\
-A setting with a fixed list of values, such as dacroom, is picked with a row of buttons in the
-Settings tab.
+An error under the top strip is cleared by the next click or key press.
 
 ## What is pdp1central?
 
@@ -87,7 +86,8 @@ With the power switch off, all three are disabled.
 Each key does just what the panel's does.
 
 While running, the buttons are disabled and the strip shows what operation is running and for how long.
-An error is shown under the strip, staying until another occurs.
+An error is shown under the strip until the next click or key press; an error the click or key
+itself causes stays until the next click or press.
 
 Stop ends the emulator first, then the t30dpy display, which normally closes by itself when the
 emulator stops.
@@ -243,8 +243,8 @@ The gain, the cutoff for all channels, the cutoff for each channel 1 to 4,
 tuning and sample rate can all be changed.
 The last column shows the emulator state for the setting.
 Type a value and press Enter or click Set to apply changes.
-A value outside its range is not sent, an error error message will say what the range is.
-The valid rages are gain 0 to 100, a cutoff 1 to 100000 Hz, tuning 0.001 to 100 (SDL3 only),
+A value outside its range is not sent, an error message will say what the range is.
+The valid ranges are gain 0 to 100, a cutoff 1 to 100000 Hz, tuning 0.001 to 100 (SDL3 only),
 sample rate 8000 to 192000.
 
 - Read current values asks the emulator for its settings  and fills the fields.

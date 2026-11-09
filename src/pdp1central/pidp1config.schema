@@ -40,7 +40,6 @@ sbs16|CPU|bool||off|pdp1|reload||The 16-channel sequence break system
 # Display features
 aperture|Displays|int|1..63|22| Type 30 and 340|run-sticky||The lightpen's aperture, 22 is 0.200 inches
 # Type 30
-lightpen|Displays|bool||off|Type 30|run||Lightpen support on the Type 30
 sdb|Displays|bool||off|Type 30|run||The Type 33 symbol generator's extended dpy
 dpyshift|Displays|bool||off|Type 30|run||The origin-shifting extended dpy, can conflict with sdb
 twoscreens|Displays|bool||off|Type 30|run||Dual Type 30 screens, untested

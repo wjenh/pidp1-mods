@@ -85,16 +85,12 @@ dpyshift=off
 # It used a hack with the intensity setting in the dpy command that will break a lot of other stuff.
 twoscreens=off
 
-# Enable lightpen support in pidp1.
-lightpen=on
 # An aperture of 22 corresponds to a physical aperture of 0.200 inches.
 aperture=22
 
-# The gui and Type 30 of course need to be able to find the config tile for these to work.
+# The unified gui of course needs to be able to find the config tile for this to work.
 # If running on a remote system, copy the config file to /opt/pidp1-mods on that system,
 # or use the command line flags if available.
-
-# The unified control gui checks this.
 guilightpen=yes
 
 # The type 340 display checks this.

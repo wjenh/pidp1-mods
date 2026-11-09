@@ -273,10 +273,10 @@ fasttyo=false
 #dacgain=1.0
 
 # The room the waveform shaper uses, dacroom=voices lets the voices choose at each start,
-# Busch Hall when a note playing asks for it, use with the Flentrop organ,
+# Busch Hall when a piece playing asks for it, use with the Flentrop organ,
 # a generic hall otherwise.
 # dacroom=busch or dacroom=hall forces the room.
-# The default without the settingtis no room.
+# The default without the setting is no room.
 dacroom=voices
 
 # The onset.

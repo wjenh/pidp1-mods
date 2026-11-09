@@ -62,7 +62,7 @@ samplerate|Audio|int|8000..192000|48000|pdp1|reload||Samples a second sent to SD
 audiodepth|Audio|int|10..500|40|pdp1|reload||Milliseconds of sound kept queued ahead of the device
 # The 4-channel DAC
 dacgain|Audio|float|0.0..100.0|1.0|DAC|reload||The DAC mixer gain
-dacroom|Audio|text||voices|DAC|reload||The DAC room setting
+dacroom|Audio|choice|voices,busch,hall,none|voices|DAC|reload||The DAC room setting, none is no room
 daconset|Audio|int|0..1000|8|DAC|reload||The DAC onset delay, in milliseconds
 
 # Misc device features

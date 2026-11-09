@@ -24,6 +24,7 @@
  * 20-Oct-2026 wje use iotCondlong, not stderr
  * 23-Oct-2026 Claude dytN bit 3, a commit waiting; comments cleaned for release.
  * 24-Oct-2026 wje cleanup for release
+ * 9-Nov-2026 wje allow 'none' for room
  */
 
 #include <math.h>
@@ -556,6 +557,10 @@ int i;
         else if( strcmp(settingP->strvalueP, "voices") == 0 )
         {
             roomKind = ROOM_VOICES;
+        }
+        else if( strcmp(settingP->strvalueP, "none") == 0 )
+        {
+            roomKind = ROOM_OFF;
         }
     }
     iotCondLog(LOG_DAC_SETUP, "IOT 71: room %s\n",

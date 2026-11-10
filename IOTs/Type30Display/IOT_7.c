@@ -12,6 +12,7 @@
  * 17-Jun-2026 wje finally adding a revision hisotry. Fix for the original incorrect code for twe screen mode.
  * 29-Sep-2026 Claude - the unused IDLEDELAY define is gone with the display aging it was for.
  * 04-Oct-2026 Claude - power clear clears the light pen status and drops an owed completion.
+ * 9-Nov-2026 wje - lightpen is always enabled now
  */
 
 #include <unistd.h>
@@ -63,7 +64,6 @@ extern int cvtDpyTo1024(int);       // from Lib/display.c
 //
 static int penAperture = APERTURE;
 static int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
-static bool lightpenEnabled;
 static bool dpyShiftEnabled;
 static bool sdbEnabled;
 static bool needCompletion;
@@ -117,14 +117,10 @@ bool noWait;
 
         // Be sure it's set to the current value
         setLightpenRadius2(0, penRadius2);
-        if( lightpenEnabled )
-        {
-            CKS(pdp1P) &= ~0400000;  // set by the last dpy completion if lp hit
-        }
-
+        CKS(pdp1P) &= ~0400000;  // set by the last dpy completion if lp hit
         return(1);
     }
-    else if( lightpenEnabled && (MB(pdp1P) & 003777) == 003407 )       // set lightpen aperture
+    else if( (MB(pdp1P) & 003777) == 003407 )       // set lightpen aperture
     {
         // The aperture is the diameter in pixels, allow 6 to 63
         // Each pixel corresponds to the original 0.009"
@@ -271,7 +267,7 @@ int realX, realY;
         intensity &= 3;
         display(1, realX, realY, type30Intensity(intensity & 03));
     }
-    else if( lightpenEnabled && checkLightpen(0, realX, realY) )
+    else if( checkLightpen(0, realX, realY) )
     {
         iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", curX, curY);
         CKS(pdp1P) |= 0400000;               // cleared by next dpy
@@ -318,13 +314,7 @@ ConfigurationP confP;
 ConfigurationSettingP settingP;
 
     iotCondLog(LOG_CONFIG, "IOT 7 checking configuration\n");
-    lightpenEnabled = sdbEnabled = dpyShiftEnabled = twoscreensEnabled = false;
-
-    if( (settingP = findConfigurationSetting(getConfiguration(), "lightpen")) )
-    {
-        iotCondLog(LOG_CONFIG, "IOT 7 lightpen is enabled\n");
-        lightpenEnabled = settingP->onOff;
-    }
+    sdbEnabled = dpyShiftEnabled = twoscreensEnabled = false;
 
     if( (settingP = findConfigurationSetting(getConfiguration(), "sdb")) )
     {

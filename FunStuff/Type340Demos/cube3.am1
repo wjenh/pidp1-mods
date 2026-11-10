@@ -52,7 +52,7 @@ Rotate cube that uses interrupts and pdp-1 builtin predictive movement
 #define TARGETSCALE 1
 #define TARGETINTENSITY 5
 #define TARGETARM 0d10
-#define TARGETSPAN (TARGETARM * 2^TARGETSCALE * 2)
+#define TARGETSPAN (TARGETARM * (2<<(TARGETSCALE * 2)))
 
 // Where the drag target is placed, its bounding box size, its scale, and its arm length.
 // The location and bounding box are computed from the location of the cube and the size of the target.

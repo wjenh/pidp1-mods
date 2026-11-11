@@ -1,8 +1,8 @@
 ## Include files for the Type 550 Microtape
 
-Also documents the filesystem routines.
+This also documents the filesystem routines.
 
-This is version 1.0\
+This is version 1.1\
 11-Nov-2026
 
 ## What's here?
@@ -13,8 +13,8 @@ This is version 1.0\
   search-word fields.
 - `mmt` is a nonstandard extension, it mounts a tape image named by a program.
 - A file system for the Microtape, an include library, that manages named files of any
-  size, up to the tape's maxiumum, on a tape,
-  Files read and written by the word and id callable from any bank.
+  size, up to the tape's maximum, on a tape.
+  Its routines are callable from any bank.
 
   | File | Gives |
   |---|---|
@@ -34,11 +34,11 @@ See Docs/UsingType550Microtape.md for how to program the tape itself.
 
 ## The file system
 
-A tape holds 576 blocks (01100) of 256 words (0400). 
+A tape holds 576 blocks (01100) of 256 words (0400).
 The file system uses them as:
 | Block | Holds |
 |---|---|
-| 0 | nothing, allows a reverse searh to complete without entering the end zone |
+| 0 | nothing, allows a reverse search to complete without entering the end zone |
 | 1 | the directory |
 | 2 | a copy of the directory |
 | 3-1077 | the files, each a run of contiguous blocks |
@@ -50,13 +50,13 @@ Each holds a name, the first block, the blocks allocated, the length in words, a
   They are kept in sixbit by `UTIL/sixbit.ac`'s `am1ToSixbit`, upper case only; `Beta.Dat`
   and `BETA.DAT` are equivalent.
   Characters 0140-0177 are mapped into 0100-0137.
-  The character  `~` is `^` and `{` is `[`.
-  Control characters are refused, and the first character cannot not be a blank.
+  The character `~` is `^` and `{` is `[`.
+  Control characters are refused, and the first character cannot be a blank.
 - **The information word**: bit 0 (0400000) is read-only, which the library enforces.
   Read-only file refuses `mtfWrite` and `mtfDelete` unless `mtfProtect` clears it.
   Bits 1-5 (0370000) and 6-17 (007777, the type) have no meaning to the library,
   they are for an application's use.
-- **The directory is written twice**, block 1 and a copy in  block 2 with a generation count for
+- **The directory is written twice**, block 1 and a copy in block 2 with a generation count for
   each write.
   Mounting uses the directory in block 1 if it is valid, else block 2.
   A halt during a directory write loses at most one change.
@@ -77,7 +77,7 @@ and cross-bank callable.
 The library uses the PDP-1D instructions `lai`, `lia` and `sni`, so the emulator needs
 `core1D` (or `all1D`) on in `pidp1.config`, which is the default.
 
-Working buffers are needed,
+Working buffers are needed.
 The program reserves the storage, anywhere in any bank, using the macros:
 - `MTF_TAPE(name)`, a tape handle, 01010 words, the drive, the directory and a block buffer.
   One per mounted tape.
@@ -93,7 +93,7 @@ A program restarted without reloading keeps them as the last run left them.
 
 Every call is made with `farjda` (`memory.ah`) from any bank, AC the 16-bit address of the
 call's parameter block and returns with extend mode on.
-AC holds the statu,`MTF_OK`, 0, or an `MTF_E` code, and IO the result if the call has one:
+AC holds the status, `MTF_OK`, 0, or an `MTF_E` code, and IO the result if the call has one:
 
 ```
     lac [mypb:*]                // mypb: the handle, the drive
@@ -107,7 +107,7 @@ descriptors can each be in any bank.
 `mtfClose` and `mtfDelete` expect the descriptor's address in AC.
 
 A descriptor is valid until it is closed and calls then return `MTF_EBADFD` when its tape handle is mounted
-or formatted again, or when its file is deleted or moved by `mtfPack.
+or formatted again, or when its file is deleted or moved by `mtfPack`.
 A close that finds it invalid marks it closed and writes nothing.
 
 - **Sequence breaks are off during every call that moves the tape** and turned on again at
@@ -157,7 +157,7 @@ The parameter block's content, by the `mtfs.ah` names:
   a block at either end goes through the handle's block buffer, read first and, for a write,
   changed and written back.
   A transfer is at most three passes over the tape.
-  A write that would exceed the allocation is refused completely giving`MTF_ERANGE` and a read-only file refuses
+  A write that would exceed the allocation is refused completely giving `MTF_ERANGE` and a read-only file refuses
   every write.
 - **A changed length or information word is only written to the tape at `mtfClose`.** A program that
   writes and never closes leaves the directory's length as it was. If the close fails, the
@@ -166,9 +166,9 @@ The parameter block's content, by the `mtfs.ah` names:
   of the scratch buffer size at a time.
   One block is enough, more is faster.
   Close every file of the tape first, the descriptor of a file that moves is no longer valid.
-  Before a file moves, its entry's word 7,(`MTF_DEMOVE` is set to the new first block and the directory written.
+  Before a file moves, its entry's word 7 (`MTF_DEMOVE`) is set to the new first block and the directory written.
   After complete, the entry gets the new first block number and word 7 is cleared.
-  A halt or an error during a move leaves the file marked with its words partly moved and `mtfEntry'
+  A halt or an error during a move leaves the file marked with its words partly moved and `mtfEntry`
   gives the last location moved.
   Pack does not try to finish it and a later pack leaves a marked file where it is.
 - **The block layer**, `mtblock.ac`, can be used alone, on any blocks of any tape, a file
@@ -314,3 +314,7 @@ start go:0
 
 The second run finds HELLO and `mtfCreate` refuses with `MTF_EEXISTS`.
 Open it by name instead or delete it first.
+
+# See also
+
+UsingMtfs.md in the Docs directory for a description of mtfs, a file system maintenance utility.

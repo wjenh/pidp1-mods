@@ -1,5 +1,5 @@
 /*
- * mtfs: manage  Microtape file system on a Type 550 tape image.
+ * mtfs: manage a Microtape file system on a Type 550 tape image.
  *
  * Usage: mtfs -l image
  *        mtfs -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image
@@ -11,22 +11,22 @@
  * -l         - list the directory
  * -a         - add the host file source to the tape as -n name
  * -d         - delete -n name
- * -x         - extract-n  name to the output file
+ * -x         - extract -n name to the output file
  * -i         - format: write an empty directory, creating the image if it is missing
  * -p         - pack: move the files down to close the gaps between them
  * -n name    - the file's name: 1 to 9 characters, no control character, no leading blank,
- *              matched without regard to case and kept in upper case
+ *               matched without regard to case and kept in upper case
  * -t type    - the file's type, octal 0-7777, default 0
  * -r         - mark the file read-only
  * -b blocks  - the blocks to allocate, octal, at least the data's and at most 0777;
  *              defaults to the data's size,  one block for an empty file
- * -f form    - the host file's formmat:
- *              bytes (the default), two 8-bit bytes a word, the first in
- *                the high half, as am1's ascii produces
- *              text, as bytes with each line end stored as CR (015), extracted back as LF
- *              words, each 18-bit word in a little-endian 32-bit word matching the PDP-1
+ * -f form    - the host file's format:
+ *                bytes (the default), two 8-bit bytes a word, the first in
+ *                  the high half, as am1's ascii produces
+ *                text, as bytes with each line end stored as CR (015), extracted back as LF
+ *                words, each 18-bit word in a little-endian 32-bit word matching the PDP-1
  * -F         - force: add replaces a file of the same name, delete removes a read-only file,
- *              format overwrites another program's data in blocks 1 and 2
+ *                format overwrites another program's data in blocks 1 and 2
  *
  * The tape is the file system of the am1 library in Am1Includes/MICROTAPE, see its README.md.
  * Block 0 unused, the directory is in block 1 and a copy in block 2, the files from block 3,
@@ -72,7 +72,7 @@
 #define MTFS_TAPEDIR    "/opt/pidp1-mods/Microtapes"    // where a relative name in the list is
 #endif
 
-// Each tape fblock has a leading checksum, the data, and the trailing checksum, each word
+// Each tape block has a leading checksum, the data, and the trailing checksum, each word
 // in a little-endian 32-bit word.
 #define WDS             0400        // data words a block
 #define BLKW            (WDS + 2)
@@ -145,7 +145,7 @@ static const char *errMeaning[E_LAST + 1] = {
     "no file of that name is on the tape",
     "every directory slot is in use",
     "no gap on the tape is large enough",
-    "past the end of the tape tape or of the file's allocation",
+    "past the end of the tape or of the file's allocation",
     "the file is marked read-only",
     "the descriptor is not open",
     "the buffer is smaller than one block",
@@ -664,7 +664,7 @@ int blk;
     return(E_NOFS);
 }
 
-// Write the directory as both copies, blocks 1 then 2, increasing the generatione, as the
+// Write the directory as both copies, blocks 1 then 2, increasing the generation, as the
 // library's mtfWrDir does.
 static void
 writeDir(void)
@@ -1358,7 +1358,7 @@ int status;
     return(0);
 }
 
-// Extract name's words bounded by its length to a host file
+// Extract name's words bounded by its length to a host file.
 // A block that does not total zero is BADBLOCK.
 // Returns the exit status.
 static int
@@ -1477,7 +1477,7 @@ int i;
 }
 
 // Pack: each file in order of first block is moved down to the
-// lowest free block, a file marked as already moving left where it is
+// lowest free block, a file marked as already moving left where it is.
 // All in memory, so the directory is written once and no file is ever marked.
 // Returns the exit status.
 static int
@@ -1585,7 +1585,7 @@ usage(void)
         "  -b blocks: octal, at least as big as the data, at most 0777; default the data's size.\n"
         "  -f form:\n"
         "     bytes (default), two 8-bit bytes a word;\n"
-        "     text, as bytes with line terminatorsstored as CR;\n"
+        "     text, as bytes with line terminators stored as CR;\n"
         "     words, each word a little-endian 32-bit word.\n"
         "  -F: force.\n"
         "    add replaces a file of that name;\n"

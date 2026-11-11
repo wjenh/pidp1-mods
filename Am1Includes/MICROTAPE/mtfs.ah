@@ -4,6 +4,7 @@
 // Definitions only; the code is in the mt*.ac files, which include this.
 // See README.md beside it for the calls.
 // 10-Nov-2026, Claude: the library.
+// 11-Nov-2026, Claude: mtfRename's parameter words.
 
 #ifndef MTFS_AH
 #define MTFS_AH
@@ -57,7 +58,11 @@
 #define MTF_PBLOCKS 2       // mtfCreate: the blocks to allocate, 1 to MTF_MAXBLKS
 #define MTF_PINFO 3         // mtfCreate: the information word
 #define MTF_PCFD 4          // mtfCreate: the descriptor's 16-bit address
-// mtfRead's, mtfWrite's and mtfSeek's blocks start with the descriptor, not the handle.
+#define MTF_PNEWNAME 2      // mtfRename: the new name's 16-bit address, an am1 ascii string;
+                            // MTF_PNAME is the old name's
+#define MTF_PREPLACE 3      // mtfRename: nonzero to replace a file of the new name
+// mtfRead's, mtfWrite's, mtfSeek's and mtfTrim's blocks start with the descriptor, not the
+// handle.
 #define MTF_PFDESC 0        // the descriptor's 16-bit address
 #define MTF_PBUF 1          // mtfRead, mtfWrite: the buffer's 16-bit address
 #define MTF_PCOUNT 2        // mtfRead, mtfWrite: the words to move, at least 0

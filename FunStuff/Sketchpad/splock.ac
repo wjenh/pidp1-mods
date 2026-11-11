@@ -278,7 +278,7 @@ pmB, 0
     endloc
 
 // Write a pick mark's cross on point p, through the view. vwCross writes its y word at w, its x
-// word, and its two drawn vectors.
+// word, and its save of mkCross.
 // Entry: AC = p, IO = w, a full address. AC and IO are clobbered. Called via jda.
 pmCross, 0
     local rtn, pcT

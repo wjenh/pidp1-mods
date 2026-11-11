@@ -48,7 +48,8 @@
 // The point tables, cFlag to cIn, are bank 9's (sketchpad.am1). The rest stand ahead of the
 // code, so that every reference the code makes to them is a backward one.
 
-// The arcs the solver keeps, cArcs, and the lines on its points, cLines, are bank 9's.
+// The arcs the solver keeps, cArcs, are bank 2's (sparcdata.ac), and the lines on its points,
+// cLines, bank 13's.
 
 // The words other banks reach: the end of the entries in use, the topology's flag (nonzero when
 // an entry, a point's index, a line or an arc changed since the last build; bank 2 and undoParts
@@ -356,7 +357,7 @@ ctArc,
     sma                 // skip if an arc is next
     jmp ctTie
     add cArcN
-    add [cArcs:011]
+    add [cArcs:2]
     dac ctT
     lac i ctT
     jda cProjC
@@ -2059,8 +2060,13 @@ cProjT, 0
     local rtn, ptOnlyP, ptOnlyO, ptMove, ptP, ptO, ptS, ptJ, ptT, ptE, ptFO, ptEX, ptEY, \
         ptOX, ptOY
     dap rtn
-    lac cProjT
-    and [MAXINST - 1]
+    lio cProjT          // t / MAXINST: a in AC, i in IO, MAXINST being no power of two
+    cla
+    scl 1s
+    div [MAXINST]
+    cla                 // no skip is overflow, which t, under NATT * MAXINST, cannot give
+    dac ptP             // a, until p is read below
+    lai
     dac ptO             // i, for now
     add [iScale:3]
     dac ptT
@@ -2075,8 +2081,7 @@ cProjT, 0
     add ptJ
     sal 1s              // k * NATT, 6
     dac ptT
-    lac cProjT
-    sar 5s              // a
+    lac ptP             // a
     add ptT
     dac ptJ             // the attacher's word in cpAX and cpAY
     lac ptO
@@ -2795,8 +2800,12 @@ cbTie,
     jmp cbTieNx
     lio [FIN]
     jda cFlagOr
-    lac cbI
-    and [MAXINST - 1]
+    lio cbI             // its instance, the remainder of cbI / MAXINST
+    cla
+    scl 1s
+    div [MAXINST]
+    cla                 // no skip is overflow, which cbI, under NATT * MAXINST, cannot give
+    lai
     add [MAXPTS]
     lio [FIN]
     jda cFlagOr
@@ -2855,7 +2864,7 @@ cbList,
     sad cArcE           // skip unless a full circle
     jmp cbLsNext
     lac cArcN
-    add [cArcs:011]
+    add [cArcs:2]
     dac cbT
     lac cbI
     dac i cbT
@@ -2933,7 +2942,7 @@ cbLn,
     jmp cbLnNext
 cbLnMine,
     lac cLnN
-    add [cLines:011]
+    add [cLines:015]
     dac cbT
     lac cbI
     dac i cbT
@@ -4206,43 +4215,16 @@ dlT, 0
 // having closed up under it.
 // Exit: AC = 0. IO is clobbered. Called via jsp.
 cDelAll,
-    local rtn, daLoop, daDrop, daNext, daDone, daP, daT
+    local rtn
     dap rtn
-    lac [cEntries:011]
-    dac daP
-daLoop,
-    lac daP
-    sad cEnd            // skip while entries remain
-    jmp daDone
-    lac i daP
-    sub [CTBEAM]
-    spa                 // skip unless below CTBEAM
-    jmp daDrop
-    sub [CTROLL-CTBEAM+1]
-    spa                 // skip if past CTROLL: a designation, or a number's type
-    jmp daNext
-daDrop,
-    lac daP
-    add [1]
-    dac daT
-    lac [NOPOINT]       // its A gone, so cPurge drops it
-    dac i daT
-daNext,
-    lac daP
-    add [CW]
-    dac daP
-    jmp daLoop
-daDone,
-    jsp cPurge
-    jsp cBuild
+    law zdDel           // its test, cWalkDrop's
+    jda cWalkDrop
     lac cRun
     sza                 // skip unless the solver is awake
     jsp cWake
     jsp cMarks
     cla
 rtn, jmp .
-daP, 0
-daT, 0
     endloc
 
 // Misc's Unfix. Every fix, attacher and designation is dropped, the points left where they are;
@@ -4251,35 +4233,10 @@ daT, 0
 // ties remain, since a point freed may let the figure settle where a fix made it give up.
 // Exit: AC = 0. IO is clobbered. Called via jsp.
 cUnfixAll,
-    local rtn, uaLoop, uaDrop, uaNext, uaDone, uaP, uaT
+    local rtn
     dap rtn
-    lac [cEntries:011]
-    dac uaP
-uaLoop,
-    lac uaP
-    sad cEnd            // skip while entries remain
-    jmp uaDone
-    lac i uaP
-    sad [CTF]           // skip unless a fix
-    jmp uaDrop
-    sad [CTDES]         // skip unless a designation
-    jmp uaDrop
-    sas [CTATT]         // skip if an attacher
-    jmp uaNext
-uaDrop,
-    lac uaP
-    add [1]
-    dac uaT
-    lac [NOPOINT]       // its A gone, so cPurge drops it
-    dac i uaT
-uaNext,
-    lac uaP
-    add [CW]
-    dac uaP
-    jmp uaLoop
-uaDone,
-    jsp cPurge
-    jsp cBuild
+    law zdUnf           // its test, cWalkDrop's
+    jda cWalkDrop
     lac i [cCount:011]
     ior cInN
     sza                 // skip unless entries or ties remain
@@ -4287,8 +4244,60 @@ uaDone,
     jsp cMarks
     cla
 rtn, jmp .
-uaP, 0
-uaT, 0
+    endloc
+
+// Del cons' and Unfix's walk of the table: each entry the caller's test picks is dropped, its A
+// made NOPOINT so that cPurge drops it, then the purge, and the sets built again. A test is
+// entered by a jmp with the entry's type word in AC, and leaves for zdDrop or zdNext; Unfix's
+// stands last so that it falls into zdDrop. One walk for the two saves bank 8 eight words.
+// Entry: AC = the test's address, zdDel or zdUnf. Exit: AC and IO clobbered. Called via jda.
+cWalkDrop, 0
+    local zdRtn, zdLoop, zdTest, zdDrop, zdNext, zdDone, zdP, zdT
+    dap zdRtn
+    lac cWalkDrop
+    dap zdTest
+    lac [cEntries:011]
+    dac zdP
+zdLoop,
+    lac zdP
+    sad cEnd            // skip while entries remain
+    jmp zdDone
+    lac i zdP
+zdTest, jmp .           // the caller's test
+// Del cons' test: all but the truss's beams, loads and rollers dropped.
+zdDel,
+    sub [CTBEAM]
+    spa                 // skip unless below CTBEAM
+    jmp zdDrop
+    sub [CTROLL-CTBEAM+1]
+    spa                 // skip if past CTROLL: a designation, or a number's type
+    jmp zdNext
+    jmp zdDrop
+// Unfix's test: the fixes, designations and attachers dropped.
+zdUnf,
+    sad [CTF]           // skip unless a fix
+    jmp zdDrop
+    sad [CTDES]         // skip unless a designation
+    jmp zdDrop
+    sas [CTATT]         // skip if an attacher
+    jmp zdNext
+zdDrop,
+    lac zdP
+    add [1]
+    dac zdT
+    lac [NOPOINT]       // its A gone, so cPurge drops it
+    dac i zdT
+zdNext,
+    lac zdP
+    add [CW]
+    dac zdP
+    jmp zdLoop
+zdDone,
+    jsp cPurge
+    jsp cBuild
+zdRtn, jmp .
+zdP, 0
+zdT, 0
     endloc
 
 // Fix's lift on point p, unfixed if it is fixed (cUnfix); else fixed, an F entry, every point's

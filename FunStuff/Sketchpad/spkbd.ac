@@ -1,8 +1,9 @@
 // spkbd.ac -- the pen keyboard: a service that replaces the frame with keys the light pen types
 // on, and gives the text typed back to its caller; and its display list. The same service shows
-// a screen of lines, the tape module's lists in bank 11: the directory's, on which Save and Load
-// pick a picture, and the masters' picker, on which Define, Inst, Copy and Change's Master and
-// Dwell pick a master.
+// a screen of lines: the directory's, on which Save and Load pick a picture, and the library's,
+// on which Library's rows pick an entry, both here, written at the open from the directory the
+// tape or the library has just read; and the masters' picker, on which Define, Inst, Copy and
+// Change's Master and Dwell pick a master, its list in bank 5.
 //
 // Bank 6, after spscale.ac. The root part comes first: the four entries, each entered by
 // jsp i [X:6], kbInit from bank 12's initVars at the start, kbOpen from the main bank's kbStart,
@@ -15,9 +16,9 @@
 // tracking is off, so no mode's target routine runs, and nothing else the main loop calls then
 // reaches another overlay. Everything runs with the extend window open, reaches bank 0's, the
 // main bank's and the callers' words through their 16-bit addresses, returns by jmp i, and
-// calls nothing outside W and bank 6's root. The lists, kbList in W and the tape module's
-// dirList in bank 11 and the masters' picker's mpkList in bank 5, are started by penISR's dla through frameGo; they hold no jump
-// or save, and each ends in a halt of its own.
+// calls nothing outside W and bank 6's root. The lists, kbList, dirList and lbsList in W and the
+// masters' picker's mpkList in bank 5, are started by penISR's dla through frameGo; they hold no
+// jump or save, and each ends in a halt of its own.
 //
 // The text is kept a character a word in kbCh, its 340 code with KLOWER for a lower-case letter.
 // It is written as 340 text, three codes to a word, an upper shift first and a shift before each
@@ -32,6 +33,28 @@
 // Where the key in column c and row r has its character drawn, its x and its y.
 #define KBCX(c) (KBX0 + (c) * KBDX)
 #define KBRY(r) (KBY0 - (r) * KBDY)
+
+// The hit record of the directory's or the library's line at row r of column c, in kbFind's
+// order: left, right, bottom, top; the masters' picker's, MPKCHARS characters long; and a key of
+// n characters at x on the action keys' row.
+#define DIRREC(r, c) \
+    DIRX0 + (c) * DIRCOLDX - DIRRX; \
+    DIRX0 + (c) * DIRCOLDX + DIRCHARS * KBADV + DIRRX; \
+    DIRY0 - (r) * DIRDY - DIRRY; \
+    DIRY0 - (r) * DIRDY + KBH + DIRRY
+#define MPKREC(r, c) \
+    DIRX0 + (c) * DIRCOLDX - DIRRX; \
+    DIRX0 + (c) * DIRCOLDX + MPKCHARS * KBADV + DIRRX; \
+    DIRY0 - (r) * DIRDY - DIRRY; \
+    DIRY0 - (r) * DIRDY + KBH + DIRRY
+#define LBKREC(x, n) \
+    (x) - KBR; \
+    (x) + (n) * KBADV + KBRX; \
+    KBYB - KBR; \
+    KBYB + KBH + KBR
+
+// A library line's label before the open writes it: three spaces, where the entry's number goes.
+#define LBBLANKL (KCSPACE * 010000 + KCSPACE * 0100 + KCSPACE)
 
 // The keyboard closed, at the program's start. The frame restarts at frame, no press is under
 // way, no key is lit and no open's load is under way. It calls no overlay, so the start reads
@@ -149,11 +172,14 @@ kbOpening, 0
 // (340 text, the starting value and the text typed at OK) and of the resume, which onMenuHit
 // calls when the keyboard closes; then the buffer's run in codes, which OK pads the text to as
 // the field is padded, or 0 for a text ended at its end in KBBUFW words. A block of kind KBDIR
-// opens a screen of lines instead: the directory's (the tape module's dirList, its lines and
-// title written by the tape module's directory read) or the masters' picker (mpkList, its lines
-// written by the instance module's mpkLines). Its limit is the number of the screen's keys it
-// acts on, 1 for Dir's OK alone, DIRKEYS or MPKEYS for a picker's Cancel and lines; its prompt
-// the key's text, three words; its buffer the screen's descriptor (dirScr, mpkScr).
+// opens a screen of lines instead: the directory's (dirList, here, its lines and title written
+// at the open from the tape module's directory, kbDirFill), the library's (lbsList, here, its
+// lines written at the open from the page the library's Dir has read, kbLibFill) or the
+// masters' picker (mpkList in bank 5, its lines written by the instance module's mpkLines).
+// Its limit is the number of the screen's keys it acts on, 1 for Dir's OK alone, DIRKEYS or
+// MPKEYS for a picker's Cancel and lines; its prompt the key's text, three words; its buffer the
+// screen's number, KBSDIR, KBSLIB or KBSMPK, which names its descriptor here (kbScrT), since
+// the root may not name an overlay's words.
 // The list is written whole before frameGo points the display at it; kbOn, set last, sends
 // penISR's hits here, once the display has reached the list (at most KBWAIT polls), the hits
 // the frame posted before it dropped, as kbClose drops the keyboard's. The open starts a press,
@@ -287,12 +313,16 @@ koPrEnd,
     lac [kbList:6]
     jmp koGo
 
-    // A screen of lines, its keys' tables from its descriptor in the block's buffer word (the
-    // tape module's dirScr or mpkScr): the hit records, the keys' parameter words' addresses,
-    // the codes, the key's text, the key, and the list. As many keys as the limit says, the
-    // key's text from the block, its key unlit.
+    // A screen of lines, its keys' tables from the descriptor its number in the block's buffer
+    // word names (kbScrT: dirScr, lbsScr or mpkScr): the hit records, the keys' parameter
+    // words' addresses, the codes, the key's text, the key, and the list. As many keys as the
+    // limit says, the key's text from the block, its key unlit. Then the directory's or the
+    // library's lines, written from what the tape or the library has just read.
 koDir,
     lac kbBuf
+    add [kbScrT:6]
+    dac koP
+    lac i koP
     dac koP
     lac i koP
     dac kbRecP
@@ -326,11 +356,17 @@ koDW,
     jmp koDW
     lac [KBKEY]
     dac i koK
+    lac kbBuf
+    sad [KBSDIR]        // skip unless the directory's screen
+    jsp kbDirFill
+    lac kbBuf
+    sad [KBSLIB]        // skip unless the library's screen
+    jsp kbLibFill
     lac koL
 koGo,
     dac i [frameGo:0]
     and [0170000]
-    dac kbBank          // the list's bank, 6 for both
+    dac kbBank          // the list's bank, 6 but for the masters' picker's, 5
     lac [0-KBWAIT]
     dac koN
 koWait,
@@ -362,6 +398,200 @@ koQ, 0
 koN, 0
 koK, 0
 koL, 0
+    endloc
+
+// The directory's screen's lines, from the tape module's directory (tpDir), which Dir's, Save's
+// or Load's read has just set: each picture's line its name, or "-" with no picture; and the
+// drive in use in the screen's title.
+// AC and IO are clobbered. Called via jsp, from kbOpenOv.
+kbDirFill,
+    local rtn, kvLoop, kvDash, kvCopy, kvE, kvL, kvN
+    dap rtn
+    lac [tpDir:013]
+    dac kvE
+    lac [dirL:6 + DLNAME]
+    dac kvL
+    law i NPICT
+    dac kvN
+kvLoop,
+    lac kvL
+    dac kbNmTo
+    lac i kvE
+    sas [TPFORMAT]      // skip if a picture
+    jmp kvDash
+    lac kvE
+    add [1]             // its name
+    jmp kvCopy
+kvDash,
+    lac [kbDash:6]
+kvCopy,
+    jda kbName
+    lac kvE
+    add [TPDENT]
+    dac kvE
+    lac kvL
+    add [DLWORDS]
+    dac kvL
+    isp kvN             // skip once every line is written
+    jmp kvLoop
+    lac i [tapeDrive:4]
+    sal 6s
+    add [KCUP * 010000 + DRVCODE1 * 0100 + KCEND]
+    dac i [dirDrv:6]
+rtn, jmp .
+kvE, 0
+kvL, 0
+kvN, 0
+    endloc
+
+// The library's screen's sixteen lines, from page lbPage of the library's directory, which its
+// Dir (splib.ac, lbShow) has just read into lbDPage: each its entry's number, a plus after it for
+// a nested entry (LBNESTL), and its name, lit (KBKEY), or "-" and dim with the pen off (KBDIM)
+// for a free slot, so that a picker never takes one.
+// AC and IO are clobbered. Called via jsp, from kbOpenOv.
+kbLibFill,
+    local rtn, kwLine, kwFlat, kwDash, kwCopy, kwE, kwK, kwL, kwN, kwP, kwX
+    dap rtn
+    lac i [lbPage:013]
+    sal 4s
+    dac kwN             // entry 16p + 1 first
+    lac [lbDPage:5]
+    dac kwE
+    lac [lbsL:6 + LBLABEL]
+    dac kwL
+    law i LBLINES
+    dac kwK
+kwLine,
+    idx kwN
+    jda kbDec
+    dac i kwL
+    lac [DIRLBLX]
+    dac kwX
+    lac i kwE
+    and [LBDNEST]
+    sza i               // skip if a nested entry
+    jmp kwFlat
+    lac [LBNESTL]
+    dac kwX
+kwFlat,
+    lac kwL
+    add [1]
+    dac kwP
+    lac kwX
+    dac i kwP           // the label's second word
+    lac kwL
+    add [DLNAME - LBLABEL]
+    dac kbNmTo
+    lac kwL
+    sub [LBLABEL]
+    dac kwP             // the line's parameter word
+    lac [KBKEY]
+    dac i kwP
+    lac i kwE
+    sza i               // skip if the slot holds an entry
+    jmp kwDash
+    lac kwE
+    add [1]             // its name
+    jmp kwCopy
+kwDash,
+    lac [KBDIM]
+    dac i kwP
+    lac [kbDash:6]
+kwCopy,
+    jda kbName
+    lac kwE
+    add [LBDENT]
+    dac kwE
+    lac kwL
+    add [DLWORDS]
+    dac kwL
+    isp kwK             // skip once every line is written
+    jmp kwLine
+rtn, jmp .
+kwE, 0
+kwK, 0
+kwL, 0
+kwN, 0
+kwP, 0
+kwX, 0
+    endloc
+
+// A name's run, NAMEW words, copied from the 16-bit address in AC to the one in kbNmTo.
+// Entry: AC = the source, kbNmTo the destination. AC is clobbered, IO preserved. Called via
+// jda.
+kbName, 0
+    local rtn, knLoop, knN
+    dap rtn
+    law i NAMEW
+    dac knN
+knLoop,
+    lac i kbName
+    dac i kbNmTo
+    idx kbName
+    idx kbNmTo
+    isp knN             // skip once the run is copied
+    jmp knLoop
+rtn, jmp .
+knN, 0
+    endloc
+kbNmTo, 0
+
+// Entry n's label on the library's screen: its number right-aligned in three characters, spaces
+// before it, as three 340 codes in one word, packed with ral so that no code loses a bit.
+// Entry: AC = n, 1 to 999. Exit: AC = the word. IO is preserved. Called via jda.
+kbDec, 0
+    local rtn, kzHL, kzTL0, kzTL, kzTE, kzSp1, kzC1, kzSp2, kzC2, kzH, kzT, kzW
+    dap rtn
+    dzm kzH
+    dzm kzT
+    lac kbDec
+kzHL,
+    sub [0d100]
+    spa                 // skip if a hundred more
+    jmp kzTL0
+    dac kbDec
+    idx kzH
+    lac kbDec
+    jmp kzHL
+kzTL0,
+    lac kbDec
+kzTL,
+    sub [0d10]
+    spa                 // skip if ten more
+    jmp kzTE
+    dac kbDec
+    idx kzT
+    lac kbDec
+    jmp kzTL
+kzTE,
+    lac kzH
+    sza i               // skip if hundreds
+    jmp kzSp1
+    add [KCZERO]
+    jmp kzC1
+kzSp1,
+    law KCSPACE
+kzC1,
+    ral 6s
+    dac kzW
+    lac kzH
+    ior kzT
+    sza i               // skip if hundreds or tens
+    jmp kzSp2
+    lac kzT
+    add [KCZERO]
+    jmp kzC2
+kzSp2,
+    law KCSPACE
+kzC2,
+    add kzW
+    ral 6s
+    add [KCZERO]
+    add kbDec           // the units
+rtn, jmp .
+kzH, 0
+kzT, 0
+kzW, 0
     endloc
 
 // A press's first hit, from the root's kbKey, which has started the press; no other hit of that
@@ -957,7 +1187,7 @@ kbShift, 0
 kbHX, 0
 kbHY, 0
 kbAns, 0
-kbBank, 0               // the list's bank, 6 for the keyboard's, 11 for a screen of lines (kbOpenOv)
+kbBank, 0               // the list's bank, 6 but for the masters' picker's, 5 (kbOpenOv)
 kbCase, 0
 kpP, 0
 kpW, 0
@@ -1507,4 +1737,241 @@ kbK49, KBKEY
     x(KBXCANCEL) next(character)
     type340 "Cancel"
 kbHalt, lpoff halt interrupt
+
+// The screens of lines, data the open reads and writes. Their descriptors by their numbers,
+// KBSDIR to KBSMPK, a KBDIR block's buffer word.
+kbScrT,
+    dirScr:6
+    lbsScr:6
+    mpkScr:6
+
+// "-" for a line with no picture or a free slot, written as codes, an upper shift and "-",
+// since a text's end code may stand only in the run's last word.
+kbDash,
+    KCUP * 010000 + 055 * 0100 + KCUP
+    table NAMEW - 2, KBPAD
+    KBBLANK
+
+// The directory's screen's descriptor: its keys' hit records, parameter words' addresses and
+// codes, the key's text, the key, and the list.
+dirScr,
+    dirRec:6
+    dirBlkT:6
+    dirCode:6
+    dirKTxt:6
+    dirKey:6
+    dirList:6
+
+// The screen's keys, as the keyboard's tables give them (kbOpenOv, kbFind, kbKeyOv). Each key's
+// parameter word, its code and its hit record, the screen's key first, then the lines, P1 to
+// P12, each a pick (KAPICK) of the picture one less than its key.
+dirBlkT,
+    dirKey:6
+    dirL:6 + 0 * DLWORDS
+    dirL:6 + 1 * DLWORDS
+    dirL:6 + 2 * DLWORDS
+    dirL:6 + 3 * DLWORDS
+    dirL:6 + 4 * DLWORDS
+    dirL:6 + 5 * DLWORDS
+    dirL:6 + 6 * DLWORDS
+    dirL:6 + 7 * DLWORDS
+    dirL:6 + 0d8 * DLWORDS
+    dirL:6 + 0d9 * DLWORDS
+    dirL:6 + 0d10 * DLWORDS
+    dirL:6 + 0d11 * DLWORDS
+dirCode,
+    KSPEC | KNUM | KACANCEL
+    table NPICT, KSPEC | KNUM | KAPICK
+dirRec,
+    KBXOK - KBR
+    KBXOK + 0d6 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    DIRREC(0, 0)
+    DIRREC(1, 0)
+    DIRREC(2, 0)
+    DIRREC(3, 0)
+    DIRREC(4, 0)
+    DIRREC(5, 0)
+    DIRREC(0, 1)
+    DIRREC(1, 1)
+    DIRREC(2, 1)
+    DIRREC(3, 1)
+    DIRREC(4, 1)
+    DIRREC(5, 1)
+
+// The directory's screen. It shows the drive in use; each picture's line, P1 to P6 down the
+// left and P7 to P12 down the right, its label and its name, taking the pen so that the
+// picker's taps find them; and the key, OK or Cancel, where the keyboard's OK is; then its
+// halt. kbDirFill writes the drive's digit and the twelve names, the open the key's text and
+// its parameter word, before frameGo points here. It holds no jump or save, as the keyboard's
+// list does not.
+dirList,
+    KBTXT
+    y(KBPY) next(point)
+    x(KBX0) next(character)
+    type340 "Drive"
+    KBTXT
+    y(KBPY) next(point)
+    x(KBX0 + 0d6 * KBADV) next(character)
+dirDrv, KCUP * 010000 + DRVCODE1 * 0100 + KCEND
+dirL,
+    DIRLINE(0, 0, KCP * 010000 + (KCZERO + 1) * 0100 + KCSPACE)
+    DIRLINE(1, 0, KCP * 010000 + (KCZERO + 2) * 0100 + KCSPACE)
+    DIRLINE(2, 0, KCP * 010000 + (KCZERO + 3) * 0100 + KCSPACE)
+    DIRLINE(3, 0, KCP * 010000 + (KCZERO + 4) * 0100 + KCSPACE)
+    DIRLINE(4, 0, KCP * 010000 + (KCZERO + 5) * 0100 + KCSPACE)
+    DIRLINE(5, 0, KCP * 010000 + (KCZERO + 6) * 0100 + KCSPACE)
+    DIRLINE(0, 1, KCP * 010000 + (KCZERO + 7) * 0100 + KCSPACE)
+    DIRLINE(1, 1, KCP * 010000 + (KCZERO + 0d8) * 0100 + KCSPACE)
+    DIRLINE(2, 1, KCP * 010000 + (KCZERO + 0d9) * 0100 + KCSPACE)
+    DIRLINE(3, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO)
+    DIRLINE(4, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 1)
+    DIRLINE(5, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 2)
+dirKey, KBKEY
+    y(KBYB) next(point)
+    x(KBXOK) next(character)
+dirKTxt,
+    017 * 010000 + 013 * 0100 + KCUP
+    KBPAD
+    KBBLANK
+dirHalt, lpoff halt interrupt
+
+// The library's screen's descriptor, as dirScr.
+lbsScr,
+    lbsRec:6
+    lbsBlkT:6
+    lbsCode:6
+    lbsKTxt:6
+    lbsKey:6
+    lbsList:6
+
+// Its keys: the screen's key, OK or Cancel; Next and Prev, each a pick (KAPICK) answering
+// LBPNEXT and LBPPREV; then the lines, entries 1 to 16 of the page shown, each a pick answering
+// LBPLINE and on.
+lbsBlkT,
+    lbsKey:6
+    lbsNext:6
+    lbsPrev:6
+    lbsL:6 + 0 * DLWORDS
+    lbsL:6 + 1 * DLWORDS
+    lbsL:6 + 2 * DLWORDS
+    lbsL:6 + 3 * DLWORDS
+    lbsL:6 + 4 * DLWORDS
+    lbsL:6 + 5 * DLWORDS
+    lbsL:6 + 6 * DLWORDS
+    lbsL:6 + 7 * DLWORDS
+    lbsL:6 + 0d8 * DLWORDS
+    lbsL:6 + 0d9 * DLWORDS
+    lbsL:6 + 0d10 * DLWORDS
+    lbsL:6 + 0d11 * DLWORDS
+    lbsL:6 + 0d12 * DLWORDS
+    lbsL:6 + 0d13 * DLWORDS
+    lbsL:6 + 0d14 * DLWORDS
+    lbsL:6 + 0d15 * DLWORDS
+lbsCode,
+    KSPEC | KNUM | KACANCEL
+    table LBKEYS - 1, KSPEC | KNUM | KAPICK
+lbsRec,
+    LBKREC(KBXOK, 6)
+    LBKREC(KBXCLEAR, 4)
+    LBKREC(KBXBACK, 4)
+    DIRREC(0, 0)
+    DIRREC(1, 0)
+    DIRREC(2, 0)
+    DIRREC(3, 0)
+    DIRREC(4, 0)
+    DIRREC(5, 0)
+    DIRREC(6, 0)
+    DIRREC(7, 0)
+    DIRREC(0, 1)
+    DIRREC(1, 1)
+    DIRREC(2, 1)
+    DIRREC(3, 1)
+    DIRREC(4, 1)
+    DIRREC(5, 1)
+    DIRREC(6, 1)
+    DIRREC(7, 1)
+
+// The library's screen: its title; the sixteen lines, the page's first eight down the left and
+// the next eight down the right, on the masters' picker's places, each its label and its name,
+// taking the pen so that a picker's taps find them; Next and Prev; and the key, OK or Cancel,
+// where the keyboard's OK is; then its halt. kbLibFill writes the labels and the names, the open
+// the key's text and its parameter word, before frameGo points here.
+lbsList,
+    KBTXT
+    y(KBPY) next(point)
+    x(KBX0) next(character)
+    type340 "Library"
+lbsL,
+    DIRLINE(0, 0, LBBLANKL)
+    DIRLINE(1, 0, LBBLANKL)
+    DIRLINE(2, 0, LBBLANKL)
+    DIRLINE(3, 0, LBBLANKL)
+    DIRLINE(4, 0, LBBLANKL)
+    DIRLINE(5, 0, LBBLANKL)
+    DIRLINE(6, 0, LBBLANKL)
+    DIRLINE(7, 0, LBBLANKL)
+    DIRLINE(0, 1, LBBLANKL)
+    DIRLINE(1, 1, LBBLANKL)
+    DIRLINE(2, 1, LBBLANKL)
+    DIRLINE(3, 1, LBBLANKL)
+    DIRLINE(4, 1, LBBLANKL)
+    DIRLINE(5, 1, LBBLANKL)
+    DIRLINE(6, 1, LBBLANKL)
+    DIRLINE(7, 1, LBBLANKL)
+lbsNext, KBKEY
+    y(KBYB) next(point)
+    x(KBXCLEAR) next(character)
+    type340 "Next"
+lbsPrev, KBKEY
+    y(KBYB) next(point)
+    x(KBXBACK) next(character)
+    type340 "Prev"
+lbsKey, KBKEY
+    y(KBYB) next(point)
+    x(KBXOK) next(character)
+lbsKTxt,
+    017 * 010000 + 013 * 0100 + KCUP
+    KBPAD
+    KBBLANK
+lbsHalt, lpoff halt interrupt
+
+// The masters' picker's descriptor, as dirScr; its list, its lines and their parameter words'
+// addresses (mpkBlkT, which the tape, the library and the instance module read too) are the
+// root's, in banks 5 and 11.
+mpkScr,
+    mpkRec:6
+    mpkBlkT:013
+    mpkCode:6
+    mpkKTxt:5
+    mpkKey:5
+    mpkList:5
+
+// Its keys' codes, Cancel first, then the lines, M1 to M16, each a pick (KAPICK) of the master
+// one less than its key; and their hit records.
+mpkCode,
+    KSPEC | KNUM | KACANCEL
+    table NMASTER, KSPEC | KNUM | KAPICK
+mpkRec,
+    KBXOK - KBR
+    KBXOK + 0d6 * KBADV + KBRX
+    KBYB - KBR
+    KBYB + KBH + KBR
+    MPKREC(0, 0)
+    MPKREC(1, 0)
+    MPKREC(2, 0)
+    MPKREC(3, 0)
+    MPKREC(4, 0)
+    MPKREC(5, 0)
+    MPKREC(6, 0)
+    MPKREC(7, 0)
+    MPKREC(0, 1)
+    MPKREC(1, 1)
+    MPKREC(2, 1)
+    MPKREC(3, 1)
+    MPKREC(4, 1)
+    MPKREC(5, 1)
+    MPKREC(6, 1)
+    MPKREC(7, 1)
 %%endoverlay

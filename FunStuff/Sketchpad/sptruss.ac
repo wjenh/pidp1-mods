@@ -232,10 +232,11 @@ taOrd,
     table TANJ, 0
 
 // The incidences and the map (taInc, taMap) are in bank 13 (sketchpad.am1). Each member's
-// coefficients (tdC), each roller joint's axis (taAX), and the members' flags of an axis not
-// level (taMI) and stiffnesses (taMK), are in bank 3.
+// coefficients (tdC), and the members' flags of an axis not level (taMI) and stiffnesses
+// (taMK), are in bank 3; each roller joint's axis (taAX) is in bank 14, beside the direct
+// solve's words, which a library save or load spoils after setting taReset.
 
-// The snapshot taCheck compares, taSnap, is in bank 13 (sketchpad.am1). It holds for each Fix
+// The snapshot taCheck compares, taSnap, is in bank 14 (sketchpad.am1). It holds for each Fix
 // and Roller its type and point, a Roller's axis after them
 // (taRlD), and for each Beam and Load its type, its points, its parameter word (a Beam's
 // stiffness) and its points' places. taSnapE is the full address of the first word past it, 0
@@ -885,7 +886,7 @@ unE, 0
     endloc
 
 // The rollers' axes, a joint a step from taAJ. Each roller joint's unit axis goes to its six
-// words of taAX (bank 3), from the direction of the line its Roller entry names (taRlD); a level
+// words of taAX (bank 14), from the direction of the line its Roller entry names (taRlD); a level
 // axis is (1, 0) exactly. Then the joints' order.
 taPAxis,
     local axLevel, axNext, axDone, axP, axW
@@ -904,7 +905,7 @@ taPAxis,
     dac axW
     add axW
     add axW
-    add [taAX:3]
+    add [taAX:016]
     dac axW
     lac rlX
     dac taDD
@@ -1028,7 +1029,7 @@ taIncl, 0
     dac tiT
     add tiT
     add tiT
-    add [taAX:3+4]
+    add [taAX:016+4]
     dac tiT
     lac i tiT
     sza i               // skip if a_y is not 0; only zero has a high part of 0
@@ -2466,7 +2467,7 @@ taCheck,
         ckW, ckS, ckDiff, ckA, ckB
     dap rtn
     dzm ckDiff
-    lac [taSnap:015]
+    lac [taSnap:016]
     dac ckS
     lac [cEntries:011]
     dac ckE

@@ -184,7 +184,8 @@
 // with its snapshot every TRUSSCHK. At most TANJ joints (more, with at most NCON members, is a
 // mechanism unless 18 or more are rollers), and TANI members at a joint. TANU is the most
 // unknowns, two a joint; TAPROF the most entries of the matrix's profile, three words each,
-// which fill banks 14 and 15 after the unknowns' words and the members' directions. TAMAXF is
+// which fill banks 14 and 15 after the unknowns' words, the members' directions and TATABW, the
+// rollers' axes and the snapshot (taAX, taSnap, sketchpad.am1's bank 14). TAMAXF is
 // the largest force the readouts show. Then its states (taState), and why there is no answer
 // (taWhy): a mechanism, a load or force too large, a member of no length, too many joints or
 // members at one, or a profile past TAPROF. TASTIFF is no state but the readouts' writing for
@@ -194,7 +195,8 @@
 #define TANJ 0d40
 #define TANI 0d15
 #define TANU (2 * TANJ)
-#define TAPROF ((0d8192 - TANU * 0d8 - NCON * 6) / 3)
+#define TATABW (TANJ * 6 + NCON * 0d8)
+#define TAPROF ((0d8192 - TANU * 0d8 - NCON * 6 - TATABW) / 3)
 #define TAMAXF 0d99999
 #define TANONE 0
 #define TABUSY 1
@@ -618,7 +620,7 @@
 #define INITIALY 0d512
 
 #define MAXPTS 0d256
-#define MAXLINES 0d264
+#define MAXLINES 0d256
 
 // No point, in a point index.
 #define NOPOINT 0777777
@@ -761,7 +763,7 @@
 // needs; the rest step over. slotAddr and rebuildDisplay depend on 4 slots per group, and
 // slotAddr and bank 11's lkSlot on SLOTWORDS 13, their shifts making 13 i + 2 (i / 4).
 #define GROUPWORDS (4 * SLOTWORDS + 2)
-#define NGROUPS 0d66
+#define NGROUPS 0d64
 #define CALLOFFSET (4 * SLOTWORDS)
 #define DRAWLISTSIZE (NGROUPS * GROUPWORDS + 2)
 
@@ -841,20 +843,32 @@
 // afTab's columns start this many words on, one type word for each mode from MFIX to MCENTER.
 #define AFCOLS (MCENTER - MFIX + 1)
 
-// Circle arcs. An arc is drawn as NARC chords to a full circle, NQ to a quarter. Its slot, like
-// a line slot, is the parameter word, the y and x words of the arc's end, the gate, then NARC
-// vector words, followed by a 2-word target call; the slot and the call are an arc group. Each
-// arc's call is one of the sites the target calls are spread over, after the full line groups'
-// (writeCalls). MAXARCS groups are in bank 0, beside the master store, with the band's slot and
-// 2 words each for the arc list's end and the band's. A radius from ARCRMIN to ARCRMAX keeps
-// every chord from 1.5 to 127 units, so no step is (0,0), which stops the 340, and none
-// exceeds a vector.
+// Circle arcs. An arc's geometry is in whole steps, NARC to a full circle and NQ to a quarter,
+// everywhere but in its slot. Its slot, like a line slot, is the parameter word, the y and x
+// words of the arc's end, the gate, then ARCSLOTV vector words, followed by a 2-word target
+// call; the slot and the call are an arc group. The vectors are the chords its radius needs to a
+// full circle (arcClass): 16 up to ARCR16, which keeps the arc within 2 units of the circle, 32
+// up to ARCR32, the radius whose chord of two whole steps is a vector's 127 units, and NARC past
+// it. Each is s = NARC / chords whole steps, and the slot's words run from vertex ARCSLOTV * s
+// down to the start, so 32 and 64 chords hold the full circle and its first half, and 16 the
+// circle twice. Every arc fits: one past ARCR32 has under half a circle with every vertex on the
+// canvas, which allows no half circle past a radius of 570. Each arc's call is one of the sites
+// the target calls are spread over, after the full line groups' (writeCalls). MAXARCS groups
+// are in bank 0, beside the master store, with the band's slot and 2 words each for the arc
+// list's end and the band's. The band's slot holds the full circle in whole steps, NARC words.
+// ARCSLOTV is a power of two, 32 the shift spvarc.ac's vaFill makes its window by.
+// A radius from ARCRMIN to ARCRMAX keeps every chord from 1.5 to 127 units, so no step is (0,0),
+// which stops the 340, and none exceeds a vector.
 #define NARC 0d64
 #define NQ (NARC / 4)
 #define ARCVEC 4
-#define ARCWORDS (ARCVEC + NARC)
+#define ARCSLOTV 0d32
+#define ARCWORDS (ARCVEC + ARCSLOTV)
 #define ARCGROUP (ARCWORDS + 2)
-#define MAXARCS 0d19
+#define BANDWORDS (ARCVEC + NARC)
+#define ARCR16 0d104
+#define ARCR32 0d647
+#define MAXARCS 0d34
 // The arc table's per-arc tables, arcTC to arcTR, one after another.
 #define NATAB 6
 #define ARCRMIN 0d15
@@ -865,6 +879,13 @@
 // Through the view, an arc between two whole steps' vertices lies within ARCSAG of the chord
 // between them; the sagitta at the largest screen radius, 8 * ARCRMAX, is 12.4.
 #define ARCSAG 0d13
+// A master's arc is composed (Define's defWalk) with the chords its radius needs at x1: 16 to
+// a full circle up to ARCM16, 32 up to ARCM32 and NARC past it. An instance draws those words
+// through the 340's scale, so its chords grow with it; the thresholds keep a chord's sagitta at
+// x8 within ARCSAG, as NARC chords keep it at 8 * ARCRMAX: 12.9 at ARCM16 and 13.0 at ARCM32.
+// The vertices are whole units of the master, so at x8 their rounding adds up to 8 more.
+#define ARCM16 0d84
+#define ARCM32 0d337
 
 // The arc module's entries, called through arcCall.
 #define AEINIT 0
@@ -905,7 +926,7 @@
 // where a vector of major axis M and minor m takes M + min(m, M - m) steps (measured). Its
 // moves are split into vectors of at most MSTEP units on either axis.
 #define NMASTER 0d16
-#define MPOOL0 0d398
+#define MPOOL0 0d341
 #define MPOOL1 0d530
 #define MNOPOOL 0777777
 // The variants at once: a block in the master store of a master's words at a code c
@@ -1032,7 +1053,7 @@
 // a save of its master, and a 2-word target call. MAXINST slots, used from the first; the first
 // unused one's gate jumps to the list's end, instEnd, which follows the last slot. An instance
 // is drawn at LITINTENSITY instead while delete mode, Move or Size locks onto it.
-#define MAXINST 0d32
+#define MAXINST 0d48
 #define INSTWORDS 6
 #define INSTGATE 3
 #define INSTCALL 5
@@ -1076,18 +1097,19 @@
 
 // The mark list follows the instance list's end, one block of MARKWORDS for each arc slot, the
 // same arcs in the same order, then markEnd. A block holds a parameter word entering subroutine
-// mode, the first gate, the center's cross (its y word, its x word MARKARM to the left entering
-// vector mode, and three vectors, the last ending vector mode), a parameter word, the start's
-// cross, a parameter word entering subroutine mode, the second gate, and the end's cross. An
-// unused block's first gate jumps to markEnd, and the arcs are dense, so the first unused block
-// ends the list; a used one's enters the center's cross. The second gate enters the end's cross,
-// or for a full circle goes on to the next block.
-#define MARKWORDS 0d20
+// mode, the first gate, the center's cross, a parameter word entering point mode, the start's
+// cross, a parameter word entering subroutine mode, the second gate, and the end's cross. A cross
+// is its point's y word, its x word entering subroutine mode, and a save of the one shared cross,
+// mkCross (spframe.ac), which returns to the next word in parameter mode; hidden, the save is a
+// jump to that word. An unused block's first gate jumps to markEnd, and the arcs are dense, so
+// the first unused block ends the list; a used one's enters the center's cross. The second gate
+// enters the end's cross, or for a full circle goes on to the next block.
+#define MARKWORDS 0d14
 #define MKGATE1 1
 #define MKCEN 2
-#define MKSTART 0d8
-#define MKGATE2 0d14
-#define MKEND 0d15
+#define MKSTART 6
+#define MKGATE2 0d10
+#define MKEND 0d11
 
 // Tape, Misc's first four rows. A picture, the drawing and the masters, is saved as P1 to P12
 // on the Microtape drive the Drive row selects, D1 to D8, drive 1 at the start; the user mounts
@@ -1221,9 +1243,10 @@
 // typed by a drag; 250 ms, so that a drag crossing the blank between keys in under a quarter
 // second is not a lift; the lists' Select box takes a lift the same way). A close
 // waits at most KBWAIT polls (about 0.6 s, twice a frame at 192 full-width lines) for the
-// display to leave the keyboard's list. A block of kind KBDIR opens the directory's screen
-// (the tape module's dirList) instead: Dir's, whose one key, OK, closes it, or Save's and Load's
-// picker, whose lines pick a picture (KAPICK) and whose Cancel closes it.
+// display to leave the keyboard's list. A block of kind KBDIR opens a screen of lines instead,
+// its number in the block's buffer word: the directory's (KBSDIR), the library's (KBSLIB) or the
+// masters' picker (KBSMPK). Dir's has one key, OK, which closes it; a picker's lines pick a
+// picture, an entry or a master (KAPICK) and its Cancel closes it.
 #define KBMAX 0d24
 #define KBBUFW 0d17
 #define KBBUFC (KBBUFW * 3)
@@ -1234,6 +1257,9 @@
 #define KBTEXT 0
 #define KBNUM 1
 #define KBDIR 2
+#define KBSDIR 0
+#define KBSLIB 1
+#define KBSMPK 2
 #define KBDEC (KBNUM | KNUM)
 #define KBKEYS 0d50
 #define NOKEY KBKEYS
@@ -1258,7 +1284,7 @@
 #define KBFLASHMS 0d150
 #define KBGAPMS 0d250
 #define KBWAIT 0d12000
-// The directory's screen (sptape.ac, dirList) has twelve lines, P1 to P6 from (DIRX0, DIRY0) down
+// The directory's screen (spkbd.ac, dirList) has twelve lines, P1 to P6 from (DIRX0, DIRY0) down
 // by DIRDY, P7 to P12 beside them DIRCOLDX right; each line's parameter word, y, x, its label in
 // two words ("P1  " to "P12 ", KCP the P) and its name's run, DLWORDS words, the name DLNAME from
 // the line's start; DIRCHARS characters a line. A hit answers a line from DIRRX left and right of
@@ -1276,9 +1302,9 @@
 #define DIRKEYS 0d13
 #define KCP 020
 // A line of the directory's screen, at row r of column c, shared by the library's screen
-// (splibdir.ac). Its label's first word l1 (for a picture KCP and its digits, then a space for P1
-// to P9), its second DIRLBLX (a space, then upper shifts), and its name's run, blank until the
-// directory's read writes it.
+// (spkbd.ac) and the masters' picker (sketchpad.am1, mpkList). Its label's first word l1 (for a
+// picture KCP and its digits, then a space for P1 to P9), its second DIRLBLX (a space, then upper
+// shifts), and its name's run, blank until the keyboard's open writes it.
 #define DIRLBLX (KCSPACE * 010000 + KCUP * 0100 + KCUP)
 #define DIRLINE(r, c, l1) \
     KBKEY; \
@@ -1288,13 +1314,8 @@
     DIRLBLX; \
     KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; KBPAD; \
     KBBLANK
-// The hit record of the line at row r of column c, in kbFind's order: left, right, bottom, top.
-#define DIRREC(r, c) \
-    DIRX0 + (c) * DIRCOLDX - DIRRX; \
-    DIRX0 + (c) * DIRCOLDX + DIRCHARS * KBADV + DIRRX; \
-    DIRY0 - (r) * DIRDY - DIRRY; \
-    DIRY0 - (r) * DIRDY + KBH + DIRRY
-// The masters' picker (sketchpad.am1's mpkList, in bank 5; its blocks in sptape.ac), the same
+// The masters' picker (sketchpad.am1's mpkList, in bank 5; its blocks in sptape.ac, its hit
+// records and codes in spkbd.ac), the same
 // screen with sixteen lines, M1 to M8 down the left and M9 to M16 down the right, on the
 // directory's places; each line a directory's line (DIRLINE), its label "M1  " to "M16 " (KCM
 // the M) and a name's run, MPKWORDS words, the label MPKLABEL and the run MPKTAG from the line's
@@ -1340,7 +1361,11 @@
 #define KACLEAR 2
 
 // Text (sptext.ac, bank 10). NTEXT texts on the canvas and NMTEXT in the masters, each at most
-// TEXTLEN characters, kept as the pen keyboard writes them, TXRUN words of 340 text. Every text
+// TEXTLEN characters, kept as the pen keyboard writes them, at most TXRUN words of 340 text, each
+// table's runs packed in a pool, TXPOOLW words for the canvas's and MTPOOLW for the masters'. A
+// text of c characters takes at most (2c + 2) / 3 words, rounded up, which is at most two thirds
+// of its characters and TXOWN, so a pool two thirds of its budget holds any set of texts within
+// it. The masters' texts' costs, txMCost, together stay within MTBUDGET. Every text
 // shown, a canvas text or an instance's copy of its master's, counts its characters and TXOWN
 // for its words against TEXTBUDGET; at about 27 us a character (measured), the texts' list takes
 // at most one presentation period. A text placed is at TXSCALE, x2, the labels'
@@ -1359,6 +1384,9 @@
 #define TEXTLEN KBMAX
 #define TXRUN KBBUFW
 #define TEXTBUDGET 0d360
+#define TXPOOLW (TEXTBUDGET * 2 / 3)
+#define MTBUDGET 0d900
+#define MTPOOLW (MTBUDGET * 2 / 3)
 #define TXOWN 2
 #define TXSCALE 1
 #define TXADV 7
@@ -1440,17 +1468,12 @@
 #define AKEEPN 0d29
 
 // The tape module's constants (sptape.ac), its picture format, words, blocks and waits.
-// The tape's magic and its format, 19, a picture as a stream, the masters' entries, each with
+// The tape's magic and its format, 21, a picture as a stream, the masters' entries, each with
 // its master's name and its sub-instances, and a closing block in its slot, and the tape's
-// directory. Formats 18 and 17, TPFORMAT18 and TPFORMAT17, are read too, with the same entries
-// and directory: 18's stream is 19's but for the masters' own texts' counts (mTxOwn, the
-// nesting's last NMASTER words, zeros in its pad), so a load counts each master's texts as its
-// own; 17's lacks the whole nesting (TPNESTW words) and its entries hold no sub-instances. A
-// picture of any other format reads as EMPTY.
+// directory. Its texts are the two pools, each with its start table. A picture of any other
+// format reads as EMPTY.
 #define TPMAGIC 0525253
-#define TPFORMAT 023
-#define TPFORMAT18 022
-#define TPFORMAT17 021
+#define TPFORMAT 025
 // An instance's scale word on the tape. Its low two bits are the 340's scale k, 0 to 3, as
 // iScale holds it, and the sixteen above them a
 // multiplier code c, the instance's size 2^k times c / 2^15, c = 0 meaning exactly 2^k. A save
@@ -1463,7 +1486,7 @@
 // The picture's runs' words (TPPICTURE), and the header's: the magic, the format, TPSTREAM, the
 // generation and the entries' blocks. TPWORDS is the runs' sum, written out: 2 * MAXPTS + 2 *
 // MAXLINES + 3 * MAXINST + TPATTWORDS + TPMDIRWORDS + TPINSTWORDS + TPARCWORDS + 2.
-#define TPWORDS 0d1798
+#define TPWORDS 0d1936
 #define TPHDRWORDS 5
 // The tie lists' packed words.
 #define TPTIES (NATT * MAXINST / 2)
@@ -1483,9 +1506,10 @@
 #define LBRECN (TPRECN - 1)
 // The masters' nesting's words, mNSub to mTxOwn in bank 5, five tables of NMASTER.
 #define TPNESTW (5 * NMASTER)
-// The texts' words (TPTEXTS), the canvas's run and the masters'.
-#define TPTWCAN (2 + NMASTER + NTEXT * (5 + TXRUN))
-#define TPTWMAS (NMTEXT * (6 + TXRUN))
+// The texts' words (TPTEXTS), the canvas's run and the masters', each ending in its start table
+// and its pool.
+#define TPTWCAN (2 + NMASTER + NTEXT * 5 + NTEXT + 1 + TXPOOLW)
+#define TPTWMAS (NMTEXT * 6 + NMTEXT + 1 + MTPOOLW)
 #define TPTWORDS (TPTWCAN + TPTWMAS)
 // The digits' words, bank 3's run from txAn to scFix, then bank 11's from mtAn to mtFix
 // (TPDIGITS), TPSWORDS in all.
@@ -1495,11 +1519,8 @@
 // A picture's stream is the header, the constraint table, the ties, the name, the cycle's
 // settings, the masters' constraints' counts, the texts, the digits, the picture's runs and the
 // masters' nesting, then TPPAD zeros; TPPBLOCKS blocks of the picture's slot, TPSLOT blocks, the
-// rest for the masters' entries and the closing block. Format 17's stream is TPSTREAM17 words,
-// the nesting left out, and format 18's TPSTREAM18, its own texts' counts left out.
+// rest for the masters' entries and the closing block.
 #define TPSTREAM (TPHDRWORDS + CONWORDS + TPTIES + NAMEW + TPCYC + TPXWORDS + TPTWORDS + TPSWORDS + TPWORDS + TPNESTW)
-#define TPSTREAM18 (TPSTREAM - NMASTER)
-#define TPSTREAM17 (TPSTREAM - TPNESTW)
 #define TPPBLOCKS 0d23
 #define TPSLOT 0d47
 #define TPPAD (TPPBLOCKS * 0d256 - TPSTREAM)
@@ -1508,8 +1529,8 @@
 #define NPICT 0d12
 #define TPHALF 6
 #define TPDIRBLK (1 + TPHALF * TPSLOT)
-// The tape's directory, each picture's entry, its format word (TPFORMAT, TPFORMAT18 or
-// TPFORMAT17, or anything else for no picture) and its name's run; the entries' words, also the
+// The tape's directory, each picture's entry, its format word (TPFORMAT, or anything else for
+// no picture) and its name's run; the entries' words, also the
 // third word of the directory's header, which tells it from a picture's.
 #define TPDENT (1 + NAMEW)
 #define TPDIRW (NPICT * TPDENT)
@@ -1555,7 +1576,8 @@
 #define LBHNL (LBHDIR + 0d10)
 #define LBHNA (LBHDIR + 0d11)
 // A text's words in an entry: its offset, scale, characters and words (mtDX to mtW), its run
-// (mtRun) and its digits' anchor, value and fix (mtAn to mtFix). The master is the entry's.
+// (in mtRun) and zeros after it to TXRUN words, and its digits' anchor, value and fix (mtAn to
+// mtFix). The master is the entry's.
 #define LBTXW (5 + TXRUN + 3)
 // A master holding sub-instances is saved as a nested entry, format LBFORMAT2: the entry's
 // header, LBEHW words, then a part for the master and for each master it calls at any depth, the
@@ -1629,7 +1651,7 @@
 #define MCJSP(r) (0620000 | ((r) & 07777))
 #define MCJDA(r) (0170000 | ((r) & 07777))
 
-// The drum overlays' window W (Docs/UsingOverlays.md, PLAN.md 7), in bank 6 from OVWFIRST to
+// The drum overlays' window W (Docs/UsingOverlays.md), in bank 6 from OVWFIRST to
 // OVWLAST, 8 words longer than the longest of its overlays, tape (sptape.ac), library (splib.ac),
 // scale (spscale.ac), kbd (spkbd.ac), defdism (spinst.ac) and truss (sptruss.ac), each with its
 // two header words and its literals (the truss's sets it), so a change that lengthens one by a

@@ -604,55 +604,6 @@ doKeep,
 rtn, jmp .
     endloc
 
-// Delete's removal of an instance's tie points (AEORPHAN). Each of the instance module's tgList,
-// tgN of them, is removed if nothing else is on it (dropOrphan), the later ones following each
-// removal (ptFollow).
-// Exit: AC = 0. IO is clobbered. Called via jsp.
-arcOrphans,
-    local rtn, aoLoop, aoFix, aoNext, aoDone, aoI, aoJ, aoN, aoP, aoQ
-    dap rtn
-    lac [tgN:7]
-    jda getW
-    dac aoN
-    dzm aoI
-aoLoop,
-    lac aoI
-    sad aoN             // skip while tie points remain
-    jmp aoDone
-    add [tgList:7]
-    jda getW
-    dac aoQ
-    jda dropOrphan
-    sza i               // skip if it was removed
-    jmp aoNext
-    lac aoI
-    dac aoJ
-aoFix,
-    idx aoJ
-    sad aoN             // skip while later ones remain
-    jmp aoNext
-    add [tgList:7]
-    dac aoP
-    jda getW
-    lio aoQ
-    jda ptFollow
-    eem
-    dac i aoP
-    lem
-    jmp aoFix
-aoNext,
-    idx aoI
-    jmp aoLoop
-aoDone,
-    cla
-rtn, jmp .
-aoI, 0
-aoJ, 0
-aoN, 0
-aoP, 0
-aoQ, 0
-    endloc
-
 // Delete line i, then either end if that leaves nothing on it. A line of no length has one end
 // to check, not two.
 // Entry: AC = i. AC and IO are clobbered. Called via jda.

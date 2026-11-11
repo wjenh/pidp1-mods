@@ -1,6 +1,6 @@
 // spvarc.ac -- the arcs through the magnifier's view. An arc's slot written for its run on the
-// screen, and Circle's band pointed at the run nearest its end; finer chords where the screen
-// radius passes ARCRMAX.
+// screen, and Circle's band pointed at the run nearest its end; the chords by the screen
+// radius, as an arc's slot takes them at x1, and finer where it passes ARCRMAX.
 //
 // Bank 13, after spsearch.ac. Bank 12 holds the view module (spview.ac), whose clipper (vwClipS,
 // entered through vwClipX), view words and fine sine table this code reaches through 16-bit
@@ -53,21 +53,22 @@ svDone,
 rtn, 0
     endloc
 
-// One pass of Circle's band through the view (arcBandPass, when magnified, or after a change of
-// view at x1). After arcSweep, arcEnd and arcSnap, it points the band at the run nearest its end.
+// One pass of Circle's band through the view (arcBandPass, when magnified). After arcSweep,
+// arcEnd and arcSnap, it points the band at the run nearest its end, in the band's last
+// ARCSLOTV vector words, as an arc's slot holds it (vaSlotA that much on).
 // The band's vectors are written whole (vaBandW, the gate first closed) only when a direction
 // is chosen anew, the arc is not the one they were written for, the view changed (arcRebase),
 // or the run the end is on is not the one they hold; otherwise only the head moves. Either way
 // the head's words, and the word the last entry took over, are posted for penISR (vaPost),
 // since the display may be partway through the band; at most five, as arcBandPass posts.
-// arcPart is left at the entry word, so that arcBandPass's passes at x1 put it back.
+// arcPart is left at the entry word; back at x1, arcBandPass writes the band again whole.
 // Entry: bank 2's arc words; no posted words waiting (bandPost 0). Exit: AC = 0. IO is
 // clobbered. Called via jsp i [vaBand:015].
 vaBand,
     local rtn, bdBuild, bdPost, bdNew, bdSame, bdNone, bdOut
     dac rtn
     dzm vaPN
-    lac [arcBand:0]
+    lac [arcBand:1+NARC-ARCSLOTV]
     dac vaSlotA
     law 1
     dac vaBandM
@@ -113,8 +114,8 @@ bdBuild,
     dzm vaValid
     dzm vaOldA
     dzm i [arcPart:2]
-    lac [jump arcBand:0+ARCWORDS next(parameter)]
-    dac i [arcBand:0+ARCVEC-1]
+    lac [jump arcBand:1+BANDWORDS next(parameter)]
+    dac i [arcBand:1+ARCVEC-1]
     lac i [frameTicks:0]
     dac vaTicks
     jsp vaBandW
@@ -155,13 +156,13 @@ bdSame,
     lac vaHW
     jda vaPost
     jsp vaWords
-    lio [arcBand:0+1]
+    lio [arcBand:1+1]
     lac vaWY
     jda vaPost
-    lio [arcBand:0+2]
+    lio [arcBand:1+2]
     lac vaWX
     jda vaPost
-    lio [arcBand:0+ARCVEC-1]
+    lio [arcBand:1+ARCVEC-1]
     lac vaWG
     jda vaPost
     lac vaOldA
@@ -174,8 +175,8 @@ bdNone,
     dzm vaValid
     dzm vaOldA
     dzm i [arcPart:2]
-    lio [arcBand:0+ARCVEC-1]
-    lac [jump arcBand:0+ARCWORDS next(parameter)]
+    lio [arcBand:1+ARCVEC-1]
+    lac [jump arcBand:1+BANDWORDS next(parameter)]
     jda vaPost
 bdOut,
     lac vaPN
@@ -222,12 +223,14 @@ wtN, 0
     endloc
 
 // The arc as the view shows it, from bank 2's words. It sets the start's offset, the direction
-// and the center for vaVtx; the chord, vaStep 512ths of a turn, 8 (a whole step) while the
-// screen radius is within ARCRMAX, halved while it is past, down to 1, and vaLog, the shift that
-// divides by it; the end on the screen, and its offset from the center (vaNX, vaNY) shifted up
-// for vaCross; vaJ, the last vertex at or before the end; and vaBase, the walk's last vertex,
-// the start, or for a full circle a whole step's vertex off the screen, the end then a turn
-// above it, so that a run through the start is not cut in two.
+// and the center for vaVtx; the chord, vaStep 512ths of a turn, by the rule an arc's slot takes
+// at x1 (arcClass) on the screen radius: 32 (four whole steps) within ARCR16, 16 within ARCR32,
+// 8 within ARCRMAX, halved for each doubling past it, down to 1 (vaRT), so that no run on the
+// screen needs more than an arc slot's ARCSLOTV words; and vaLog, the shift that divides by it;
+// the end on the screen, and its offset from the center (vaNX, vaNY) shifted up for vaCross;
+// vaJ, the last vertex at or before the end the chords reach, a multiple of vaStep; and vaBase,
+// the walk's last vertex, the start, or for a full circle a whole step's vertex off the screen,
+// the end then a turn above it, so that a run through the start is not cut in two.
 // AC and IO are clobbered. Called via jsp.
 vaSetup,
     local rtn, stLoop, stShift, stNorm, stJ, stFine, stFull, stScan, stBase, stR, stT, stI
@@ -262,34 +265,30 @@ vaSetup,
     sal 5s
     add stT
     dac vaY32
-    law 010
+    law 040
     dac vaStep
-    law 3
+    law i 5
     dac vaLg
     lac i [arcR32:2]
     sar 5s
     xct vaSal
     dac stR             // the screen radius, at most 8 * ARCRMAX
 stLoop,
+    lac vaLg
+    add [vaRT:015+5]
+    dac stT
     lac stR
-    sub [ARCRMAX+1]
-    spa                 // skip while past ARCRMAX
+    sub i stT
+    spa                 // skip while past this chord's radius
     jmp stShift
     lac vaStep
-    sad [1]             // skip unless the chord is already the finest
-    jmp stShift
     sar 1s
     dac vaStep
-    lac vaLg
-    sub [1]
-    dac vaLg
-    lac stR
-    sar 1s
-    dac stR
+    isp vaLg            // skip once the chord is the finest, a 512th
     jmp stLoop
 stShift,
     lac vaLg
-    add [vaLgT:015]
+    add [vaShT:015+5]   // sar n, n the chord's log
     dac stT
     lac i stT
     dac vaLog
@@ -338,6 +337,11 @@ stJ,
     dac vaJ
     add [010]
     dac stT             // the next whole step's vertex
+    lac vaStep
+    sub [1]
+    cma
+    and vaJ
+    dac vaJ             // the whole steps rounded down to a chord's
 stFine,
     lac vaJ
     add vaStep
@@ -395,7 +399,7 @@ stI, 0
     endloc
 
 // The sine and cosine of i 512ths of a turn in the arc's direction (counterclockwise when vaDir
-// is plus), from the quarter table vaSin; any i from 0 to 1023.
+// is plus), from the quarter table vaSin; any i of 0 or more, as only its low 9 bits are read.
 // Entry: AC = i. Exit: vaS, vaCo. AC is clobbered, IO preserved. Called via jda.
 vaSinCos, 0
     local rtn, scEven, scHalf, scJ, scP, scA
@@ -449,7 +453,8 @@ scA, 0
 // Vertex i of the arc, i 512ths of a turn from the start, as the start's offset rotated, in 32nds
 // of a page unit, and its point on the screen, (center * 32 + offset) >> (5 - vwS) - vwOut,
 // rounded. At a whole step's vertex, the offset is arcVertex's.
-// Entry: AC = i, 0 to 1023. Exit: vaUk, vaVk, vaX, vaY. AC and IO are clobbered. Called via jda.
+// Entry: AC = i, 0 or more (vaSinCos). Exit: vaUk, vaVk, vaX, vaY. AC and IO are clobbered.
+// Called via jda.
 vaVtx, 0
     local rtn, vxT
     dap rtn
@@ -545,7 +550,8 @@ wkNext,
     sza                 // skip at a whole step's vertex
     jmp wkFine
     lac vaStep
-    sad [010]           // skip unless the chords are whole steps already
+    and [7]
+    sza i               // skip if the chords are finer than whole steps
     jmp wkFine
     lac wkA
     sub [010]
@@ -776,11 +782,12 @@ onOff,
 rtn, jmp .
     endloc
 
-// Write the window's NARC vector words into the slot. Word p is the chord from vertex
-// vaWHi - p * vaStep to the next below, vaWHi being NARC chords above vaWLo, the run's lower
+// Write the window's ARCSLOTV vector words into the slot. Word p is the chord from vertex
+// vaWHi - p * vaStep to the next below, vaWHi being ARCSLOTV chords above vaWLo, the run's lower
 // vertex, so the run's last piece is the last word, which carries end. A chord on the screen is
 // its vector; one leaving it, the vector to the edge with end; any other, which the display
-// reaches only as an entry vaHead writes over it, the chord's vector with end.
+// reaches only as an entry vaHead writes over it, the chord's vector with end. At four whole
+// steps a chord the window is two turns, which vaVtx takes.
 // Entry: vaWalk's run; vaSlotA. AC and IO are clobbered. Called via jsp.
 vaFill,
     local rtn, flLoop, flOdd, flStore, flPut, flA, flP, flPtr, flT
@@ -788,7 +795,7 @@ vaFill,
     lac vaRLo
     dac vaWLo
     lac vaStep
-    sal 6s
+    sal 5s              // ARCSLOTV chords
     add vaWLo
     dac vaWHi
     dac flA
@@ -830,7 +837,7 @@ flOdd,
 flStore,
     dac flT
     lac flP
-    sas [0d63]          // skip if the last word, which carries end
+    sas [ARCSLOTV-1]    // skip if the last word, which carries end
     jmp flPut
     lac flT
     ior [end]
@@ -844,7 +851,7 @@ flPut,
     lac vaQY
     dac vaPY
     idx flP
-    sas [0d64]          // skip once every word is written
+    sas [ARCSLOTV]      // skip once every word is written
     jmp flLoop
 rtn, jmp .
 flA, 0
@@ -943,13 +950,13 @@ hdShow,
     sza i               // skip if the piece leaves the screen, allowed only as the last word
     jmp hdWord
     lac hdP
-    sas [0d63]          // skip if the last word
+    sas [ARCSLOTV-1]    // skip if the last word
     jmp hdBad
 hdWord,
     jsp vaPiece
     dac vaHW
     lac hdP
-    sas [0d63]          // skip if the last word, which carries end
+    sas [ARCSLOTV-1]    // skip if the last word, which carries end
     jmp hdPut
     lac vaHW
     ior [end]
@@ -1097,18 +1104,24 @@ mgSign, 0
 mgM, 0
     endloc
 
-// The shift from 32nds of a page unit to screen units, by scale, x1 to x8, sar (5 - vwS).
+// The shift from 32nds of a page unit to screen units, by scale, x1 to x8, sar (5 - vwS); and
+// at 5 - n, n 0 to 5, the shift dividing by a chord of 2^n 512ths of a turn, sar n (vaSetup's
+// vaLog, which vaLg, -n, indexes from the table's sixth word).
 vaShT,
     sar 5s
     sar 4s
     sar 3s
     sar 2s
-// The shift dividing by a chord of 2^n 512ths of a turn, n 0 to 3.
-vaLgT,
-    nop
     sar 1s
-    sar 2s
-    sar 3s
+    nop
+// At 5 - n, n 5 to 1, the largest screen radius plus one that a chord of 2^n 512ths of a turn
+// draws: past ARCRMAX each halving of the chord doubles it (vaSetup).
+vaRT,
+    ARCR16+1
+    ARCR32+1
+    ARCRMAX+1
+    2*(ARCRMAX+1)
+    4*(ARCRMAX+1)
 
 // The arcs through the view's words. The slot written, and whether it is the band's (its
 // first run taken, not its longest); frameTicks when its gate closed.
@@ -1118,9 +1131,9 @@ vaTicks, 0
 // The arc as vaSetup leaves it. The start's offset from the center in 32nds of a page unit, the
 // view's shift left and offsets (bank 12's vwSal, vwOutX and vwOutY), the direction, the center
 // in 32nds plus half a screen unit, the shift to screen units, the chord in 512ths of a turn,
-// its log and the shift dividing by it; the walk's last vertex, and the last one a full circle's
-// walk began at; the vertex at or before the end, the end on the screen, and its offset from the
-// center for vaCross.
+// its log negated and the shift dividing by it; the walk's last vertex, and the last one a full
+// circle's walk began at; the vertex at or before the end, the end on the screen, and its offset
+// from the center for vaCross.
 vaU, 0
 vaV, 0
 vaSal, nop

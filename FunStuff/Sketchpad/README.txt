@@ -11,7 +11,7 @@ Fiddle around.
 
 More interesting:
 
-mtp 1 /opt/pidp1-mods/FunStuff/Sketchpad/Tapes/SketchpadGirl.img
+mtp 1 /opt/pidp1-mods/FunStuff/Sketchpad/Tapes/SketchpadGirl.mtp
 
 Then in the program, Misc->Load, pick P1. Wait.
 

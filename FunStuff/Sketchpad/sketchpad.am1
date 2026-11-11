@@ -34,8 +34,7 @@ Sketchpad, a light pen drawing program for the Type 340
 //
 // 18-Oct-2026 Claude: first release.
 // 18-Oct-2026 Claude: production cleanup, comments only.
-// 4-Nov-2026 Version 2.0 added the remainder of the thesis operations
-// 8-Nov-2026 Version 2.1 added the size operations for instances, etc.
+// 4-Nov-2026 Version 2.0 adding the remainder of the thesis operations
 
 #include <TYPE340/type340alt.ah>
 #include <LIGHTPEN/lightpen.ah>
@@ -55,9 +54,9 @@ Sketchpad, a light pen drawing program for the Type 340
 // The drum's tracks the overlays keep off, the lowest, where drumupdater's programs and
 // Z-machine stories go first; the overlays, eight of code and sixteen masters' records, take the
 // tracks above it (the owner, 21-Oct-2026: every track may be used, from the top down), where
-// am1 places them: W's seven largest a track each from 11, the records two a track after them,
-// with the short ranks at track 20's start, to 27, leaving 30 to 37 for later overlays
-// (sketchpad.lst's overlay table has the layout).
+// am1 places them: W's ten a track each from 11 to 22, the records in the room they leave and
+// two a track on 23 to 27, leaving 30 to 37 for later overlays (sketchpad.lst's overlay table
+// has the layout).
 %%drumreserve 0-10
 
 // Bank 0's variables, those penISR and the routines beside it use.
@@ -134,20 +133,70 @@ var flipAt, flipW0, flipW1, bandPost
 // tgtLX, since its move to the middle keeps the arms the last hit left.
 var tgtKey, tgtNewKey, tgtPend, tgtPY, tgtPX, tgtLX, tgtLY
 
-// The drawing list in bank 1, then the master store's region 1. The list's line slots, target
-// calls and end-of-list jump are all written at run time. Both are placed ahead of the code so
-// that every reference to them is a backward one, which keeps their address literals out of
-// am1's forward-reference pool defect. The frame enters the list from call0; the line list's
-// end jumps to the arc list in bank 0. The 340's subroutine words reach both banks, and a save
-// made here returns here. The CPU only stores into the list, by full address, from the main
-// bank, whose extend window is open, and from bank 2 inside a window. Every bank but 0 is free
-// from its first word.
+// The drawing list in bank 1, three display blocks moved from bank 0 for room, then the master
+// store's region 1. The list's line slots, target calls and end-of-list jump are all written at
+// run time. All are placed ahead of the code so that every reference to them is a backward one,
+// which keeps their address literals out of am1's forward-reference pool defect. The frame
+// enters the list from call0; the line list's end jumps to the arc list in bank 0. The 340's
+// subroutine words reach both banks, and a save made here returns here, one made from bank 0
+// to bank 0. The CPU only stores into the list, by full address, from the main bank, whose
+// extend window is open, and from bank 2 inside a window. Every bank but 0 is free from its
+// first word.
 bank 1
 0/
 drawList,
     table DRAWLISTSIZE, 0
 
-// The master store's region 1, MPOOL1 words, the rest of the bank (sketchpad.ah, the masters'
+// The arc band, written at run time by the main bank and bank 2 (sparcs.ac), every reference
+// to it tagged :1. bandGate (spframe.ac) enters it once the arc's start is placed; it jumps back
+// to bank 0's band for the radius.
+arcBand,
+    table BANDWORDS + 2, 0
+
+// The circle every constraint glyph draws by save (spframe.ac's GLYPH and gOTail), out to the
+// right, then 16 chords round, ending FIXR right of the center (the vectors are for a radius of
+// 10). The save returns to bank 0.
+gRing, scale(DRAWSCALE) intensity(MARKINTENSITY) lpoff next(vector)
+    deltax(FIXR) deltay(0) right
+    deltax(1) deltay(4) left up visible
+    deltax(2) deltay(3) left up visible
+    deltax(3) deltay(2) left up visible
+    deltax(4) deltay(1) left up visible
+    deltax(4) deltay(1) left down visible
+    deltax(3) deltay(2) left down visible
+    deltax(2) deltay(3) left down visible
+    deltax(1) deltay(4) left down visible
+    deltax(1) deltay(4) right down visible
+    deltax(2) deltay(3) right down visible
+    deltax(3) deltay(2) right down visible
+    deltax(4) deltay(1) right down visible
+    deltax(4) deltay(1) right up visible
+    deltax(3) deltay(2) right up visible
+    deltax(2) deltay(3) right up visible
+    deltax(1) deltay(4) right up visible end
+
+// The screen during a transfer, a self-contained block started by the tape module and cut off by
+// tapeCall's dla of the frame. It draws WAIT, then eight invisible vectors out and back, then
+// round again, with no halt, since the CPU polls the tape with the break system off and cannot
+// restart it. Each word fetched steals a CPU cycle; the vectors, 127 steps at 1.5 us for one
+// fetch each, make the loop about 15 fetches in 1.8 ms, about 4% of the tape loop's cycles.
+waitList, WAITPARAM
+    y(WAITY) next(point)
+    x(WAITX) next(character)
+    type340 "WAIT"
+    scale(0) lpoff next(vector)
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left
+    deltax(0d127) deltay(0) right
+    deltax(0d127) deltay(0) left end
+    lpoff next(subroutine)
+    jump waitList:1 next(parameter)
+
+// The master store's region 1, MPOOL1 words, to the bank's last 4 (sketchpad.ah, the masters'
 // comment); region 0 is masters, in bank 0. Written by Define, its store's compaction and Load.
 mpool1,
     table MPOOL1, 0
@@ -414,36 +463,24 @@ uSz,
     table MAXINST, 0
 
 // An unused mark block's words, which markUnused copies; markWrite then writes the positions
-// and the gates. Each cross is drawn from MARKARM left of its point, right through it, back to
-// below it, and up through it.
+// and the gates. Each cross is its point's words and a save of bank 0's mkCross.
 markTpl,
     scale(DRAWSCALE) intensity(MARKINTENSITY) lpoff next(subroutine)
     jump markEnd:0 next(parameter)
     y(0) next(point)
-    x(0) next(vector)
-    deltax(2 * MARKARM) deltay(0) right visible
-    deltax(MARKARM) deltay(MARKARM) left down
-    deltax(0) deltay(2 * MARKARM) up visible end
+    x(0) next(subroutine)
+    save mkCross:0 next(vector)
     lpoff next(point)
     y(0) next(point)
-    x(0) next(vector)
-    deltax(2 * MARKARM) deltay(0) right visible
-    deltax(MARKARM) deltay(MARKARM) left down
-    deltax(0) deltay(2 * MARKARM) up visible end
+    x(0) next(subroutine)
+    save mkCross:0 next(vector)
     lpoff next(subroutine)
     jump markEnd:0 next(parameter)
     y(0) next(point)
-    x(0) next(vector)
-    deltax(2 * MARKARM) deltay(0) right visible
-    deltax(MARKARM) deltay(MARKARM) left down
-    deltax(0) deltay(2 * MARKARM) up visible end
+    x(0) next(subroutine)
+    save mkCross:0 next(vector)
 
 #include "spdispatch.ac"
-
-// Each truss joint's unit axis while it is a roller, a_x then a_y, three-word numbers, which the
-// truss module (sptruss.ac) writes and reads through its 16-bit address.
-taAX,
-    table TANJ * 6, 0
 
 // For each truss member, nonzero when an end is a roller on an axis not level (taMI), and its
 // Beam parameter word, its stiffness (taMK), which the truss module reaches likewise.
@@ -875,9 +912,10 @@ arList,
 akSave,
     table AKEEPN, 0
 
-// The masters' picker's screen (its blocks, keys and hit records in the tape module's root,
-// sptape.ac): its title, the sixteen lines, taking the pen when lit so that a tap finds them,
-// and Cancel where the keyboard's OK is; then its halt. Each line, M1 to M8 down the left and
+// The masters' picker's screen (its blocks and keys in the tape module's root, sptape.ac, its
+// descriptor, codes and hit records in the overlay kbd, spkbd.ac): its title, the sixteen
+// lines, taking the pen when lit so that a tap finds them, and Cancel where the keyboard's OK
+// is; then its halt. Each line, M1 to M8 down the left and
 // M9 to M16 down the right, is a directory's line: its parameter word, which the instance
 // module's mpkLines writes lit or dim for the row that opens it, its place, its label and its
 // name's run, which mpkLines writes "empty" or blank. It holds no jump or save, as the
@@ -1008,10 +1046,11 @@ constants
 // Vertex k of an arc is its start rotated k steps of 2pi/NARC about the center, worked out
 // directly from the start with a quarter-wave table of sines, so no error builds up from step
 // to step and a full circle closes exactly on its start. Offsets from the center are kept in
-// 32nds of a unit, rounded to a unit only for the display. An arc slot's vectors run the full
-// circle backward, from vertex NARC down to vertex 0, the start; only the last carries end. The
-// gate enters the last k of them for an arc of k whole steps, or the word before those, which
-// then holds the part step from the end to vertex k.
+// 32nds of a unit, rounded to a unit only for the display. An arc slot's vectors run backward
+// over every s'th vertex down to vertex 0, the start, s whole steps the chord its radius needs
+// (arcClass); only the last carries end. The gate enters the last k / s of them for an arc of k
+// whole steps, or the word before those, which then holds the part step from the end to vertex
+// s (k / s). The band's run the full circle in whole steps.
 bank 2
 0/
 
@@ -1021,7 +1060,6 @@ bank 2
 
 #include "spdrag.ac"
 
-#include "spdefine.ac"
 #include "spvar2.ac"
 
 #include "sparcdata.ac"
@@ -1039,10 +1077,13 @@ bank 0d11
 // Bank 6 begins with the drum overlays' window W (sketchpad.ah), where the overlay manager reads
 // an overlay from the drum when it is called and W holds another. The overlays are tape
 // (sptape.ac), library, the library of masters (splib.ac), plot, Plot (spplot.ac), scale
-// (spscale.ac), kbd (spkbd.ac), defdism, Define and Dismember (spinst.ac), and truss, the truss's
-// analysis (sptruss.ac and spfloat.ac), the one persistent overlay; each is entered only through
-// root code under its entries' names, bank 6's for scale and kbd, bank 7's for defdism and bank
-// 11's for tape, library, plot and truss, so their callers call them as they always have. The root
+// (spscale.ac), kbd (spkbd.ac), gscale (spgscale.ac), defdism, Define and Dismember (spinst.ac),
+// copy, Copy's drop's arcs and merges (spdefine.ac), ranks (spranks.ac), and truss, the truss's
+// analysis (sptruss.ac and spfloat.ac); gscale and truss are persistent. Each is entered only
+// through root code, bank 6's for scale and kbd, bank 5's loop gsRun for gscale, bank 7's for
+// defdism, bank 2's for copy, bank 13's mkMarks for ranks and bank 11's for tape, library, plot
+// and truss, the stubs keeping the entries' names, so their callers call them as they always
+// have. The root
 // follows W: the scale module's (spscale.ac), Edit > Scale and its mode, entered
 // by the main bank's gates; then the pen keyboard's (spkbd.ac), entered by its four entries,
 // whose list is in W. Each keeps here the words its overlay reaches directly.
@@ -1087,6 +1128,24 @@ cGapTab,
     CUNUSED + (0d2 * GAPHALF + GAPMARGIN) * 0d32
     CUNUSED + (0d4 * GAPHALF + GAPMARGIN) * 0d32
     CUNUSED + (0d8 * GAPHALF + GAPMARGIN) * 0d32
+
+constants
+
+// Bank 2's second part, after its first's constants: the gates through which defdism's Define
+// words and the overlay copy call bank 2, and the overlay copy's root stubs, with the overlay
+// itself, Copy's drop's arcs and merges, run in W (spdefine.ac). Here, after the manager and W,
+// since a stub's %%ovcall must follow the manager and an overlay its window.
+bank 2
+
+#include "spdefine.ac"
+
+// The library's trial's refusals, DEFPBIG to DEFPDIGIT, as the library's tape statuses, read by
+// splib.ac's root through its 16-bit address. Here for bank 11's room.
+lyMap,
+    TSTOOBIG
+    TSSLOW
+    TSNOROOM
+    TSDIGIT
 
 constants
 
@@ -1170,10 +1229,6 @@ cLast,
 cArcG,
     table MAXARCS, 0
 
-// The lines on the solver's points (cBuild), which the main bank's conRedraw reads too.
-cLines,
-    table MAXLINES, 0
-
 // How many constraints each master keeps, cpNCon + k of them, in its record's cpCon (bank 5),
 // CW words each as the table holds them but in master point indices. Written by Define (the
 // instance module's instDef), read by Copy's drop (cCopy) and Define's room (instNest), which
@@ -1181,11 +1236,9 @@ cLines,
 cpNCon,
     table NMASTER, 0
 
-// The arcs the solver keeps (cBuild); cKeep's slots, a line, a second line and an arc each; and
-// per constraint type, indexed by the type word's low bits (CTMASK), how many points it names
-// (A, A and B, A to C, or A to D).
-cArcs,
-    table MAXARCS, 0
+// cKeep's slots, a line, a second line and an arc each; and per constraint type, indexed by the
+// type word's low bits (CTMASK), how many points it names (A, A and B, A to C, or A to D). The
+// arcs the solver keeps, cArcs, are bank 2's (sparcdata.ac).
 kpLock,
     table 0d9, 0
 cNPts,
@@ -1422,6 +1475,12 @@ instCount, 0
 iMaster,
     table MAXINST, 0
 
+// A carry's group (the instance module's instPick and instMove): each instance's flag, nonzero
+// while it is carried with the dragged one. Here for bank 7's room; the instance module reaches
+// it through its 16-bit address.
+gMem,
+    table MAXINST, 0
+
 constants
 
 // The rest of bank 11, after the manager. First the tape module's root and its overlay tape. It
@@ -1473,9 +1532,10 @@ bank 0d11
 #include "splock.ac"
 
 // The masters' texts, for the text module (sptext.ac), which reaches them through their 16-bit
-// addresses: mtN of them, mtM naming the master and mtDX, mtDY the offset from its origin. mtM
-// to mtRun is one run, which a picture's save writes and its load reads whole after the
-// canvas's (sptape.ac, TPTEXTS).
+// addresses: mtN of them, mtM naming the master and mtDX, mtDY the offset from its origin; their
+// runs packed in mtRun, MTPOOLW words, run t from the word mtRS's entry t names up to the one
+// its entry t + 1 names (the text module's txFit). mtM to mtRun is one run, which a picture's
+// save writes and its load reads whole after the canvas's (sptape.ac, TPTEXTS).
 mtM,
     table NMTEXT, 0
 mtDX,
@@ -1488,8 +1548,10 @@ mtCh,
     table NMTEXT, 0
 mtW,
     table NMTEXT, 0
+mtRS,
+    table NMTEXT + 1, 0
 mtRun,
-    table NMTEXT * TXRUN, 0
+    table MTPOOLW, 0
 
 // The masters' digits, a separate run that a save writes in the digits' block (sptape.ac,
 // TPDIGITS). First each master's text's anchor, the master index of the point at its center,
@@ -1532,22 +1594,25 @@ txBufA,
 txBufB,
     table TXLISTW, 0
 
-// Bank 13's data. The truss's snapshot, which taCheck (sptruss.ac) compares and writes through
-// 16-bit addresses. Reached the same way, the incidences, whose words hold the map until the
-// analysis's directions pass writes them (taInc, taMap); the rollers' axes, taAX, the members'
-// taMI and taMK and their coefficients tdC are in bank 3. Then the readouts' list (roList),
+// Bank 13's data. The truss's incidences, whose words hold the map until the analysis's
+// directions pass writes them (taInc, taMap), which the truss module (sptruss.ac) reaches through
+// 16-bit addresses; the members' taMI and taMK and their coefficients tdC are in bank 3, the
+// rollers' axes, taAX, and the snapshot, taSnap, in bank 14. Then the readouts' list (roList),
 // which penISR starts by full address, per readout a parameter, a y and an x word and at most
 // three of characters, one for each entry at most, then UNSTABLE's six words and the halt.
 bank 0d13
 0/
 
-taSnap,
-    table NCON * 0d8, 0
 taInc,
 taMap,
     table MAXPTS, 0
 roList,
     table NCON * 6 + 7, 0
+
+// The lines on the solver's points (cBuild), which the main bank's conRedraw reads too, through
+// their 16-bit address. In bank 13 for bank 9's room.
+cLines,
+    table MAXLINES, 0
 
 // After the data, the constraints' marks (spmarks.ac). The constraint module enters them at
 // mkMarks and mkNear by their 16-bit addresses; they run with the extend window open, reaching
@@ -1616,8 +1681,11 @@ constants
 // The truss's direct solve, banks 14 and 15, data only, reached by sptruss.ac through 16-bit
 // addresses and written before each is read, so not on the tape. Per unknown its
 // row's base address and first coupled unknown (tdU), 1/D (tdRD) and the right side, then the
-// displacements (tdY); per member e_x and e_y (tdE); then the matrix's profile, run on through
-// bank 15 (tdK, tdK2). Numbers are three words (spfloat.ac).
+// displacements (tdY); per member e_x and e_y (tdE); each roller joint's unit axis, a_x then
+// a_y (taAX), and the snapshot taCheck compares (taSnap), TATABW words the two; then the
+// matrix's profile, run on through bank 15 (tdK, tdK2). Numbers are three words (spfloat.ac).
+// The snapshot is the one table read before it is written: a check after taInitOv, which
+// zeroes its end (taSnapE), finds the length changed whatever its words hold.
 // The library's entry buffer, lbEBuf, LBBUFW words from the bank's start, shares them: a save
 // or a load writes it within one call of the overlay library (splib.ac), first setting
 // taReset, so that the truss starts again from its map rather than resume on a spoiled profile.
@@ -1633,8 +1701,12 @@ tdY,
     table TANU * 3
 tdE,
     table NCON * 6
+taAX,
+    table TANJ * 6
+taSnap,
+    table NCON * 0d8
 tdK,
-    table 0d4096 - TANU * 0d8 - NCON * 6
+    table 0d4096 - TANU * 0d8 - NCON * 6 - TATABW
 
 bank 0d15
 0/

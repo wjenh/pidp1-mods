@@ -376,7 +376,8 @@ rtn, jmp .
 // past eight the line is hidden rather than loop.
 // AC is clobbered, IO preserved. Called via jsp.
 vwClipS,
-    local rtn, vcLoop, vcMove, vcOnY, vcAcc, vcOut, vcDone, vcXch, vcXr, vcIO, vcC0, vcC1, vcSw,         vcK, vcE
+    local rtn, vcLoop, vcMove, vcOnY, vcAcc, vcOut, vcDone, vcXch, vcXr, vcIO, vcC0, vcC1, vcSw, \
+        vcK, vcE
     dap rtn
     dio vcIO
     dzm vwHid
@@ -733,15 +734,15 @@ rtn, 0
 
 // An arc's cross through the view, for the arc module's markAt, its point taken to the screen.
 // It is shown when the cross, MARKARM each way, lies wholly on the screen under the view's top
-// (vwTop), as its y word, its x word MARKARM to the left, then its first and third vectors
-// visible, as markTpl has them. Otherwise it is hidden, those two vectors dark, then its place
-// kept MARKARM inside every edge, so that the beam's moves stay on the screen. The display may
-// be in the block, so each word is written whole, and in that order no frame draws a cross at a
-// kept place. At x1 a point on the canvas gives the words markAt would write without the view.
-// Entry: IO = y, vxX = x, on the page; vxP = the full address of the cross's y word. AC is
-// clobbered, IO preserved. Called via jsp i [vwCross:014].
+// (vwTop), as its y word, its x word, then the save of mkCross, as markTpl has them. Otherwise
+// it is hidden, the save a jump to the word after it, then its place kept MARKARM inside every
+// edge, so that the beam's moves stay on the screen. The display may be in the block, so each
+// word is written whole, and in that order no frame draws a cross at a kept place. At x1 a point
+// on the canvas gives the words markAt would write without the view.
+// Entry: IO = y, vxX = x, on the page; vxP = the full address of the cross's y word, in bank 0.
+// AC is clobbered, IO preserved. Called via jsp i [vwCross:014].
 vwCross,
-    local rtn, vxShow, vxPos, vxPRtn, vxV1, vxV3, vxT
+    local rtn, vxShow, vxPos, vxPRtn, vxC, vxT
     dac rtn
     dio vxY
     dzm vxOff
@@ -762,24 +763,20 @@ vwCross,
     dac vxY
     lac vxP
     add [2]
-    dac vxV1
-    add [2]
-    dac vxV3
+    dac vxC
     lac vxOff
     sza i               // skip if hidden
     jmp vxShow
-    lac [deltax(2 * MARKARM) deltay(0) right]
-    dac i vxV1
-    lac [deltax(0) deltay(2 * MARKARM) up end]
-    dac i vxV3
+    lac vxC
+    add [1]
+    ior [jump next(parameter)]
+    dac i vxC
     jsp vxPos
     jmp i rtn
 vxShow,
     jsp vxPos
-    lac [deltax(2 * MARKARM) deltay(0) right visible]
-    dac i vxV1
-    lac [deltax(0) deltay(2 * MARKARM) up visible end]
-    dac i vxV3
+    lac [save mkCross:0 next(vector)]
+    dac i vxC
     jmp i rtn
 
     // The cross's y and x words. AC is clobbered, IO preserved. Called via jsp.
@@ -792,13 +789,11 @@ vxPos,
     add [1]
     dac vxT
     lac vxX
-    sub [MARKARM]
-    ior [x(0) next(vector)]
+    ior [x(0) next(subroutine)]
     dac i vxT
 vxPRtn, jmp .
 rtn, 0
-vxV1, 0
-vxV3, 0
+vxC, 0
 vxT, 0
     endloc
 
@@ -842,9 +837,10 @@ rtn, 0
     endloc
 
 // The constraints' arms, written with the marks, the list shut by bank 13's arBegin before
-// mkMarks' walk and arOne for each mark it reaches, from the last entry to the first. Bank 5's arList holds a slot for each E, P
-// and R entry in the table with Show on, in the table's order, packed, the word after the last
-// used slot the list's halt; penISR starts the list while arGo is set.
+// mkMarks' walk and arOne for each mark it reaches, from the last entry to the first. Bank 5's
+// arList holds a slot for each E, P and R entry in the table with Show on, in the table's order,
+// packed, the word after the last used slot the list's halt; penISR starts the list while arGo is
+// set.
 
 // An entry's arms. For an E, a P or an R it writes the next slot down, a run from its first
 // line's middle to its second's through the view, clipped to the screen under the view's top
@@ -895,6 +891,8 @@ aoArm,
     lac i [cMkBent:015]
     sza                 // skip unless the mark stands on a ring, its run bent through it
     jmp aoBent
+    law ARMSTEPS
+    dac arCap
     jsp aoStep
 
     // The first vector half the steps, rounded down, the second the rest.
@@ -929,8 +927,13 @@ aoArm,
 
     // Bent: the first vector from the first middle to the mark (cMkX, cMkY, on the screen), the
     // second from where the first ends to the second middle, each part clipped and stepped as a
-    // run is. The second middle is kept in aoA, aoT and the start's y word in aoH1X meanwhile.
+    // run is, at most ARMVEC steps an axis, all one vector holds: a longer part stops short, so
+    // that the bend falls off the mark and the run may end short of the second middle, rather
+    // than turn its vector the other way off the screen. The second middle is kept in aoA, aoT
+    // and the start's y word in aoH1X meanwhile.
 aoBent,
+    law ARMVEC
+    dac arCap
     lac vcX1
     dac aoA
     lac vcY1
@@ -1073,8 +1076,8 @@ aoMRtn, jmp .
 
     // A run from (vcX0, vcY0) to (vcX1, vcY1) clipped to the screen under the view's top
     // (vwClipS), its steps on each axis (aoQX, aoQY), their directions as the vector words' bits
-    // (arNX, arNY), and where the steps end, x in aoH1Y, y in arEnd. It goes dark (aoDark) when the run is
-    // off the screen or its steps are (0,0). Called via jsp.
+    // (arNX, arNY), and where the steps end, x in aoH1Y, y in arEnd. It goes dark (aoDark) when the
+    // run is off the screen or its steps are (0,0). Called via jsp.
 aoStep,
     dap aoSRtn
     jsp vwClipS
@@ -1137,8 +1140,8 @@ rtn, jmp .
     endloc
 
 // One axis of a run, its steps at ARMSCALE, |end - start| / 4 rounded, one fewer if that would
-// draw the run's end past the screen (0 to arHi), at most ARMSTEPS; and its direction.
-// Entry: AC = the start, IO = the end, both on the screen; arHi. Exit: AC = the steps; arNeg
+// draw the run's end past the screen (0 to arHi), at most arCap; and its direction.
+// Entry: AC = the start, IO = the end, both on the screen; arHi, arCap. Exit: AC = the steps; arNeg
 // set if the end is below the start; arEnd the drawn end, the start moved by the steps. IO is
 // clobbered. Called via jda.
 arQ, 0
@@ -1180,11 +1183,11 @@ aqLess,
     sub [1]
     dac aqM
 aqCap,
-    lac aqM
-    sub [ARMSTEPS + 1]
-    spa                 // skip unless at most ARMSTEPS
+    lac arCap
+    sub aqM
+    sma                 // skip if the steps pass the cap
     jmp aqEnd
-    law ARMSTEPS
+    lac arCap
     dac aqM
 aqEnd,
     lac aqM
@@ -1306,9 +1309,11 @@ vcY0, 0
 vcX1, 0
 vcY1, 0
 // The arms (arBegin, arOne), the slots left to write, the last written first; arQ's far bound
-// for the axis, its direction, its drawn end, and the directions' bits in a vector word.
+// for the axis, its cap on the steps (ARMSTEPS for a straight run, ARMVEC for a bent run's
+// part), its direction, its drawn end, and the directions' bits in a vector word.
 arK, 0
 arHi, 0d1023
+arCap, ARMSTEPS
 arNeg, 0
 arEnd, 0
 arNX, 0

@@ -1,22 +1,48 @@
-// spdefine.ac -- the gates Define's words call bank 2 through (spdefword.ac, in defdism); and,
-// at Copy's drop, the copy's arcs put back from the store and its attachers' merges.
+// spdefine.ac -- the gates through which Define's words (spdefword.ac, in defdism) and the
+// overlay copy call bank 2; the overlay copy's two root stubs; and the overlay copy, Copy's drop:
+// the copy's arcs put back from the store and its attachers' merges.
 //
-// Bank 2, after spdrag.ac.
+// Bank 2's second part, after the overlay manager (sketchpad.am1), since a stub's %%ovcall must
+// follow the manager; the overlay's code is in W.
 // Part of sketchpad.am1, included where it stands.
 
 // arcLoad and arcVertex for Define's words, which run in the overlay defdism (spdefword.ac) with
 // the extend window open: called there by jsp i [X:2], the argument in agArg, each calls its
 // routine with the window closed, as this bank calls it, and returns across banks with the
-// window open again.
+// window open again. arcLoadW also sets the master's chords for the arc's radius (ARCM16,
+// ARCM32): dfAS, the whole steps a chord, 1, 2 or 4, and dfKV, the first vertex after the end,
+// arcK rounded down to a whole dfAS, as arcHead rounds it for a slot.
 // Entry: AC = the return, agArg = the arc or the vertex. Exit: the routine's words, as it leaves
-// them. AC and IO are clobbered. Called via jsp i, from W.
+// them; dfAS and dfKV after arcLoadW. AC and IO are clobbered. Called via jsp i, from W.
 arcLoadW,
+    local alKV
     dac agR
     lem
     lac agArg
     jda arcLoad
+    law 1
+    dac dfAS
+    lac arcR32
+    sub [ARCM32*0d32+1]
+    sma                 // skip if the radius is within ARCM32
+    jmp alKV
+    law 2
+    dac dfAS
+    lac arcR32
+    sub [ARCM16*0d32+1]
+    sma                 // skip if the radius is within ARCM16
+    jmp alKV
+    law 4
+    dac dfAS
+alKV,
+    lac dfAS
+    sub [1]
+    cma
+    and arcK
+    dac dfKV
     eem
     jmp i agR
+    endloc
 arcVertexW,
     dac agR
     lem
@@ -26,6 +52,178 @@ arcVertexW,
     jmp i agR
 agR, 0
 agArg, 0
+
+// A routine of this bank for the overlay copy, which runs in W with the window open: the jsp
+// routine at agFn, called with the window closed, as this bank calls it, returning across banks
+// with the window open again. A jda routine is called at its address plus one, its argument
+// stored first in its first word, as the jda would store it.
+// Entry: AC = the return, agFn = the routine's address. Exit: AC and IO as the routine leaves
+// them. Called via jsp i [arcGoW:2], from W.
+arcGoW,
+    dac agR
+    lem
+    lac agFn
+    dap agGo
+agGo, jsp .
+    eem
+    jmp i agR
+agFn, 0
+
+// The overlay copy's four entries, AECOPY, AECMERGE, AEINIT and AEORPHAN of arcEntries: root
+// stubs under the entries' names, calling the overlay's (the name with Ov), which reads it into
+// W first if W holds another. Each is reached from root code only. The first two are reached
+// from the main bank's takeParts: Copy's drop (copyDrop), a dismember's (dismLost) and Define's
+// loop; Scale's row drops a copy being placed before its overlay is entered (actScale), so no
+// overlay's call of setMode reaches one. AEINIT is reached from start-up, Clear, Define and a
+// load's rebuild (tapeRebuild), AEORPHAN from Delete's loss (deleteLost).
+// Entry: AC = the return, in this bank. Exit: AC as the entry leaves it, the window closed. IO
+// is clobbered. Called via jsp, from arcEntry.
+arcInit,
+    dap cyStR
+    %%ovcall copy, arcInitOv
+    jmp cyStB
+arcOrphans,
+    dap cyStR
+    %%ovcall copy, arcOrphansOv
+    jmp cyStB
+copyArcs,
+    dap cyStR
+    %%ovcall copy, copyArcsOv
+    jmp cyStB
+copyMerge,
+    dap cyStR
+    %%ovcall copy, copyMergeOv
+cyStB,
+    lem
+cyStR, jmp .
+
+// The overlay copy: Copy's drop's arcs and merges, each run once a drop, for Copy, Dismember and
+// each of Define's instances; and two of the arc module's entries that only root code reaches,
+// rarely, the arc table emptied and an instance's tie points removed, here for bank 2's room. It
+// runs with the extend window open, reaching bank 2's words (arcCount, the arc table, mPenX
+// and mPenY, mgP and mgQ), bank 0's arc list and band, the main bank's, bank 3's point tables,
+// bank 7's tie points and the masters' records in bank 5 through 16-bit addresses, and calls bank
+// 2's arcRewrite, arcPick, arcDrag, mergePoint, dropMerge, arcUnused, dropOrphan and ptFollow
+// through the gate arcGoW. None of them reaches an %%ovcall.
+%%overlay copy, W
+    export copyArcsOv, copyMergeOv, arcInitOv, arcOrphansOv
+
+// Empty the arc table and write every arc slot unused (arcUnused), then the arc list's end, and
+// the band drawing nothing, its tail jumping to bank 0's band for the radius. At init the display
+// has not started; after a load it runs the tape's WAIT list; at Clear and Define it runs through
+// these words, so each is written whole, and an unused slot's gate is written first.
+// Entry: AC = the return. Exit: AC = 0. IO is clobbered. Called via %%ovcall copy, arcInitOv,
+// from the stub arcInit.
+arcInitOv,
+    local rtnW, aiLoop, aiI, aiP
+    dac rtnW
+    dzm i [arcCount:2]
+    dzm aiI
+    lac [arcUnused:2+1]
+    dac i [agFn:2]
+aiLoop,
+    lac aiI
+    dac i [arcUnused:2] // its argument, where its jda would leave it
+    jsp i [arcGoW:2]
+    idx aiI
+    sas [MAXARCS]       // skip once every slot is written
+    jmp aiLoop
+    lac [arcList:0+MAXARCS*ARCGROUP]
+    dac aiP
+    lac [next(subroutine)]
+    dac i aiP
+    idx aiP
+    lac [jump drawEnd:0 next(parameter)]
+    dac i aiP
+    lac [next(subroutine)]
+    dac i [arcBand:1+BANDWORDS]
+    lac [jump bandStart:0 next(parameter)]
+    dac i [arcBand:1+BANDWORDS+1]
+    lac [jump arcBand:1+BANDWORDS next(parameter)]
+    dac i [arcBand:1+ARCVEC-1]
+    lac [DRAWPARAM]
+    dac i [arcBand:1]
+    lac [y(0) next(point)]
+    dac i [arcBand:1+1]
+    lac [x(0) next(subroutine)]
+    dac i [arcBand:1+2]
+    dzm i [bandPost:0]
+    dzm i [arcPart:2]
+    dzm i [arcPosting:2]
+    cla
+    jmp i rtnW
+rtnW, 0
+aiI, 0
+aiP, 0
+    endloc
+
+// Delete's removal of an instance's tie points (AEORPHAN). Each of the instance module's tgList,
+// tgN of them, is removed if nothing else is on it (dropOrphan), the later ones following each
+// removal (ptFollow).
+// Entry: AC = the return. Exit: AC = 0. IO is clobbered. Called via %%ovcall copy,
+// arcOrphansOv, from the stub arcOrphans.
+arcOrphansOv,
+    local rtnW, aoLoop, aoFix, aoNext, aoDone, aoI, aoJ, aoN, aoP, aoQ
+    dac rtnW
+    lac i [tgN:7]
+    dac aoN
+    dzm aoI
+aoLoop,
+    lac aoI
+    sad aoN             // skip while tie points remain
+    jmp aoDone
+    add [tgList:7]
+    dac aoP
+    lac i aoP
+    dac aoQ
+    dac i [dropOrphan:2] // its argument, where its jda would leave it
+    lac [dropOrphan:2+1]
+    dac i [agFn:2]
+    jsp i [arcGoW:2]
+    sza i               // skip if it was removed
+    jmp aoNext
+    lac aoI
+    dac aoJ
+aoFix,
+    idx aoJ
+    sad aoN             // skip while later ones remain
+    jmp aoNext
+    add [tgList:7]
+    dac aoP
+    lac i aoP
+    dac i [ptFollow:2]  // its argument, where its jda would leave it
+    lac [ptFollow:2+1]
+    dac i [agFn:2]
+    lio aoQ
+    jsp i [arcGoW:2]
+    dac i aoP
+    jmp aoFix
+aoNext,
+    idx aoI
+    jmp aoLoop
+aoDone,
+    cla
+    jmp i rtnW
+rtnW, 0
+aoI, 0
+aoJ, 0
+aoN, 0
+aoP, 0
+aoQ, 0
+    endloc
+
+// Copy's work: the master, the point table's length before the copy, the master's arcs, a count
+// and two pointers; and moveWords' from, to, count and addend.
+cyK, 0
+cyPC, 0
+cyNA, 0
+cyJ, 0
+cyP, 0
+cyQ, 0
+mwA, 0
+mwB, 0
+mwN, 0
+mwD, 0
 
 // Move mwN words from the 16-bit address mwA on to mwB on, adding mwD to each, for Copy's store
 // and the tables of banks 2, 3 and 5. mwN may be 0.
@@ -39,7 +237,6 @@ moveWords,
     jmp rtn
     cma
     dac mwN
-    eem
 mvLoop,
     lac i mwA
     add mwD
@@ -48,19 +245,35 @@ mvLoop,
     idx mwB
     isp mwN             // skip once every word is moved
     jmp mvLoop
-    lem
 rtn, jmp .
+    endloc
+
+// Point p's coordinates, from bank 3's table, as bank 2's ptXY reads them.
+// Entry: AC = p. Exit: AC = x, IO = y. Called via jda.
+cmXY, 0
+    local rtn, pxP
+    dap rtn
+    lac cmXY
+    add [pointY:3]
+    dac pxP
+    lio i pxP
+    lac cmXY
+    add [pointX:3]
+    dac pxP
+    lac i pxP
+rtn, jmp .
+pxP, 0
     endloc
 
 // Copy's drop, its arcs (AECOPY). Master copyArg's arcs are added at the arc table's end, their
 // point indices moved past the points the table held before the copy (copyBase), and each
 // arc's slot and marks written (arcRewrite). The main bank has checked for room and added the
 // points and lines (copyParts), whose load of the master's record leaves it resident.
-// Exit: AC = 0. IO is clobbered. Called via jsp.
-copyArcs,
-    local rtn, cxTab, cxGo, cxArc, cxDone
-    dap rtn
-    eem
+// Entry: AC = the return. Exit: AC = 0. IO is clobbered. Called via %%ovcall copy, copyArcsOv,
+// from the stub copyArcs.
+copyArcsOv,
+    local rtnW, cxTab, cxGo, cxArc, cxDone
+    dac rtnW
     lac i [copyArg:4]
     dac cyK
     lac i [copyBase:4]
@@ -70,12 +283,11 @@ copyArcs,
     dac cyP
     lac i cyP
     dac cyNA
-    lem
 
     // Each table from cpC to cpK into arcTC to arcTK at the arc table's end.
     lac [cpC:5]
     dac cyQ
-    lac arcCount
+    lac i [arcCount:2]
     add [arcTC:2]
     dac cyP
     law i CPATAB
@@ -110,13 +322,18 @@ cxArc,
     jmp cxDone
     sub [1]
     dac cyNA
-    lac arcCount
-    jda arcRewrite
-    idx arcCount
+    lac i [arcCount:2]
+    dac i [arcRewrite:2] // its argument, where its jda would leave it
+    lac [arcRewrite:2]
+    add [1]
+    dac i [agFn:2]
+    jsp i [arcGoW:2]
+    idx i [arcCount:2]
     jmp cxArc
 cxDone,
     cla
-rtn, jmp .
+    jmp i rtnW
+rtnW, 0
     endloc
 
 // Copy's drop, its attachers' merges (AECMERGE), once its parts, its arcs and its constraints
@@ -131,21 +348,21 @@ rtn, jmp .
 // conRen keeps as merges rename points, and desPt with it; both are emptied after. A dismember's
 // drop (the instance module's dismOn) merges every attacher alike, none carried, each into the
 // instance's tie point for it (dismTie), dragged onto it as above.
-// Exit: AC = the carried attacher's point if it lies at the pseudo pen location and no point is
-// locked, for the main bank to give it its N's and C's (cDrop); otherwise NOPOINT. IO is
-// clobbered. Called via jsp.
-copyMerge,
-    local rtn, cmLoop, cmOne, cmTie, cmDes, cmNear, cmQNx, cmGot, cmNext, cmLast, cmMerge, \
+// Entry: AC = the return. Exit: AC = the carried attacher's point if it lies at the pseudo pen
+// location and no point is locked, for the main bank to give it its N's and C's (cDrop);
+// otherwise NOPOINT. IO is clobbered. Called via %%ovcall copy, copyMergeOv, from the stub
+// copyMerge.
+copyMergeOv,
+    local rtnW, cmLoop, cmOne, cmTie, cmDes, cmNear, cmQNx, cmGot, cmNext, cmLast, cmMerge, \
         cmEmpty, cmClr, cmRes, cmA, cmN, cmE, cmP, cmQ, cmX, cmY, cmU, cmT, cmD, cmBest, cmPX, \
         cmPY, cmDm
-    dap rtn
+    dac rtnW
     lac [NOPOINT]
     dac cmRes
-    lac mPenX
+    lac i [mPenX:2]
     dac cmPX
-    lac mPenY
+    lac i [mPenY:2]
     dac cmPY
-    eem
     lac i [copyArg:4]
     add [cpNAtt:5]
     dac cmT
@@ -153,9 +370,7 @@ copyMerge,
     dac cmN
     lac i [copyBase:4]
     dac cmE
-    lem
-    lac [dismOn:7]
-    jda getW
+    lac i [dismOn:7]
     dac cmDm
     lac cmN
     sza i               // skip if the master has attachers
@@ -169,7 +384,8 @@ cmLoop,
 cmOne,
     lac cmA
     add [cpMrg:3]
-    jda getW
+    dac cmT
+    lac i cmT
     dac cmP
     sad [NOPOINT]       // skip unless the point has gone
     jmp cmNext
@@ -178,11 +394,12 @@ cmOne,
     jmp cmTie
     lac cmA
     add [desPt:3]
-    jda getW
+    dac cmT
+    lac i cmT
     sas [NOPOINT]       // skip if no point is designated for it
     jmp cmDes
     lac cmP
-    jda ptXY
+    jda cmXY
     dac cmX
     dio cmY
 
@@ -196,7 +413,7 @@ cmNear,
     lac cmQ
     sad cmE             // skip while points below copyBase remain
     jmp cmGot
-    jda ptXY
+    jda cmXY
     dio cmU
     sub cmX
     spa                 // skip if plus
@@ -226,36 +443,40 @@ cmGot,
     lac cmBest
     sad [NOPOINT]       // skip if a point is in reach
     jmp cmNext
-    jda ptXY
-    dac mPenX
-    dio mPenY
+    jda cmXY
+    dac cmX
+    dio cmY
+    lac cmX
+    dac i [mPenX:2]
+    lac cmY
+    dac i [mPenY:2]
     lac cmP
-    eem
     dac i [dragIdx:4]
-    lem
-    jsp arcPick
-    jsp arcDrag
+    lac [arcPick:2]
+    dac i [agFn:2]
+    jsp i [arcGoW:2]
+    lac [arcDrag:2]
+    dac i [agFn:2]
+    jsp i [arcGoW:2]
     sza                 // skip unless an arc on it cannot follow
     jmp cmNext
     lac cmP
     add [pointX:3]
     dac cmT
-    lac mPenX
-    eem
+    lac cmX
     dac i cmT
-    lem
     lac cmP
     add [pointY:3]
     dac cmT
-    lac mPenY
-    eem
+    lac cmY
     dac i cmT
-    lem
     lac cmP
-    dac mgP
+    dac i [mgP:2]
     lac cmBest
-    dac mgQ
-    jsp mergePoint
+    dac i [mgQ:2]
+    lac [mergePoint:2]
+    dac i [agFn:2]
+    jsp i [arcGoW:2]
 cmNext,
     idx cmA
     sad cmN             // skip while attachers remain; a dismember's last comes here
@@ -267,7 +488,8 @@ cmNext,
 cmTie,
     lac cmA
     add [dismTie:7]
-    jda getW
+    dac cmT
+    lac i cmT
 cmDes,
     dac cmBest
     jmp cmGot
@@ -278,16 +500,17 @@ cmLast,
     sza                 // skip unless a dismember
     jmp cmOne
     lac cmPX
-    dac mPenX
+    dac i [mPenX:2]
     lac cmPY
-    dac mPenY
+    dac i [mPenY:2]
     lac cmA
     add [cpMrg:3]
-    jda getW
+    dac cmT
+    lac i cmT
     dac cmP
     sad [NOPOINT]       // skip unless the point has gone
     jmp cmEmpty
-    jda ptXY
+    jda cmXY
     sas cmPX            // skip if at the pseudo pen location's x
     jmp cmEmpty
     dio cmU
@@ -295,19 +518,18 @@ cmLast,
     sas cmPY            // skip if at its y too
     jmp cmEmpty
     lac cmP
-    eem
     dac i [dragIdx:4]
     lac i [penIdx:4]
-    lem
     sas [NOPOINT]       // skip unless it locks onto a point
     jmp cmMerge
     lac cmP
     dac cmRes
     jmp cmEmpty
 cmMerge,
-    jsp dropMerge
+    lac [dropMerge:2]
+    dac i [agFn:2]
+    jsp i [arcGoW:2]
 cmEmpty,
-    eem
     lac [NOPOINT]
     dac i [dragIdx:4]
     lac [cpMrg:3]
@@ -320,9 +542,9 @@ cmClr,
     idx cmT
     isp cmA             // skip once every word is NOPOINT
     jmp cmClr
-    lem
     lac cmRes
-rtn, jmp .
+    jmp i rtnW
+rtnW, 0
 cmRes, 0
 cmA, 0
 cmN, 0
@@ -339,3 +561,4 @@ cmPX, 0
 cmPY, 0
 cmDm, 0
     endloc
+%%endoverlay

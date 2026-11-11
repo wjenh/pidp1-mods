@@ -1638,8 +1638,8 @@ plGT, 0
 lnDone,                 // each line, nonzero once drawn or passed over (plLines)
     table MAXLINES, 0
 
-// The strokes' table, written by Tests/plot_glyphs.py from Render/sketchplot.c's glyphs;
-// written again from them, never edited.
+// The strokes' table, generated from Render/sketchplot.c's glyphs;
+// generated again from them, never edited.
 plGlyph,
     01
     013

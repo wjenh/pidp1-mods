@@ -1,21 +1,21 @@
 // spframe.ac -- bank 0's storage, the display list. It holds the frame, the bar's labels and
 // status word, the drop-down selector, the target calls, the instance slots, the arcs' marks, the
 // pseudo pen location and the lock mark, the constraints' marks and their glyphs, the lists, the
-// status words, the arc slots and band, and the master store. The bar's and the lists' tables
-// are in bank 3 (spdispatch.ac).
+// status words, the arc slots, and the master store. The bar's and the lists' tables are in bank
+// 3 (spdispatch.ac).
 //
 // Bank 0, after spbreak.ac. Needs sketchpad.ah's defines; the 340's words reach bank 1's
-// line slots by full address.
+// line slots, the arc band, the glyphs' circle and the transfer's screen by full address.
 // Part of sketchpad.am1, included where it stands.
 
 // A constraint's glyph g, called from its mark's slot in subroutine mode. It draws the circle
-// (gRing), then its letter, each a separate save. A save returns at the first end, and the 340
-// keeps one return address, so the glyph first keeps its slot's in its last word, ret (deposit,
-// which writes a jump there to the address the last save kept), and jumps back by it. One circle
-// so serves every letter.
+// (gRing, in bank 1), then its letter, each a separate save. A save returns at the first end, to
+// its caller's bank, and the 340 keeps one return address, so the glyph first keeps its slot's
+// in its last word, ret (deposit, which writes a jump there to the address the last save kept),
+// and jumps back by it. One circle so serves every letter.
 #define GLYPH(g, ret, letter) \
 g,  deposit ret next(subroutine); \
-    save gRing next(parameter); \
+    save gRing:1 next(parameter); \
     lpoff next(subroutine); \
     save letter next(vector); \
     lpoff next(subroutine); \
@@ -135,7 +135,19 @@ bandVec,
     deltax(1) deltay(0) right
     deltax(1) deltay(0) right
     deltax(1) deltay(0) right end
+// The band's last vector escapes into parameter mode, so a parameter word sets subroutine mode
+// for boxGate: read as a parameter word, a jump's address bits are its controls, and an address
+// with bit 02000 halts the display.
+    next(subroutine)
 boxGate, jump dotBlock next(parameter)
+// Scale's box, the size an instance held will take at the lift, entered from boxGate after the
+// band while it is, at the scale the box's longer side needs (the scale module's scBoxDraw). Its
+// last vector escapes into the dot's parameter word, so it needs no jump there.
+boxBlock, scale(0) intensity(SLIDEINTENSITY) lpoff next(point)
+boxY, y(0) next(point)
+boxX, x(0) next(vector)
+boxVec,
+    table 4, 0
 dotBlock, DOTPARAM
 dotY, y(INITIALY) next(point)
 dotX, x(INITIALX) show next(parameter)
@@ -152,15 +164,6 @@ frameHalt, lpoff halt interrupt
 
 // A halt that asks for no break, where init holds a display left running by an earlier program.
 parked, lpoff halt
-
-// Scale's box, the size an instance held will take at the lift, entered from boxGate after the
-// band while it is, at the scale the box's longer side needs (the scale module's scBoxDraw).
-boxBlock, scale(0) intensity(SLIDEINTENSITY) lpoff next(point)
-boxY, y(0) next(point)
-boxX, x(0) next(vector)
-boxVec,
-    table 4, 0
-    jump dotBlock next(parameter)
 
 // The constraints' marks, entered from showGate in Fix mode and while Show is on, the list then
 // jumping on to markGate. NCON slots, each the mark's y word, its x word, the gate, which calls
@@ -282,32 +285,13 @@ gO7, deposit gORet next(parameter)
     deltax(0d17) deltay(0d7) left up end
     lpoff next(subroutine)
     jump gOTail next(subroutine)
-gOTail, save gRing next(parameter)
+gOTail, save gRing:1 next(parameter)
     lpoff next(subroutine)
     save lO next(vector)
     lpoff next(subroutine)
 gORet, 0
 
-// The circle, out to the right, then 16 chords round, ending FIXR right of the center (the
-// vectors are for a radius of 10).
-gRing, scale(DRAWSCALE) intensity(MARKINTENSITY) lpoff next(vector)
-    deltax(FIXR) deltay(0) right
-    deltax(1) deltay(4) left up visible
-    deltax(2) deltay(3) left up visible
-    deltax(3) deltay(2) left up visible
-    deltax(4) deltay(1) left up visible
-    deltax(4) deltay(1) left down visible
-    deltax(3) deltay(2) left down visible
-    deltax(2) deltay(3) left down visible
-    deltax(1) deltay(4) left down visible
-    deltax(1) deltay(4) right down visible
-    deltax(2) deltay(3) right down visible
-    deltax(3) deltay(2) right down visible
-    deltax(4) deltay(1) right down visible
-    deltax(4) deltay(1) right up visible
-    deltax(3) deltay(2) right up visible
-    deltax(2) deltay(3) right up visible
-    deltax(1) deltay(4) right up visible end
+// The circle every glyph draws, gRing, is in bank 1, after the line list.
 
 // The letters, in vector mode, from FIXR right of the center.
 lS, deltax(FIXR + 3) deltay(5) left down
@@ -901,12 +885,22 @@ msgName,
     jump statEnd next(parameter)
 
 // The arc slots, MAXARCS groups of an arc slot and its target call, then the arc list's
-// end; and the arc band. The line list's end in bank 1 jumps to the arc list, whose unused
-// slots and end jump back to drawEnd. All written at run time, by the main bank and bank 2.
+// end. The line list's end in bank 1 jumps to the arc list, whose unused slots and end jump
+// back to drawEnd. All written at run time, by the main bank and bank 2. The arc band is in
+// bank 1, after the line list (arcBand).
 arcList,
     table MAXARCS * ARCGROUP + 2, 0
-arcBand,
-    table ARCWORDS + 2, 0
+
+// The cross every arc's mark and every pick mark draws, by save from its point, the beam left
+// there: MARKARM to the left unseen, right through the point, back to below it, and up through
+// it. The save returns at the end, in parameter mode, to the word after it. The vectors scale
+// and the point does not: the arms are MARKARM at DRAWSCALE 0, which vwCross keeps on the
+// screen.
+mkCross,
+    deltax(MARKARM) deltay(0) left
+    deltax(2 * MARKARM) deltay(0) right visible
+    deltax(MARKARM) deltay(MARKARM) left down
+    deltax(0) deltay(2 * MARKARM) up visible end
 
 // The master store's region 0, MPOOL0 words, master k's words from its offset mStart (bank 2)
 // when that is below MPOOL0; region 1 is mpool1, in bank 1. Written as a master is brought in
@@ -914,24 +908,3 @@ arcBand,
 // save, so both are in banks 0 and 1.
 masters,
     table MPOOL0, 0
-
-// The screen during a transfer, a self-contained block started by the tape module and cut off by
-// tapeCall's dla of the frame. It draws WAIT, then eight invisible vectors out and back, then
-// round again, with no halt, since the CPU polls the tape with the break system off and cannot
-// restart it. Each word fetched steals a CPU cycle; the vectors, 127 steps at 1.5 us for one
-// fetch each, make the loop about 15 fetches in 1.8 ms, about 4% of the tape loop's cycles.
-waitList, WAITPARAM
-    y(WAITY) next(point)
-    x(WAITX) next(character)
-    type340 "WAIT"
-    scale(0) lpoff next(vector)
-    deltax(0d127) deltay(0) right
-    deltax(0d127) deltay(0) left
-    deltax(0d127) deltay(0) right
-    deltax(0d127) deltay(0) left
-    deltax(0d127) deltay(0) right
-    deltax(0d127) deltay(0) left
-    deltax(0d127) deltay(0) right
-    deltax(0d127) deltay(0) left end
-    lpoff next(subroutine)
-    jump waitList next(parameter)

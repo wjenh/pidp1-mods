@@ -12,9 +12,10 @@
 // relative to its origin, the center of their box. For each line, in the order the instance
 // module's dkChain chose in Define's map (dfOrd), which joins lines where it can and draws each
 // from either end, the words hold a beam-off move from where the beam is to its start, unless
-// the beam is there, then the line; for each arc a beam-off move to its end, then its steps back
-// to its start as its slot draws them; then each attacher's cross, at the visits the instance
-// module's instMap listed. The last word carries end, so a save returns. A line of no length
+// the beam is there, then the line; for each arc a beam-off move to its end, then its chords
+// back to its start, as many as its radius needs (ARCM16, ARCM32); then each attacher's cross,
+// at the visits the instance module's instMap listed. The last word carries end, so a save
+// returns. A line of no length
 // draws nothing and is passed over. Here the words are only counted, nothing written: refused
 // when nothing is drawn (DEFEMPTY), past MPOOL1 words or CPLINES lines (DEFWORDS), or past
 // MTIME of drawing (DEFTIME). The main bank's actDefine, which took apart first the instances of
@@ -198,9 +199,10 @@ deP, 0
 
 // One pass over the drawn parts in the order a master draws them, each point the beam goes to
 // given to defVisit. They are a line's start beam off and its end beam on, the lines in dfOrd's
-// order (loadLine), then an arc's end beam off and its vertices from arcK down to 0, the start,
-// beam on; then the sub-instances' words, composed; then the attachers' crosses, the visits at
-// dfAvA (instMap's in bank 7, avX, avY, avV, avN of them, for Define). The words' count is kept
+// order (loadLine), then an arc's end beam off and its vertices from dfKV down to 0, the start,
+// every dfAS'th, beam on (the chords its radius needs, arcLoadW); then the sub-instances' words,
+// composed; then the attachers' crosses, the visits at dfAvA (instMap's in bank 7, avX, avY,
+// avV, avN of them, for Define). The words' count is kept
 // after the arcs (dfOwnN) and before the crosses (dfDrawN). With dfSrc set there are no lines or
 // arcs: a master's own words come as the first block (rwBuild).
 // A sub-instance's words are its master's in the store up to its crosses, its block's address
@@ -262,7 +264,7 @@ dwArc,
     jda defVisit
     lac [visible]
     dac i [dvVis:2]
-    lac i [arcK:2]
+    lac i [dfKV:2]
     dac dwK
 dwVert,
     lac dwK
@@ -274,7 +276,7 @@ dwVert,
     lac dwK
     sza i               // skip until vertex 0, the start
     jmp dwArcNext
-    sub [1]
+    sub i [dfAS:2]
     dac dwK
     jmp dwVert
 dwArcNext,
@@ -762,7 +764,8 @@ dmP, 0
 //   its slot in the store (dfPut), then each changed master counted from them (rwBuild,
 //   rwPass), and one another changed master holds stored in its slot too. Refused whole, at
 //   the first master past MPOOL1 words (DEFPBIG) or MTIME (DEFPSLOW), or with the store or the
-//   masters' texts' table short of room (DEFPROOM), the master named (rwWho); or before
+//   masters' texts' table short of room, or their cost past MTBUDGET (the text module's
+//   mtCoInit and mtCoHold), (DEFPROOM), the master named (rwWho); or before
 //   anything, for digits in k's texts (DEFPDIGIT), a master holding k named. Pass or refusal,
 //   each changed master's mLen and mDrawLen are put back and it is out of the store, and
 //   Define's box (dfMinX to dfMaxY) is put back; on a refusal every master goes back to its
@@ -782,9 +785,9 @@ rewriteOv,
     local rtn, rtnW, rxInit, rxCl, rxClL, rxClN, rxHeld, rxTz, rxTc, rxTk, rxTd, rxTs, rxDgL, \
         rxDgN, rxDgH, rxDg, rxDgN2, rxSv, rxMd, rxMdN, rxBs, rxBsL, rxEmp, rxClr, rxKSt, rxKOk, \
         rxPick, rxPkL, rxPkN, rxGo, rxBrg, rxBNx, rxBNo, rxLoad, rxComp, rxTry, rxT1, rxT2, \
-        rxTl, rxT3, rxT4, rxWhoJ, rxStore, rxSOk, rxDone1, rxEnd, rxFail, rxRest, rxRsL, rxRsN, \
-        rxUndo, rxInst, rxInL, rxWhy, rxBit, rxBr0, rxMove, rxMvL, rxMvR, rxMvA, rxMvB, rxCn, \
-        rxM, rxB, rxP, rxT, rxN, rxC, rxA, rxCh
+        rxTl, rxT3, rxT3c, rxT4, rxWhoJ, rxStore, rxSOk, rxDone1, rxEnd, rxFail, rxRest, \
+        rxRsL, rxRsN, rxUndo, rxInst, rxInL, rxWhy, rxBit, rxBr0, rxMove, rxMvL, rxMvR, rxMvA, \
+        rxMvB, rxCn, rxM, rxB, rxP, rxT, rxN, rxC, rxA, rxCh
     dac rtnW
     lac i [rwSt:2]
     sad [RWSINIT]       // skip unless starting
@@ -918,6 +921,7 @@ rxTs,
     dac i [rwTx:2]
     lac rxN
     dac i rxP
+    jsp i [mtCoInit:012] // and k's texts' cost, for the masters' budget
 
     // Digits in k's texts: refused before anything changes (C4), the first master holding k
     // named.
@@ -1246,8 +1250,14 @@ rxT3,
     lac i [rwTx:2]
     sub [NMTEXT+1]
     spa                 // skip if past NMTEXT
-    jmp rxT4
+    jmp rxT3c
     law DEFPROOM
+    jmp rxWhoJ
+
+    // And their cost (the text module's mtCoHold).
+rxT3c,
+    jsp i [mtCoHold:012]
+    sza                 // skip if within MTBUDGET
     jmp rxWhoJ
 
     // Stored in its slot if another changed master holds it (RQBRING, then rwPass's store).

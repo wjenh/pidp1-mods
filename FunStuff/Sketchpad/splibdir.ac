@@ -1,28 +1,15 @@
-// splibdir.ac -- the library's screen: a page of the library tape's directory, sixteen entries,
-// on which Dir shows them and a picker picks one, with Next and Prev, which turn the page; its
-// blocks and Save's keyboard's; and the directory's header and page as the library reads and
-// writes them.
+// splibdir.ac -- the library's directory as the library reads and writes it, its header and a
+// page; the blocks that open the library's screen, on which Dir shows a page's sixteen entries
+// and a picker picks one, with Next and Prev, which turn the page; and Save's keyboard's.
 //
 // Bank 5, after akSave, since bank 11's room does not hold it, nor W's beside the overlay
 // library the directory's words. Data but for mCalled, the rule of Load's picker, last, here for
-// bank 7's room: the header and the page, which the overlay reads and writes within one call through their 16-bit addresses (splib.ac, lbRdHdr to lbRdSlot);
-// the blocks Library's rows give the keyboard service (splib.ac, libStep); the list, which
-// penISR's dla starts through frameGo once the keyboard service opens it on a block of kind
-// KBDIR (spkbd.ac); its descriptor and its keys' tables, which kbOpen and kbFind read through
-// their 16-bit addresses. The library's Dir (splib.ac, lbShow) writes each line's label and name
-// from the page it reads. The list holds no jump or save, as the keyboard's list does not, and
-// ends in its halt.
+// bank 7's room: the header and the page, which the overlay reads and writes within one call
+// through their 16-bit addresses (splib.ac, lbRdHdr to lbRdSlot); and the blocks Library's rows
+// give the keyboard service (splib.ac, libStep). The screen, its descriptor and its keys' tables
+// are the overlay kbd's (spkbd.ac, lbsList), its lines written at the open from the page the
+// library's Dir (splib.ac, lbShow) has read into lbDPage (kbLibFill).
 // Part of sketchpad.am1, included where it stands.
-
-// The hit record of a key of n characters at x on the action keys' row, in kbFind's order.
-#define LBKREC(x, n) \
-    (x) - KBR; \
-    (x) + (n) * KBADV + KBRX; \
-    KBYB - KBR; \
-    KBYB + KBH + KBR
-
-// A line's label before Dir writes it: three spaces, where the entry's number goes.
-#define LBBLANKL (KCSPACE * 010000 + KCSPACE * 0100 + KCSPACE)
 
 // The directory's header and a page of it, as on tape (sketchpad.ah, the library's directory),
 // each set within the library's call that reads it.
@@ -31,127 +18,26 @@ lbDHdr,
 lbDPage,
     table LBPGW, 0
 
-// The screen's descriptor, as the tape module's dirScr: its keys' hit records, parameter words'
-// addresses and codes, the key's text, the key, and the list.
-lbsScr,
-    lbsRec:5
-    lbsBlkT:5
-    lbsCode:5
-    lbsKTxt:5
-    lbsKey:5
-    lbsList:5
-
-// The keys: the screen's key, OK or Cancel; Next and Prev, each a pick (KAPICK) answering
-// LBPNEXT and LBPPREV; then the lines, entries 1 to 16 of the page shown, each a pick answering
-// LBPLINE and on.
-lbsBlkT,
-    lbsKey:5
-    lbsNext:5
-    lbsPrev:5
-    lbsL:5 + 0 * DLWORDS
-    lbsL:5 + 1 * DLWORDS
-    lbsL:5 + 2 * DLWORDS
-    lbsL:5 + 3 * DLWORDS
-    lbsL:5 + 4 * DLWORDS
-    lbsL:5 + 5 * DLWORDS
-    lbsL:5 + 6 * DLWORDS
-    lbsL:5 + 7 * DLWORDS
-    lbsL:5 + 0d8 * DLWORDS
-    lbsL:5 + 0d9 * DLWORDS
-    lbsL:5 + 0d10 * DLWORDS
-    lbsL:5 + 0d11 * DLWORDS
-    lbsL:5 + 0d12 * DLWORDS
-    lbsL:5 + 0d13 * DLWORDS
-    lbsL:5 + 0d14 * DLWORDS
-    lbsL:5 + 0d15 * DLWORDS
-lbsCode,
-    KSPEC | KNUM | KACANCEL
-    table LBKEYS - 1, KSPEC | KNUM | KAPICK
-lbsRec,
-    LBKREC(KBXOK, 6)
-    LBKREC(KBXCLEAR, 4)
-    LBKREC(KBXBACK, 4)
-    DIRREC(0, 0)
-    DIRREC(1, 0)
-    DIRREC(2, 0)
-    DIRREC(3, 0)
-    DIRREC(4, 0)
-    DIRREC(5, 0)
-    DIRREC(6, 0)
-    DIRREC(7, 0)
-    DIRREC(0, 1)
-    DIRREC(1, 1)
-    DIRREC(2, 1)
-    DIRREC(3, 1)
-    DIRREC(4, 1)
-    DIRREC(5, 1)
-    DIRREC(6, 1)
-    DIRREC(7, 1)
-
-// The screen: its title; the sixteen lines, the page's first eight down the left and the next
-// eight down the right, on the masters' picker's places, each its label and its name, taking the
-// pen so that a picker's taps find them; Next and Prev; and the key, OK or Cancel, where the
-// keyboard's OK is; then its halt. Dir writes the labels and the names, kbOpen the key's text and
-// its parameter word, before frameGo points here.
-lbsList,
-    KBTXT
-    y(KBPY) next(point)
-    x(KBX0) next(character)
-    type340 "Library"
-lbsL,
-    DIRLINE(0, 0, LBBLANKL)
-    DIRLINE(1, 0, LBBLANKL)
-    DIRLINE(2, 0, LBBLANKL)
-    DIRLINE(3, 0, LBBLANKL)
-    DIRLINE(4, 0, LBBLANKL)
-    DIRLINE(5, 0, LBBLANKL)
-    DIRLINE(6, 0, LBBLANKL)
-    DIRLINE(7, 0, LBBLANKL)
-    DIRLINE(0, 1, LBBLANKL)
-    DIRLINE(1, 1, LBBLANKL)
-    DIRLINE(2, 1, LBBLANKL)
-    DIRLINE(3, 1, LBBLANKL)
-    DIRLINE(4, 1, LBBLANKL)
-    DIRLINE(5, 1, LBBLANKL)
-    DIRLINE(6, 1, LBBLANKL)
-    DIRLINE(7, 1, LBBLANKL)
-lbsNext, KBKEY
-    y(KBYB) next(point)
-    x(KBXCLEAR) next(character)
-    type340 "Next"
-lbsPrev, KBKEY
-    y(KBYB) next(point)
-    x(KBXBACK) next(character)
-    type340 "Prev"
-lbsKey, KBKEY
-    y(KBYB) next(point)
-    x(KBXOK) next(character)
-lbsKTxt,
-    017 * 010000 + 013 * 0100 + KCUP
-    KBPAD
-    KBBLANK
-lbsHalt, lpoff halt interrupt
-
 // The screen's blocks, Dir's, Load's and Delete's, which libStep gives the main bank's actTape.
 // Each holds the kind, KBDIR; the keys the screen acts on, LBDIRKEYS for Dir (OK, Next and
 // Prev), LBKEYS for a picker (Cancel, Next, Prev and the lines); the key's text; the screen's
-// descriptor (lbsScr) in the buffer's place; the resume, the main bank's tapeResume; and no run.
+// number, KBSLIB, in the buffer's place; the resume, the main bank's tapeResume; and no run.
 lbDirBlk, KBDIR
     LBDIRKEYS
     tpOKTxt:013
-    lbsScr:5
+    KBSLIB
     tapeResume:4
     0
 lbLdPick, KBDIR
     LBKEYS
     tpCanTxt:013
-    lbsScr:5
+    KBSLIB
     tapeResume:4
     0
 lbDlPick, KBDIR
     LBKEYS
     tpCanTxt:013
-    lbsScr:5
+    KBSLIB
     tapeResume:4
     0
 

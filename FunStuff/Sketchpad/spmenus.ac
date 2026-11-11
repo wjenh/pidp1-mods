@@ -18,9 +18,9 @@
 // if it was on, and the caller's resume runs, IO 1 for OK or 0 for Cancel. Otherwise listFresh
 // also serves the Select box (onListHit), and a press's first hit hides the status word
 // (msgHide) before it acts, so that a word the hit raises survives it. A pen resting on a
-// label posts a hit every frame, so only a fresh press hides; the word's writers stamp lastMenuMs, so that the hits of a pen
-// still resting where the word's command was given (a keyboard's OK, whose hits leave
-// lastMenuMs alone) are not one.
+// label posts a hit every frame, so only a fresh press hides; the word's writers stamp lastMenuMs,
+// so that the hits of a pen still resting where the word's command was given (a keyboard's OK,
+// whose hits leave lastMenuMs alone) are not one.
 // Entry: sMenuX, sMenuY = raw position of the latest hit; sMenuArmed; now = the clock. AC and
 // IO are clobbered. Called via jsp.
 onMenuHit,

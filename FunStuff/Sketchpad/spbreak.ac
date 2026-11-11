@@ -44,19 +44,15 @@ chBox,
 // The pick marks, in the spare words after Change's sublist, a cross on each point Dist,
 // Change or Gap has picked, entered from pickGate (spframe.ac) in point mode at
 // markEnd's scale and intensity, and left through the band's gate. Two crosses as markTpl's,
-// the second on the first's point while one is picked; written by splock.ac's pmShow through
-// the view module's vwCross.
+// each a save of mkCross, the second on the first's point while one is picked; written by
+// splock.ac's pmShow through the view module's vwCross.
 pickAY, y(0) next(point)
-    x(0) next(vector)
-    deltax(2 * MARKARM) deltay(0) right visible
-    deltax(MARKARM) deltay(MARKARM) left down
-    deltax(0) deltay(2 * MARKARM) up visible end
+    x(0) next(subroutine)
+    save mkCross next(vector)
     lpoff next(point)
 pickBY, y(0) next(point)
-    x(0) next(vector)
-    deltax(2 * MARKARM) deltay(0) right visible
-    deltax(MARKARM) deltay(MARKARM) left down
-    deltax(0) deltay(2 * MARKARM) up visible end
+    x(0) next(subroutine)
+    save mkCross next(vector)
     lpoff next(subroutine)
     jump bandGate next(subroutine)
 
@@ -126,7 +122,9 @@ tgtNew,
 // rate.
 // Entered from location 3; AC and IO are restored from locations 0 and 2.
 penISR,
-    local isrX, isrY, isrPos, isrPoll, menuPost, canvas, held, resume, isrPost, notPen, notEdge, frameEnd, noFlag, lateStop, lsWait, lsNext, commit, isrDone, isrPX, isrPY, isrWX, isrWY, tgtMove, \
+    local isrX, isrY, isrPos, isrPoll, menuPost, canvas, held, resume, isrPost, notPen, notEdge, \
+        frameEnd, noFlag, lateStop, lsWait, lsNext, commit, isrDone, isrPX, isrPY, isrWX, isrWY, \
+        tgtMove, \
         roFollow, txFollow, arFollow, inkHit, drumBreak
     dsp                // skip on a light pen hit
     jmp notPen
@@ -274,7 +272,7 @@ notEdge,
     // bank 5, follow the frame's closing halt while arGo is set; then the texts' list, in bank 12,
     // while txGo names it; then the truss's readouts, a list in bank 13, while roOn is set. The
     // last list's halt ends the frame. While the pen keyboard is open nothing follows its list or
-    // screen, whose halt might read as the arms' (the library's screen is in bank 5).
+    // screen, whose halt might read as the arms' (the masters' picker's, mpkList, is in bank 5).
     lac listOpen
     ior kbOn
     sza                 // skip unless a list or the keyboard is open

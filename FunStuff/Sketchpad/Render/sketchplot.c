@@ -25,6 +25,9 @@
  * 25-Oct-2026, Claude: the PNG's rows deflated by zlib, not stored.
  * 27-Oct-2026, Claude: tape format 18, the masters' sub-instances; format 17 read too.
  * 27-Oct-2026, Claude: tape format 19, the masters' own texts' counts; 18 and 17 read too.
+ * 09-Nov-2026, Claude: tape format 20, 34 arcs; 19, 18 and 17 read too.
+ * 09-Nov-2026, Claude: tape format 21, the texts' runs packed in two pools; no older format read.
+ * 10-Nov-2026, Claude: format 21 at 48 instances and 256 lines.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,21 +47,15 @@
 #define TAPEBLOCKS 576
 #define NDRIVES 8
 
-// The picture on the tape, format 19, 18 or 17, the three the load accepts, its header's words,
-// and the stream's words and blocks; 18's stream is 19's less the masters' own texts' counts,
-// 17's less the whole nesting, and 17's entries hold no sub-instances. Picture p (0 to 11) has a
-// slot of TPSLOT blocks, P1 to P6 from block 1, P7 to P12 from TPDIRBLK + 1, the directory's
-// block between them. The picture is the
+// The picture on the tape, format 21, the one the load accepts, its header's words, and the
+// stream's words and blocks. Picture p (0 to 11) has a slot of TPSLOT blocks, P1 to P6 from
+// block 1, P7 to P12 from TPDIRBLK + 1, the directory's block between them. The picture is the
 // stream over the first TPPBLOCKS blocks of its slot, the header first; then each master's
 // entry, from a block's start, for each master with words in turn, as many blocks in all as
 // the header's HENTRIES word says; then the closing block, the header again as its last words.
 #define TPMAGIC 0525253
-#define TPFORMAT 023
-#define TPSTREAM 5759
-#define TPFORMAT18 022
-#define TPSTREAM18 5743
-#define TPFORMAT17 021
-#define TPSTREAM17 5679
+#define TPFORMAT 025
+#define TPSTREAM 4739
 #define TPHDRWORDS 5
 #define HENTRIES 4
 #define TPPBLOCKS 23
@@ -72,24 +69,27 @@
 // constraints' counts', which size their entries. The constraint table and the ties lie between
 // the header and the name, the cycle's settings between the name and the counts; nothing here
 // draws them.
-#define SNAME 486
-#define SCPNCON 518
-#define STEXTS 534
-#define SDIGITS 3432
-#define SPICTURE 3881
-#define SNEST 5679
+#define SNAME 534
+#define SCPNCON 566
+#define STEXTS 582
+#define SDIGITS 2274
+#define SPICTURE 2723
+#define SNEST 4659
 
 // Sketchpad's table sizes, and the largest radius it gives an arc. A master's words are at most
 // MPOOL1, the master store's larger region.
 #define MAXPTS 256
-#define MAXLINES 264
-#define MAXINST 32
+#define MAXLINES 256
+#define MAXINST 48
 #define NMASTER 16
 #define MPOOL1 530
-#define MAXARCS 19
+#define MAXARCS 34
 #define NTEXT 64
 #define NMTEXT 64
 #define TXRUN 17
+#define TXPOOLW 240
+#define MTPOOLW 600
+#define MTBUDGET 900
 #define NSCAL 64
 #define NOPOINT 0777777
 #define ARCRMAX 1294
@@ -105,8 +105,7 @@
 #define NCPCON 16
 #define CW 6
 
-// The masters' nesting, five tables of NMASTER from SNEST (format 19; 18 holds the first four):
-// each master's sub-instances' count, its own words' count, its words before its own crosses, the
+// The masters' nesting, five tables of NMASTER from SNEST: each master's sub-instances' count, its own words' count, its words before its own crosses, the
 // masters it holds, a bit each, M1 in bit 17, and its own texts' count, which come first among
 // its texts. Its sub-instances are last in its entry, before its name, SUBW words each: the
 // master, x and y from the master's origin, the scale word, and NATT ties. A master's words
@@ -126,42 +125,47 @@
 #define SPOINTX 0
 #define SPOINTY 256
 #define SLINEFROM 512
-#define SLINETO 776
-#define SIX 1040
+#define SLINETO 768
+#define SIX 1024
 #define SIY 1072
-#define SISCALE 1104
-#define SDIR 1440
-#define SLINECOUNT 1796
-#define SPOINTCOUNT 1797
+#define SISCALE 1120
+#define SDIR 1472
+#define SLINECOUNT 1934
+#define SPOINTCOUNT 1935
 
 // The master directory's run, each master's length and its entry's counts, then the instances'
-// masters and the arc table's runs, from SDIR.
+// masters and the arc table's runs, from SDIR; each of the arc table's runs is MAXARCS long.
 #define DMLEN 0
 #define DCPNP 144
 #define DCPNL 160
 #define DCPNA 176
 #define DINSTCOUNT 208
 #define DIMASTER 209
-#define DARCCOUNT 241
-#define DARCTC 242
+#define DARCCOUNT 257
+#define DARCTC 258
 
-// The texts' two runs (TPTEXTS), the canvas's then the masters' from MTM, from STEXTS.
+// The texts' two runs (TPTEXTS), the canvas's then the masters' from MTM, from STEXTS. Each ends
+// in its start table, one entry a text and the top, and its pool, the texts' runs packed in text
+// order, run k from the word its start entry k names, its words as many as its W table says.
 #define TXN 0
 #define MTN 1
+#define TXMCOST 2
 #define TXX 18
 #define TXY 82
 #define TXSC 146
 #define TXCH 210
 #define TXW 274
-#define TXRUNAT 338
-#define MTM 1426
-#define MTDX 1490
-#define MTDY 1554
-#define MTSC 1618
-#define MTCH 1682
-#define MTW 1746
-#define MTRUNAT 1810
-#define TPTWORDS 2898
+#define TXRSAT 338
+#define TXRUNAT 403
+#define MTM 643
+#define MTDX 707
+#define MTDY 771
+#define MTSC 835
+#define MTCH 899
+#define MTW 963
+#define MTRSAT 1027
+#define MTRUNAT 1092
+#define TPTWORDS 1692
 
 // The digits' runs (TPDIGITS), from SDIGITS.
 #define DTXAN 0
@@ -222,6 +226,7 @@ typedef struct
     int lineCount;
     int lineFrom[MAXLINES];
     int lineTo[MAXLINES];
+    int arcs;
     int arcCount;
     int arcCenter[MAXARCS];
     int arcStart[MAXARCS];
@@ -627,15 +632,10 @@ streamWord(int first, int k)
     return( dataWord(first + (k / 256), k % 256) );
 }
 
-// Master m's sub-instances in the picture from block first, as its entry holds them: none on a
-// format 17 tape, whose stream has zeros where 18 and 19 keep the nesting.
+// Master m's sub-instances in the picture from block first, as its entry holds them.
 static int
 subCount(int first, int m)
 {
-    if( streamWord(first, 1) == TPFORMAT17 )
-    {
-        return( 0 );
-    }
     return( held(signedWord(streamWord(first, SNEST + NSUBAT + m)), NSUB) );
 }
 
@@ -670,8 +670,8 @@ int words;
 }
 
 // Check picture p (0 to 11) as Sketchpad's Load does before it reads a word into its tables.
-// It checks the first block's sum; the header, a format it reads with that format's stream size,
-// and entries that end within the slot; the closing header the same; every block's sum; then the
+// It checks the first block's sum; the header, its format and its stream's size, and entries
+// that end within the slot; the closing header the same; every block's sum; then the
 // entries' blocks the header gives against those the picture's tables give, which Load finds
 // only once it has begun to change its tables, so that it reports a bad block. Returns PICOK,
 // PICEMPTY or PICBAD.
@@ -681,6 +681,7 @@ checkPicture(int p)
 int first;
 int blocks;
 int entries;
+int cost;
 int k;
 
     first = slotFirst(p);
@@ -689,9 +690,8 @@ int k;
         return( PICBAD );
     }
     if( (streamWord(first, 0) != TPMAGIC)
-        || !(((streamWord(first, 1) == TPFORMAT) && (streamWord(first, 2) == TPSTREAM))
-             || ((streamWord(first, 1) == TPFORMAT18) && (streamWord(first, 2) == TPSTREAM18))
-             || ((streamWord(first, 1) == TPFORMAT17) && (streamWord(first, 2) == TPSTREAM17)))
+        || (streamWord(first, 1) != TPFORMAT)
+        || (streamWord(first, 2) != TPSTREAM)
         || (streamWord(first, HENTRIES) > (uint32_t)(TPSLOT - TPPBLOCKS - 1)) )
     {
         return( PICEMPTY );
@@ -717,6 +717,20 @@ int k;
         entries += entryBlocks(first, k);
     }
     if( entries != (int)streamWord(first, HENTRIES) )
+    {
+        return( PICBAD );
+    }
+
+    // The masters' texts' costs within MTBUDGET and each pool's top within its pool, which Load
+    // judges once its reverse pass has read them.
+    cost = 0;
+    for( k = 0; k < NMASTER; k++ )
+    {
+        cost += signedWord(streamWord(first, STEXTS + TXMCOST + k));
+    }
+    if( (cost > MTBUDGET)
+        || (signedWord(streamWord(first, STEXTS + TXRSAT + NTEXT)) > TXPOOLW)
+        || (signedWord(streamWord(first, STEXTS + MTRSAT + NMTEXT)) > MTPOOLW) )
     {
         return( PICBAD );
     }
@@ -766,6 +780,32 @@ int set;
     *outP = '\0';
 }
 
+// A text's run out of its pool into a slot of TXRUN words, zeros after its own: its start the
+// start table's entry at stream word startAt, its words w, each held to the pool of poolW words
+// from stream word poolAt, so that a damaged picture reads nothing outside its pool.
+static void
+unpackRun(int first, int startAt, int poolAt, int poolW, int w, uint32_t *run)
+{
+int start;
+int n;
+int j;
+
+    start = held(signedWord(streamWord(first, startAt)), poolW);
+    n = held(w, TXRUN);
+    if( n > (poolW - start) )
+    {
+        n = poolW - start;
+    }
+    for( j = 0; j < TXRUN; j++ )
+    {
+        run[j] = 0;
+        if( j < n )
+        {
+            run[j] = streamWord(first, poolAt + start + j);
+        }
+    }
+}
+
 // Decode picture p, already checked, into pic.
 static void
 decodePicture(int p)
@@ -778,6 +818,7 @@ int k;
 int j;
 int b2;
 int entry;
+int nest;
 uint32_t nameRun[NAMEW];
 
     memset(&pic, 0, sizeof(pic));
@@ -794,6 +835,8 @@ uint32_t nameRun[NAMEW];
     }
     textString(nameRun, NAMEW, pic.name);
 
+    pic.arcs = MAXARCS;
+    nest = SNEST;
     pic.pointCount = signedWord(streamWord(first, data + SPOINTCOUNT));
     pic.lineCount = signedWord(streamWord(first, data + SLINECOUNT));
     for( k = 0; k < MAXPTS; k++ )
@@ -816,8 +859,7 @@ uint32_t nameRun[NAMEW];
     pic.instCount = signedWord(streamWord(first, data + SDIR + DINSTCOUNT));
 
     // Each master's words, the first of its entry's, and its sub-instances, the last before its
-    // name, the entries one after another from the stream's end; and the nesting, which a
-    // format 17 picture reads as a master with none has it.
+    // name, the entries one after another from the stream's end; and the nesting.
     entry = first + TPPBLOCKS;
     for( k = 0; k < NMASTER; k++ )
     {
@@ -826,16 +868,9 @@ uint32_t nameRun[NAMEW];
         {
             pic.masters[k][j] = streamWord(entry, j);
         }
-        if( pic.format != TPFORMAT17 )
-        {
-            pic.ownLen[k] = signedWord(streamWord(first, SNEST + NOWNAT + k));
-            pic.drawLen[k] = signedWord(streamWord(first, SNEST + NDRAWAT + k));
-            pic.uses[k] = streamWord(first, SNEST + NUSESAT + k);
-        }
-        else
-        {
-            pic.ownLen[k] = pic.masterLen[k];
-        }
+        pic.ownLen[k] = signedWord(streamWord(first, nest + NOWNAT + k));
+        pic.drawLen[k] = signedWord(streamWord(first, nest + NDRAWAT + k));
+        pic.uses[k] = streamWord(first, nest + NUSESAT + k);
         if( entryBlocks(first, k) > 0 )
         {
             pic.nSub[k] = subCount(first, k);
@@ -847,15 +882,15 @@ uint32_t nameRun[NAMEW];
         entry += entryBlocks(first, k);
     }
     pic.arcCount = signedWord(streamWord(first, data + SDIR + DARCCOUNT));
-    for( k = 0; k < MAXARCS; k++ )
+    for( k = 0; k < pic.arcs; k++ )
     {
         b2 = (data + SDIR + DARCTC + k);
         pic.arcCenter[k] = indexWord(streamWord(first, b2));
-        pic.arcStart[k] = indexWord(streamWord(first, b2 + MAXARCS));
-        pic.arcEnd[k] = indexWord(streamWord(first, b2 + (2 * MAXARCS)));
-        pic.arcDir[k] = signedWord(streamWord(first, b2 + (3 * MAXARCS)));
-        pic.arcSteps[k] = signedWord(streamWord(first, b2 + (4 * MAXARCS)));
-        pic.arcR32[k] = signedWord(streamWord(first, b2 + (5 * MAXARCS)));
+        pic.arcStart[k] = indexWord(streamWord(first, b2 + pic.arcs));
+        pic.arcEnd[k] = indexWord(streamWord(first, b2 + (2 * pic.arcs)));
+        pic.arcDir[k] = signedWord(streamWord(first, b2 + (3 * pic.arcs)));
+        pic.arcSteps[k] = signedWord(streamWord(first, b2 + (4 * pic.arcs)));
+        pic.arcR32[k] = signedWord(streamWord(first, b2 + (5 * pic.arcs)));
     }
 
     pic.txN = signedWord(streamWord(first, text + TXN));
@@ -867,10 +902,8 @@ uint32_t nameRun[NAMEW];
         pic.txSc[k] = signedWord(streamWord(first, text + TXSC + k));
         pic.txCh[k] = signedWord(streamWord(first, text + TXCH + k));
         pic.txW[k] = signedWord(streamWord(first, text + TXW + k));
-        for( j = 0; j < TXRUN; j++ )
-        {
-            pic.txRun[(k * TXRUN) + j] = streamWord(first, text + TXRUNAT + (k * TXRUN) + j);
-        }
+        unpackRun(first, text + TXRSAT + k, text + TXRUNAT, TXPOOLW, pic.txW[k],
+                  &pic.txRun[k * TXRUN]);
         pic.txAn[k] = streamWord(first, digit + DTXAN + k);
     }
     for( k = 0; k < NMTEXT; k++ )
@@ -881,33 +914,16 @@ uint32_t nameRun[NAMEW];
         pic.mtSc[k] = signedWord(streamWord(first, text + MTSC + k));
         pic.mtCh[k] = signedWord(streamWord(first, text + MTCH + k));
         pic.mtW[k] = signedWord(streamWord(first, text + MTW + k));
-        for( j = 0; j < TXRUN; j++ )
-        {
-            pic.mtRun[(k * TXRUN) + j] = streamWord(first, text + MTRUNAT + (k * TXRUN) + j);
-        }
+        unpackRun(first, text + MTRSAT + k, text + MTRUNAT, MTPOOLW, pic.mtW[k],
+                  &pic.mtRun[k * TXRUN]);
         pic.mtAn[k] = streamWord(first, digit + DMTAN + k);
         pic.mtVal[k] = signedWord(streamWord(first, digit + DMTVAL + k));
     }
 
-    // Each master's own texts' count, which format 19 keeps; on 18 and 17 every text a master
-    // holds counts as its own, as Load counts them.
+    // Each master's own texts' count.
     for( k = 0; k < NMASTER; k++ )
     {
-        pic.txOwn[k] = 0;
-        if( pic.format == TPFORMAT )
-        {
-            pic.txOwn[k] = signedWord(streamWord(first, SNEST + NTXOWNAT + k));
-        }
-    }
-    if( pic.format != TPFORMAT )
-    {
-        for( k = 0; k < held(pic.mtN, NMTEXT); k++ )
-        {
-            if( (pic.mtM[k] >= 0) && (pic.mtM[k] < NMASTER) )
-            {
-                pic.txOwn[pic.mtM[k]]++;
-            }
-        }
+        pic.txOwn[k] = signedWord(streamWord(first, nest + NTXOWNAT + k));
     }
 }
 
@@ -1432,7 +1448,7 @@ int t;
     printf("\n");
 }
 
-// Print the decoded tables, one item a line; a format 19 or 18 picture's nesting after its
+// Print the decoded tables, one item a line; a format 20, 19 or 18 picture's nesting after its
 // masters, each master's own texts' count last.
 static void
 dumpPicture(int p)
@@ -1455,7 +1471,7 @@ char text[(TXRUN * 3) + 1];
         printf("line %d %d %d\n", k, pic.lineFrom[k], pic.lineTo[k]);
     }
     printf("arcs %d\n", pic.arcCount);
-    for( k = 0; k < held(pic.arcCount, MAXARCS); k++ )
+    for( k = 0; k < held(pic.arcCount, pic.arcs); k++ )
     {
         printf("arc %d %d %d %d %d %d %d\n", k, pic.arcCenter[k], pic.arcStart[k], pic.arcEnd[k],
                pic.arcDir[k], pic.arcSteps[k], pic.arcR32[k]);
@@ -1464,16 +1480,13 @@ char text[(TXRUN * 3) + 1];
     {
         printf("master %d %d\n", k, pic.masterLen[k]);
     }
-    if( pic.format != TPFORMAT17 )
+    for( k = 0; k < NMASTER; k++ )
     {
-        for( k = 0; k < NMASTER; k++ )
+        printf("nest %d %d %d %d %06o %d\n", k, pic.nSub[k], pic.ownLen[k], pic.drawLen[k],
+               pic.uses[k], pic.txOwn[k]);
+        for( j = 0; j < pic.nSub[k]; j++ )
         {
-            printf("nest %d %d %d %d %06o %d\n", k, pic.nSub[k], pic.ownLen[k], pic.drawLen[k],
-                   pic.uses[k], pic.txOwn[k]);
-            for( j = 0; j < pic.nSub[k]; j++ )
-            {
-                dumpSub(k, j);
-            }
+            dumpSub(k, j);
         }
     }
     printf("instances %d\n", pic.instCount);
@@ -1522,7 +1535,7 @@ int b;
             screenLine(pic.pointX[a], pic.pointY[a], pic.pointX[b], pic.pointY[b]);
         }
     }
-    for( k = 0; k < held(pic.arcCount, MAXARCS); k++ )
+    for( k = 0; k < held(pic.arcCount, pic.arcs); k++ )
     {
         drawArc(k);
     }

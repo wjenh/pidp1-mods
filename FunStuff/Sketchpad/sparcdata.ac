@@ -1,8 +1,8 @@
-// sparcdata.ac -- bank 2's storage: the arc being drawn, Copy's counts, the arc table and a
+// sparcdata.ac -- bank 2's storage: the arc being drawn, the arc table and a
 // drag's arcs, and the sine table. The instance table is in bank 10 and the master directory in
 // bank 5 (sketchpad.am1).
 //
-// Bank 2, after spdefine.ac.
+// Bank 2, after spvar2.ac.
 // Part of sketchpad.am1, included where it stands.
 
 // The arc being drawn, or written. Center, and the start's offset from it, in 32nds. arcX32
@@ -38,6 +38,12 @@ arcEX, 0
 arcEY, 0
 arcDot, 0
 arcPart, 0
+// The chords of the slot arcFill and arcHead last wrote (arcClass): whole steps a chord, the
+// shift dividing by it, the slot's vector words, and the vertex its first word starts at.
+arcStp, 0
+arcSh, nop
+arcNW, 0
+arcTop, 0
 // arcEntry's copies of the main bank's pseudo pen location and target center; the point arcNorm
 // measures.
 mPenX, 0
@@ -96,6 +102,10 @@ dfAt, 0
 dvVis, 0
 dmDX, 0
 dmDY, 0
+// The arc defWalk composes: the whole steps a chord, by its radius, and its first vertex after
+// the end (spdefine.ac's arcLoadW).
+dfAS, 0
+dfKV, 0
 // The order defWalk takes the lines in, which the instance module's dkChain writes and bank
 // 12's loadLine reads, both through 16-bit addresses.
 dfOrd,
@@ -155,19 +165,6 @@ rwSvS,
     table NMASTER, 0
 rwTot,
     table NMASTER, 0
-// Copy's work: the master, the point table's length before the copy, the master's arcs, a
-// count and two pointers; and moveWords' from, to, count and addend.
-cyK, 0
-cyPC, 0
-cyNA, 0
-cyJ, 0
-cyP, 0
-cyQ, 0
-mwA, 0
-mwB, 0
-mwN, 0
-mwD, 0
-
 // The arc table: arcCount arcs, each its center's, start's and end's point indices (a full
 // circle's end is its start), its direction, its whole steps and its radius in 32nds (for
 // delete mode's lock). NATAB tables, one after another (arcRemove). Then a drag's start, end
@@ -195,6 +192,11 @@ mvEX,
 mvEY,
     table MAXARCS, 0
 mvK,
+    table MAXARCS, 0
+
+// The arcs the constraint solver keeps (spcons.ac, cBuild), read there through their 16-bit
+// address; here for bank 9's room.
+cArcs,
     table MAXARCS, 0
 
 // sin(j * 2pi/NARC) for j = 0 to NQ, as 17-bit fractions; sin(pi/2) is one unit short of 1.

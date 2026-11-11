@@ -7,17 +7,19 @@
 // Bank 10, from its first word, alone. Entered at txEntry from the main bank's txCall, at txInit
 // from bank 12's initVars, at txIsAn from the main bank's findNearPoint, and at txLock, txShine,
 // txDelete, txSize, txFits, txDefRoom, txDefine, txCopyRoom, txNestRoom and txParts from the
-// instance module, each by jsp i [X:012]; runs with the extend window open throughout, so every
+// instance module, at mtDup, mtCoInit and mtCoHold from defdism, and at mtFitE, mtAtE and mtTrimE
+// from the library, each by jsp i [X:012]; runs with the extend window open throughout, so every
 // indirect address is a 16-bit one. Each entry returns by jmp i, and the module calls nothing
 // outside bank 10. It reads the view module's words in bank 12, since every text is written
 // through the view (txView), and the instance module's iHid in bank 3. The masters' texts are
 // in bank 11 (sketchpad.am1, for room), reached through their 16-bit addresses.
-// A text is kept as the pen keyboard writes it, TXRUN words of 340 text (an upper shift first, a
-// shift before each change of case, then the end code), with its origin, its first character's
-// lower left, its scale (0 to 3, x1 to x8), its characters, and its words up to its end. The
-// canvas's texts are txX to txW and txRun, txN of them, in the order placed, so that Undo removes
-// those past its count; the masters' texts are mtM to mtW and mtRun, mtN of them, mtM naming the
-// master and mtDX, mtDY the offset from the master's origin at x1.
+// A text is kept as the pen keyboard writes it, a run of at most TXRUN words of 340 text (an
+// upper shift first, a shift before each change of case, then the end code), with its origin,
+// its first character's lower left, its scale (0 to 3, x1 to x8), its characters, and its words
+// up to its end, the run's length. The canvas's texts are txX to txW and their runs in the pool
+// txRun (txRS), txN of them, in the order placed, so that Undo removes those past its count; the
+// masters' texts are mtM to mtW and their runs in mtRun (mtRS), mtN of them, mtM naming the
+// master and mtDX, mtDY the offset from the master's origin at x1 (the pools, txFit).
 // A canvas text is digits while bank 3's txAn names its anchor, a point at its box's center, and
 // txSv its scalar (scVal, scFix); the anchor is the digits' master, their origin worked out from
 // it and their box, and their characters from the scalar's value (txDgSet). The pen locks onto
@@ -107,7 +109,8 @@ txInN, 0
 // none lit or carried, and the list is written again. Every set of digits is written again from
 // its scalar at the next pass (its value shown -0, which no value is, and cScChg raised;
 // txDgSync), since a save may have caught digits whose rewrite the keyboard held back. Either way
-// no text from txN on is digits.
+// no text from txN on is digits, and each pool is trimmed at its count (txTrim, mtTrim), so a
+// failed load, which leaves both counts 0, leaves both pools empty.
 // AC is clobbered, IO preserved. Called via jsp.
 txClear,
     dzm txN
@@ -129,6 +132,8 @@ txClLp,
     idx txClP
     sas [txDv:012+NTEXT] // skip once every word is written
     jmp txClLp
+    jsp txTrim
+    jsp mtTrim
     lac txN
     jda txAnFill
 txClRtn, jmp .
@@ -337,7 +342,8 @@ txSyD, 0
     endloc
 
 // txSync's copy of the masters' digits txSyT in an instance at scale txSyS, its word txSyW. Their
-// master's value at that size, the code c's rounding, then the doublings (txMag), is written into txIRun, never the keyboard's txKb, which may be open;
+// master's value at that size, the code c's rounding, then the doublings (txMag), is written into
+// txIRun, never the keyboard's txKb, which may be open;
 // their place is the lower left of a box centered on txPtX, txPtY, where txSync put their
 // center. Entry: txPtSc. Exit: txPtX, txPtY, txPtCh, txPtWn, txPtR.
 // AC and IO are clobbered. Called via jsp.
@@ -619,8 +625,7 @@ txLoad, 0
     lac i txLdP
     dac txPtWn
     lac txLoad
-    jda txRunOf
-    add [txRun:012]
+    jda txRunAt
     dac txPtR
 txLdRtn, jmp .
 txLdP, 0
@@ -657,41 +662,312 @@ mtLoad, 0
     lac i mtLdP
     dac txPtWn
     lac mtLoad
-    jda txRunOf
-    add [mtRun:013]
+    jda mtRunAt
     dac txPtR
 mtLdRtn, jmp .
 mtLdP, 0
     endloc
 
-// A run's offset in its table, k * TXRUN, TXRUN being 17 (KBBUFW), so 16k + k.
-// Entry: AC = k. Exit: AC = 17k. IO is preserved. Called via jda.
-txRunOf, 0
-    dap txRoRtn
-    lac txRunOf
-    sal 4s
-    add txRunOf
-txRoRtn, jmp .
+// The pools. Each table's runs are packed in text order from its pool's first word: the
+// canvas's in txRun, the masters' in bank 11's mtRun. Its start table, one entry more than the
+// table has texts, holds each run's first word as an offset in the pool: run k is from entry k's
+// word up to entry k + 1's, and every entry from the table's count on is the pool's top, so a
+// text past the count holds no words. A pool is never fuller than its budget allows (TXPOOLW,
+// MTPOOLW).
 
-// Copy a run of TXRUN words. Entry: AC = from, IO = to (16-bit addresses). AC and IO are
+// Canvas text k's run's address (txRunAt), or the masters' text t's (mtRunAt).
+// Entry: AC = k. Exit: AC = the address. IO is preserved. Called via jda.
+txRunAt, 0
+    local txRaRtn, txRaP
+    dap txRaRtn
+    lac txRunAt
+    add [txRS:012]
+    dac txRaP
+    lac i txRaP
+    add [txRun:012]
+txRaRtn, jmp .
+txRaP, 0
+    endloc
+mtRunAt, 0
+    local mtRaRtn, mtRaP
+    dap mtRaRtn
+    lac mtRunAt
+    add [mtRS:013]
+    dac mtRaP
+    lac i mtRaP
+    add [mtRun:013]
+mtRaRtn, jmp .
+mtRaP, 0
+    endloc
+
+// The pool txFit, txPutRun and txCut work on: the canvas's (txPlC) or the masters' (mtPl), its
+// start table's first entry (txPlS) and last, the top (txPlE), and its first word (txPlB).
+// AC is clobbered, IO preserved. Called via jsp.
+txPlC,
+    dap txPcRtn
+    lac [txRS:012]
+    dac txPlS
+    lac [txRS:012+NTEXT]
+    dac txPlE
+    lac [txRun:012]
+    dac txPlB
+txPcRtn, jmp .
+mtPl,
+    dap mtPlRtn
+    lac [mtRS:013]
+    dac txPlS
+    lac [mtRS:013+NMTEXT]
+    dac txPlE
+    lac [mtRun:013]
+    dac txPlB
+mtPlRtn, jmp .
+txPlS, 0
+txPlE, 0
+txPlB, 0
+
+// Run k of the pool named made w words long, the runs after it moved up or down to follow it and
+// their starts and the top with them. A shrunk run keeps its first words; a grown one's new
+// words are whatever lay there.
+// Entry: AC = k, below the table's texts' limit; IO = w. Exit: AC = the run's address. IO is
 // clobbered. Called via jda.
+txFit, 0
+    local pfRtn, pfUp, pfDn, pfDl, pfAdj, pfAl, pfEnd, pfP, pfQ, pfD, pfF, pfT, pfN
+    dap pfRtn
+    lac txFit
+    add txPlS
+    dac pfP             // the run's start
+    add [1]
+    dac pfQ             // the next run's
+    dio pfD
+    lac pfD
+    add i pfP
+    sub i pfQ           // the change, w less the run's words
+    sza i               // skip if the length changes
+    jmp pfEnd
+    dac pfD
+    lac i txPlE
+    sub i pfQ           // the words after the run
+    sza i               // skip if there are any
+    jmp pfAdj
+    cma
+    dac pfN
+    lac pfD
+    spa                 // skip if the run grows
+    jmp pfDn
+
+    // Growing: the words after it move up, the last first.
+    lac i txPlE
+    add txPlB
+    sub [1]
+    dac pfF
+    add pfD
+    dac pfT
+pfUp,
+    lac i pfF
+    dac i pfT
+    law i 1
+    add pfF
+    dac pfF
+    law i 1
+    add pfT
+    dac pfT
+    isp pfN             // skip once every word is moved
+    jmp pfUp
+    jmp pfAdj
+
+    // Shrinking: they move down, the first first.
+pfDn,
+    lac i pfQ
+    add txPlB
+    dac pfF
+    add pfD
+    dac pfT
+pfDl,
+    lac i pfF
+    dac i pfT
+    idx pfF
+    idx pfT
+    isp pfN             // skip once every word is moved
+    jmp pfDl
+
+    // Every start after the run's, to the top, moved by the change.
+pfAdj,
+    lac pfQ
+    sub txPlE
+    sub [1]
+    dac pfN
+pfAl,
+    lac i pfQ
+    add pfD
+    dac i pfQ
+    idx pfQ
+    isp pfN             // skip once every start is moved
+    jmp pfAl
+pfEnd,
+    lac i pfP
+    add txPlB
+pfRtn, jmp .
+pfP, 0
+pfQ, 0
+pfD, 0
+pfF, 0
+pfT, 0
+pfN, 0
+    endloc
+
+// Run k of the pool named made w words (txFit), and w words copied into it from txCoF, which
+// lies outside the pool or in it before run k (txFit moves only the runs after it).
+// Entry: AC = k, IO = w, txCoF. AC and IO are clobbered. Called via jda.
+txPutRun, 0
+    local prRtn, prW
+    dap prRtn
+    dio prW
+    lac txPutRun
+    jda txFit
+    dac txCoT
+    lac prW
+    jda txCopy
+prRtn, jmp .
+prW, 0
+    endloc
+
+// The pool named trimmed at count m: its first run from its first word, and every start after
+// run m's that start, the top, so that no text from m on holds words.
+// Entry: AC = m, at most the table's texts' limit. AC is clobbered, IO preserved. Called via jda.
+txCut, 0
+    local pcRtn, pcLp, pcP, pcV, pcN
+    dap pcRtn
+    dzm i txPlS
+    lac txCut
+    add txPlS
+    dac pcP
+    lac i pcP
+    dac pcV
+    lac pcP
+    sub txPlE           // the starts after it, complemented
+    sza i               // skip if there are any
+    jmp pcRtn
+    dac pcN
+pcLp,
+    idx pcP
+    lac pcV
+    dac i pcP
+    isp pcN             // skip once every start is the top
+    jmp pcLp
+pcRtn, jmp .
+pcP, 0
+pcV, 0
+pcN, 0
+    endloc
+
+// The canvas's pool trimmed at txN (txTrim), or the masters' at mtN (mtTrim), after a count
+// falls. AC is clobbered, IO preserved. Called via jsp.
+txTrim,
+    dap txTmRtn
+    jsp txPlC
+    lac txN
+    jda txCut
+txTmRtn, jmp .
+mtTrim,
+    dap mtTmRtn
+    jsp mtPl
+    lac mtN
+    jda txCut
+mtTmRtn, jmp .
+
+// The masters' text t's run, which mtLoad found (txPtR, txPtWn), moved down to slot j's start for
+// a closing-up in order, and slot j + 1's start set past it. Each slot from j + 1 to t then has
+// no true start until the closing-up gives it one or mtTrim ends it. j is below t, every run
+// from t on where it was.
+// Entry: AC = j. AC is clobbered, IO preserved. Called via jda.
+mtPack, 0
+    local mtPkRtn, mtPkP
+    dap mtPkRtn
+    lac mtPack
+    add [mtRS:013]
+    dac mtPkP
+    lac i mtPkP
+    add [mtRun:013]
+    dac txCoT
+    lac txPtR
+    dac txCoF
+    lac txPtWn
+    jda txCopy
+    idx mtPkP
+    lac txCoT
+    sub [mtRun:013]
+    dac i mtPkP
+mtPkRtn, jmp .
+mtPkP, 0
+    endloc
+
+// Copy n words from txCoF to txCoT (16-bit addresses), first to last, each left past them.
+// Entry: AC = n, 0 or more. AC is clobbered, IO preserved. Called via jda.
 txCopy, 0
-    local txCoRtn, txCoLp, txCoT, txCoN
+    local txCoRtn, txCoLp, txCoN
     dap txCoRtn
-    dio txCoT
-    law i TXRUN
+    lac txCopy
+    sza i               // skip if there are words
+    jmp txCoRtn
+    cma
     dac txCoN
 txCoLp,
-    lac i txCopy
+    lac i txCoF
     dac i txCoT
-    idx txCopy
+    idx txCoF
     idx txCoT
     isp txCoN           // skip once every word is copied
     jmp txCoLp
 txCoRtn, jmp .
-txCoT, 0
 txCoN, 0
     endloc
+txCoF, 0
+txCoT, 0
+
+// For the library's lbText and the instance module's dqTxt, in overlays: the masters' text t's
+// run made its mtW words long (mtFitE) or only found (mtAtE), its address returned; its run
+// copied in as slot mtN's, at that slot's mtW, which dqTxt has copied (mtDup); and the masters'
+// pool trimmed at mtN (mtTrimE).
+// Entry: IO = t (but mtTrimE); AC = the return address. Exit: AC = the run's address (mtFitE,
+// mtAtE). IO is clobbered. Called via jsp i [X:012].
+mtFitE,
+    dac mtEnRtn
+    dio mtEnT
+    jsp mtPl
+    lac mtEnT
+    add [mtW:013]
+    dac mtEnP
+    lio i mtEnP
+    lac mtEnT
+    jda txFit
+    jmp i mtEnRtn
+mtAtE,
+    dac mtEnRtn
+    dio mtEnT
+    lac mtEnT
+    jda mtRunAt
+    jmp i mtEnRtn
+mtDup,
+    dac mtEnRtn
+    dio mtEnT
+    jsp mtPl
+    lac mtEnT
+    jda mtRunAt
+    dac txCoF
+    lac mtN
+    add [mtW:013]
+    dac mtEnP
+    lio i mtEnP
+    lac mtN
+    jda txPutRun
+    jmp i mtEnRtn
+mtTrimE,
+    dac mtEnRtn
+    jsp mtTrim
+    jmp i mtEnRtn
+mtEnRtn, 0
+mtEnT, 0
+mtEnP, 0
 
 // The pen's lock onto a text, for the instance module's instLock. In Move, Delete, Size, Scale
 // and Text modes it is the canvas's text whose box (txOnScr's), widened by TXREACH on every side
@@ -987,14 +1263,20 @@ txRemove, 0
     dac txRmGo
     lac txPtWn
     dac i txRmGo
+    jsp txPlC
     lac txRemove
-    jda txRunOf
-    add [txRun:012]
-    dac txRmGo
-    lio txRmGo
-    lac txPtR
+    lio txPtWn
+    jda txFit           // its run the last's length, the last's moved to follow
+    dac txRmTo
+    lac txRmL
+    jda txRunAt
+    dac txCoF
+    lac txRmTo
+    dac txCoT
+    lac txPtWn
     jda txCopy
 txRmEnd,
+    jsp txTrim          // the last's run, or k's own, gone
     lac txN
     jda txAnFill
 txRmRtn, jmp .
@@ -1084,9 +1366,14 @@ txOpen,
 txOpEd,
     lac txPen
     dac txEd
-    jda txRunOf
-    add [txRun:012]
-    lio [txKb:012]
+    jda txRunAt
+    dac txCoF
+    lac [txKb:012]
+    dac txCoT
+    lac txEd
+    add [txW:012]
+    dac txOpP
+    lac i txOpP
     jda txCopy
 txOpGo,
     lac [txBlk:012]
@@ -1211,13 +1498,12 @@ txDnPut,
     dac txDnT
     lac txCnW
     dac i txDnT
-    lac txEd
-    jda txRunOf
-    add [txRun:012]
-    dac txDnT
-    lio txDnT
+    jsp txPlC
     lac [txKb:012]
-    jda txCopy
+    dac txCoF
+    lac txEd
+    lio txCnW
+    jda txPutRun
     law 1
     dac txDirty
     lac txDnK
@@ -1489,6 +1775,8 @@ txUndo, 0
     jmp txUnRtn
     lac txUndo
     dac txN
+    jsp txTrim
+    lac txN
     jda txAnFill
     jsp txScGc
     lac [NOPOINT]
@@ -1551,11 +1839,16 @@ txSaN, 0
 
 // Define's room, for the instance module's instMap. The masters' table must take the canvas's
 // texts, less master masterArg's, which they replace, and txDrMore more, the derived texts that
-// instMap counts and instDef writes. Exit: AC = 0, or DEFTEXT. IO is clobbered. Called via
+// instMap counts and instDef writes. And their cost must keep the masters' within MTBUDGET: the
+// master's new cost (txDrCo, which the propagation's trial takes up, mtCoInit) is the canvas's
+// texts', as txDefine counts them (txDfFit, digits at SCALDIG + 1 characters), and each copy's,
+// its master's whole cost, for every instance instMap counts; the old cost of masterArg gives
+// way to it. Exit: AC = 0, or DEFTEXT. IO is clobbered. Called via
 // jsp i [txDefRoom:012], from bank 7.
 txDrMore, 0
 txDefRoom,
-    local txDrRtn, txDrLp, txDrNx, txDrChk, txDrOK, txDrK, txDrN, txDrP
+    local txDrRtn, txDrLp, txDrNx, txDrChk, txDrOK, txDrCl, txDrPl, txDrAd, txDrIn, txDrIl, \
+        txDrIx, txDrSum, txDrSl, txDrFits, txDrK, txDrN, txDrP
     dac txDrRtn
     lac mtN
     add txN
@@ -1584,13 +1877,173 @@ txDrChk,
     jmp txDrOK
     law DEFTEXT
     jmp i txDrRtn
+
+    // The cost: the canvas's texts', then the copies'.
 txDrOK,
+    dzm txDrCo
+    dzm txDrK
+txDrCl,
+    lac txDrK
+    sad txN             // skip while the canvas's texts remain
+    jmp txDrIn
+    jda txKind
+    sza i               // skip if digits
+    jmp txDrPl
+    law SCALDIG+1
+    jmp txDrAd
+txDrPl,
+    lac txDrK
+    add [txCh:012]
+    dac txDrP
+    lac i txDrP
+txDrAd,
+    add [TXOWN]
+    add txDrCo
+    dac txDrCo
+    idx txDrK
+    jmp txDrCl
+txDrIn,
+    dzm txDrK
+txDrIl,
+    lac txDrK
+    sad i [instCount:012] // skip while instances remain
+    jmp txDrSum
+    add [iMaster:012]
+    dac txDrP
+    lac i txDrP
+    sad i [masterArg:4] // skip unless taken apart
+    jmp txDrIx
+    add [txMCost:012]
+    dac txDrP
+    lac i txDrP
+    add txDrCo
+    dac txDrCo
+txDrIx,
+    idx txDrK
+    jmp txDrIl
+
+    // The masters' total with it, less masterArg's old.
+txDrSum,
+    lac i [masterArg:4]
+    add [txMCost:012]
+    dac txDrP
+    lac txDrCo
+    sub i txDrP
+    dac txDrN
+    lac [txMCost:012]
+    dac txDrP
+    law i NMASTER
+    dac txDrK
+txDrSl,
+    lac txDrN
+    add i txDrP
+    dac txDrN
+    idx txDrP
+    isp txDrK           // skip once every master's cost is in
+    jmp txDrSl
+    lac txDrN
+    sub [MTBUDGET+1]
+    spa                 // skip if past MTBUDGET
+    jmp txDrFits
+    law DEFTEXT
+    jmp i txDrRtn
+txDrFits,
     cla
     jmp i txDrRtn
 txDrRtn, 0
 txDrK, 0
 txDrN, 0
 txDrP, 0
+    endloc
+
+// The masters' texts' budget across the propagation's trial (spdefword.ac, rewriteOv). mtCoInit,
+// at the trial's start: no master's cost changed but master rwK's, by its new cost (txDrCo:
+// Define's, txDefRoom, or the library entry's, splib.ac's root) less its old, and the masters'
+// total with that change (txCoTot). mtCoHold, for each master rwJ the trial remakes, once, inner
+// first, its record resident: its copies of its sub-instances' masters' texts are made again,
+// so its change is the sum of theirs, added to the total, refused past MTBUDGET.
+// Entry: AC = the return address. Exit: AC = 0, or DEFPROOM (mtCoHold). IO is clobbered.
+// Called via jsp i [X:012], from defdism.
+mtCoInit,
+    local mtCoRtn, mtCiLp, mtChLp, mtChSet, mtChOK, mtCoP, mtCoQ, mtCoN, mtCoV
+    dac mtCoRtn
+    lac [mtDel:012]
+    dac mtCoP
+    lac [txMCost:012]
+    dac mtCoQ
+    law i NMASTER
+    dac mtCoN
+    dzm txCoTot
+mtCiLp,
+    dzm i mtCoP
+    lac txCoTot
+    add i mtCoQ
+    dac txCoTot
+    idx mtCoP
+    idx mtCoQ
+    isp mtCoN           // skip once every master is taken
+    jmp mtCiLp
+    lac i [rwK:2]
+    add [txMCost:012]
+    dac mtCoQ
+    lac txDrCo
+    sub i mtCoQ
+    dac mtCoV
+    lac i [rwK:2]
+    add [mtDel:012]
+    dac mtCoP
+    lac mtCoV
+    dac i mtCoP
+    add txCoTot
+    dac txCoTot
+    cla
+    jmp i mtCoRtn
+mtCoHold,
+    dac mtCoRtn
+    dzm mtCoV
+    lac i [rwJ:2]
+    add [mNSub:5]
+    dac mtCoP
+    lac i mtCoP
+    sza i               // skip if it has sub-instances
+    jmp mtChSet
+    cma
+    dac mtCoN
+    lac [cpSub:5 + SBM]
+    dac mtCoQ
+mtChLp,
+    lac i mtCoQ
+    add [mtDel:012]
+    dac mtCoP
+    lac mtCoV
+    add i mtCoP
+    dac mtCoV
+    lac mtCoQ
+    add [SUBW]
+    dac mtCoQ
+    isp mtCoN           // skip once every sub-instance is counted
+    jmp mtChLp
+mtChSet,
+    lac i [rwJ:2]
+    add [mtDel:012]
+    dac mtCoP
+    lac mtCoV
+    dac i mtCoP
+    add txCoTot
+    dac txCoTot
+    sub [MTBUDGET+1]
+    spa                 // skip if past MTBUDGET
+    jmp mtChOK
+    law DEFPROOM
+    jmp i mtCoRtn
+mtChOK,
+    cla
+    jmp i mtCoRtn
+mtCoRtn, 0
+mtCoP, 0
+mtCoQ, 0
+mtCoN, 0
+mtCoV, 0
     endloc
 
 // Define's texts, for the instance module's instDef. Master dfK's texts in the masters' table are
@@ -1636,6 +2089,7 @@ txDfDrNx,
 txDfDNx,
     lac txDfJ
     dac mtN
+    jsp mtTrim
 
     // The canvas's texts in, relative to the origin; the cost, and the box.
     dzm txDfC
@@ -1681,13 +2135,12 @@ txDfLp,
     dac txDfP
     lac txPtWn
     dac i txDfP
-    lac mtN
-    jda txRunOf
-    add [mtRun:013]
-    dac txDfQ
-    lio txDfQ
+    jsp mtPl
     lac txPtR
-    jda txCopy
+    dac txCoF
+    lac mtN
+    lio txPtWn
+    jda txPutRun
 
     // Digits keep their anchor's master index, which instMap marked, and their scalar's value
     // and fix; their cost and box are taken at SCALDIG + 1 characters about their center, the
@@ -1892,6 +2345,7 @@ txRcNx,
 txRcFit,
     lac txRcJ
     dac mtN
+    jsp mtTrim
     dzm txDfC
     dzm txRcI
 txRcFl,
@@ -1978,12 +2432,7 @@ mtMove, 0
     lac txPtWn
     dac i mtMvP
     lac mtMvJ
-    jda txRunOf
-    add [mtRun:013]
-    dac mtMvP
-    lio mtMvP
-    lac txPtR
-    jda txCopy
+    jda mtPack
 
     // Its anchor, value and fix, three tables NMTEXT apart.
     lac mtMove
@@ -2206,13 +2655,12 @@ txPaPut,
     dac txPaP
     lac txPtWn
     dac i txPaP
-    lac txPaT
-    jda txRunOf
-    add [txRun:012]
-    dac txPaP
-    lio txPaP
+    jsp txPlC
     lac txPtR
-    jda txCopy
+    dac txCoF
+    lac txPaT
+    lio txPtWn
+    jda txPutRun
 
     // Digits take as anchor the copy's point, which copyParts adds past the points the table
     // holds now (copyBase), and a new scalar, the master's value at the scale, its fix kept;
@@ -2705,13 +3153,12 @@ txDgSet, 0
     dac txDsP
     lac txCnW
     dac i txDsP
-    lac txDsK
-    jda txRunOf
-    add [txRun:012]
-    dac txDsP
-    lio txDsP
+    jsp txPlC
     lac [txKb:012]
-    jda txCopy
+    dac txCoF
+    lac txDsK
+    lio txCnW
+    jda txPutRun
     law 1
     dac txDirty
     cla
@@ -2857,6 +3304,8 @@ txNumNew,
 txNnNo,
     lac txNnK
     dac txN
+    jsp txTrim
+    lac txN
     jda txAnFill        // its slot plain again
     cla
     jmp txNnRtn
@@ -3113,10 +3562,20 @@ txCh,
     table NTEXT, 0
 txW,
     table NTEXT, 0
+txRS,                   // each run's start in txRun, then the top (the pools, txFit)
+    table NTEXT + 1, 0
 txRun,
-    table NTEXT * TXRUN, 0
+    table TXPOOLW, 0
 
 // An instance's copy of digits, as txSyDg writes it.
 txIRun,
     table TXRUN, 0
+
+// The masters' texts' budget (MTBUDGET): Define's new cost for its master (txDefRoom) or the
+// library's entry's (splib.ac's root), each master's change in a propagation's trial, and the
+// total with the changes (mtCoInit, mtCoHold).
+txDrCo, 0
+txCoTot, 0
+mtDel,
+    table NMASTER, 0
 

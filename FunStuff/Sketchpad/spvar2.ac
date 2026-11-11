@@ -1,7 +1,7 @@
 // spvar2.ac -- two scale words composed (ieComp); and the variants' root calls with no room in bank
 // 9, every entry freed for a load and a record made resident for the overlay scale.
 //
-// Bank 2, after spdefine.ac. Entered by jsp i [X:2] from code running with the extend window open,
+// Bank 2, after spdrag.ac. Entered by jsp i [X:2] from code running with the extend window open,
 // and returning so, reaching other banks' words through their 16-bit addresses.
 // Part of sketchpad.am1, included where it stands.
 

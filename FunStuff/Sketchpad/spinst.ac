@@ -576,7 +576,12 @@ pkFind,
 pkOwn,
     lac pkT
     sub [iTie:3]
-    and [MAXINST-1]
+    lia                 // the instance, the remainder of the tie's place / MAXINST
+    cla
+    scl 1s
+    div [MAXINST]
+    cla                 // no skip is overflow, which a place in iTie cannot give
+    lai
     dac i [dragInst:4]
     add [iX:3]
     dac pkT
@@ -604,7 +609,7 @@ pkOrg,
     // until a pass adds none, each joining marking its tie points (grJoin).
 pkClr,
     jsp markClear
-    lac [gMem:7]
+    lac [gMem:012]
     dac pkT
     law i MAXINST
     dac pkN
@@ -622,7 +627,7 @@ pkInst,
     lac pkI
     sad i [instCount:012] // skip while instances remain
     jmp pkWalkEnd
-    add [gMem:7]
+    add [gMem:012]
     dac pkT
     lac i pkT
     sza                 // skip unless a member already
@@ -761,7 +766,7 @@ grJoin, 0
     local rtn, gjLoop, gjT, gjN
     dap rtn
     lac grJoin
-    add [gMem:7]
+    add [gMem:012]
     dac gjT
     law 1
     dac i gjT
@@ -847,7 +852,7 @@ mvMem,
     lac mvI
     sad i [instCount:012] // skip while instances remain
     jmp mvPts
-    add [gMem:7]
+    add [gMem:012]
     dac mvT
     lac i mvT
     sza i               // skip if a member
@@ -965,7 +970,7 @@ cvMem,
     lac cvI
     sad i [instCount:012] // skip while instances remain
     jmp cvPts
-    add [gMem:7]
+    add [gMem:012]
     dac cvT
     lac i cvT
     sza i               // skip if a member
@@ -3084,11 +3089,11 @@ mbRtnW, 0
 mbC, 0
 mbB, 0
 
-// Master k's nesting words for a master read with none, from a library entry (lbLoad) or a
-// format 17 tape: no sub-instances and none called (mNSub, mUses 0), every word its own
-// (mOwnLen = mLen), and the count before its attachers' crosses (mDrawLen) worked out from its
-// attachers in the root (mDrawOf).
-// Entry: AC = k. AC is clobbered, IO preserved. Called via jda, from the library and the tape.
+// Master k's nesting words for a master read with none, from a flat library entry (lbLoad): no
+// sub-instances and none called (mNSub, mUses 0), every word its own (mOwnLen = mLen), and the
+// count before its attachers' crosses (mDrawLen) worked out from its attachers in the root
+// (mDrawOf).
+// Entry: AC = k. AC is clobbered, IO preserved. Called via jda, from the library.
 mFlat, 0
     local mfT, mfN, rtnW
     dac rtnW
@@ -5806,8 +5811,8 @@ dqY1, 0
 // instDefOv, and for the propagation's commit (spdefword.ac, rwRedo).
 // Entry: dqK, dqB. AC and IO are clobbered; dqB is kept. Called via jsp.
 dqDer,
-    local dqDr, dqWid, dqWx, dqWy, dqWv, dqWmin, dqWset, dqWr, dqTxt, dqTl, dqTs, dqTsp, dqTrn, \
-        dqTn, dqTr, dqTc, dqTcr, dqP, dqM, dqDX, dqDY, dqH, dqV2, dqS, dqE, dqT2, dqD, dqQ, dqN2
+    local dqDr, dqWid, dqWx, dqWy, dqWv, dqWmin, dqWset, dqWr, dqTxt, dqTl, dqTs, dqTsp, \
+        dqTn, dqTr, dqTc, dqTcr, dqP, dqM, dqDX, dqDY, dqH, dqV2, dqS, dqE, dqT2, dqD, dqQ
     dap dqDr
     lac dqB
     sub [SBS]
@@ -5960,26 +5965,9 @@ dqTsp,
     lac [NOPOINT]
     dac i dqP           // mtAn, plain
 
-    // The run, TXRUN words at 17 times the index (the text module's txRunOf).
-    lac dqT2
-    sal 4s
-    add dqT2
-    add [mtRun:013]
-    dac dqP
-    lac dqD
-    sal 4s
-    add dqD
-    add [mtRun:013]
-    dac dqQ
-    law i TXRUN
-    dac dqN2
-dqTrn,
-    lac i dqP
-    dac i dqQ
-    idx dqP
-    idx dqQ
-    isp dqN2            // skip once the run is copied
-    jmp dqTrn
+    // The run, its mtW words, in the masters' pool after the others (the text module's mtDup).
+    lio dqT2
+    jsp i [mtDup:012]
     idx i [mtN:012]
 dqTn,
     idx dqT2
@@ -6010,7 +5998,6 @@ dqE, 0                  // the masters' texts before the copies
 dqT2, 0                 // a text, and its copy
 dqD, 0
 dqQ, 0
-dqN2, 0
     endloc
 
 // dqDer's master and its sub-instance's SBS word, which instDefOv and rwRedo set.
@@ -7257,10 +7244,8 @@ tgN, 0
 tgList,
     table NATT, 0
 
-// A carry (instPick, instMove). The group's instances, gMem; the handle's offset from the
-// dragged origin; the step; mvHold's bounds on the step, x then y.
-gMem,
-    table MAXINST, 0
+// A carry (instPick, instMove). The handle's offset from the dragged origin; the step; mvHold's
+// bounds on the step, x then y. The group's instances, gMem, are bank 10's.
 hdX, 0
 hdY, 0
 cvDX, 0

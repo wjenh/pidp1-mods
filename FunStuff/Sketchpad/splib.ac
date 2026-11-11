@@ -92,7 +92,7 @@ libEntryOv,
     dac leRtn
     dio leSel
     lsm
-    lio [waitList:0]
+    lio [waitList:1]
     dla
     lac i [lbPhase:013]
     sas [LBPSHOW]       // skip if only a holder's refusal is shown
@@ -615,7 +615,7 @@ phW, 0
 lbLoad,
     local rtn, llRead, llOK, llGo, llNG, llRoom, llNoRm, llEmpty, llBad, llW, llNest, llSrc
     addlocal llPt, llSb, llPtE, llMap, llMp, llMapE, llFree, llFrN, llSlots, llPart, llDone
-    addlocal llS, llK, llB, llQ, llP, llC, llX, llT, llJ
+    addlocal llS, llK, llB, llQ, llP, llC, llX, llT, llJ, llCo, llCs
     dap rtn
     jsp lbRdSlot
     sza                 // skip if the slot holds an entry
@@ -688,9 +688,12 @@ llRead,
     jmp llBad
     lac i [lbEBuf:016 + LBHNTX]
     dac llT
+    lac i [lbEBuf:016 + LBHCOST]
+    dac llCo
 
     // The room for its texts: the masters' texts, less the master's, and the entry's (a nested
-    // entry's every part's); then a nested entry's masters (llMap).
+    // entry's every part's), and their costs within MTBUDGET the same way; then a nested entry's
+    // masters (llMap).
 llRoom,
     jsp lbCount
     cma
@@ -698,6 +701,27 @@ llRoom,
     add llT
     sub [NMTEXT+1]
     sma                 // skip unless past NMTEXT
+    jmp llNoRm
+    lac lbMk
+    add [txMCost:012]
+    dac lbT
+    lac llCo
+    sub i lbT
+    dac llCo
+    lac [txMCost:012]
+    dac lbT
+    law i NMASTER
+    dac llC
+llCs,
+    lac llCo
+    add i lbT
+    dac llCo
+    idx lbT
+    isp llC             // skip once every master's cost is in
+    jmp llCs
+    lac llCo
+    sub [MTBUDGET+1]
+    sma                 // skip unless past MTBUDGET
     jmp llNoRm
     lac lbNest
     sza                 // skip if a flat entry
@@ -803,11 +827,12 @@ llSrc,
 
     // Each part: a flat entry's header, its counts a master's and its words some; then its
     // nesting, its sub-instances' count at most NSUB, each one's master one of the parts' and
-    // not the part's own; its words its header's. llT the parts' texts.
+    // not the part's own; its words its header's. llT the parts' texts, llCo their cost.
     lac [lbEBuf:016 + LBEHW]
     dac lbE
     dzm llK
     dzm llT
+    dzm llCo
 llPt,
     lac i lbE
     sas [LBMAGIC]       // skip if a part's magic
@@ -880,6 +905,10 @@ llPtE,
     jda lbHW
     add llT
     dac llT
+    law LBHCOST
+    jda lbHW
+    add llCo
+    dac llCo
     lac llP
     dac lbE
     idx llK
@@ -960,6 +989,7 @@ llC, 0
 llX, 0
 llT, 0
 llJ, 0
+llCo, 0
     endloc
 
 // Part lbE's tables into master lbMk, its record resident: its old texts out (lbDrop), its words
@@ -1229,11 +1259,13 @@ lhA, 0
 
 // The masters' text t's words, between the masters' texts' tables and the buffer from lbB, in or
 // out by lbDir, lbB left past them: its offset, scale, characters and words, mtDX to mtW, five
-// tables NMTEXT apart; its run, TXRUN words from mtRun; its digits' anchor, value and fix, mtAn to
-// mtFix, three tables NMTEXT apart. Its master, mtM, is the caller's.
-// Entry: AC = t. AC is clobbered, IO preserved. Called via jda.
+// tables NMTEXT apart; its run, its mtW words in the masters' pool, TXRUN in the buffer, zeros
+// after the run's (a save's run found, a load's slot made that long first: the text module's
+// mtAtE and mtFitE); its digits' anchor, value and fix, mtAn to mtFix, three tables NMTEXT
+// apart. Its master, mtM, is the caller's.
+// Entry: AC = t. AC and IO are clobbered. Called via jda.
 lbText, 0
-    local rtn
+    local rtn, lxOut, lxRun, lxPad, lxEnd, lxW, lxN
     dap rtn
     law NMTEXT
     dac lbStep
@@ -1242,16 +1274,38 @@ lbText, 0
     dac lbAt
     law 5
     jda lbRun
+    lac lbText
+    add [mtW:013]
+    dac lbAt
+    lac i lbAt
+    dac lxW
+    lio lbText
+    lac lbDir
+    sza i               // skip if a load's
+    jmp lxOut
+    jsp i [mtFitE:012]
+    jmp lxRun
+lxOut,
+    jsp i [mtAtE:012]
+lxRun,
+    dac lbAt
     law 1
     dac lbStep
-    law TXRUN
-    dac lbM
-    lac lbText
-    jda lbTimes
-    add [mtRun:013]
-    dac lbAt
-    law TXRUN
+    lac lxW
     jda lbRun
+    lac lxW
+    sub [TXRUN]
+    sza i               // skip if short of TXRUN
+    jmp lxEnd
+    dac lxN
+lxPad,
+    lac lbDir
+    sza i               // skip if a load's, which passes the zeros
+    dzm i lbB
+    idx lbB
+    isp lxN             // skip once the pad is done
+    jmp lxPad
+lxEnd,
     law NMTEXT
     dac lbStep
     lac lbText
@@ -1260,6 +1314,8 @@ lbText, 0
     law 3
     jda lbRun
 rtn, jmp .
+lxW, 0
+lxN, 0
     endloc
 
 // Master lbMk's record's tables (lbRecT), between the resident record and the buffer from lbB,
@@ -1442,6 +1498,7 @@ ldNext,
 ldEnd,
     lac ldJ
     dac i [mtN:012]
+    jsp i [mtTrimE:012]
 rtn, jmp .
 ldI, 0
 ldJ, 0
@@ -1568,13 +1625,11 @@ lmN, 0
     endloc
 
 // Dir: the directory's header read, and page lbPage, brought back to the last page with an entry
-// (the first with none), into lbDPage; then the screen's sixteen lines (splibdir.ac, lbsL)
-// written from it, each its entry's number, a plus after it for a nested entry (LBNESTL), and
-// its name, lit (KBKEY), or "-" and dim with the pen off (KBDIM) for a free slot, so that a
-// picker never takes one.
+// (the first with none), into lbDPage, from which the keyboard's open writes the screen's sixteen
+// lines (spkbd.ac, kbLibFill).
 // Exit: AC = TSOPEN, or lbRdHdr's or lbPgIO's failure. IO is clobbered. Called via jsp.
 lbShow,
-    local rtn, lwLast, lwHave, lwRd, lwLine, lwDash, lwCopy, lwFlat, lwL, lwN, lwP, lwX
+    local rtn, lwLast, lwHave, lwRd, lwN
     dap rtn
     jsp lbRdHdr
     sza                 // skip if the directory's header was read
@@ -1611,69 +1666,9 @@ lwRd,
     jsp lbPgIO
     sza                 // skip if the page was read
     jmp rtn
-
-    // The lines, entry 16p + 1 first.
-    lac lbPg
-    sal 4s
-    dac lwN
-    lac [lbsL:5 + LBLABEL]
-    dac lwL
-    dzm lbSl
-lwLine,
-    idx lwN
-    jda lbDec
-    dac i lwL
-    lac lbSl
-    jda lbEnt
-    dac lbSE
-    lac [DIRLBLX]
-    dac lwX
-    lac i lbSE
-    and [LBDNEST]
-    sza i               // skip if a nested entry
-    jmp lwFlat
-    lac [LBNESTL]
-    dac lwX
-lwFlat,
-    lac lwL
-    add [1]
-    dac lbT
-    lac lwX
-    dac i lbT           // the label's second word
-    lac lwL
-    sub [LBLABEL]
-    dac lwP             // the line's parameter word
-    lac [KBKEY]
-    dac i lwP
-    lac i lbSE
-    sza i               // skip if the slot holds an entry
-    jmp lwDash
-    lac lbSE
-    add [1]             // its name
-    jmp lwCopy
-lwDash,
-    lac [KBDIM]
-    dac i lwP
-    lac [lbDash:6]
-lwCopy,
-    dac lbFrom
-    lac lwL
-    add [DLNAME - LBLABEL]
-    dac lbTo
-    law NAMEW
-    jda lbMove
-    lac lwL
-    add [DLWORDS]
-    dac lwL
-    idx lbSl
-    sas [LBLINES]       // skip once every line is written
-    jmp lwLine
     lac [TSOPEN]
 rtn, jmp .
-lwL, 0
 lwN, 0
-lwP, 0
-lwX, 0
     endloc
 
 // Delete: slot lbSlot's entry out of the directory, refused, EMPTY, for a free slot. Its name
@@ -2191,64 +2186,6 @@ lrUsed,
 rtn, jmp .
     endloc
 
-// Entry n's label: its number right-aligned in three characters, spaces before it, as three
-// 340 codes in one word, packed with ral so that no code loses a bit.
-// Entry: AC = n, 1 to 999. Exit: AC = the word. IO is preserved. Called via jda.
-lbDec, 0
-    local rtn, ldHL, ldTL0, ldTL, ldTE, ldSp1, ldC1, ldSp2, ldC2, ldH, ldT, ldW
-    dap rtn
-    dzm ldH
-    dzm ldT
-    lac lbDec
-ldHL,
-    sub [0d100]
-    spa                 // skip if a hundred more
-    jmp ldTL0
-    dac lbDec
-    idx ldH
-    lac lbDec
-    jmp ldHL
-ldTL0,
-    lac lbDec
-ldTL,
-    sub [0d10]
-    spa                 // skip if ten more
-    jmp ldTE
-    dac lbDec
-    idx ldT
-    lac lbDec
-    jmp ldTL
-ldTE,
-    lac ldH
-    sza i               // skip if hundreds
-    jmp ldSp1
-    add [KCZERO]
-    jmp ldC1
-ldSp1,
-    law KCSPACE
-ldC1,
-    ral 6s
-    dac ldW
-    lac ldH
-    ior ldT
-    sza i               // skip if hundreds or tens
-    jmp ldSp2
-    lac ldT
-    add [KCZERO]
-    jmp ldC2
-ldSp2,
-    law KCSPACE
-ldC2,
-    add ldW
-    ral 6s
-    add [KCZERO]
-    add lbDec           // the units
-rtn, jmp .
-ldH, 0
-ldT, 0
-ldW, 0
-    endloc
-
 // The status word's texts, four words each, by the result, TSSAVED to TSSLOTS, as the tape's
 // (sptape.ac, tpMsgs). TSOPEN's and TSMORE's are never shown, nor TSNOTPIC's, the tape's, nor
 // Plot's three, TSPLOTTED to TSNOPLOT, nor TSNESTED's, no longer given, nor TSHELD's, which only
@@ -2282,14 +2219,9 @@ lbMsgs,
     type340 "SLOTS    "
 
 // A blank name's run, which the name's line shows after any result but SAVED, LOADED and
-// DELETED, and which a deleted slot's name becomes; and "-" for a free slot on the screen, as the
-// tape's (sptape.ac, tpDash).
+// DELETED, and which a deleted slot's name becomes.
 lbBlank,
     table NAMEW - 1, KBPAD
-    KBBLANK
-lbDash,
-    KCUP * 010000 + 055 * 0100 + KCUP
-    table NAMEW - 2, KBPAD
     KBBLANK
 
 // The counts lbSane judges: each one's offset in the header and its largest value, then a 0.
@@ -2368,8 +2300,8 @@ lbTmp,                  // a text on its way to another slot (lbDrop), or a dele
 // its next part's master's record (TSMORE), lyCall makes master tpK's record resident and calls
 // the overlay again with teArg, which the overlay has made TELMORE; nothing calls the overlay
 // after such a loop but with teArg set again.
-// A load into a master others hold (mUses) runs in calls of the overlay (lbPhase; owner's ruling
-// C5, TASK-NESTED-C.md): the first reads and judges the entry and stops there (TSHELD); then,
+// A load into a master others hold (mUses) runs in calls of the overlay (lbPhase): the first
+// reads and judges the entry and stops there (TSHELD); then,
 // from lbEBuf (at lbEAt, which the first call gives), the entry's words go
 // into the master's slot in the store (the instance module's poolRoom), its count before its
 // crosses worked out from its attachers (its mDrawOf), and its texts' count and digits set for
@@ -2454,11 +2386,15 @@ lyHeld,
     jsp i [mDrawOf:7+1]
     dac i lyQ
 
-    // Its texts' count and whether any is digits (an anchor), for the trial; lyT left at its
-    // words, which follow the texts.
+    // Its texts' count, their cost (the text module's txDrCo, for the masters' budget) and
+    // whether any is digits (an anchor), for the trial; lyT left at its words, which follow the
+    // texts.
     law LBHNTX
     jda lyWd
     dac i [rwTx:2]
+    law LBHCOST
+    jda lyWd
+    dac i [txDrCo:012]
     dzm i [rwDig:2]
     lac lbEAt
     add [LBHDRW]
@@ -2537,7 +2473,7 @@ lyNoRm,
     law DEFPROOM
 lyRef,
     sub [DEFPBIG]
-    add [lyMap:013]
+    add [lyMap:2]
     dac lyT
     lac i lyT
     dac lbRes
@@ -2594,12 +2530,8 @@ lyWd, 0
 lyWr, jmp .
 lyWp, 0
 
-    // The trial's refusals, DEFPBIG to DEFPDIGIT, as the library's.
-lyMap,
-    TSTOOBIG
-    TSSLOW
-    TSNOROOM
-    TSDIGIT
+    // The trial's refusals, DEFPBIG to DEFPDIGIT, as the library's, are bank 2's lyMap
+    // (sketchpad.am1), for this bank's room.
 lyB, 0
 lyK, 0
 lyT, 0

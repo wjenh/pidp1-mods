@@ -78,8 +78,8 @@ rcMLoop,
     sas [mLen:5 + NMASTER]  // skip if past the last slot
     jmp rcMLoop
 
-    // The conditions, ROWANY first. P, the points the dot can take, is pointCount less scN, since each
-    // number's digits own one anchor point, which the dot never takes.
+    // The conditions, ROWANY first. P, the points the dot can take, is pointCount less scN, since
+    // each number's digits own one anchor point, which the dot never takes.
     cli
     cla                 // ROWANY
     sub i [pointCount:4]

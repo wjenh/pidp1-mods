@@ -7,7 +7,7 @@
 |                  In the style of a classic DEC reference                   |
 +----------------------------------------------------------------------------+
 |  SYSTEM: 64K Words (16 Banks), Type 23 Drum, BBN Clock, Type 550 Microtape |
-|  SOFTWARE: Version 2.1 (8-Nov-2026) by Bill Ezell & Claude Opus            |
+|  SOFTWARE: Version 2.2 (11-Nov-2026) by Bill Ezell & Claude Opus            |
 +----------------------------------------------------------------------------+
 ```
 
@@ -82,9 +82,9 @@ toggles, lit while on.
 ## 3. Core Software Limits & Boundary Constraints
 
 * **Points:** Max 256
-* **Lines:** Max 264
-* **Arcs:** Max 19
-* **Instances:** Max 32
+* **Lines:** Max 256
+* **Arcs:** Max 34
+* **Instances:** Max 48
 * **Masters:** Max 16 slots (M1 to M16)
 * **Constraints (Total Slots):** Max 64
 * **Constraints (Internal/Slot):** Max 16
@@ -92,15 +92,16 @@ toggles, lit while on.
 * **Designations:** Max 6
 * **Nested Masters per Master:** Max 8
 * **Texts (Canvas):** Max 64
-* **Texts (Masters Total):** Max 64
+* **Texts (Masters Total):** Max 64, costing up to 900 characters (each text two more than its
+  characters)
 * **Max Text Length:** 24 characters
 * **CRT Max Glyphs:** 360 characters total visible
 * **Numbers (Total):** Max 64
 * **Vector Radii Boundaries:** 15 to 1294 display units
 * **Display List Memory Pools:** Two volatile core storage lanes configured at
-  **422 words** and **530 words**.
+  **341 words** and **530 words**.
 * **Master Tape Footprint:** Unified master tables must fit inside 23 blocks on a standard picture tape.
-  Individual library master exports are capped at 10 tape blocks.
+  Individual library master exports are capped at 32 tape blocks.
 
 ---
 

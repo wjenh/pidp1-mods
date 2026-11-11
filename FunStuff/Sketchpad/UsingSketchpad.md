@@ -3,9 +3,9 @@
 This document describes Sketchpad, a reproduction of Sutherland's Sketchpad for the PiDP-1 and its Type 340
 display, and how to use it.
 
-This is version 2.0\
-Edit date 4-Nov-2026\
-Updated for added functionality from the thesis.
+This is version 2.1\
+Edit date 11-Nov-2026\
+Increase limits on various items
 
 ## What is Sketchpad?
 
@@ -91,13 +91,13 @@ the creation of a standard png file of what would have been plotted.
 | File | What it is |
 |---|---|
 | *sketchpad.am1* | The program's main source file; it includes the others |
-| *sp\*.ac* | The rest of the source, thirty-nine files included by *sketchpad.am1* |
+| *sp\*.ac* | The rest of the source, forty-one files included by *sketchpad.am1* |
 | *sketchpad.ah* | The program's constants, sizes, times and limits, included by *sketchpad.am1* |
 | *intensities.ah* | The brightness of each kind of object drawn, included by *sketchpad.am1* |
-| *SketchpadGirl.img* | A Microtape image holding a drawing of the famous girl, as picture P1 |
-| *SketchpadGirlWink.img* | The true classic, the winkin girl, as P1 |
-| *SketchpadBridge.img* | The truss bridge of the thesis's figure 9.6, as P1 |
-| *SketchpadDimension.img* | A 3-4-5 triangle with dimension lines, the thesis's figure 9.5, as P1 |
+| *Tapes/SketchpadGirl.mtp* | A Microtape image holding a drawing of the famous girl, as picture P1 |
+| *Tapes/SketchpadGirlWink.mtp* | The true classic, the winking girl, as P1 |
+| *Tapes/SketchpadBridge.mtp* | The truss bridge of the thesis's figure 9.6, as P1 |
+| *Tapes/SketchpadDimension.mtp* | A 3-4-5 triangle with dimension lines, the thesis's figure 9.5, as P1 |
 | *Render/sketchplot.c*, *Render/Makefile* | *sketchplot*, the plotter replacement |
 | *SketchpadTechnicalDesign.md* | How the program is implemented and how it compares with the thesis |
 
@@ -609,7 +609,7 @@ Its tie points are the placed points it was tied to, so it stays joined to the p
 The held instances' texts are shown by the new instances, not placed as texts.
 A second Dismem on one of them takes the next level apart.
 This is also refused, nothing changing, if a held instance's size would be more than x8 or
-less than x1/4, if the drawing would have more than 32 instances, or if the masters the drawing
+less than x1/4, if the drawing would have more than 48 instances, or if the masters the drawing
 uses would leave no room for the held instances' masters, see *Limits*.
 
 ## Constraints
@@ -892,7 +892,8 @@ message showing under the menu until dismissed, see *Messages*, if:
 - the drawing is too large for a master (TOO BIG),
 - the drawing would take too long to draw as a master (TOO SLOW),
 - it has more than 16 constraints among its points (CONSTR),
-- all masters together would hold more than 64 texts (NO ROOM),
+- all masters together would hold more than 64 texts, or texts taking more than 900
+  characters, see *Limits* (NO ROOM),
 - while any instance cycles (CYCLING),
 - more than eight instances of other masters would be inside the new master, those held by
   instances of the master being defined included (TOO MANY),
@@ -900,7 +901,7 @@ message showing under the menu until dismissed, see *Messages*, if:
 - an instance's master, or a master held by an instance of the master being defined, has a
   number among its texts (DIGITS),
 - an instance of the master being defined cannot be taken apart because the tables lack room
-  for its parts, its texts included, the drawing would have more than 32 instances, or the
+  for its parts, its texts included, the drawing would have more than 48 instances, or the
   masters' store has no room for its held instances' masters (NO ROOM), a part would lie off the
   screen (OFF EDGE), an arc would be too large at its size (ARC SIZE), or an instance it holds
   would come to more than x8 or less than x1/4 (SCALE),
@@ -960,7 +961,7 @@ Undo of the copy removes them with the parts.
 
 Copy is refused if the drawing or the constraint table has no room for all its parts, or as
 Inst is for the master's display list, and for a master that holds instances, if the drawing
-would have more than 32 instances or the masters the drawing uses would leave no room for theirs.
+would have more than 48 instances or the masters the drawing uses would leave no room for theirs.
 
 ### Clear
 
@@ -1251,7 +1252,7 @@ their size and a margin, so that the digits maintain  a gap.
 Sizing the digits widens it.
 Two Gaps, one each side of the digits, and a Paral leave the gap in a dimension line, as in the
 thesis.
-*SketchpadDimension.img* shows one.
+*SketchpadDimension.mtp* shows one.
 
 **Size.**
 Lift with the dot on an instance, then on a number's digits.
@@ -1321,7 +1322,7 @@ describes.
 The program never mounts a tape itself.
 To try a sample picture, mount its image on a drive, choose that drive, and load P1.
 ```
-bin/mtp 1 /opt/pidp1-mods/FunStuff/Sketchpad/SketchpadBridge.img,locked
+bin/mtp 1 /opt/pidp1-mods/FunStuff/Sketchpad/Tapes/SketchpadBridge.mtp,locked
 ```
 *,locked* write-protects the drive, so a Save cannot overwrite the sample.
 
@@ -1382,7 +1383,12 @@ up to about 19 seconds for a load of P1 or P12 and 30 for a save.
 The directory only lists the picture name.
 A save cut short can leave its line showing the old name.
 If the directory's block itself is damaged, Dir, Save and Load all show BAD BLOCK and nothing
-opens, so the pictures behind it are not written over.
+opens,so the pictures are not written over.
+
+Pictures saved by an earlier release of Sketchpad are not read.
+Dir and Load show their lines as `-`, and a Load of one shows EMPTY and keeps the current drawing.
+The sample images in *Tapes* are saved in this release's form.
+A library tape of masters from an earlier release still loads.
 
 ## The library of masters
 
@@ -1620,10 +1626,10 @@ UNSTABLE is hidden while another message shows and returns once that message is 
 | NO TAPE | No tape is mounted on the drive chosen |
 | LOCKED | The tape is write-protected |
 | EMPTY | No picture or entry was saved in the slot or its save was cut short |
-| BAD BLOCK | A block of the picture, of the entry, or of the tape's directory could not be read correctly |
+| BAD BLOCK | A block of the picture, of the entry, or of the tape's directory could not be read correctly, or the picture is not correctly formatted. The canvas is left empty. |
 | NOT LIB | A library command found a picture tape on the drive; nothing was written |
 | NOT PICT | A picture command found a library tape on the drive; nothing was written |
-| NOT BLANK | The tape holds another program's data, so Save, or any library command, was refused; nothing was written |
+| NOT BLANK | The tape holds another program's data, nothing was written |
 | TAPE FULL | The library tape has no free run of blocks long enough for the entry |
 | NO FLAG | A tape fault, shouldn't happen |
 | NO ROOM | A text, a number, or an instance's texts would exceed the program's limits; or a library entry's texts would not fit with the other masters', or a master that holds the one replaced could not be made again, see *The library of masters*; or Define was refused, see *Define*; or Scale's lift or Undo found no room for an instance's size, see *Limits* |
@@ -1649,54 +1655,56 @@ UNSTABLE is hidden while another message shows and returns once that message is 
 
 ## Limits
 
-- Up to 256 points, 264 lines, 19 arcs and 32 instances.
+- Up to 256 points, 256 lines, 34 arcs. and 48 instances.
 - Sixteen masters, with up to 16 constraints kept with each master, and up to eight instances
   of other masters held inside each.
-  A master is up to 128 lines and 530 words of display list: a line drawn on from the last one's
-  end takes a word, one elsewhere two, a long line more, and a small circle about 65.
-  Every master is kept on the drum. The masters the drawing uses, its instances' and, while any
-  instance cycles, every master, are also kept whole in one of two stores in core, of 398 and 530
-  words, so together they are up to 928 words, and the room left can be enough in all and too
-  little in either.
-  A master nothing uses gives its room up when another needs it.
-- An instance at a size other than x1, x2, x4 or x8 draws a copy of its master's display list made
+  A master is up to 128 lines and 530 words of display list.
+  A line drawn on from the previous one's end takes a word, otherwise two, a long line more.
+  A circle takes 17 up to a radius of 84 units, 33 up to 337 units and 65 past that.
+  Every master is kept on the drum.
+  The masters the drawing uses, its instances and, while any
+  instance cycles, every master, are also kept in one of two stores in core, of 341 and 530
+  words, together they are up to 871 word.
+  A master nothing uses storage is freeed when another one needs space.
+- An instance at a size other than x1, x2, x4 or x8 draws a copy of its master's display list
   at that size, as long as the master's and kept in the same two stores.
-  There are up to sixteen such copies, one for each master and size in use: instances showing the
-  same digits share one, and so do sizes a doubling apart, x1.5 and x3.
-  A copy nothing uses gives its room up when another needs it, and a master whose instances all
-  draw copies is not itself kept in core.
-  Scale > Figure or All is refused with NO ROOM, nothing resized, when after it the drawing's
-  instances would need more than sixteen such copies, the instances it leaves alone counted.
-- Up to 64 constraints, counting fixed points, attachers and designations, the truss's members,
-  loads and rollers, the distances Dist, Change and Gap keep, and Keep's and Dim > Size's.
-- Six attachers in a drawing, so six tie points an instance, and six designations.
-- Up to 64 texts in the drawing, and 64 across the masters together, each of up to 24 characters.
+  There are up to sixteen such copies, one for each master and size in use.
+  Instances showing the same digits share one and so do sizes a doubling apart, x1.5 and x3.
+  A copy nothing uses also is freed when another copy needs space, and a master whose instances all
+  are copies is not itself kept in core.
+  Scale > Figure or All is refused with NO ROOM, nothing resized, if the drawing's
+  instances would need more than sixteen such copies.
+- Up to 64 constraints, counting fixed points, attacher,s and designations, the truss's members,
+  loads, and rollers, the distances Dist, Change, and Gap keep, and Keep's and Dim > Size's.
+- Six attachers in a drawing, six tie points an instance, and six designations.
+- Up to 64 texts in the drawing and 64 across the masters all together, each of up to 24 characters.
+  The masters' texts together take up to 900 characters, each counting two more than its
+  characters, as the screen's do below.
 - The screen can show 360 characters of text in all, the drawing's texts and the instances'
   together, each text counting two more than its characters, a space counting and Shift not.
-  That is about as much text as the display can draw without making the target slow to follow the
+  That is about as much text as the display can draw without making the target too slow to follow the
   pen.
 - Up to 64 numbers in the drawing.
   A number's digits are one of its texts and count against the texts and the characters as any
   text does.
   An instance's digits count as six characters, the most they can show.
-  In an instance at a size other than x1, x2, x4 or x8 a value past 65535 does not read true.
+  In an instance at a size other than x1, x2, x4 or x8 a value past 65535 does not reflect the actual value.
 - The view magnifies up to x8.
   An instance whose size times the view's exceeds x8 is hidden and a text is drawn at x8 at most.
 - A circle's radius is from 15 to 1294 units.
 - A circle swept at about one and a half turns a second (600 degrees a second) or faster can
   lose the pen just after it starts, most often on an empty screen, and the lift then keeps only
-  its first few degrees as an arc. No hand draws that fast in use.
+  its first few degrees as an arc.
+  In practice, this rate cannot be achieved by hand.
 - A bent arm's part, from a line's middle to its letter or on to the other line's, draws at most
-  508 units on each axis. A longer one, a letter set a ring or two apart between two lines most
-  of the screen's height apart, stops short there, so that the arm bends a little off its letter
-  or ends a little short of the second line.
-- A picture's name is up to 12 characters, and so is a master's and a library entry's.
-- A library tape holds up to 256 entries, each up to 32 of the tape's blocks: any one master fits,
-  texts and all, and an entry holds about four masters at every table's limit without texts
-  (seven blocks each), or ten the size of the girl's (three each).
-- Many instances of a large master slow the display: 32 of the largest Define takes draw about
-  a frame and a half a second, flickering. Nothing is lost, every command still works, a press
-  held a moment longer, and deleting instances, or Undo, brings the speed back.
+  508 units on each axis.
+- A picture's name is up to 12 characters, as is a master's and a library entry's.
+- A library tape holds up to 256 entries, each up to 32 of the tape's blocks.
+  Any one master always fits, texts and all, and an entry holds about four masters at every table's
+  limit without texts (seven blocks each), or ten the size of the girl (three each).
+- Many instances of a large master slow the display.
+  48 of the largest Define takes draw about one frame a second.
+  Nothing is lost, every command still works.
 
 ## Compared with the thesis
 
@@ -1704,7 +1712,7 @@ Every constraint and nearly every push button in the thesis is here, as a menu r
 
 Missing:
 - Rotation: rotated or mirrored instances, rotated text and digits, and the constraints that
-  turn a something upright or set a text's angle.
+  turn something upright or set a text's angle.
   The Type 340 cannot rotate.
 - The Constraint button, which made a constraint on loose points to be merged onto others later.
   Each constraint is applied to what you pick, and a new kind is a master with its
@@ -1731,7 +1739,7 @@ Added:
 ## sketchplot, a picture as a PNG
 
 *sketchplot* draws a picture saved on a Microtape as a PNG file without the emulator needing to be running.
-It subsitutes for the plotter and emulator if you want to produce a plot from a tape directly.
+It substitutes for the plotter and emulator if you want to produce a plot from a tape directly.
 The PNG it writes is compressed, a few kilobytes at the default size.
 It is in the *Render* directory and is built when sketchpad is built.
 Misc > Plot draws the same page on the plotter, see *Plot*.
@@ -1768,7 +1776,7 @@ The menu, the target, the marks, and the truss's readouts are not drawn.
 
 For instance, printing the bridge:
 ```
-sketchplot -t SketchpadBridge.img -i bridge.png
+sketchplot -t SketchpadBridge.mtp -i bridge.png
 ```
 
 ## Finally, the end

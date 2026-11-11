@@ -1,11 +1,12 @@
 // sptape.ac -- the tape module: a picture's save to and load from the Type 550 Microtape on
-// the drive in use, the tape's directory, and the directory's screen, on which Save and Load
-// pick one of the twelve pictures.
+// the drive in use, and the tape's directory, which the keyboard service shows as the
+// directory's screen, on which Save and Load pick one of the twelve pictures.
 //
 // Bank 11, after the overlay manager. The root part comes first: the words the module keeps
 // between calls, the name Save writes, the directory, Save's keyboard block with its prompts, and
-// the directory's screen, its blocks and its key tables, which the keyboard service shows and
-// reads (spkbd.ac, kbOpen and kbKey) through their 16-bit addresses. Then the overlay tape, read
+// the directory's screen's blocks and the masters' picker's, which the keyboard service reads
+// (spkbd.ac, kbOpen) through their 16-bit addresses, the screens themselves being the overlay
+// kbd's (dirList, its lines written from tpDir at the open). Then the overlay tape, read
 // into the window W, in bank 6, from the drum when it is called (Docs/UsingOverlays.md): Save,
 // Load, Dir and their helpers, the run lists, and the words used within one call; it reaches
 // the root's words through their 16-bit addresses. Then, in the root again, the tape's
@@ -19,8 +20,7 @@
 // one, and calls nothing outside W and bank 11 but the view module's vwInit (bank 12).
 // Part of sketchpad.am1, included where it stands.
 //
-// The tape's layout, format 19; formats 18 and 17 are read too (sketchpad.ah, TPFORMAT18 and
-// TPFORMAT17). Picture p (0
+// The tape's layout, format 21; no other is read (sketchpad.ah, TPFORMAT). Picture p (0
 // to 11, P1 to P12) has a slot of TPSLOT blocks, P1 to P6 from block 1, P7 to P12 from
 // TPDIRBLK + 1 (tpFirst); block TPDIRBLK between them is the tape's directory, and block 0 is
 // not used. A picture is three parts, one after another from
@@ -134,8 +134,8 @@
     TPREV(mtAn:013, TPSMAS); \
     TPREV(txAn:3, TPSCAN)
 
-// The directory's lines and their hit records are sketchpad.ah's DIRLINE and DIRREC, which the
-// library's screen shares.
+// The directory's screen is the keyboard's (spkbd.ac, dirList), its lines sketchpad.ah's
+// DIRLINE, which the library's screen and the masters' picker share.
 
 // The module's words kept between calls.
 tpName,                 // the name a save writes, typed on the keyboard (tpSvBlk)
@@ -175,24 +175,25 @@ tpPrm12, type340 "P12 name"
 // The directory's screen's blocks, Dir's, Save's and Load's, which tapeStep gives the main
 // bank's actTape. Each holds the kind, KBDIR; the keys
 // the screen acts on, its key alone for Dir, and for the picker its key, Cancel, and the twelve
-// lines; the key's text, three words, which kbOpen copies into dirKTxt; the screen's descriptor
-// (dirScr) in the buffer's place; the resume; and no run.
+// lines; the key's text, three words, which kbOpen copies into dirKTxt; the screen's number,
+// KBSDIR, in the buffer's place; the resume; and no run. The screen itself, its tables and the
+// writing of its lines from tpDir are the keyboard's (spkbd.ac, dirList and kbDirFill).
 tpDirBlk, KBDIR
     1
     tpOKTxt:013
-    dirScr:013
+    KBSDIR
     nothing:4
     0
 tpSvPick, KBDIR
     DIRKEYS
     tpCanTxt:013
-    dirScr:013
+    KBSDIR
     tapeResume:4
     0
 tpLdPick, KBDIR
     DIRKEYS
     tpCanTxt:013
-    dirScr:013
+    KBSDIR
     tapeResume:4
     0
 tpOKTxt,
@@ -204,161 +205,62 @@ tpCanTxt,
     016 * 010000 + 003 * 0100 + 005
     014 * 010000 + KCUP * 0100 + KCEND
 
-// The directory's screen's descriptor, which kbOpen reads: its keys' hit records, parameter
-// words' addresses and codes, the key's text, the key, and the list.
-dirScr,
-    dirRec:013
-    dirBlkT:013
-    dirCode:013
-    dirKTxt:013
-    dirKey:013
-    dirList:013
-
-// The screen's keys, as the keyboard's tables give them (kbOpen, kbFind, kbKey). Each key's
-// parameter word, its code and its hit record, the screen's key first, then the lines, P1 to
-// P12, each a pick (KAPICK) of the picture one less than its key.
-dirBlkT,
-    dirKey:013
-    dirL:013 + 0 * DLWORDS
-    dirL:013 + 1 * DLWORDS
-    dirL:013 + 2 * DLWORDS
-    dirL:013 + 3 * DLWORDS
-    dirL:013 + 4 * DLWORDS
-    dirL:013 + 5 * DLWORDS
-    dirL:013 + 6 * DLWORDS
-    dirL:013 + 7 * DLWORDS
-    dirL:013 + 0d8 * DLWORDS
-    dirL:013 + 0d9 * DLWORDS
-    dirL:013 + 0d10 * DLWORDS
-    dirL:013 + 0d11 * DLWORDS
-dirCode,
-    KSPEC | KNUM | KACANCEL
-    table NPICT, KSPEC | KNUM | KAPICK
-dirRec,
-    KBXOK - KBR
-    KBXOK + 0d6 * KBADV + KBRX
-    KBYB - KBR
-    KBYB + KBH + KBR
-    DIRREC(0, 0)
-    DIRREC(1, 0)
-    DIRREC(2, 0)
-    DIRREC(3, 0)
-    DIRREC(4, 0)
-    DIRREC(5, 0)
-    DIRREC(0, 1)
-    DIRREC(1, 1)
-    DIRREC(2, 1)
-    DIRREC(3, 1)
-    DIRREC(4, 1)
-    DIRREC(5, 1)
-
-// The directory's screen. It shows the drive in use; each picture's line, P1 to P6 down the
-// left and P7 to P12 down the right, its label and its name, taking the pen so that the
-// picker's taps find them; and the key, OK or Cancel, where the keyboard's OK is; then its
-// halt. tpGetDir writes the drive's digit and the twelve names, kbOpen the key's text and its
-// parameter word, before frameGo points here. It holds no jump or save, as the keyboard's list
-// does not.
-dirList,
-    KBTXT
-    y(KBPY) next(point)
-    x(KBX0) next(character)
-    type340 "Drive"
-    KBTXT
-    y(KBPY) next(point)
-    x(KBX0 + 0d6 * KBADV) next(character)
-dirDrv, KCUP * 010000 + DRVCODE1 * 0100 + KCEND
-dirL,
-    DIRLINE(0, 0, KCP * 010000 + (KCZERO + 1) * 0100 + KCSPACE)
-    DIRLINE(1, 0, KCP * 010000 + (KCZERO + 2) * 0100 + KCSPACE)
-    DIRLINE(2, 0, KCP * 010000 + (KCZERO + 3) * 0100 + KCSPACE)
-    DIRLINE(3, 0, KCP * 010000 + (KCZERO + 4) * 0100 + KCSPACE)
-    DIRLINE(4, 0, KCP * 010000 + (KCZERO + 5) * 0100 + KCSPACE)
-    DIRLINE(5, 0, KCP * 010000 + (KCZERO + 6) * 0100 + KCSPACE)
-    DIRLINE(0, 1, KCP * 010000 + (KCZERO + 7) * 0100 + KCSPACE)
-    DIRLINE(1, 1, KCP * 010000 + (KCZERO + 0d8) * 0100 + KCSPACE)
-    DIRLINE(2, 1, KCP * 010000 + (KCZERO + 0d9) * 0100 + KCSPACE)
-    DIRLINE(3, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO)
-    DIRLINE(4, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 1)
-    DIRLINE(5, 1, KCP * 010000 + (KCZERO + 1) * 0100 + KCZERO + 2)
-dirKey, KBKEY
-    y(KBYB) next(point)
-    x(KBXOK) next(character)
-dirKTxt,
-    017 * 010000 + 013 * 0100 + KCUP
-    KBPAD
-    KBBLANK
-dirHalt, lpoff halt interrupt
-
 // The masters' picker: the directory's screen made again for the masters (the keyboard's KBDIR
-// screens, spkbd.ac), its list and lines in bank 5 (sketchpad.am1's mpkList), its blocks, keys
-// and hit records here.
-
-// The hit record of the picker's line at row r of column c, as DIRREC's.
-#define MPKREC(r, c) \
-    DIRX0 + (c) * DIRCOLDX - DIRRX; \
-    DIRX0 + (c) * DIRCOLDX + MPKCHARS * KBADV + DIRRX; \
-    DIRY0 - (r) * DIRDY - DIRRY; \
-    DIRY0 - (r) * DIRDY + KBH + DIRRY
+// screens, spkbd.ac), its list and lines in bank 5 (sketchpad.am1's mpkList), its blocks and
+// its lines' addresses here, its descriptor, codes and hit records the keyboard's.
 
 // The picker's blocks, Define's, Inst's, Copy's, Change's (its Master row) and Dwell's, which
 // the instance module's instKbOpen gives the main bank's actKb, and Library's Save's and Load's,
 // which it gives libStep (splib.ac). Each holds the kind, KBDIR; its keys, Cancel and the
-// sixteen lines; Cancel's text; the screen's descriptor (mpkScr); and the resume, the row's
+// sixteen lines; Cancel's text; the screen's number, KBSMPK; and the resume, the row's
 // action, which takes the master picked (pkTake), or for Dwell and Define ckDone, which opens
 // Dwell's number keyboard or Define's name keyboard (instKbDone), or for Library's rows the
 // main bank's tapeResume.
 mpkDfBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     ckDone:4
     0
 mpkInBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     actInst:4
     0
 mpkCpBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     actCopy:4
     0
 mpkChBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     actChange:4
     0
 mpkDwBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     ckDone:4
     0
 mpkLsBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     tapeResume:4
     0
 mpkLlBlk, KBDIR
     MPKEYS
     tpCanTxt:013
-    mpkScr:013
+    KBSMPK
     tapeResume:4
     0
 
-// The picker's descriptor, as dirScr's, and its keys: Cancel first, then the lines, M1 to M16,
-// each a pick (KAPICK) of the master one less than its key.
-mpkScr,
-    mpkRec:013
-    mpkBlkT:013
-    mpkCode:013
-    mpkKTxt:5
-    mpkKey:5
-    mpkList:5
+// The picker's keys' parameter words' addresses: Cancel's first, then the lines', M1 to M16,
+// which the tape, the library and the instance module read too, to reach a master's line.
 mpkBlkT,
     mpkKey:5
     mpkL:5 + 0 * MPKWORDS
@@ -377,30 +279,6 @@ mpkBlkT,
     mpkL:5 + 0d13 * MPKWORDS
     mpkL:5 + 0d14 * MPKWORDS
     mpkL:5 + 0d15 * MPKWORDS
-mpkCode,
-    KSPEC | KNUM | KACANCEL
-    table NMASTER, KSPEC | KNUM | KAPICK
-mpkRec,
-    KBXOK - KBR
-    KBXOK + 0d6 * KBADV + KBRX
-    KBYB - KBR
-    KBYB + KBH + KBR
-    MPKREC(0, 0)
-    MPKREC(1, 0)
-    MPKREC(2, 0)
-    MPKREC(3, 0)
-    MPKREC(4, 0)
-    MPKREC(5, 0)
-    MPKREC(6, 0)
-    MPKREC(7, 0)
-    MPKREC(0, 1)
-    MPKREC(1, 1)
-    MPKREC(2, 1)
-    MPKREC(3, 1)
-    MPKREC(4, 1)
-    MPKREC(5, 1)
-    MPKREC(6, 1)
-    MPKREC(7, 1)
 
 // The overlay tape: Save, Load and Dir (tapeEntryOv) and Save's name (tpPickNameOv), with every
 // word they use within one call, read again from the drum at each load.
@@ -427,7 +305,7 @@ tapeEntryOv,
     dac teRtn
     dio teSel
     lsm
-    lio [waitList:0]
+    lio [waitList:1]
     dla
     lac teSel
     sad [TEMORE]        // skip unless an entry's turn, the drive selected
@@ -524,15 +402,9 @@ tpMsgs,
     table 4 * (TSOTHER - TSNOTPIC - 1), 0
     type340 "NOT BLANK"
 
-// Name runs (NAMEW words, sketchpad.ah). Blank, which the keyboard reads as an empty text; and "-"
-// for no picture, written as codes, an upper shift and "-", since a text's end code may stand
-// only in the run's last word.
+// A blank name's run (NAMEW words, sketchpad.ah), which the keyboard reads as an empty text.
 tpBlank,
     table NAMEW - 1, KBPAD
-    KBBLANK
-tpDash,
-    KCUP * 010000 + 055 * 0100 + KCUP
-    table NAMEW - 2, KBPAD
     KBBLANK
 
 // The first block of picture tapePic, from tpFirst.
@@ -691,14 +563,14 @@ rtn, jmp .
 // Read the tape's directory block into tpDir, the rest of the block after it into tpEBuf. A
 // block whose sum is not zero is refused, BAD BLOCK, since the pictures behind it may still be
 // read; a library tape's directory (splib.ac), NOT PICT, so that no save writes over it. A
-// picture tape's directory of another format than this one, 18 or 17 reads as twelve empty
+// picture tape's directory of another format than this one reads as twelve empty
 // entries, as does a block with neither magic: tpDirZ set when every word of it is zero, a
 // blank tape, and tpOther when not, another program's, which a save refuses (tpSave). That is
 // not a failure, so that Dir and Load show the empty entries.
 // Exit: AC = 0, TSBAD, TSNOTPIC, or tpSeek's or tpRead's failure; tpDirZ and tpOther set. IO is
 // clobbered. Called via jsp.
 tpRdDir,
-    local rtn, trdNone, trdLoop, trdSum, trdLib, trdFmt, trdTest, trdOther
+    local rtn, trdNone, trdLoop, trdSum, trdLib, trdTest, trdOther
     dap rtn
     dzm tpDirZ
     dzm tpOther
@@ -730,13 +602,8 @@ trdLib,
     sas [TPMAGIC]       // skip if the magic
     jmp trdTest
     lac tpHdrB+1
-    sad [TPFORMAT17]    // skip unless format 17's, the same directory
-    jmp trdFmt
-    sad [TPFORMAT18]    // skip unless format 18's, the same directory
-    jmp trdFmt
     sas [TPFORMAT]      // skip if this format
     jmp trdNone
-trdFmt,
     lac tpHdrB+2
     sas [TPDIRW]        // skip if a directory, not a picture
     jmp trdNone
@@ -800,7 +667,7 @@ rtn, jmp .
 // first block's flag: every data word ORed into tpOr, and the first block's first kept in tpW0.
 // Not the checksums, since a block never written gives a leading one of minus zero; no sum is
 // checked, since only zeros matter. A loop of its own, since tpRead's has no time for the OR at
-// a run change (CompletedTasks/TASK-SPEED-TAPE.md). The tape is stopped after the last.
+// a run change. The tape is stopped after the last.
 // Exit: AC = 0; TSBAD on a tape error. IO is clobbered. Called via jsp.
 tpScan,
     local rtn, scBlock, scData, scNoDF, scBEF, scErr, scK, scW
@@ -864,22 +731,18 @@ scW, 0
 
 // Load the picture: its stream, here, then each master's entry (tpMore) and the close
 // (tpLdEnd). The picture's first block read alone, for its header, which must hold the magic,
-// this format and its stream's size or format 18 or 17 and its own, and entries that end within
-// the slot; then the check pass
+// this format and its stream's size, and entries that end within the slot; then the check pass
 // over all its blocks, keeping only the two headers; the headers judged, then the blocks' sums;
-// then the reverse search to the stream's last block, and the reverse pass into the tables; the
-// entries' blocks counted from the tables just read, which must be the header's; for formats 18
-// and 17, each master's texts counted as its own (mTxOwn), the reverse pass having read their
-// pad's zeros there, since only stage A's Define derived texts and nothing marked them; for
-// format 17, each master given the nesting words of one with none (the instance module's mFlat),
-// the reverse pass having read its pad's zeros into them, so that its entries read with no
-// sub-instances; then the first master's entry asked for (tpNext). A pass that fails once the
-// tables have begun to change empties them (tpWipe).
+// then the reverse search to the stream's last block, and the reverse pass into the tables
+// (tpLoadRuns); the entries' blocks counted from the tables just read, which must be the
+// header's; the masters' texts' costs within MTBUDGET and each pool's top within the pool, as
+// every save leaves them (the text module's txFit); the instances within MAXINST and each one's
+// master within NMASTER; then the first master's entry asked for (tpNext). A pass that fails
+// once the tables have begun to change empties them (tpWipe).
 // Exit: AC = the result, TSMORE, TSEMPTY, TSBAD, TSWIPED, or tpSeek's or tpRead's failure, or
 // tpNext's. IO is clobbered. Called via jsp.
 tpLoad,
-    local rtn, tlFirst, tlN, tlK, tlEmpty, tlBad, tlWipe, tlOld, tl18, tlSize, tlOwn, tl17, \
-        tlFlat, tlNew
+    local rtn, tlFirst, tlN, tlK, tlEmpty, tlBad, tlWipe, tlCost, tlMast, tlNew
     dap rtn
     jsp tpBase
     dac tlFirst
@@ -902,20 +765,9 @@ tpLoad,
     sas [TPMAGIC]       // skip if a picture
     jmp tlEmpty
     lac tpHdrA+1
-    sad [TPFORMAT17]    // skip unless format 17
-    jmp tlOld
-    sad [TPFORMAT18]    // skip unless format 18
-    jmp tl18
     sas [TPFORMAT]      // skip if this format
     jmp tlEmpty
     lac [TPSTREAM]
-    jmp tlSize
-tl18,
-    lac [TPSTREAM18]
-    jmp tlSize
-tlOld,
-    lac [TPSTREAM17]
-tlSize,
     sas tpHdrA+2        // skip if its size
     jmp tlEmpty
     lac tpHdrA+4
@@ -988,34 +840,57 @@ tlSize,
     jsp tpEnts
     sas tpHdrA+4        // skip if the entries are the header's blocks
     jmp tlWipe
-    lac tpHdrA+1
-    sad [TPFORMAT]      // skip unless format 18 or 17
-    jmp tlNew
-    dzm tlK
-tlOwn,
-    lac tlK
-    sad i [mtN:012]     // skip while the masters' texts remain
-    jmp tl17
-    add [mtM:013]
+    lac [txMCost:012]
     dac tpPtr
+    law i NMASTER
+    dac tlK
+    dzm tlN
+tlCost,
+    lac tlN
+    add i tpPtr
+    dac tlN
+    idx tpPtr
+    isp tlK             // skip once every master's cost is in
+    jmp tlCost
+    lac tlN
+    sub [MTBUDGET+1]
+    sma                 // skip unless past MTBUDGET
+    jmp tlWipe
+    lac i [txRS:012+NTEXT]
+    sub [TXPOOLW+1]
+    sma                 // skip unless past the canvas's pool
+    jmp tlWipe
+    lac i [mtRS:013+NMTEXT]
+    sub [MTPOOLW+1]
+    sma                 // skip unless past the masters' pool
+    jmp tlWipe
+
+    // The instances no more than MAXINST, and each one's master one of the NMASTER, as every
+    // save leaves them: a master past them would send the rebuild's mrLoad (spinst.ac) past its
+    // jump table, a hang. A sub gives -0 only for -0 - +0, so each bound is exact.
+    lac i [instCount:012]
+    spa                 // skip unless negative
+    jmp tlWipe
+    sub [MAXINST+1]
+    sma                 // skip unless past MAXINST
+    jmp tlWipe
+    lac i [instCount:012]
+    sza i               // skip if any instance
+    jmp tlNew
+    cma
+    dac tlK
+    lac [iMaster:012]
+    dac tpPtr
+tlMast,
     lac i tpPtr
-    add [mTxOwn:5]
-    dac tpPtr
-    idx i tpPtr
-    idx tlK
-    jmp tlOwn
-tl17,
-    lac tpHdrA+1
-    sas [TPFORMAT17]    // skip if format 17
-    jmp tlNew
-    dzm tlK
-tlFlat,
-    lac tlK
-    dac i [mFlat:7]
-    jsp i [mFlat:7+1]
-    idx tlK
-    sas [NMASTER]       // skip once every master is taken
-    jmp tlFlat
+    spa                 // skip unless negative
+    jmp tlWipe
+    sub [NMASTER]
+    sma                 // skip if under NMASTER
+    jmp tlWipe
+    idx tpPtr
+    isp tlK             // skip once every instance's master is in
+    jmp tlMast
 tlNew,
     lac tlFirst
     add [TPPBLOCKS]
@@ -1605,59 +1480,16 @@ tdLoop,
 tdRtn, jmp .
     endloc
 
-// Dir's, Save's and Load's read (TEDIR). It reads the tape's directory (tpRdDir), then writes
-// each picture's line of the directory's screen, its name, or "-" with no picture, and the
-// drive in use into the screen's title.
+// Dir's, Save's and Load's read (TEDIR): the tape's directory read into tpDir (tpRdDir), from
+// which the keyboard's open writes the directory's screen (spkbd.ac, kbDirFill).
 // Exit: AC = TSOPEN, or tpRdDir's failure. IO is clobbered. Called via jsp.
 tpGetDir,
-    local rtn, tdLoop, tdPic, tdDash, tdCopy, tdE, tdL, tdN
+    local rtn
     dap rtn
     jsp tpRdDir
-    sza                 // skip if read
-    jmp rtn
-    lac [tpDir:013]
-    dac tdE
-    lac [dirL:013 + DLNAME]
-    dac tdL
-    law i NPICT
-    dac tdN
-tdLoop,
-    lac i tdE
-    sad [TPFORMAT17]    // skip unless a format 17 picture
-    jmp tdPic
-    sad [TPFORMAT18]    // skip unless a format 18 picture
-    jmp tdPic
-    sas [TPFORMAT]      // skip if a picture
-    jmp tdDash
-tdPic,
-    lac tdE
-    add [1]             // its name
-    jmp tdCopy
-tdDash,
-    lac [tpDash:6]
-tdCopy,
-    dac tpPtr
-    lac tdL
-    dac tpRun
-    law NAMEW
-    jda tpMove
-    lac tdE
-    add [TPDENT]
-    dac tdE
-    lac tdL
-    add [DLWORDS]
-    dac tdL
-    isp tdN             // skip once every line is written
-    jmp tdLoop
-    lac i [tapeDrive:4]
-    sal 6s
-    add [KCUP * 010000 + DRVCODE1 * 0100 + KCEND]
-    dac i [dirDrv:013]
+    sza i               // skip unless read
     lac [TSOPEN]
 rtn, jmp .
-tdE, 0
-tdL, 0
-tdN, 0
     endloc
 
 // Save's name for the picture picked (tapePic, set by tapeStep). It sets the
@@ -1667,18 +1499,13 @@ tdN, 0
 // Entry: AC = the return address, which carries the main bank. AC and IO are clobbered. Called
 // through the root stub tpPickName, by the manager.
 tpPickNameOv,
-    local tpkRtn, tpkPic, tpkBlank, tpkCopy
+    local tpkRtn, tpkBlank, tpkCopy
     dac tpkRtn
     jsp tpEntry
     dac tpPtr
     lac i tpPtr
-    sad [TPFORMAT17]    // skip unless a format 17 picture
-    jmp tpkPic
-    sad [TPFORMAT18]    // skip unless a format 18 picture
-    jmp tpkPic
     sas [TPFORMAT]      // skip if a picture
     jmp tpkBlank
-tpkPic,
     idx tpPtr           // its name
     jmp tpkCopy
 tpkBlank,
@@ -1918,7 +1745,8 @@ rtn, jmp .
 // load's first block, its header kept; the check pass's, the two headers kept and every other
 // word to tpSink, as many as tpLoad sets in tpChkN; the reverse pass's, the stream's runs
 // backward in the reverse order, the header to tpSink; and the directory block's, read and
-// written. An entry's is built in tpEntL (tpEntRuns).
+// written. An entry's is
+// built in tpEntL (tpEntRuns).
 tpSaveRuns,
     TPRUN(tpHdr:013, TPHDRWORDS)
     TPRUN(conTab:011, CONWORDS)

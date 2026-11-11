@@ -253,6 +253,29 @@ endChain,
 rtn, jmp .
     endloc
 
+// A mode's entry from its row: with tracking off, the target first goes to the middle, as
+// Locate does; then endChain, and the target's miss count, its last hit's time and its loss
+// start again. The band's gate is left shut: each entry opens it once its mode has placed the
+// dot. Exit: miWas = the tracking word as it was on entry. AC and IO are clobbered. Called via
+// jsp.
+modeIn,
+    local rtn, miGo
+    dap rtn
+    lac i [tracking:0]
+    dac miWas
+    sza                 // skip if tracking is off
+    jmp miGo
+    jsp placeTarget
+miGo,
+    jsp endChain
+    dzm i [trackMiss:0]
+    lac now
+    dac i [lastHitAt:0]
+    dzm trackLost
+rtn, jmp .
+    endloc
+miWas, 0
+
 // Circle mode, a target hit. The stroke is live; move the pseudo pen location and the band.
 // AC and IO are clobbered. Called via jsp.
 circleTarget,
@@ -346,7 +369,7 @@ clStart,
     dac startY
     lac penIdx
     dac startPointIdx
-    lac [jump arcBand:0 next(parameter)]
+    lac [jump arcBand:1 next(parameter)]
     dac i [bandGate:0]
     law 2
     dac circPhase
@@ -425,19 +448,9 @@ lockD, 0
 // dragged, it drops it and starts over.
 // AC and IO are clobbered. Called via jsp.
 actMove,
-    local rtn, amGo, amWas
+    local rtn
     dap rtn
-    lac i [tracking:0]
-    dac amWas
-    sza                 // skip if tracking is off
-    jmp amGo
-    jsp placeTarget
-amGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     lac [CEDIT]
     dac newCol
     law MMOVE
@@ -449,11 +462,10 @@ amGo,
     dac i [dotBlock:0]
     lac [jump dotBlock:0 next(parameter)]
     dac i [bandGate:0]
-    lac amWas
+    lac miWas
     sza                 // skip if tracking was off
     jsp pickUp
 rtn, jmp .
-amWas, 0
     endloc
 
 // Move mode, a target hit. Drag the instance being moved, by a tie point or not, or the point
@@ -947,7 +959,16 @@ leE, 0
 // Edit's Scale row and Scale mode, the scale module's routines in bank 6
 // (spscale.ac), each reached by its gate here, a jump there, and returning across the banks by
 // the address its jsp left. Entry and exit as each routine's. Called via jsp.
-actScale, jmp i [scAct:6]
+// actScale drops a copy being placed first (copyDrop), here in root: Scale's act entry runs
+// inside an overlay, and the setMode it calls would otherwise reach the drop there, whose
+// copySubs calls the overlay defdism, a nested call the manager refuses. scActOv and gsAct
+// read no IO, so copyDrop's clobbering it does no harm.
+actScale,
+    dac asR
+    jsp copyDrop
+    lac asR
+    jmp i [scAct:6]
+asR, 0
 scaleTarget, jmp i [scTarget:6]
 scaleLost, jmp i [scLost:6]
 scaleEnd, jmp i [scEnd:6]
@@ -959,18 +980,9 @@ scaleEnd, jmp i [scEnd:6]
 // tracking off, the target first goes to the middle, as Locate does.
 // AC and IO are clobbered. Called via jsp.
 actDelete,
-    local rtn, adGo
+    local rtn
     dap rtn
-    lac i [tracking:0]
-    sza                 // skip if tracking is off
-    jmp adGo
-    jsp placeTarget
-adGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     lac [CEDIT]
     dac newCol
     law MDELETE
@@ -1000,9 +1012,9 @@ rtn, jmp .
 // selection or the last deletion does nothing, and so does one with nothing locked. So does a
 // loss after a menu hit that came since the target's last, which checkLost finds with the stroke
 // dropped: the pen went to the menu, Stop most likely, whose hit a long pass (the lines' search
-// at 192) has not read yet. The program stays in delete mode. A deletion of parts wakes the constraint module while it
-// has entries, so that its next pass drops those the deletion spoiled, the N's and C's of a line
-// or an arc deleted among them (cGone).
+// at 192) has not read yet. The program stays in delete mode. A deletion of parts wakes the
+// constraint module while it has entries, so that its next pass drops those the deletion spoiled,
+// the N's and C's of a line or an arc deleted among them (cGone).
 // AC and IO are clobbered. Called via jsp.
 deleteLost,
     local rtn, dlParts, dlInst, dlDone
@@ -1050,18 +1062,9 @@ rtn, jmp .
 // With tracking off, the target first goes to the middle, as Locate does.
 // AC and IO are clobbered. Called via jsp.
 actHorv,
-    local rtn, ahGo
+    local rtn
     dap rtn
-    lac i [tracking:0]
-    sza                 // skip if tracking is off
-    jmp ahGo
-    jsp placeTarget
-ahGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     lac [CEDIT]
     dac newCol
     law MHORV
@@ -1169,19 +1172,10 @@ actTie,
 actFix,
     lio [MFIX]
 afMode,
-    local rtn, afGo, afM, afP
+    local rtn, afM, afP
     dap rtn
     dio afM
-    lac i [tracking:0]
-    sza                 // skip if tracking is off
-    jmp afGo
-    jsp placeTarget
-afGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     lac afM
     sub [MFIX]
     add [afTab:3]
@@ -1337,7 +1331,7 @@ rtn, jmp .
 // (consLost).
 // Entry: lastItem = the item. AC and IO are clobbered. Called via jsp.
 actCons,
-    local rtn, acGo, acMode, acT
+    local rtn, acMode, acT
     dap rtn
     lac lastItem
     sub [ICONS1]
@@ -1345,16 +1339,7 @@ actCons,
     dac acT
     lac i acT
     dac consType
-    lac i [tracking:0]
-    sza                 // skip if tracking is off
-    jmp acGo
-    jsp placeTarget
-acGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     dzm consPick
     lio [CEDIT]
     lac consType
@@ -1735,7 +1720,7 @@ rtn, jmp .
 // Entry: lastItem = the item; for actChange, IO = 1 for a pick, 0 for Cancel. AC and IO are
 // clobbered. Called via jsp, actChange via jsp i from onMenuHit.
 actSize,
-    local rtn, asGo, asJoin, asChg, asMode, asArg
+    local rtn, asJoin, asChg, asMode, asArg
     dap rtn
     law MSIZE
     dac asMode
@@ -1763,16 +1748,7 @@ asChg,
     lac asArg
 asJoin,
     dac asArg
-    lac i [tracking:0]
-    sza                 // skip if tracking is off
-    jmp asGo
-    jsp placeTarget
-asGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     lac [CEDIT]
     dac newCol
     lac asMode
@@ -2134,18 +2110,9 @@ cyP, 0
 // the program returns to Locate's mode.
 // AC and IO are clobbered. Called via jsp.
 placeInst,
-    local rtn, aiGo, aiShow
+    local rtn, aiShow
     dap rtn
-    lac i [tracking:0]
-    sza                 // skip if tracking is off
-    jmp aiGo
-    jsp placeTarget
-aiGo,
-    jsp endChain
-    dzm i [trackMiss:0]
-    lac now
-    dac i [lastHitAt:0]
-    dzm trackLost
+    jsp modeIn
     lac [CPICTURE]
     dac newCol
     law MPLACE

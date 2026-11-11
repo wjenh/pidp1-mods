@@ -11,7 +11,7 @@ Initial version.
 
 Mtfs directly modifies a tape image that contains a Microtape file system.
 
-It lists the tape's files, adds a host file, delestes a file,
+It lists the tape's files, extracts a file, adds a host file, deletes a file,
 formats a tape, and packs a tape to recover space left from deleting files.
 ```
 mtfs -l image
@@ -48,13 +48,13 @@ Warnings go to stderr and do not change the status.
 **The forms.** A file's length is kept in words, so:
 - `bytes`: two 8-bit bytes a word, the first in bits 0-8, as am1's `ascii` packs characters.
   An odd last byte leaves the low half 0.
-- `text`: as `bytes`, with each line end ,LF or CR LF, stored as CR (015).
+- `text`: as `bytes`, with each line end, LF or CR LF, stored as CR (015).
   Extract converts each CR to LF and drops any trailing 0 bytes.
-- `words`: each 18-bit word in a little-endian 32-bit word as the image file stores then.
+- `words`: each 18-bit word in a little-endian 32-bit word as the image file stores them.
   A value greater than 0777777 gives an error.
   Use this for a `.rim` image.
 
-Extract refuses a tape image file whose blocks do not total zero, BADBLOCK, a checksum error.
+Extract refuses if the sum of an extracted block does not total zero, BADBLOCK, a checksum error.
 
 A half word of 9 bits is extracted as `bytes` or `text` using only its low 8 bits
 with a warning, `words` keeps all 9 bits.

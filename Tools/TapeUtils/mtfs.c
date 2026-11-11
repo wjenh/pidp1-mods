@@ -1,5 +1,5 @@
 /*
- * mtfs: manage  Microtape file system on a Type 550 tape image.
+ * mtfs: manage a Microtape file system on a Type 550 tape image.
  *
  * Usage: mtfs -l image
  *        mtfs -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image
@@ -11,7 +11,7 @@
  * -l         - list the directory
  * -a         - add the host file source to the tape as -n name
  * -d         - delete -n name
- * -x         - extract -n  name to the output file
+ * -x         - extract -n name to the output file
  * -i         - format: write an empty directory, creating the image if it is missing
  * -p         - pack: move the files down to close the gaps between them
  * -n name    - the file's name: 1 to 9 characters, no control character, no leading blank,
@@ -1585,7 +1585,7 @@ usage(void)
         "  -b blocks: octal, at least as big as the data, at most 0777; default the data's size.\n"
         "  -f form:\n"
         "     bytes (default), two 8-bit bytes a word;\n"
-        "     text, as bytes with line terminatorsstored as CR;\n"
+        "     text, as bytes with line terminators stored as CR;\n"
         "     words, each word a little-endian 32-bit word.\n"
         "  -F: force.\n"
         "    add replaces a file of that name;\n"

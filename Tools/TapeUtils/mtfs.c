@@ -145,7 +145,7 @@ static const char *errMeaning[E_LAST + 1] = {
     "no file of that name is on the tape",
     "every directory slot is in use",
     "no gap on the tape is large enough",
-    "past the end of the tape tape or of the file's allocation",
+    "past the end of the tape or of the file's allocation",
     "the file is marked read-only",
     "the descriptor is not open",
     "the buffer is smaller than one block",
@@ -1358,7 +1358,7 @@ int status;
     return(0);
 }
 
-// Extract name's words bounded by its length to a host file
+// Extract name's words bounded by its length to a host file.
 // A block that does not total zero is BADBLOCK.
 // Returns the exit status.
 static int
@@ -1477,7 +1477,7 @@ int i;
 }
 
 // Pack: each file in order of first block is moved down to the
-// lowest free block, a file marked as already moving left where it is
+// lowest free block, a file marked as already moving left where it is.
 // All in memory, so the directory is written once and no file is ever marked.
 // Returns the exit status.
 static int

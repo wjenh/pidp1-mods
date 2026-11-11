@@ -1,0 +1,267 @@
+// mtfpack.ac -- mtfPack: move a mounted tape's files down to close the gaps between them, so
+// the free blocks are one gap at the end.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtfdir.ac. Called as mtfdir.ac's entries are.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTFPACK_AC
+#define MTFPACK_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtfdir.ac>
+#include <AIDS/skipmacros.ah>
+
+assert MTWDS == 0400
+
+local pkRtn, pkP, pkH, pkBuf, pkNb, pkPos, pkIter, pkSel, pkF, pkA, pkE, pkK, pkQ, pkSrc, \
+    pkDst, pkRem, pkN, pkBlk, pkWr, pkMoved, pkS, pkSbm, pkLoop, pkScan, pkNext, pkCopy, pk1, \
+    pk2, pkCopied, pkStay, pkDone, pkEnd, pkUnmk, pkNofs, pkSmall, pkXfer, px1, pxx
+
+// Pack a tape: each file, in order of its first block, moves down to the lowest free block,
+// copied a buffer's worth of blocks at a time from its first block up, which is safe though
+// the old and new places overlap. Before a file moves, the directory is written with the new
+// first block in its entry's MTF_DEMOVE word; after, with the new first block and MTF_DEMOVE
+// 0. A halt or an error during a move leaves that file marked, as mtfEntry shows, and its
+// words partly moved; pack does not resume it, and a later pack leaves a marked file where its
+// entry says it is. Files open on the tape should be closed first: the descriptor of a file
+// that moves answers MTF_EBADFD from then on. Sequence breaks are off throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the scratch
+// buffer's 16-bit address (MTF_PSCRATCH) and its size in words (MTF_PSIZE). Exit: AC =
+// MTF_OK, MTF_ENOFS, MTF_ESMALLBUF for a buffer under MTWDS words, or the block layer's error;
+// IO = the files moved. Called via jda.
+mtfPack, 0
+    dac pkRtn
+    eem
+    lac mtfPack
+    dac pkP
+    MTF_SBS_OFF(pkSbm)
+    dzm pkMoved
+    lac i pkP
+    dac pkH
+    idx pkP
+    lac i pkP
+    dac pkBuf
+    idx pkP
+    lac i pkP
+    dac pkNb
+    lac pkH
+    add [MTF_HSTATE]
+    dac pkQ
+    lac i pkQ
+    sas [1]                     // skip if mounted
+    jmp pkNofs
+    lac pkNb
+    sub [MTWDS]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp pkSmall
+    lac pkNb
+    sar 8s                      // the buffer's whole blocks
+    dac pkNb
+    law MTF_FIRSTBLK
+    dac pkPos
+    law i MTF_NENT+1            // a bound on a bad directory
+    dac pkIter
+
+    // The entry in use with the lowest first block at or past pkPos: pkSel its address, pkF
+    // its first block; pkSel 0 when there is none.
+pkLoop,
+    dzm pkSel
+    lac [MTBLKS]
+    dac pkF
+    lac pkH
+    add [MTF_HDIR+MTF_DENT0]
+    dac pkE
+    law i MTF_NENT
+    dac pkK
+pkScan,
+    lac i pkE                   // the name's first word, 0 for a free slot
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pkNext
+    lac pkE
+    add [MTF_DEFIRST]
+    dac pkQ
+    lac i pkQ
+    sub pkPos
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp pkNext                  // below pkPos
+    lac i pkQ
+    sub pkF
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pkNext                  // not lower
+    lac i pkQ
+    dac pkF
+    lac pkE
+    dac pkSel
+pkNext,
+    lac pkE
+    add [MTF_ENTW]
+    dac pkE
+    isp pkK
+    jmp pkScan
+    lac pkSel
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pkDone
+    add [MTF_DEALLOC]
+    dac pkQ
+    lac i pkQ
+    dac pkA
+
+    // A file marked by an earlier pack, or already at pkPos, stays where it is.
+    lac pkSel
+    add [MTF_DEMOVE]
+    dac pkQ
+    lac i pkQ
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pkStay
+    lac pkF
+    sub pkPos
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pkStay
+
+    // Marked, copied, then given its new first block.
+    lac pkPos
+    dac i pkQ                   // MTF_DEMOVE
+    lac pkH
+    farjda(mtfWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pkUnmk
+    lac pkF
+    dac pkSrc
+    lac pkPos
+    dac pkDst
+    lac pkA
+    dac pkRem
+pkCopy,
+    lac pkRem
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pkCopied
+    lac pkNb
+    sub pkRem
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pk1
+    lac pkNb
+    jmp pk2
+pk1,
+    lac pkRem
+pk2,
+    dac pkN
+    lac pkSrc
+    dac pkBlk
+    dzm pkWr
+    jsp pkXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pkEnd
+    lac pkDst
+    dac pkBlk
+    law 1
+    dac pkWr
+    jsp pkXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pkEnd
+    lac pkSrc
+    add pkN
+    dac pkSrc
+    lac pkDst
+    add pkN
+    dac pkDst
+    lac pkRem
+    sub pkN
+    dac pkRem
+    jmp pkCopy
+pkCopied,
+    lac pkSel
+    add [MTF_DEFIRST]
+    dac pkQ
+    lac pkPos
+    dac i pkQ
+    lac pkSel
+    add [MTF_DEMOVE]
+    dac pkQ
+    dzm i pkQ
+    lac pkH
+    farjda(mtfWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pkEnd
+    idx pkMoved
+    lac pkPos
+    dac pkF
+pkStay,
+    lac pkF
+    add pkA
+    dac pkPos
+    isp pkIter
+    jmp pkLoop
+pkDone,
+    cla
+pkEnd,
+    dac pkS
+    MTF_SBS_RESTORE(pkSbm)
+    lio pkMoved
+    lac pkS
+    jmp i pkRtn
+pkUnmk,
+    dzm i pkQ                   // the mark, not written: nothing has moved
+    jmp pkEnd
+pkNofs,
+    law MTF_ENOFS
+    jmp pkEnd
+pkSmall,
+    law MTF_ESMALLBUF
+    jmp pkEnd
+
+// Move pkN blocks from block pkBlk to or from the scratch buffer, written when pkWr is
+// nonzero, else read, on the handle pkH's drive.
+// Exit: AC = the block layer's status. IO is clobbered. Called via jsp.
+pkXfer,
+    dap pxx
+    lac pkH
+    dac pkQ
+    lac i pkQ                   // MTF_HDRIVE
+    dac mtfpPb+MTB_PDRIVE
+    lac pkBlk
+    dac mtfpPb+MTB_PBLOCK
+    lac pkN
+    dac mtfpPb+MTB_PCOUNT
+    lac pkBuf
+    dac mtfpPb+MTB_PBUF
+    lac [mtfpPb:.]
+    lio pkWr
+    sni                         // skip if writing
+    jmp px1
+    farjda(mtbWrite:*)
+    jmp pxx
+px1,
+    farjda(mtbRead:*)
+pxx,
+    jmp .
+
+pkRtn, 0
+pkP, 0
+pkH, 0
+pkBuf, 0
+pkNb, 0
+pkPos, 0
+pkIter, 0
+pkSel, 0
+pkF, 0
+pkA, 0
+pkE, 0
+pkK, 0
+pkQ, 0
+pkSrc, 0
+pkDst, 0
+pkRem, 0
+pkN, 0
+pkBlk, 0
+pkWr, 0
+pkMoved, 0
+pkS, 0
+pkSbm, 0
+endloc
+
+// The block layer's parameter block for this file's transfers; global so its full address can
+// be taken.
+mtfpPb,
+    table MTB_PW
+
+#endif

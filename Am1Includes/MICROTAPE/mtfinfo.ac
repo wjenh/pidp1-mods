@@ -1,0 +1,132 @@
+// mtfinfo.ac -- mtfProtect, mtfSetType and mtfSetApp: change an open file's information word
+// (mtfs.ah, MTF_IRO, MTF_IAPP, MTF_ITYPE). The change is in the descriptor at once, so a
+// write after mtfProtect is refused, and reaches the directory when the file is closed.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are; none moves the tape.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTFINFO_AC
+#define MTFINFO_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtfopen.ac>
+#include <AIDS/skipmacros.ah>
+
+assert MTF_FFLAGS == MTF_FINFO + 1
+
+local inRtn, inP, inQ, inV, inI, inGet, ig1, igx, inPut, inBad, inRange, inRet
+
+// Mark an open file read-only, or clear the mark. Read-only refuses mtfWrite and mtfDelete.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC) and the value
+// (MTF_PVALUE), nonzero to mark it. Exit: AC = MTF_OK or MTF_EBADFD. IO is clobbered.
+// Called via jda.
+mtfProtect, 0
+    dac inRtn
+    eem
+    lac mtfProtect
+    dac inP
+    jsp inGet
+    lac inI
+    and [~MTF_IRO]
+    dac inI
+    lac inV
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp inPut
+    lac inI
+    ior [MTF_IRO]
+    dac inI
+    jmp inPut
+
+// Set an open file's type, bits 6-17 of its information word.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC) and the type
+// (MTF_PVALUE), 0 to MTF_ITYPE. Exit: AC = MTF_OK, MTF_EBADFD, or MTF_ERANGE for a type past
+// MTF_ITYPE. IO is clobbered. Called via jda.
+mtfSetType, 0
+    dac inRtn
+    eem
+    lac mtfSetType
+    dac inP
+    jsp inGet
+    lac inV
+    and [~MTF_ITYPE]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp inRange
+    lac inI
+    and [~MTF_ITYPE]
+    ior inV
+    dac inI
+    jmp inPut
+
+// Set an open file's application field, bits 1-5 of its information word.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC) and the value
+// (MTF_PVALUE), right-justified, 0 to MTF_IAPPMAX. Exit: AC = MTF_OK, MTF_EBADFD, or
+// MTF_ERANGE for a value past MTF_IAPPMAX. IO is clobbered. Called via jda.
+mtfSetApp, 0
+    dac inRtn
+    eem
+    lac mtfSetApp
+    dac inP
+    jsp inGet
+    lac inV
+    and [~MTF_IAPPMAX]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp inRange
+    lac inV
+    sal 9s
+    sal 3s                      // to bits 1-5
+    dac inV
+    lac inI
+    and [~MTF_IAPP]
+    ior inV
+    dac inI
+    jmp inPut
+
+// From the parameter block whose 16-bit address is in inP: inQ the descriptor's flags word,
+// inV the value, inI the information word. Returns only for a descriptor mtfFdOk accepts; for
+// another it ends the call with MTF_EBADFD. Called via jsp. AC is clobbered, IO is preserved.
+inGet,
+    dap igx
+    lac i inP
+    add [MTF_FINFO]
+    dac inQ
+    lac i inQ
+    dac inI
+    idx inQ                     // MTF_FFLAGS
+    lac i inP
+    farjda(mtfFdOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp inBad
+    idx inP
+    lac i inP
+    dac inV
+igx,
+    jmp .
+
+// The descriptor takes inI and is marked changed.
+inPut,
+    lac i inQ
+    ior [MTF_FCHANGED]
+    dac i inQ
+    law i 1
+    add inQ                     // back to MTF_FINFO
+    dac inQ
+    lac inI
+    dac i inQ
+    cla
+    jmp inRet
+inBad,
+    law MTF_EBADFD
+    jmp inRet
+inRange,
+    law MTF_ERANGE
+inRet,
+    jmp i inRtn
+
+inRtn, 0
+inP, 0
+inQ, 0
+inV, 0
+inI, 0
+endloc
+
+#endif

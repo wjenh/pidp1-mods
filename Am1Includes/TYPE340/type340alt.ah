@@ -1,5 +1,6 @@
 // Handle the duplicate dra,dss also used by the Type 23 drum
-#ifndef TYPE340_AH
+#if !defined(TYPE340ALT_AH) && !defined(TYPE340DEFS_AH)
+#define TYPE340ALT_AH
 
 #define _NO_DRA_DSS
 #include <TYPE340/type340defs.ah>

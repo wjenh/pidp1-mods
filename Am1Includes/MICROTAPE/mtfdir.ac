@@ -1,0 +1,548 @@
+// mtfdir.ac -- the file system's directory. mtfRdDir reads it into a tape handle and mtfWrDir
+// writes it back as its two copies, for the other mtf files; mtfDirOk tells a directory
+// block of this file system; mtfLookup finds a name, packed into sixbit by UTIL/sixbit.ac;
+// mtfEntry gives an entry by its slot, and mtfFree the free blocks and the gaps, from the
+// handle, without the tape.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtblock.ac and UTIL/sixbit.ac, which land beside it unless they were
+// included before.
+// Every entry is entered by jda with the window open, farjda (memory.ah) from another bank,
+// with AC a 16-bit address; it returns with the window open and AC the status, MTF_OK or an
+// MTF_E code. Not reentrant; not to be called from a break routine. mtfLookup, mtfEntry and
+// mtfFree do not move the tape; mtfRdDir and mtfWrDir leave the sequence breaks to their caller.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTFDIR_AC
+#define MTFDIR_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtblock.ac>
+#include <UTIL/sixbit.ac>
+#include <AIDS/skipmacros.ah>
+
+// The block buffer follows the directory in the handle, so the two copies go out in one write.
+assert MTF_HBUF == MTF_HDIR + MTWDS
+assert MTF_HGEN == MTF_HSTATE + 1
+assert MTF_DEALLOC == MTF_DEFIRST + 1
+assert MTF_ENTW == 010
+
+local rdRtn, rd1, rd2, rd3, rdNo, rdOk, rdRet, wdRtn, dkRtn, dkP, dkNo, dkRet, \
+    enRtn, enP, enK, enRange, enRet, frRtn, frP, frNeed, frTot, frLarge, frFit, frPos, frF, \
+    frA, frK, frE, frGap, frIter, frLoop, frScan, frNext, frBig, frFitT, frAdv, frDone, frRet, \
+    mdH, mdP, mxBlk, mxCnt, mxOff, mxWr, mdXfer, mx1, mxx, mdCopy, mdCopyN, mcS, mcD, mcN, \
+    mc1, mcx, mdMounted, mm1, mmx, lkRtn, lkP, lkD, lkE, lkN, lkSlot, lkFree, lkLoop, lkCmp, \
+    lkC1, lkNext, lkRet, nmPack, nmArg, nmBad, nmx, nmS, nmD
+
+// Read the directory into the handle: block 1 if it reads cleanly and is this file system's,
+// else block 2, copied over it. Then the handle is mounted, with the directory's generation.
+// The handle's mount count goes up, so descriptors opened before are refused.
+// Entry: AC = the handle's 16-bit address, its drive set. Exit: AC = MTF_OK, MTF_ENOFS when
+// neither copy is good, or the block layer's error. IO is clobbered. Called via jda.
+mtfRdDir, 0
+    dac rdRtn
+    lac mtfRdDir
+    dac mdH
+    add [MTF_HSTATE]
+    dac mdP
+    dzm i mdP                   // not mounted until a copy has passed
+    lac mdH
+    add [MTF_HMOUNT]
+    dac mdP
+    idx i mdP                   // the old mount's descriptors are no longer valid
+    law MTF_DIRBLK
+    dac mxBlk
+    law 1
+    dac mxCnt
+    law MTF_HDIR
+    dac mxOff
+    dzm mxWr
+    jsp mdXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rd1
+    lac mdH
+    add [MTF_HDIR]
+    jda mtfDirOk
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rdOk
+    jmp rd2
+rd1,
+    sad [MTF_EBADBLOCK]         // skip unless a bad block, which the copy may cover
+    jmp rd2
+    jmp rdRet
+
+    // The copy, into the block buffer, then over the directory.
+rd2,
+    law MTF_DIRBLK2
+    dac mxBlk
+    law MTF_HBUF
+    dac mxOff
+    jsp mdXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rd3
+    lac mdH
+    add [MTF_HBUF]
+    jda mtfDirOk
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rdNo
+    lac mdH
+    add [MTF_HBUF]
+    dac mcS
+    lac mdH
+    add [MTF_HDIR]
+    dac mcD
+    jsp mdCopy
+    jmp rdOk
+rd3,
+    sad [MTF_EBADBLOCK]
+    jmp rdNo
+    jmp rdRet
+rdNo,
+    law MTF_ENOFS
+    jmp rdRet
+rdOk,
+    lac mdH
+    add [MTF_HDIR+MTF_DGEN]
+    dac mdP
+    lio i mdP
+    lac mdH
+    add [MTF_HSTATE]
+    dac mdP
+    law 1
+    dac i mdP
+    idx mdP
+    dio i mdP                   // MTF_HGEN
+    cla
+rdRet,
+    jmp i rdRtn
+
+// Write the handle's directory to the tape as its two copies, blocks 1 and 2 in one pass, with
+// a new generation in the directory and in the handle. The block buffer is overwritten.
+// Entry: AC = the handle's 16-bit address. Exit: AC = the block layer's status. IO is
+// clobbered. Called via jda.
+mtfWrDir, 0
+    dac wdRtn
+    lac mtfWrDir
+    dac mdH
+    add [MTF_HDIR+MTF_DGEN]
+    dac mdP
+    lac i mdP
+    add [1]
+    and [0377777]               // kept positive
+    dac i mdP
+    lia
+    lac mdH
+    add [MTF_HGEN]
+    dac mdP
+    dio i mdP
+    lac mdH
+    add [MTF_HDIR]
+    dac mcS
+    lac mdH
+    add [MTF_HBUF]
+    dac mcD
+    jsp mdCopy
+    law MTF_DIRBLK
+    dac mxBlk
+    law 2
+    dac mxCnt
+    law MTF_HDIR
+    dac mxOff
+    law 1
+    dac mxWr
+    jsp mdXfer
+    jmp i wdRtn
+
+// Whether a directory block is this file system's: the magic, the version and the tape's
+// blocks.
+// Entry: AC = the block's 16-bit address. Exit: AC = 0 if it is, else nonzero. IO is
+// preserved. Called via jda.
+mtfDirOk, 0
+    dac dkRtn
+    lac mtfDirOk
+    dac dkP
+    lac i dkP
+    sas [MTF_MAGIC]             // skip if the magic
+    jmp dkNo
+    idx dkP
+    lac i dkP
+    sas [MTF_VERSION]
+    jmp dkNo
+    lac dkP
+    add [MTF_DBLKS-MTF_DVER]
+    dac dkP
+    lac i dkP
+    sas [MTBLKS]
+    jmp dkNo
+    cla
+    jmp dkRet
+dkNo,
+    law 1
+dkRet,
+    jmp i dkRtn
+
+// Copy directory slot MTF_PINDEX's MTF_ENTW words to MTF_PDEST.
+// Entry: AC = the parameter block's 16-bit address: the handle, the slot and the destination.
+// Exit: AC = MTF_OK, MTF_ENOFS if the tape is not mounted, or MTF_ERANGE for a slot past
+// MTF_NENT-1. IO is clobbered. Called via jda.
+mtfEntry, 0
+    dac enRtn
+    eem
+    lac mtfEntry
+    dac enP
+    lac i enP
+    dac mdH
+    idx enP
+    lac i enP
+    dac enK
+    idx enP
+    lac i enP
+    dac mcD
+    jsp mdMounted
+    SKIP_NEXT_IF_AC_ZERO
+    jmp enRet
+    lac enK
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp enRange
+    sub [MTF_NENT]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp enRange
+    lac enK
+    sal 3s                      // times MTF_ENTW
+    add [MTF_HDIR+MTF_DENT0]
+    add mdH
+    dac mcS
+    law i MTF_ENTW
+    dac mcN
+    jsp mdCopyN
+    cla
+    jmp enRet
+enRange,
+    law MTF_ERANGE
+enRet,
+    jmp i enRtn
+
+// The free blocks, from the handle's directory: the total, the largest gap, and the first gap
+// of MTF_PNEED blocks. A gap is a run of blocks from MTF_FIRSTBLK on that no entry holds.
+// Entry: AC = the parameter block's 16-bit address: the handle and MTF_PNEED. Exit: AC =
+// MTF_OK or MTF_ENOFS; MTF_PTOTAL, MTF_PLARGEST and MTF_PFIT set, MTF_PFIT -1 when no gap is
+// large enough or MTF_PNEED is 0. IO is clobbered. Called via jda.
+mtfFree, 0
+    dac frRtn
+    eem
+    lac mtfFree
+    dac frP
+    lac i frP
+    dac mdH
+    lac frP
+    add [MTF_PNEED]
+    dac mdP
+    lac i mdP
+    dac frNeed
+    jsp mdMounted
+    SKIP_NEXT_IF_AC_ZERO
+    jmp frRet
+    dzm frTot
+    dzm frLarge
+    law i 1
+    dac frFit
+    law MTF_FIRSTBLK
+    dac frPos
+    law i MTF_NENT+1            // a gap before each entry, and the last; a bound on a bad directory
+    dac frIter
+
+    // The entry with the lowest first block at or past frPos: frF, its blocks frA; frF is
+    // MTBLKS when there is none.
+frLoop,
+    lac [MTBLKS]
+    dac frF
+    dzm frA
+    lac mdH
+    add [MTF_HDIR+MTF_DENT0]
+    dac frE
+    law i MTF_NENT
+    dac frK
+frScan,
+    lac i frE                   // the name's first word, 0 for a free slot
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp frNext
+    lac frE
+    add [MTF_DEFIRST]
+    dac mdP
+    lac i mdP
+    sub frPos
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp frNext                  // before frPos
+    lac i mdP
+    sub frF
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp frNext                  // not lower
+    lac i mdP
+    dac frF
+    idx mdP
+    lac i mdP
+    dac frA
+frNext,
+    lac frE
+    add [MTF_ENTW]
+    dac frE
+    isp frK
+    jmp frScan
+
+    // The gap from frPos to frF: counted, the largest kept, the first large enough kept.
+    lac frF
+    sub frPos
+    dac frGap
+    add frTot
+    dac frTot
+    lac frGap
+    sub frLarge
+    sma sza                     // skip unless larger
+    jmp frBig
+    jmp frFitT
+frBig,
+    lac frGap
+    dac frLarge
+frFitT,
+    lac frFit
+    SKIP_NEXT_IF_AC_NEGATIVE    // skip while none is kept
+    jmp frAdv
+    lac frNeed
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp frAdv
+    lac frGap
+    sub frNeed
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp frAdv
+    lac frPos
+    dac frFit
+frAdv,
+    lac frF
+    sad [MTBLKS]                // skip unless the tape's end
+    jmp frDone
+    add frA
+    dac frPos
+    isp frIter
+    jmp frLoop
+frDone,
+    lac frP
+    add [MTF_PTOTAL]
+    dac mdP
+    lac frTot
+    dac i mdP
+    idx mdP
+    lac frLarge
+    dac i mdP
+    idx mdP
+    lac frFit
+    dac i mdP
+    cla
+frRet,
+    jmp i frRtn
+
+// Look a name up in the handle's directory, packing it into sixbit on the way. Names match
+// whatever their case, since packing takes lower case as upper.
+// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the name's 16-bit
+// address, an am1 ascii string (MTF_PNAME), and where its 3 sixbit words go (MTF_PNAMED).
+// Exit: AC = MTF_OK with IO the slot; MTF_ENOTFOUND with IO the first free slot, or -1 when
+// there is none; MTF_ENAME (nmPack's rules) or MTF_ENOFS. Called via jda.
+mtfLookup, 0
+    dac lkRtn
+    eem
+    lac mtfLookup
+    dac lkP
+    lac i lkP
+    dac mdH
+    idx lkP
+    lac i lkP
+    dac nmS
+    idx lkP
+    lac i lkP
+    dac nmD
+    dac lkD
+    jsp mdMounted
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lkRet
+    jsp nmPack
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lkRet
+    law i 1
+    dac lkFree
+    dzm lkSlot
+    lac mdH
+    add [MTF_HDIR+MTF_DENT0]
+    dac lkE
+lkLoop,
+    lac i lkE                   // the name's first word, 0 for a free slot
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lkCmp
+    lac lkFree
+    sma                         // skip while no free slot is kept
+    jmp lkNext
+    lac lkSlot
+    dac lkFree
+    jmp lkNext
+lkCmp,
+    lac lkE
+    dac mcS
+    lac lkD
+    dac mcD
+    law i MTF_DENAMEW
+    dac lkN
+lkC1,
+    lac i mcS
+    sas i mcD                   // skip if this word matches
+    jmp lkNext
+    idx mcS
+    idx mcD
+    isp lkN
+    jmp lkC1
+    lio lkSlot
+    cla
+    jmp lkRet
+lkNext,
+    lac lkE
+    add [MTF_ENTW]
+    dac lkE
+    idx lkSlot
+    sas [MTF_NENT]              // skip past the last slot
+    jmp lkLoop
+    lio lkFree
+    law MTF_ENOTFOUND
+lkRet,
+    jmp i lkRtn
+
+// Pack the am1 ascii string at nmS into MTF_DENAMEW sixbit words at nmD, both 16-bit
+// addresses, with UTIL/sixbit.ac's am1ToSixbit: at most 9 characters, blank-padded, lower case
+// raised. Exit: AC = 0, or MTF_ENAME for a name too long, with a control character, empty, or
+// with a leading blank (it would pack as a free slot's zero word). IO is clobbered.
+// Called via jsp.
+nmPack,
+    dap nmx
+    lac nmD
+    dac nmArg
+    lio [MTF_DENAMEW]
+    lac nmS
+    farjda(am1ToSixbit:*)
+nmArg, 0
+    SKIP_NEXT_IF_AC_ZERO
+    jmp nmBad
+    lac i nmD
+    and [0770000]               // the first character
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nmBad
+    cla
+    jmp nmx
+nmBad,
+    law MTF_ENAME
+nmx,
+    jmp .
+
+// Move blocks between the tape and the handle mdH: mxCnt blocks from block mxBlk, at mxOff in
+// the handle (MTF_HDIR or MTF_HBUF), written when mxWr is nonzero, else read.
+// Exit: AC = the block layer's status. IO is clobbered. Called via jsp.
+mdXfer,
+    dap mxx
+    lac mdH
+    dac mdP
+    lac i mdP                   // MTF_HDRIVE
+    dac mtfdPb+MTB_PDRIVE
+    lac mxBlk
+    dac mtfdPb+MTB_PBLOCK
+    lac mxCnt
+    dac mtfdPb+MTB_PCOUNT
+    lac mdH
+    add mxOff
+    dac mtfdPb+MTB_PBUF
+    lac [mtfdPb:.]
+    lio mxWr
+    sni                         // skip if writing
+    jmp mx1
+    farjda(mtbWrite:*)
+    jmp mxx
+mx1,
+    farjda(mtbRead:*)
+mxx,
+    jmp .
+
+// Copy MTWDS words, or mcN's negative count at mdCopyN, from mcS to mcD, both 16-bit
+// addresses, which are left past the words. Called via jsp. AC is clobbered, IO is preserved.
+mdCopy,
+    dap mcx
+    law i MTWDS
+    dac mcN
+    jmp mc1
+mdCopyN,
+    dap mcx
+mc1,
+    lac i mcS
+    dac i mcD
+    idx mcS
+    idx mcD
+    isp mcN
+    jmp mc1
+mcx,
+    jmp .
+
+// Whether the handle mdH is mounted. Exit: AC = 0 if it is, else MTF_ENOFS. IO is preserved.
+// Called via jsp.
+mdMounted,
+    dap mmx
+    lac mdH
+    add [MTF_HSTATE]
+    dac mdP
+    lac i mdP
+    sas [1]                     // skip if mounted
+    jmp mm1
+    cla
+    jmp mmx
+mm1,
+    law MTF_ENOFS
+mmx,
+    jmp .
+
+rdRtn, 0
+wdRtn, 0
+dkRtn, 0
+dkP, 0
+enRtn, 0
+enP, 0
+enK, 0
+frRtn, 0
+frP, 0
+frNeed, 0
+frTot, 0
+frLarge, 0
+frFit, 0
+frPos, 0
+frF, 0
+frA, 0
+frK, 0
+frE, 0
+frGap, 0
+frIter, 0
+mdH, 0
+mdP, 0
+mxBlk, 0
+mxCnt, 0
+mxOff, 0
+mxWr, 0
+mcS, 0
+mcD, 0
+mcN, 0
+lkRtn, 0
+lkP, 0
+lkD, 0
+lkE, 0
+lkN, 0
+lkSlot, 0
+lkFree, 0
+nmS, 0
+nmD, 0
+endloc
+
+// The block layer's parameter block for this file's transfers, MTB_PW words; global so its
+// full address can be taken.
+mtfdPb,
+    table MTB_PW
+
+#endif

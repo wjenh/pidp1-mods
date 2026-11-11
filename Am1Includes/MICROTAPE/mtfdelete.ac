@@ -1,0 +1,118 @@
+// mtfdelete.ac -- mtfDelete: remove an open file from its tape's directory; its blocks become
+// free.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTFDELETE_AC
+#define MTFDELETE_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtfopen.ac>
+#include <AIDS/skipmacros.ah>
+
+local dlRtn, dlFd, dlH, dlQ, dlE, dlA, dlN, dlS, dlSbm, dl1, dl2, dl3, dlBad, dlRo, dlEnd
+
+// Delete a file by its open descriptor: its entry is cleared and the directory written, and
+// the descriptor is closed. The file's words are not erased. A read-only file is refused. On a
+// write error the entry is put back in the handle and the descriptor stays open. Sequence
+// breaks are off throughout and turned on again only if they were on.
+// Entry: AC = the descriptor's 16-bit address; it is the whole parameter block. Exit: AC =
+// MTF_OK, MTF_EBADFD (mtfopen.ac's mtfFdOk), MTF_EREADONLY, or the block layer's error. IO is clobbered. Called via
+// jda.
+mtfDelete, 0
+    dac dlRtn
+    eem
+    lac mtfDelete
+    dac dlFd
+    MTF_SBS_OFF(dlSbm)
+    lac dlFd
+    farjda(mtfFdOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dlBad
+    lac dlFd
+    add [MTF_FINFO]
+    dac dlQ
+    lac i dlQ
+    and [MTF_IRO]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dlRo
+
+    // The entry, kept in mtfeSv, then cleared.
+    lac dlFd
+    dac dlQ
+    lac i dlQ
+    dac dlH                     // MTF_FTAPE
+    idx dlQ
+    lac i dlQ                   // MTF_FSLOT
+    sal 3s                      // times MTF_ENTW
+    add [MTF_HDIR+MTF_DENT0]
+    add dlH
+    dac dlE
+    dac dlA
+    lac [mtfeSv:.]
+    dac dlQ
+    law i MTF_ENTW
+    dac dlN
+dl1,
+    lac i dlA
+    dac i dlQ
+    dzm i dlA
+    idx dlA
+    idx dlQ
+    isp dlN
+    jmp dl1
+    lac dlH
+    farjda(mtfWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dl2
+    lac dlFd
+    add [MTF_FFLAGS]
+    dac dlQ
+    dzm i dlQ
+    cla
+    jmp dlEnd
+
+    // The write failed: the entry back.
+dl2,
+    dac dlS
+    lac [mtfeSv:.]
+    dac dlQ
+    law i MTF_ENTW
+    dac dlN
+dl3,
+    lac i dlQ
+    dac i dlE
+    idx dlE
+    idx dlQ
+    isp dlN
+    jmp dl3
+    lac dlS
+    jmp dlEnd
+dlBad,
+    law MTF_EBADFD
+    jmp dlEnd
+dlRo,
+    law MTF_EREADONLY
+dlEnd,
+    dac dlS
+    MTF_SBS_RESTORE(dlSbm)
+    lac dlS
+    jmp i dlRtn
+
+dlRtn, 0
+dlFd, 0
+dlH, 0
+dlQ, 0
+dlE, 0
+dlA, 0
+dlN, 0
+dlS, 0
+dlSbm, 0
+endloc
+
+// The entry while it is written; global so its full address can be taken.
+mtfeSv,
+    table MTF_ENTW
+
+#endif

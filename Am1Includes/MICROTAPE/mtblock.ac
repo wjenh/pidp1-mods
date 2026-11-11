@@ -1,0 +1,455 @@
+// mtblock.ac -- the Microtape block layer: mtbRead and mtbWrite move whole blocks of MTWDS
+// words between a drive and memory, forward, keeping the checksums. The file system uses it,
+// and a program may use it alone.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. The code runs with the extend window open and reaches the caller's parameter
+// block and buffer by their 16-bit addresses. Each entry is entered by jda, farjda
+// (memory.ah) from another bank, with AC the 16-bit address of its parameter block (mtfs.ah,
+// MTB_PDRIVE to MTB_PBUF); it returns with the window open and AC the status, MTF_OK or an
+// MTF_E code. Not reentrant; not to be called from a break routine.
+// A call blocks until it is done and leaves the tape stopped. Sequence breaks are off
+// throughout and turned on again at the end only if they were on (MTF_SBS_RESTORE). The tape
+// is polled with mrs, as Docs/UsingType550Microtape.md's example polls it.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTBLOCK_AC
+#define MTBLOCK_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <AIDS/skipmacros.ah>
+
+local mbRtn, mbPar, mbWr, mbWm, mbDrv, mbBlk, mbCnt, mbAt, mbSbm, mbStat, mbWc, mbSum, mbBad, \
+    mbTmo, mbWord, mbN, mbGo, mbRange, mbNoDrv, mbNoTape, mbExit, mbFault, mf0, mf1, mf2, \
+    mf3, mbBlock, mbx, mbSeek, msx, ms1, ms2, ms3, ms4, ms5, ms6, ms7, ms8, \
+    mr1, mr2, mr3, mr4, mr5, mr7, mr8, mr9, mw1, mw2, mw3, mw4, mw5, mw6, mw7
+
+// Read blocks from a drive into memory.
+// Entry: AC = the parameter block's 16-bit address: the drive, the first block, the count
+// and the buffer's 16-bit address (MTB_PDRIVE to MTB_PBUF). Exit: AC = the status; the
+// buffer holds count x MTWDS words. IO is clobbered. Called via jda.
+mtbRead, 0
+    dac mbRtn
+    lac mtbRead
+    dac mbPar
+    dzm mbWr
+    jmp mbGo
+
+// Write blocks from memory to a drive.
+// Entry and exit as mtbRead's. IO is clobbered. Called via jda.
+mtbWrite, 0
+    dac mbRtn
+    lac mtbWrite
+    dac mbPar
+    law 1
+    dac mbWr
+
+mbGo,
+    eem
+    MTF_SBS_OFF(mbSbm)
+    dzm mbWm
+
+    // The parameters.
+    lac i mbPar
+    dac mbDrv
+    idx mbPar
+    lac i mbPar
+    dac mbBlk
+    idx mbPar
+    lac i mbPar
+    dac mbCnt
+    idx mbPar
+    lac i mbPar
+    dac mbAt
+
+    // A drive 1-8; a first block on the tape, a count from 1 to MTBLKS, and their sum within
+    // the tape, each bounded first so that the sum cannot overflow.
+    lac mbDrv
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp mbNoDrv
+    sub [7]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp mbNoDrv
+    lac mbBlk
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp mbRange
+    sub [MTBLKS]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mbRange
+    lac mbCnt
+    sma sza i                   // skip if at least one block
+    jmp mbRange
+    sub [MTBLKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mbRange
+    lac mbBlk
+    add mbCnt
+    sub [MTBLKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mbRange
+    lac mbCnt
+    cma
+    dac mbCnt                   // negative, counted up by isp
+
+    // Select the drive; a stop is refused, with the error flag, only when it has no tape. A
+    // new selection holds back the flags for 34 ms, but a command is taken at once.
+    lac mbDrv
+    sal 6s
+    sal 6s                      // the unit field, IO bits 2-5
+    lia
+    mse
+    cli
+    mlc
+    mrs
+    ril 2s                      // the error flag to the sign
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mbNoTape
+
+    jsp mbSeek
+    lac mbWr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mbWt
+
+    // Reading: each block's leading checksum, words and trailing checksum summed, and a
+    // block not totaling zero counted in mbBad. The tape stays in read mode from block to
+    // block. A data flag that does not come is a fault: the block's end too soon, the error
+    // flag, or GO cleared by a halt; otherwise the wait goes on.
+    dzm mbBad
+    jsp mbBlock
+    lio [mtgo mtread]
+    mlc
+mr1,
+    mrs                         // the leading checksum
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp mr7
+    mrd
+    lai
+    add mbSum
+    dac mbSum
+mr2,
+    mrs
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp mr8
+    mrd
+    dio i mbAt
+    lai
+    add mbSum
+    dac mbSum
+    idx mbAt
+    isp mbWc
+    jmp mr2
+mr3,
+    mrs                         // the words all taken, wait for the block's end
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp mr9
+    mrd
+    lai
+    add mbSum
+    dac mbSum
+    jmp mr3
+mr4,
+    mrd                         // the trailing checksum
+    lai
+    add mbSum
+    SKIP_NEXT_IF_AC_ZERO        // add leaves +0 for a good block, never -0
+    idx mbBad
+    isp mbCnt
+    jmp mr5
+
+    // The last block: any error up is a fault, then the tape stops.
+    mrs
+    ril 2s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    cli
+    mlc
+    lac mbBad
+    SKIP_NEXT_IF_AC_ZERO
+    law MTF_EBADBLOCK
+    jmp mbExit
+mr5,
+    jsp mbBlock
+    jmp mr1
+mr7,
+    ril 1s                      // the block end flag
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 1s                      // the error flag
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 4s                      // GO
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mr1
+    jmp mf1
+mr8,
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 4s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mr2
+    jmp mf1
+mr9,
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mr4                     // the block's end
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 4s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mr3
+    jmp mf1
+
+    // Writing: each block's words, then at its end the checksum, the complement of their
+    // sum. Write mode raises the first data flag at once, or the error flag if the drive is
+    // write-locked. A flag that does not come is a fault as in reading.
+mbWt,
+    jsp mbBlock
+    law 1
+    dac mbWm                    // in write mode: UNABLE from here is the write lock
+    lio [mtgo mtwrit]
+    mlc
+mw1,
+    mrs
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp mw5
+    lio i mbAt
+    mwr
+    lai
+    add mbSum
+    dac mbSum
+    idx mbAt
+    isp mbWc
+    jmp mw1
+mw2,
+    mrs                         // the words all given, wait for the block's end
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp mw6
+    cli
+    mwr
+    jmp mw2
+mw3,
+    lac mbSum                   // the trailing checksum
+    cma
+    lia
+    mwr
+    isp mbCnt
+    jmp mw4
+
+    // The last block: the checksum reaches the tape 200 us after its flag, so wait about
+    // 300 us, then any error up is a fault, then the tape stops.
+    law i 0d20
+    dac mbTmo
+mw7,
+    isp mbTmo
+    jmp mw7
+    mrs
+    ril 2s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    cli
+    mlc
+    law MTF_OK
+    jmp mbExit
+mw4,
+    jsp mbBlock
+    jmp mw1
+mw5,
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 4s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mw1
+    jmp mf1
+mw6,
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mw3                     // the block's end
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mf2
+    ril 4s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp mw2
+    jmp mf1
+
+// The call's end: breaks restored as they were, the status returned to the caller.
+// Entry: AC = the status. Reached by jmp.
+mbExit,
+    dac mbStat
+    MTF_SBS_RESTORE(mbSbm)
+    lac mbStat
+    jmp i mbRtn
+mbNoDrv,
+    law MTF_ENODRIVE
+    jmp mbExit
+mbRange,
+    law MTF_ERANGE
+    jmp mbExit
+mbNoTape,
+    law MTF_ENOTAPE
+    jmp mbExit
+
+// A fault: the status read before the tape is stopped, since a stop clears the errors, and
+// mapped to a code. UNABLE is a write-locked drive once write mode was asked for, else no tape
+// or one off its reel; then END, then MISS; with none of them up, the code the caller gave.
+// mf1 is entered for GO cleared, a halt; mf2 for a bad block; mbFault with AC the code.
+// Reached by jmp; ends the call.
+mf1,
+    law MTF_EHALTED
+    jmp mbFault
+mf2,
+    law MTF_EBADBLOCK
+mbFault,
+    dac mbStat
+    mrs
+    dio mbWord
+    cli
+    mlc
+    lac mbWord
+    and [mtunab]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mf3
+    lio mbWm
+    law MTF_ENOTAPE
+    SKIP_NEXT_IF_IO_IS_ZERO
+    law MTF_ELOCKED
+    jmp mbExit
+mf3,
+    lac mbWord
+    and [mtend]
+    SKIP_NEXT_IF_AC_ZERO
+    law MTF_EENDZONE
+    SKIP_NEXT_IF_AC_ZERO        // AC is still the masked status when END is not up
+    jmp mbExit
+    lac mbWord
+    and [mtmiss]
+    SKIP_NEXT_IF_AC_ZERO
+    law MTF_EBADBLOCK
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mbExit
+    lac mbStat
+    jmp mbExit
+
+// A block's start: MTWDS words to go, the sum zero. Called via jsp. AC is clobbered, IO is
+// preserved.
+mbBlock,
+    dap mbx
+    law i MTWDS
+    dac mbWc
+    dzm mbSum
+mbx,
+    jmp .
+
+// Search forward to block mbBlk's forward mark, each block mark steering: a forward mark
+// before the block goes on, one past it turns back; a reverse mark before it turns forward,
+// one at or past it goes on back. An end zone turns the tape; a MISS is passed over. Returns
+// as the mark's flag comes, with 400 us to command a write. GO cleared, UNABLE, or no mark in
+// MTB_POLLS polls ends the call as a fault.
+// Called via jsp. AC and IO are clobbered.
+mbSeek,
+    dap msx
+    lio [mtgo mtsrch]
+    mlc
+ms1,
+    lac [MTB_POLLS]
+    cma
+    dac mbTmo
+ms2,
+    mrs
+    SKIP_NEXT_IF_IO_NEGATIVE    // the data flag: a mark's word
+    jmp ms5
+    mrd
+    dio mbWord
+    lac mbWord
+    and [mtblk]
+    sub mbBlk
+    dac mbN
+    lio mbWord
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp ms4                     // a reverse mark
+    lac mbN
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ms3
+    jmp ms1                     // before the block
+ms3,
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ms7                     // past it
+msx,
+    jmp .
+ms4,
+    lac mbN
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ms6                     // before the block, in reverse
+    jmp ms1
+ms6,
+    lio [mtgo mtsrch]
+    mlc
+    jmp ms1
+ms7,
+    lio [mtgo mtrev mtsrch]
+    mlc
+    jmp ms1
+
+    // No data flag: an error, GO cleared by a halt, or a wait that goes on.
+ms5,
+    ril 2s                      // the error flag
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp ms8
+    mrs
+    dio mbWord
+    lac mbWord
+    and [mtend]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mf0
+    lac mbWord
+    and [mtrevs]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ms6                     // the near end zone, reversing: forward
+    jmp ms7                     // the far end zone: back
+mf0,
+    lac mbWord
+    and [mtmiss]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mf2                     // UNABLE: no tape, or off its reel
+    lac mbWord
+    and [mtrevs]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ms7
+    jmp ms6
+ms8,
+    ril 4s                      // GO
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp mf1
+    isp mbTmo
+    jmp ms2
+    law MTF_ETIMEOUT
+    jmp mbFault
+
+mbRtn, 0
+mbPar, 0
+mbWr, 0
+mbWm, 0
+mbDrv, 0
+mbBlk, 0
+mbCnt, 0
+mbAt, 0
+mbSbm, 0
+mbStat, 0
+mbWc, 0
+mbSum, 0
+mbBad, 0
+mbTmo, 0
+mbWord, 0
+mbN, 0
+endloc
+
+#endif

@@ -1,0 +1,180 @@
+// mtfcreate.ac -- mtfCreate: a new file on a mounted tape, its blocks the first gap large
+// enough, its entry written to the tape, and returned open.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTFCREATE_AC
+#define MTFCREATE_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtfopen.ac>
+#include <AIDS/skipmacros.ah>
+
+// The entry is written word by word in this order.
+assert MTF_DENAME == 0
+assert MTF_DEFIRST == 3
+assert MTF_DEALLOC == 4
+assert MTF_DELEN == 5
+assert MTF_DEINFO == 6
+assert MTF_DEMOVE == 7
+
+local crRtn, crP, crH, crN, crI, crFd, crK, crE, crS, crSbm, cr1, crUndo, crFull, crNoSp, \
+    crRange, crEnd
+
+// Create a file: a name not on the tape, a free slot, and the first gap of the blocks asked
+// for. The entry takes the name, the blocks, length 0 and the information word as given, and
+// the directory is written; the descriptor is then open at position 0. Sequence breaks are off
+// throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the name's 16-bit
+// address, an am1 ascii string (MTF_PNAME), the blocks (MTF_PBLOCKS, 1 to MTF_MAXBLKS), the
+// information word (MTF_PINFO) and the descriptor's 16-bit address (MTF_PCFD). Exit: AC =
+// MTF_OK; MTF_EEXISTS, MTF_EDIRFULL, MTF_ENOSPACE, MTF_ERANGE for fewer than 1 block or more
+// than MTF_MAXBLKS, MTF_ENAME, MTF_ENOFS, or the block layer's error, after which the handle
+// has no entry for the file (the tape may, if the write stopped after block 1). IO is
+// clobbered. Called via jda.
+mtfCreate, 0
+    dac crRtn
+    eem
+    lac mtfCreate
+    dac crP
+    MTF_SBS_OFF(crSbm)
+    lac i crP
+    dac crH
+    dac mtfcPb+MTF_PHANDLE
+    dac mtfcFr+MTF_PHANDLE
+    idx crP
+    lac i crP
+    dac mtfcPb+MTF_PNAME
+    idx crP
+    lac i crP
+    dac crN
+    idx crP
+    lac i crP
+    dac crI
+    idx crP
+    lac i crP
+    dac crFd
+    lac [mtfcNm:.]
+    dac mtfcPb+MTF_PNAMED
+    lac [mtfcPb:.]
+    farjda(mtfLookup:*)
+    sad [MTF_ENOTFOUND]         // skip unless not found, as wanted
+    jmp cr1
+    SKIP_NEXT_IF_AC_ZERO
+    jmp crEnd
+    law MTF_EEXISTS
+    jmp crEnd
+cr1,
+    dio crK                     // the first free slot, or -1
+    lac crK
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp crFull
+    lac crN
+    sma sza i                   // skip if at least 1 block
+    jmp crRange
+    sub [MTF_MAXBLKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp crRange
+    lac crN
+    dac mtfcFr+MTF_PNEED
+    lac [mtfcFr:.]
+    farjda(mtfFree:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp crEnd
+    lac mtfcFr+MTF_PFIT
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp crNoSp
+
+    // The entry, then the directory to the tape.
+    lac crK
+    sal 3s                      // times MTF_ENTW
+    add [MTF_HDIR+MTF_DENT0]
+    add crH
+    dac crE
+    lac mtfcNm
+    dac i crE
+    idx crE
+    lac mtfcNm+1
+    dac i crE
+    idx crE
+    lac mtfcNm+2
+    dac i crE
+    idx crE
+    lac mtfcFr+MTF_PFIT
+    dac i crE
+    idx crE
+    lac crN
+    dac i crE
+    idx crE
+    dzm i crE                   // MTF_DELEN
+    idx crE
+    lac crI
+    dac i crE
+    idx crE
+    dzm i crE                   // MTF_DEMOVE
+    lac crH
+    farjda(mtfWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp crUndo
+
+    // Open it.
+    lac crH
+    dac mtfcOp+MTF_PHANDLE
+    lac crK
+    dac mtfcOp+MTF_PINDEX
+    lac crFd
+    dac mtfcOp+MTF_PFD
+    lac [mtfcOp:.]
+    farjda(mtfOpenIndex:*)
+    jmp crEnd
+
+    // The write failed: the slot is freed in the handle.
+crUndo,
+    dac crS
+    lac crK
+    sal 3s
+    add [MTF_HDIR+MTF_DENT0]
+    add crH
+    dac crE
+    dzm i crE
+    lac crS
+    jmp crEnd
+crFull,
+    law MTF_EDIRFULL
+    jmp crEnd
+crNoSp,
+    law MTF_ENOSPACE
+    jmp crEnd
+crRange,
+    law MTF_ERANGE
+crEnd,
+    dac crS
+    MTF_SBS_RESTORE(crSbm)
+    lac crS
+    jmp i crRtn
+
+crRtn, 0
+crP, 0
+crH, 0
+crN, 0
+crI, 0
+crFd, 0
+crK, 0
+crE, 0
+crS, 0
+crSbm, 0
+endloc
+
+// The parameter blocks of this file's calls, and the packed name; global so their full
+// addresses can be taken.
+mtfcPb,
+    table 3
+mtfcNm,
+    table MTF_DENAMEW
+mtfcFr,
+    table MTF_PFIT+1
+mtfcOp,
+    table 3
+
+#endif

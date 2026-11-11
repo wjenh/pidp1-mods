@@ -3,9 +3,9 @@
 // This is a collection of subroutines to pack and unpack strings to/from DEC SIXBIT.
 // SIXBIT packs 3 limited-range ascii characters into one 18-bit word.
 // It does this by limiting the allowed characters to those between decimal 32 and 95 inclusive.
-// This excludes lower-case characters and the characters back-quoute, ~, {, }, |, and the non-printing del.
+// This excludes lower-case characters and the characters back-quote, ~, {, }, |, and the non-printing del.
 // If these are present in the unpacked ascii as input, they are mapped to the upper-case range
-// by anding with 0x100 before the subtraction.
+// by clearing the 040 (0x20) bit before the subtraction, as am1ToSixbit does.
 
 // Shared locals
 local rtn, count, ptr
@@ -13,7 +13,7 @@ local rtn, count, ptr
 // Given a list of SIXBIT packed characters and word count, unpack into am1 directive 'ascii' style
 // 2-characters-per-word form.
 // Note that the input is the word count, not the character count.
-// The destination buffer must be (words/3) * 2 + 1 minimum in length to accomodate
+// The destination buffer must be (words/3) * 2 + 1 minimum in length to accommodate
 // the largest possible expansion, a word of 0 will always be added to ensure the
 // am1 string is properly terminated.
 // If the passed count is 0 or negative, a single 0 word will be written to the buffer.
@@ -27,7 +27,7 @@ local rtn, count, ptr
 // jda sixbitToAm1
 // destaddr
 // This is 16-bit-address safe and can be called from any bank
-// as long as extnded memory is enabled.
+// as long as extended memory is enabled.
 //
 sixbitToAm1, 0
     local loop, partial, next, none, pending
@@ -94,6 +94,147 @@ none,
     jmp i rtn
 
 pending, 0          // where we build our am1 character pair
+    endloc
+
+// Given an am1 directive 'ascii' style string, 2 characters per word and ended by a 0
+// character, pack it into SIXBIT, 3 characters per word, blank-padded (SIXBIT 0) to fill
+// the destination's words.
+// Lower case and the other characters from 0140 to 0177 are raised by clearing the 040 bit;
+// a character below 040 (a control character) or above 0177 is refused.
+//
+// Called via jda.
+// The destination's word count is in IO.
+// The source address is in AC.
+// The destination address follows the jda call:
+// lio [count
+// lac [srcaddr
+// jda am1ToSixbit
+// destaddr
+// On return AC is 0 if the whole string was packed, 1 if it has more characters than
+// 3 x count, 2 if a character was refused; the destination is complete only for 0.
+// IO is the number of characters packed.
+// This is 16-bit-address safe and can be called from any bank
+// as long as extended memory is enabled.
+//
+am1ToSixbit, 0
+    local loop, check, pad, done, tooLong, badChar, put, putx, getch, gc1, gc2, getx, \
+        src, half, word, inword, left, nchars, ch
+    dac rtn         // full 16-bit address preservation
+    lac i rtn       // pick up the destination address
+    dac ptr
+    idx rtn         // and update the return pointer
+    lac am1ToSixbit
+    dac src
+    lai
+    sma sza i       // is the count <= 0?
+    cla             // yes, no room at all
+    dac left        // destination words not yet filled
+    dzm half
+    dzm word
+    dzm nchars
+    law i 3
+    dac inword
+
+loop,
+    jsp getch       // AC = the next character, 0 at the end
+    sza i
+    jmp pad
+    dac ch
+    sub [0140]
+    spa             // skip if 0140 or above, to be raised
+    jmp check
+    lac ch
+    and [~040]
+    dac ch
+check,
+    lac ch
+    sub [040]
+    spa             // skip if not a control character
+    jmp badChar
+    sub [0100]
+    sma             // skip if below 0140, now in range
+    jmp badChar
+    add [0100]      // the SIXBIT character
+    dac ch
+    lac left
+    sza i           // is there room?
+    jmp tooLong
+    idx nchars
+    jsp put
+    jmp loop
+
+pad,                // blanks until the destination's words are filled
+    lac left
+    sza i
+    jmp done
+    dzm ch
+    jsp put
+    jmp pad
+
+done,
+    lio nchars
+    cla
+    jmp i rtn       // full 16-bit return
+tooLong,
+    lio nchars
+    law 1
+    jmp i rtn
+badChar,
+    lio nchars
+    law 2
+    jmp i rtn
+
+// ch into the word being built; each third character, the word goes out.
+put,
+    dap putx
+    lac word
+    ral 6s
+    add ch
+    dac word
+    isp inword
+    jmp putx
+    lac word
+    dac i ptr
+    idx ptr
+    dzm word
+    law i 3
+    dac inword
+    law i 1
+    add left
+    dac left
+putx,
+    jmp .
+
+// The next character from src: the high 9 bits of a word, then the low 9 bits,
+// then on to the next word.
+getch,
+    dap getx
+    lac half
+    sza
+    jmp gc1
+    law 1
+    dac half
+    lac i src
+    rar 9s
+    jmp gc2
+gc1,
+    dzm half
+    lac i src
+    dac ch          // remember that idx modifies the AC!
+    idx src
+    lac ch
+gc2,
+    and [0777]
+getx,
+    jmp .
+
+src, 0
+half, 0
+word, 0
+inword, 0
+left, 0
+nchars, 0
+ch, 0
     endloc
 
 rtn, 0

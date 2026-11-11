@@ -1,0 +1,370 @@
+// mtfio.ac -- mtfRead, mtfWrite and mtfSeek: words between an open file and memory, from the
+// file's position, which then advances.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
+// A transfer moves whole blocks straight between the tape and the caller's buffer; a part of
+// a block at either end goes through the tape handle's block buffer, read first and, for a
+// write, changed and written back. So a transfer is at most three passes of the tape.
+// 10-Nov-2026, Claude: the library.
+
+#ifndef MTFIO_AC
+#define MTFIO_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtfopen.ac>
+#include <AIDS/skipmacros.ah>
+
+// The position splits into a block and an offset by shifts of 8.
+assert MTWDS == 0400
+assert MTF_FALLOC == MTF_FFIRST + 1
+assert MTF_FLEN == MTF_FFIRST + 2
+assert MTF_FPOS == MTF_FFIRST + 3
+assert MTF_FINFO == MTF_FFIRST + 4
+
+local ioRtn, ioP, ioWr, ioFd, ioH, ioBuf, ioRem, ioFirst, ioAlloc, ioLen, ioPos, ioInfo, \
+    ioDone, ioBlk, ioOff, ioK, ioM, ioN, ioA, ioB, ioXb, ioDir, ioQ, ioS, ioSbm, ioGo, \
+    ioRdLim, ioLoop, ioPart, io2, io3, io4, io5, ioAdv, ioOk, ioErr, ioEnd, ioBadFd, ioRo, \
+    ioRange, ioXfer, ix1, ixx, skRtn, skBad, skRange, skRet
+
+// Read words from the position: the count asked for, or fewer where the file's length ends
+// first, as C's read.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC), the buffer's
+// 16-bit address (MTF_PBUF) and the count (MTF_PCOUNT, at least 0). Exit: AC = MTF_OK,
+// MTF_EBADFD, MTF_ERANGE for a negative count, or the block layer's error; IO = the words
+// read, by which the position has advanced. Sequence breaks are off throughout and turned on
+// again only if they were on. Called via jda.
+mtfRead, 0
+    dac ioRtn
+    eem
+    lac mtfRead
+    dac ioP
+    dzm ioWr
+    jmp ioGo
+
+// Write words at the position, which may lengthen the file up to its allocation; a write
+// that would go past it is refused whole. A lengthened file's entry is written at its close.
+// Entry: as mtfRead's. Exit: AC = MTF_OK, MTF_EBADFD, MTF_EREADONLY, MTF_ERANGE for a
+// negative count or one past the allocation, or the block layer's error; IO = the words
+// written, by which the position has advanced. Sequence breaks as mtfRead's. Called via jda.
+mtfWrite, 0
+    dac ioRtn
+    eem
+    lac mtfWrite
+    dac ioP
+    law 1
+    dac ioWr
+
+ioGo,
+    MTF_SBS_OFF(ioSbm)
+    dzm ioDone
+    lac i ioP
+    dac ioFd
+    idx ioP
+    lac i ioP
+    dac ioBuf
+    idx ioP
+    lac i ioP
+    dac ioRem
+    lac ioFd
+    farjda(mtfFdOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ioBadFd
+    lac ioFd
+    dac ioQ
+    lac i ioQ
+    dac ioH                     // MTF_FTAPE
+    lac ioFd
+    add [MTF_FFIRST]
+    dac ioQ
+    lac i ioQ
+    dac ioFirst
+    idx ioQ
+    lac i ioQ
+    dac ioAlloc
+    idx ioQ
+    lac i ioQ
+    dac ioLen
+    idx ioQ
+    lac i ioQ
+    dac ioPos
+    idx ioQ
+    lac i ioQ
+    dac ioInfo
+    lac ioRem
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ioRange
+    lac ioWr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ioRdLim
+
+    // A write: not read-only, and all of it within the allocation.
+    lac ioInfo
+    and [MTF_IRO]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ioRo
+    lac ioAlloc
+    sal 8s                      // times MTWDS
+    sub ioPos
+    sub ioRem
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ioRange
+    jmp ioLoop
+
+    // A read stops at the length.
+ioRdLim,
+    lac ioLen
+    sub ioPos
+    sub ioRem
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ioLoop
+    lac ioLen
+    sub ioPos
+    dac ioRem
+
+    // Each pass: the block and the offset of the position, then whole blocks or a part of one.
+ioLoop,
+    lac ioRem
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ioOk
+    lac ioPos
+    sar 8s
+    add ioFirst
+    dac ioBlk
+    lac ioPos
+    and [MTWDS-1]
+    dac ioOff
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ioPart
+    lac ioRem
+    sub [MTWDS]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ioPart
+
+    // Whole blocks, straight between the tape and the caller's buffer.
+    lac ioRem
+    sar 8s
+    dac ioK
+    sal 8s
+    dac ioM
+    lac ioBuf
+    dac ioXb
+    lac ioWr
+    dac ioDir
+    jsp ioXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ioErr
+    jmp ioAdv
+
+    // Part of one block, ioM words at ioOff, through the handle's block buffer.
+ioPart,
+    lac [MTWDS]
+    sub ioOff
+    dac ioM
+    sub ioRem
+    sma sza i                   // skip if more than is left
+    jmp io2
+    lac ioRem
+    dac ioM
+io2,
+    lac ioH
+    add [MTF_HBUF]
+    dac ioXb
+    law 1
+    dac ioK
+    dzm ioDir
+    jsp ioXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ioErr
+    lac ioXb
+    add ioOff
+    dac ioA
+    lac ioBuf
+    dac ioB
+    lac ioM
+    cma
+    dac ioN
+    lac ioWr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp io3
+io4,
+    lac i ioA
+    dac i ioB
+    idx ioA
+    idx ioB
+    isp ioN
+    jmp io4
+    jmp ioAdv
+io3,
+    lac i ioB
+    dac i ioA
+    idx ioA
+    idx ioB
+    isp ioN
+    jmp io3
+    law 1
+    dac ioDir
+    jsp ioXfer
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ioErr
+
+ioAdv,
+    lac ioBuf
+    add ioM
+    dac ioBuf
+    lac ioPos
+    add ioM
+    dac ioPos
+    lac ioDone
+    add ioM
+    dac ioDone
+    lac ioRem
+    sub ioM
+    dac ioRem
+    jmp ioLoop
+
+    // The descriptor takes the position, and after a write that lengthened the file, the
+    // length and the changed flag.
+ioOk,
+    cla
+ioErr,
+    dac ioS
+    lac ioFd
+    add [MTF_FPOS]
+    dac ioQ
+    lac ioPos
+    dac i ioQ
+    lac ioWr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ioEnd
+    lac ioPos
+    sub ioLen
+    sma sza i                   // skip if past the length
+    jmp ioEnd
+    lac ioFd
+    add [MTF_FLEN]
+    dac ioQ
+    lac ioPos
+    dac i ioQ
+    lac ioFd
+    add [MTF_FFLAGS]
+    dac ioQ
+    lac i ioQ
+    ior [MTF_FCHANGED]
+    dac i ioQ
+ioEnd,
+    MTF_SBS_RESTORE(ioSbm)
+    lio ioDone
+    lac ioS
+    jmp i ioRtn
+ioBadFd,
+    law MTF_EBADFD
+    dac ioS
+    jmp ioEnd
+ioRo,
+    law MTF_EREADONLY
+    jmp ioErr
+ioRange,
+    law MTF_ERANGE
+    jmp ioErr
+
+// Move ioK blocks from block ioBlk to or from the 16-bit address ioXb, written when ioDir is
+// nonzero, else read, on the handle ioH's drive.
+// Exit: AC = the block layer's status. IO is clobbered. Called via jsp.
+ioXfer,
+    dap ixx
+    lac ioH
+    dac ioQ
+    lac i ioQ                   // MTF_HDRIVE
+    dac mtfiPb+MTB_PDRIVE
+    lac ioBlk
+    dac mtfiPb+MTB_PBLOCK
+    lac ioK
+    dac mtfiPb+MTB_PCOUNT
+    lac ioXb
+    dac mtfiPb+MTB_PBUF
+    lac [mtfiPb:.]
+    lio ioDir
+    sni                         // skip if writing
+    jmp ix1
+    farjda(mtbWrite:*)
+    jmp ixx
+ix1,
+    farjda(mtbRead:*)
+ixx,
+    jmp .
+
+// Set the position. Past the length is refused, so a file has no unwritten words inside it.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC) and the
+// position (MTF_PPOS). Exit: AC = MTF_OK, MTF_EBADFD, or MTF_ERANGE for a position below 0 or
+// past the length. IO is clobbered. Called via jda. It does not move the tape.
+mtfSeek, 0
+    dac skRtn
+    eem
+    lac mtfSeek
+    dac ioP
+    lac i ioP
+    dac ioFd
+    idx ioP
+    lac i ioP
+    dac ioPos
+    lac ioFd
+    farjda(mtfFdOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp skBad
+    lac ioPos
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp skRange
+    lac ioFd
+    add [MTF_FLEN]
+    dac ioQ
+    lac i ioQ
+    sub ioPos
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp skRange
+    idx ioQ                     // MTF_FPOS
+    lac ioPos
+    dac i ioQ
+    cla
+    jmp skRet
+skBad,
+    law MTF_EBADFD
+    jmp skRet
+skRange,
+    law MTF_ERANGE
+skRet,
+    jmp i skRtn
+
+ioRtn, 0
+ioP, 0
+ioWr, 0
+ioFd, 0
+ioH, 0
+ioBuf, 0
+ioRem, 0
+ioFirst, 0
+ioAlloc, 0
+ioLen, 0
+ioPos, 0
+ioInfo, 0
+ioDone, 0
+ioBlk, 0
+ioOff, 0
+ioK, 0
+ioM, 0
+ioN, 0
+ioA, 0
+ioB, 0
+ioXb, 0
+ioDir, 0
+ioQ, 0
+ioS, 0
+ioSbm, 0
+skRtn, 0
+endloc
+
+// The block layer's parameter block for this file's transfers; global so its full address can
+// be taken.
+mtfiPb,
+    table MTB_PW
+
+#endif

@@ -39,7 +39,7 @@ child.o: child.c core.h
 conffile.o: conffile.c core.h
 	$(CC) $(CFLAGS) -c -o $@ conffile.c
 
-schema.o: schema.c core.h
+schema.o: schema.c core.h pidp1config.schema
 	$(CC) $(CFLAGS) -c -o $@ schema.c
 
 mtlist.o: mtlist.c core.h

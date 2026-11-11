@@ -1,5 +1,5 @@
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
-%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../Lib/iotLogger.h ../Lib/flexlib.h
+INC= -I../../src/common -I../../src/pdp1 -I.. -I../Lib
+%.o:%.c ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h ../Lib/iotLogger.h ../Lib/flexlib.h
 	gcc $(INC) -O3 -fPIC -c $< -o $@
 %.so:%.o ../Lib/iotLogger.o ../Lib/flextoascii.o ../Lib/asciitoflex.o
 	gcc -shared $< ../Lib/iotLogger.o ../Lib/flextoascii.o ../Lib/asciitoflex.o -o $@

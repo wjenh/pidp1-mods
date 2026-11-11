@@ -1,7 +1,7 @@
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
+INC= -I../../src/common -I../../src/pdp1 -I.. -I../Lib
 CFLAGS= -O3
 #CFLAGS= -g
-HDRS= ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../../src/blincolnlights/pdp1/configuration.h ../Lib/iotLogger.h ../Lib/writeBehind.h pngWrite.h
+HDRS= ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h ../../src/pdp1/configuration.h ../Lib/iotLogger.h ../Lib/writeBehind.h pngWrite.h
 
 all: IOT_73.so
 

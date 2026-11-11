@@ -8,9 +8,17 @@ Demo of the Type 340 display showing off the features.
  * click on any line, text, etc. and see what happens.
  * Click on the little box and slowly drag the lightpen, er, mouse around.
  *
+ * 8-Nov-2026 Claude - the frame wait ends at an edge too, the target is held on the screen,
+ *                     and its x no longer takes a bit of y.
  */
 // This is for the triangles
 #define SIDE 0d120
+
+// The target's box reaches TGTHALF from its center (two increment words at scale 3), so its
+// center is held that far inside the screen. drc's coordinates are even, 0 to 1022.
+#define TGTHALF 0d8
+#define TGTMIN TGTHALF
+#define TGTMAX (0d1022 - TGTHALF)
 
 var lpcoords, lphit
 
@@ -24,7 +32,7 @@ check, dsp
     dio lpcoords
     idx lphit
     drs
-nohit, dss
+nohit, dss dsv dsh               // skip once the display has halted, at its halt or at an edge
     jmp check
 
     // see if we need to update the target
@@ -35,15 +43,40 @@ nohit, dss
     // The coordinates are missing the lsb
     and [0777
     sal 1s
+    jda clamp
     ior [next(point) y(0)
     dac ty
     lac lpcoords
     sar 8s
-    and [01777
+    and [01776                      // x only: bit 0 here is y's top bit
+    jda clamp
     ior [show x(0) next(increment)
     dac tx
     dzm lphit
     jmp top
+
+// clamp: hold a target coordinate where the whole box stays on the screen.
+// Entered by jda with AC = the coordinate, 0 to 1022.
+// Returns AC = the coordinate, held to TGTMIN..TGTMAX. IO preserved.
+clamp, 0
+    dap clampx
+    lac clamp
+    sub [TGTMIN
+    sma                             // below TGTMIN: hold it there
+    jmp clamp1
+    lac [TGTMIN
+    jmp clampx
+clamp1,
+    lac clamp
+    sub [TGTMAX
+    sma sza                         // above TGTMAX: hold it there
+    jmp clamphi
+    lac clamp
+    jmp clampx
+clamphi,
+    lac [TGTMAX
+clampx,
+    jmp .
 
 variables
 

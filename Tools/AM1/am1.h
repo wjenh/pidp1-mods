@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v5.6 5-Nov-2026"
-#define AM1SHORTVERSION "am1 v5.6"
+#define AM1VERSION "am1 v5.7 6-Nov-2026"
+#define AM1SHORTVERSION "am1 v5.7"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -164,7 +164,7 @@ typedef struct parsenode
     PNodeValue value2;
     struct parsenode *exprP;    // an expression relayout must evaluate again or on a
                                 // RELAYOUT node the deleted word's, NILP elsewhere
-    int srcLine;                // on a BREF made from a name, the line and file it
+    int srcLine;                // on a BREF, ADDR or LCLADDR made from a name, the line and file it
     char *srcFileP;             // was written on, for the error given after the
                                 // parse if its symbol never resolves, and on an
                                 // OVCALL its own.

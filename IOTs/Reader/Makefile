@@ -2,11 +2,11 @@
 # IOT_2.so also carries the Type 550 Microtape, which shares device 01 with rpa.
 # Its sources# live in ../Microtape and are compiled here.
 MT= ../Microtape
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib -I$(MT)
+INC= -I../../src/common -I../../src/pdp1 -I.. -I../Lib -I$(MT)
 MTHDRS= $(MT)/microtape.h $(MT)/control550.h $(MT)/transport555.h
 MTOBJS= microtape.o control550.o transport555.o
 
-%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h
+%.o:%.c ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h
 	gcc $(INC) -O3 -fPIC -c $< -o $@
 
 %.so:%.o
@@ -14,10 +14,10 @@ MTOBJS= microtape.o control550.o transport555.o
 
 all: IOT_1.so IOT_2.so
 
-IOT_2.o: IOT_2.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h $(MTHDRS)
+IOT_2.o: IOT_2.c ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h $(MTHDRS)
 	gcc $(INC) -O3 -fPIC -c IOT_2.c -o $@
 
-microtape.o: $(MT)/microtape.c $(MTHDRS) ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../../src/blincolnlights/pdp1/configuration.h ../Lib/iotLogger.h ../Lib/writeBehind.h
+microtape.o: $(MT)/microtape.c $(MTHDRS) ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h ../../src/pdp1/configuration.h ../Lib/iotLogger.h ../Lib/writeBehind.h
 	gcc $(INC) -O3 -fPIC -c $(MT)/microtape.c -o $@
 
 control550.o: $(MT)/control550.c $(MT)/control550.h $(MT)/transport555.h

@@ -2,7 +2,7 @@
 
 This document describes the funcionality and how to create your own IOTs.
 
-Updated 24-Oct-2026\
+Updated 9-Nov-2026\
 minor corrections
 
 ## What is a dynamic IOT?
@@ -131,7 +131,7 @@ First, be sure everything is cleaned up.
 This is done most easily by using **pidp1control** to start again, then use it to stop.
 This will ensure all the subordinate processes are terminated, like the panel driver and such.
 
-Then, in the /opt/pidp1/src/blinconlnlights/pdp1 directory:\
+Then, in the /opt/pidp1/src/pdp1 directory:\
 gdb pdp1\
 and type r at the prompt.
 
@@ -319,7 +319,7 @@ This allows debugging to be turned on and off.
 
 ## Configuration for your IOTs
 
-If you want to have configurable features controlled via the /opt/pidp1-mods/pidp-1.config file, it's easy to do.
+If you want to have configurable features controlled via the /opt/pidp1-mods/pidp1.config file, it's easy to do.
 Two functions are provided automatically, you don't have to explicitly link them:
 
 ```

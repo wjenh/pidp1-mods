@@ -11,7 +11,7 @@ T01: HSC GATEWAY ALLOC/FREE LIFECYCLE
  * configuration that has those devices installed).
  *
  * IMPORTANT cross-test note: the HSC channel-assignment table in
- * src/blincolnlights/pdp1/highSpeedChannels.c is process-lifetime static state, not cleared
+ * src/pdp1/highSpeedChannels.c is process-lifetime static state, not cleared
  * between .rim loads (same reason reportResult's resetResults must be called manually every
  * run -- see Am1Includes/TESTUTIL/reportResult.ac). If this program halts or is re-run
  * without a full emulator restart, channel 2 could be left allocated. Every path through

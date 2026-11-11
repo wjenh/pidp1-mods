@@ -1,8 +1,9 @@
 #ifndef TRACKINGTARGET_AH
 #define TRACKINGTARGET_AH
-// This defines the parameters used by trackingTarget.ah.
+// This defines the parameters used by trackingTarget.ac.
 // They are separated out here so programs can get the settings if needed.
 // If defined by the program, those values are used.
+// 8-Nov-2026 Claude - TARGETSPAN shifts by the scale; ^ is exclusive or in am1, not a power.
 
 #ifndef TARGETSCALE
 #define TARGETSCALE 1
@@ -14,6 +15,7 @@
 #define TARGETARM 0d16
 #endif
 
-#define TARGETSPAN (TARGETARM * (2^TARGETSCALE) * 2)
+// The target's full width on the screen: an arm each way, each TARGETARM times the scale.
+#define TARGETSPAN ((TARGETARM << TARGETSCALE) * 2)
 
 #endif

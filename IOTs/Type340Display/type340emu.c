@@ -68,6 +68,15 @@
  *    in every mode but character.
  * 3-Nov-2026 Claude - an edge sets only its edge flag, never the stop flag, so dss no longer skips at
  *    an edge (H-340 p. 3-4). A vector continue's edge flag is cleared at once, as its RFD does.
+ * 7-Nov-2026 Claude - a lightpen hit in increment mode pauses after its nibble, 1.0 us, with the rest of
+ *    the word undrawn, and the resume goes on with the next nibble (H-340 p. 3-7).
+ * 7-Nov-2026 Claude - curState is declared as States, not Modes.
+ * 7-Nov-2026 wje - adjust timing for character mode to match deduced performance.
+ *    Note that no actual documentation survives, the timing is a best guess from the typical
+ *    way DEC did character generation at the time.
+ * 7-Nov-2026 Claude - the 0.5 us setup is charged only before vector, vector continue, increment,
+ *    subroutine and slave words, and a dla start no longer charges 1.5 us: on the PDP-1 the 340's
+ *    setup delay runs inside the word's own 5 us cycle (H-340 p. 2-9, F17 p. 6-35).
  */
 
 #include <stdlib.h>
@@ -123,19 +132,28 @@
 #define LOG_CACHE 0
 #define LOG_HSCTIMING 0    // measure getWord() HSC fetch latency
 
-// This defines the time each command takes to initialize, 0.5 usecs. This might not be accurate.
+// The 0.5 us intensify S delay that ends in IDP.
+// Every word incurs it after the setup delay that DATA SYNC starts.
+// On the PDP-1 both run inside the word's 5 us channel cycle.
+// The word arrives in about 1.5 us, and a parameter word or an undrawn Y point word
+// still asks for the next word in time for the next cycle, so the setup delay is about 1.0 us
+// and the fetch's 5 us covers it.
+// Only the modes whose time is counted from IDP incur the additional 0.5 us, vector, vector continue and increment.
+// Subroutine and slave words also incur it since their devices' own times are not known.
+// A character word's delays are in CHAR_NEXT_TIME.
 #define SETUP_TIME 500
-// This defines the time it takes to initialize after a start via dla.
-// The documentation is vague, 2.8 us for a PDP-4, 'faster' for others. Pick 1.5 us.
-#define START_TIME 1500
-// A vector's COUNT BRM pulse starts the 1.0 us sequence delay, whose end starts the 0.5 us
-// intensify delay that ends in the next pulse (H-340 p. 3-6). A pulse that ends the loop at an
-// edge or a lightpen hit costs only the sequence delay.
+// A vector's COUNT BRM pulse starts the 1.0 us sequence delay whose end starts the 0.5 us
+// intensify delay that ends in the next pulse.
+// A pulse that ends the loop at an edge or a lightpen hit costs only the sequence delay.
 #define BRM_PULSE_TIME 1500
 #define BRM_HALT_PULSE_TIME 1000
-// The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay,
-// before the display goes on where it left off (H-340 pp. 3-6, 3-27).
+// The RESUME pulse after a lightpen hit starts a 1.0 us delay, then the 0.5 us intensify delay
+// before the display continues from where it left off.
 #define RESUME_TIME 1500
+// The 342 steps the beam one COUNT every 1.5 us, drawn or not, and at the character's end NEXT CHAR
+// starts the next character 0.5 us later.
+#define CHAR_STEP_TIME 1500
+#define CHAR_NEXT_TIME 500
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -164,6 +182,7 @@
 #define CHARWIDTH 5     // char width for scale 0, pixels
 #define CHARHEIGHT 7    // char height for scale 0, pixels
 #define CHARDELTA 2     // spacing between characters for scale 0, pixels
+#define LINEFEED 12     // line feed, scale 0 pixels (340 Programming Manual, Table 2)
 
 // Convert a command word mode field to one of the mode enum values
 #define MODE(x) (((x) >> 13) & 07)
@@ -299,8 +318,10 @@ static sem_t waitSemaphore; // how we wait for commands
 
 // Primary state
 static Modes curMode = PARAMETER;
-static Modes curState = STOPPED;
+static States curState = STOPPED;
 static BRMState brmState;
+static int incWord;         // the increment word being drawn, kept while a lightpen hit pauses in it
+static int incShift;        // the shift of incWord's next nibble, 12 down to 0; below 0 when none is left
 static int pendingDelay;
 static uint64_t dueNs;      // getNow() at which the modeled time so far is used up
 static volatile int curAddress;      // the address set by the dla command, where we will fetch data from
@@ -688,7 +709,7 @@ uint64_t idleT0;
             sawEscape = false;          // be sure there's no dangling escape
             curAddress = cmdAddress;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
-            pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
+            pendingDelay = 0;           // DPY GO requests the first word at once (H-340 p. 3-1)
             twoCharsets = origCharsets; // we revert on each DPY-GO
             iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
             break;
@@ -759,7 +780,7 @@ uint64_t idleT0;
                     reset340();                 // sets curmode to PARAMETER, state to INITIALIZE
                     curAddress = cmdAddress;
                     curState = INITIALIZE;              // override STOPPED so the inner loop continues
-                    pendingDelay = START_TIME;
+                    pendingDelay = 0;
                     dueNs = getNow();
                     twoCharsets = origCharsets;
                     iotCondLog(LOG_RUN, "Received start while running, new addr %o\n", curAddress);
@@ -767,9 +788,10 @@ uint64_t idleT0;
                 }
             }
 
-            // Delay time is accumulated to the end of a cycle, then done.
-            // Every command has a setup time in addition to the hsc request delay,
-            if( curState == INITIALIZE )
+            // Delay time is accumulated then done at the end of a cycle.
+            // A parameter, point or character word's setup fits in its fetch's cycle (SETUP_TIME).
+            if( (curState == INITIALIZE) && (curMode != PARAMETER) && (curMode != POINT) &&
+                (curMode != CHARACTER) )
             {
                 pendingDelay += SETUP_TIME;
             }
@@ -1042,20 +1064,26 @@ uint64_t idleT0;
                 break;
 
             case INCREMENT:
-                curState = RUNNING;             // not necessary, but do it for consistency
-                word = getWord(ctlP->pdp1P);
-
-                if( ESCAPE(word) )
+                // RUNNING here means a lightpen hit paused the 340 inside incWord, and the resume
+                // goes on with its next nibble; otherwise a new word is fetched.
+                if( curState != RUNNING )
                 {
-                    sawEscape = true;
-                    iotCondLog(LOG_INCREMENT, "increment escape\n");
+                    curState = RUNNING;
+                    incWord = getWord(ctlP->pdp1P);
+                    incShift = 12;
+
+                    if( ESCAPE(incWord) )
+                    {
+                        sawEscape = true;
+                        iotCondLog(LOG_INCREMENT, "increment escape\n");
+                    }
                 }
 
                 // The word contains 4, 4 bit fields, each moves up, down, left, or right, or diagonally
                 // one dotSpacing location. The high bit determines visible/invisible.
-                for( tmp = 12; tmp >= 0; tmp -= 4)
+                for( ; incShift >= 0; incShift -= 4 )
                 {
-                    if( (status = doIncrement(curScale, (word >> tmp) & 0xF)) != COMPLETED )
+                    if( (status = doIncrement(curScale, (incWord >> incShift) & 0xF)) != COMPLETED )
                     {
                         // Edge violation
                         iotCondLog(LOG_STOP, "Increment set stop\n");
@@ -1063,26 +1091,26 @@ uint64_t idleT0;
                         needBreak = true;
                         break;
                     }
-                    else
+
+                    if( INTENSIFY(incWord) && drawAndCheck(true, curX, curY, curIntensity) )
                     {
-                        // Actually want to draw it
-                        // The hardware always takes 1.5 us per nibble (0.5 us intensify-s
-                        // delay + 1.0 us sequence delay), whether or not the beam is unblanked.
-                        pendingDelay += 1500;
-                        if( INTENSIFY(word) )
-                        {
-                            if( drawAndCheck(true, curX, curY, curIntensity) )
-                            {
-                                // Lp hit, will take effect on the next word
-                                isPaused = true;
-                                iotCondLog(LOG_PAUSE, "LP hit in increment, pausing\n");
-                            }
-                        }
+                        // The nibble's COUNT Y sets the LP flag as a vector's pulse does (H-340
+                        // p. 3-7), so the intensify delay never starts: the 340 halts after the
+                        // 1.0 us sequence delay with the rest of the word undrawn.
+                        pendingDelay += BRM_HALT_PULSE_TIME;
+                        isPaused = true;
+                        incShift -= 4;
+                        iotCondLog(LOG_PAUSE, "LP hit in increment, pausing\n");
+                        break;
                     }
+
+                    // The hardware always takes 1.5 us per nibble (0.5 us intensify
+                    // delay + 1.0 us sequence delay), whether or not the beam is unblanked.
+                    pendingDelay += 1500;
                 }
 
-                // Don't lose the edge violation stop
-                if( curState != STOPPED )
+                // Don't lose the edge violation stop, and keep the word while paused in it
+                if( (curState != STOPPED) && !isPaused )
                 {
                     curState = INITIALIZE;
                 }
@@ -1611,8 +1639,8 @@ static unsigned char charSet[128][6] = {
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 63 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 64 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 65 ???
-    { 0000, 0200, 0100, 0040, 0000, 0 },  // 66 `
-    { 0040, 0100, 0200, 0100, 0040, 0 },  // 67 ^
+    { 0000, 0200, 0100, 0040, 0000, CH_NSPC },  // 66 ` accent, over the previous character
+    { 0040, 0100, 0200, 0100, 0040, CH_NSPC },  // 67 ^ accent, over the previous character
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 70 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 71 block?
     { 0000, 0000, 0000, 0000, 0000, CH_BS },  // 72 backspace
@@ -1621,6 +1649,31 @@ static unsigned char charSet[128][6] = {
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 75 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 76 ???
     { 0376, 0376, 0376, 0376, 0376, CH_SUP } // 77 superscript
+};
+
+// COUNTs the 342 takes for each charSet[] entry: the 342's paths are not documented, so this is
+// a model, the shortest path from the start through the lit dots to the next character's start
+// (Projects/CoreEnhancements/char-time/path_model.py --table writes it; edit charSet[] and rerun
+// it). LF 12, CR 9, the shifts and escape 0, sub- and superscript 4, backspace 7 (one character
+// back); an accent (CH_NSPC) goes from the beam back through its dots over the previous character
+// and returns; the ??? placeholders' 38 is a 2-opt bound, too many dots for the exact search.
+static const unsigned char charSteps[128] = {
+    19, 22, 24, 20, 22, 26, 20, 22,   // 000 blob A B C D E F G
+    24, 17, 16, 20, 19, 20, 21, 20,   // 010 H I J K L M N O
+    20, 23, 21, 20, 19, 22, 21, 24,   // 020 P Q R S T U V W
+    20, 18, 26, 12,  9,  0,  0,  0,   // 030 X Y Z LF CR HORIZ VERT ESC
+     7, 14, 14, 25, 23, 23, 20, 13,   // 040 space ! " # $ % & '
+    15, 13, 19, 14, 11, 10,  9, 10,   // 050 ( ) * + , - . /
+    23, 15, 22, 19, 18, 22, 22, 17,   // 060 0 1 2 3 4 5 6 7
+    22, 20, 14, 16, 15, 16, 13, 17,   // 070 8 9 : ; < = > ?
+    19, 16, 21, 16, 21, 18, 16, 21,   // 100 blob a b c d e f g
+    18, 16, 14, 18, 16, 20, 15, 16,   // 110 h i j k l m n o
+    21, 20, 12, 17, 18, 19, 16, 18,   // 120 p q r s t u v w
+    16, 23, 20, 12,  9,  0,  0,  0,   // 130 x y z LF CR HORIZ VERT ESC
+     7, 38, 38, 14, 38, 38, 17, 14,   // 140 space ??? ??? ~ ??? ??? up right
+    17, 14, 12, 18, 17, 15, 13, 38,   // 150 down left backslash [ ] { } ???
+     8, 38, 14, 38, 38, 38, 12, 15,   // 160 _ ??? | ??? ??? ??? ` ^
+    38, 38,  7,  4, 38, 38, 38,  4   // 170 ??? block? backspace subscript ??? ??? ??? superscript
 };
 
 /*
@@ -1638,6 +1691,7 @@ int x, y;
 int xTmp, yTmp;
 int chFlags;
 int curChar;
+int steps;
 bool sawHit;
 
     if( ch > 63 )
@@ -1653,12 +1707,18 @@ bool sawHit;
     // Each char has 5 data bytes plus one flag byte.
     chFlags = charSet[curChar][5];
 
-    iotCondLog(LOG_CHARACTER,"curChar %o flags %o\n", curChar, chFlags);
+    // The whole character's time, charged here so that an escape, a stop or an edge violation pays
+    // it too. A vertical character is charged the horizontal path's COUNTs, an approximation: it is
+    // drawn unturned, and where the 342 starts the next vertical character is not documented.
+    steps = charSteps[curChar];
+    pendingDelay += ((steps * CHAR_STEP_TIME) + CHAR_NEXT_TIME);
+
+    iotCondLog(LOG_CHARACTER,"curChar %o flags %o steps %d\n", curChar, chFlags, steps);
     switch( chFlags )
     {
     case CH_LF:
         // Down one line dotSpacing
-        curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
+        curY -= LINEFEED * dotSpacing;
 
         if( checkBounds(curX, curY) )
         {
@@ -1713,6 +1773,26 @@ bool sawHit;
         }
         break;
 
+    case CH_BS:
+        // Back one character, so the next one overprints the last, as simh's backspace does. It
+        // draws nothing, so at the left edge the beam stays where it is rather than stopping the
+        // display for an edge violation, as the non-spacing guard above does.
+        if( twoCharsets || (shiftState == 0) )
+        {
+            if( curX >= ((CHARWIDTH + CHARDELTA) * dotSpacing) )
+            {
+                curX -= (CHARWIDTH + CHARDELTA) * dotSpacing;
+            }
+        }
+        else if( !twoCharsets && (shiftState != 0) )
+        {
+            if( curY <= 1023 - ((CHARHEIGHT + CHARDELTA) * dotSpacing) )
+            {
+                curY += (CHARHEIGHT + CHARDELTA) * dotSpacing;
+            }
+        }
+        return(COMPLETED);
+
     case CH_D:
         curY -= 2 * dotSpacing;                     // descender
         break;
@@ -1742,17 +1822,14 @@ bool sawHit;
     }
 
     // Finally!
-    // The Type 342 character generator didn't scan the display across every point in the 5x7 matrix.
-    // Instead, it moved from each 'on' bit position directly to the next, only doing an intensify
-    // if in visible mode.
+    // The dots are drawn column by column. The 342's own order is not known; its time, a model of
+    // its path through the dots, was charged above from charSteps[].
     for( x = 0; x < 5; x++ )
     {
         // columns 0 to 4, left to right
         for( y = 0; y < 7; y++ )
         {
             // Rows 0 to 6, bottom to top.
-            // The delay time is 1.5 usecs per drawm bit.
-            // As noted above, there were no moves to undrawn bit positions.
             if( charSet[curChar][x] & (2 << y) )
             {
                 // Bit on, draw it
@@ -1764,7 +1841,6 @@ bool sawHit;
                     return(EDGEVIOLATION);
                 }
 
-                pendingDelay += 1500;
                 if( drawAndCheck(true, xTmp, yTmp, type340Intensity(curIntensity)) )
                 {
                     sawHit = true;
@@ -1782,24 +1858,7 @@ bool sawHit;
         curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
     }
 
-    if( chFlags == CH_BS )
-    {
-        if( twoCharsets || (shiftState == 0) )
-        {
-            curX -= (CHARWIDTH + CHARDELTA) * dotSpacing;  // backspace
-        }
-        else if( !twoCharsets && (shiftState != 0) )
-        {
-            curY += (CHARHEIGHT + CHARDELTA) * dotSpacing;  // backspace
-        }
-
-        if( checkBounds(curX, curY) )
-        {
-            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
-            return(EDGEVIOLATION);
-        }
-    }
-    else if( chFlags == CH_D )
+    if( chFlags == CH_D )
     {
         curY += 2 * dotSpacing;     // undo descender
     }
@@ -1817,8 +1876,8 @@ bool sawHit;
 // Display 0 is always the primary display.
 // Set the LP flag if a hit occurred.
 // Return true if an lp hit occurred, else false.
-// Only the first hit counts until the 340 is resumed or restarted: the rest of the word is still
-// drawn after a hit, and a pen held on it would otherwise hit again and move lpX and lpY along.
+// Only the first hit counts until the 340 is resumed or restarted: the rest of a character word is
+// still drawn after a hit, and a pen held on it would otherwise hit again and move lpX and lpY along.
 bool
 drawAndCheck(bool tryLightpen, int x, int y, int intensity)
 {

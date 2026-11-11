@@ -22,3 +22,12 @@
 /pdp1control.config.bak
 /pdp1central.config
 /pdp1central.config.bak
+/src/pdp1/pdp1
+/src/pdp1/*.d
+/src/pdp1/sdl3.h
+/src/panel_pidp1/newpanel
+/src/tapevis/tapevis
+/src/vpanel_pdp1/panel_pdp1
+/src/ptytools/mkptyfio
+/src/ptytools/mkptyfl
+/src/ptytools/mkptyfio_telnet

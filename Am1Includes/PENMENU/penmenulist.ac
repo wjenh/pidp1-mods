@@ -1,0 +1,59 @@
+// penmenulist.ac -- the pen menu's display list: the bar, the selector that jumps to the open
+// list, every list and sublist, the Select box and the leader, and the jump back to the
+// program's frame.
+// The program defines PM_BAR (penmenu.ah) and PM_RETURN, the full address of the word its frame
+// goes on at (label:N), includes penmenu.ah, then this file once, in bank 0 or 1: the list's
+// jumps and the program's jump into it are the 340's, which reach those banks only. The frame
+// enters at pmBar in parameter mode (a jump pmBar:N next(parameter), or this file included
+// where the frame stands), and the list leaves in subroutine mode by its jump to PM_RETURN, the
+// scale and intensity changed; the words at PM_RETURN set their own. pmInit writes every
+// label's place before the list may be shown.
+// 04-Nov-2026, Claude: the library, from Sketchpad's menu.
+
+#ifndef PENMENULIST_AC
+#define PENMENULIST_AC
+
+#ifndef PM_RETURN
+#error "penmenu: define PM_RETURN, the frame's word after the menu, before penmenulist.ac"
+#endif
+
+// The bar's labels, then the selector, which pmOpenL points at the open list and pmClose back
+// at the end.
+pmBar,
+    PM_BAR(PM_LBAR, PM_LBAR)
+    lpoff next(subroutine)
+pmSel, jump pmEnd:. next(parameter)
+
+// The lists, then the sublists, each ending in its tail word.
+    PM_BAR(PM_LLIST, PM_NIL)
+    PM_BAR(PM_LSUBS, PM_NIL)
+
+// The Select box, entered at pmBox by every tail. Its gate, shut, jumps to the end; open, to the
+// next word. It is assembled shut; pmPlace writes its y and x, the leader's length, then opens
+// it. Its vectors leave the beam at the square's corner, and an invisible one takes it to
+// "OK".
+pmBox, lpoff next(subroutine)
+pmBoxG, jump pmEnd:. next(parameter)
+pmBoxP, scale(0) intensity(PMNORMI) lpon next(point)
+pmBoxY, y(PMROWY0 + PMBOXRISE) next(point)
+pmBoxX, x(0) next(vector)
+    deltax(PMBOXW) deltay(0) right visible
+    deltax(0) deltay(PMBOXW) down visible
+    deltax(PMBOXW) deltay(0) left visible
+    deltax(0) deltay(PMBOXW) up visible
+    deltax(PMBOXTDX) deltay(PMBOXRISE) right down end
+    PMBOXLBL
+    type340 "OK"
+
+// The leader, from the end of "OK" back to the box and on to the lit row's label; pmPlace
+// writes pmLeadV's length. Its last vector escapes into pmEnd's parameter word.
+#if PMLEADER
+pmLead, scale(PMLEADSCALE) intensity(PMLEADI) lpon next(vector)
+    deltax(PMLEADBACK) deltay(PMLEADRISE / PMLEADSTEP) left up
+pmLeadV, deltax(0) deltay(0) left visible end
+#endif
+
+pmEnd, lpoff next(subroutine)
+    jump (PM_RETURN) next(parameter)
+
+#endif

@@ -28,12 +28,9 @@
 
 # throttleburst is how far, in microseconds, simtime must get ahead of the wall clock before the
 # throttle waits at all.
-# The default, 100, runs about 20 cycles between waits, so the host wakes the emulator far less
-# often.
-# 0 waits whenever simtime is ahead at all, one to five cycles between waits, the behavior before
-# this setting.
-# The most is 250, since the Type 340 runs on the wall clock and can absorb a lead only up to that.
-#throttleburst=100
+# 0 waits whenever simtime is ahead at all, one to five cycles between waits.
+# The most is 250, since the Type 340 can absorb a lead only up to that.
+#throttleburst=10
 
 # throttlespin is the final stretch of each wait, in microseconds, that busy-spins on the CPU
 # instead of sleeping to avoid the scheduler's wakeup latency at very short quanta.
@@ -88,24 +85,13 @@ dpyshift=off
 # It used a hack with the intensity setting in the dpy command that will break a lot of other stuff.
 twoscreens=off
 
-# Enable lightpen support in pidp1.
-lightpen=on
 # An aperture of 22 corresponds to a physical aperture of 0.200 inches.
 aperture=22
 
-# The gui and Type 30 of course need to be able to find the config tile for these to work.
+# The unified gui of course needs to be able to find the config tile for this to work.
 # If running on a remote system, copy the config file to /opt/pidp1-mods on that system,
 # or use the command line flags if available.
-
-# The unified control gui checks this.
 guilightpen=yes
-
-# The standalone type 30 display checks this.
-type30lightpen=yes
-# The default size is 1024, change to what you want, also via command line -s size.
-type30size=1024
-# The default is yes, also via sommand line -n, for no border.
-type30border=yes
 
 # The type 340 display checks this.
 # If two charsets are enabled, then lower-shift characters come from the second one.
@@ -287,16 +273,16 @@ fasttyo=false
 #dacgain=1.0
 
 # The room the waveform shaper uses, dacroom=voices lets the voices choose at each start,
-# Busch Hall when a note playing asks for it, use with the Flentrop organ,
-# a generic hall otherwise.
-# dacroom=busch or dacroom=hall forces the room.
-# The default without the settingtis no room.
+# Busch Hall when a piece asks for it, a generic hall otherwise.
+# dacroom=busch, dacroom=hall, dacroom=none forces the room.
+# The Flentrop organ uses Busch Hall, the room it was designed for.
+# The default without the setting is no room.
 dacroom=voices
 
 # The onset.
 # daconset=MS starts each organ note up to MS milliseconds late,
 # as a tracker organ's pallets and pipes do.
-# Off by default or if at 0.
+# Off by default or if 0.
 # 8 ms is correct for the Flentrop, a tracker organ.
 daconset=8
 

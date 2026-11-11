@@ -1,6 +1,7 @@
 // pdp1central, one desktop window to control the PiDP-1 emulator.
 // It shows what is running, starts, stops, restarts and reloads the emulator through
-// bin/pdp1control.sh, keeps the script's start-time choices in pdp1control.config, mounts and
+// bin/pdp1control.sh, runs, continues and halts the machine through the emulator's command port,
+// keeps the script's start-time choices in pdp1control.config, mounts and
 // saves paper tapes, fast loads a tape through fastload, or through ovlload when it has drum
 // overlays, mounts microtapes through mtp, picks and saves drum images, turns the
 // sound on and off, starts the typewriter, t30dpy and console windows, and edits pidp1.config
@@ -33,6 +34,12 @@
 // 25-Oct-2026 wje (Claude) - the Control tab's Companions row starts the typewriter, t30dpy and
 //     the console detached, with the commands of their desktop launchers.
 // 30-Oct-2026 wje - add vertical scrolling for small displays
+// 06-Nov-2026 wje (Claude) - Run, Continue and Halt set the emulator start, continue, and stop states
+//     through the emulator's command port; Reload config is now Reload.
+// 07-Nov-2026 wje (Claude) - the "Also launch:" row: t30dpy and Soroban, the typewriter terminal,
+//     started by pdp1control.sh; the Companions row's Typewriter is now Soroban.
+// 09-Nov-2026 wje - add choice to the schema, clean out unused items, add missing ones.
+//    A choice setting is picked with option buttons in the Settings tab.
 
 #include <errno.h>
 #include <limits.h>
@@ -60,12 +67,16 @@
 #define MAX_OTHER 128           // names in pidp1.config the schema does not have
 #define MAX_QUEUE 4             // script commands waiting for the running child
 #define MAX_SCHEMES 8           // color schemes the Colors choice lists
+#define CHOICE_MAX 32           // values a choice can have: 64 characters of "a,b,..."
+#define CHOICE_BUTTONS_MAX 8    // a choice with more values gets a drop-down
 #define WINDOW_W 960
 #define WINDOW_H 680
 #define TITLE_MARGIN 32         // kept above a window that is opened to fit a short screen
 #define ROW_H 26
 #define AUDIO_RESTORE_MS 1000   // after a reload ends, time for the emulator to take its SIGHUP
 #define MULDIV_POLL_MS 2000     // how often the Live tab reads multiply and divide
+#define RUN_POLL_MS 1000        // how often the machine's run state is read
+#define RUN_AFTER_MS 200        // after Run, Continue or Halt, how soon the state is read again
 #define AD1_DEFAULT_PORT 1044   // the debugger link's port when pidp1.config does not set ad1port
 #define MT_NAME_MAX 255         // the longest tape path mtp and the plugin take
 #define OVL_MAX_SKEW 5          // seconds a tape's and its .ovl's modification times may differ
@@ -97,6 +108,15 @@ typedef enum
     CMD_UNMOUNT,
     CMD_SAVEPUNCH
 } Command;
+
+// The machine's state as the emulator's run ? gives it.
+typedef enum
+{
+    RUN_UNKNOWN,                // not read, or an emulator with no run ?
+    RUN_POWER_OFF,
+    RUN_HALTED,
+    RUN_RUNNING
+} RunState;
 
 typedef enum
 {
@@ -268,6 +288,9 @@ static char overflowNote[160];  // the last reply to audio overflow
 static int muldivState = -1;    // multiply and divide as the last read gave it: 1 on, 0 off, -1 not known
 static Uint32 muldivMs;         // when it was last read, 0 to read it at once
 
+static RunState runState = RUN_UNKNOWN;
+static Uint32 runMs;            // when the run state was last read, 0 to read it at once
+
 static Tab tab = TAB_CONTROL;
 static float tabHeight[TAB_COUNT];      // the height each tab's rows took when last drawn
 static bool redrawNow;                  // a tab just changed sides of the fit, so don't wait for an event
@@ -275,7 +298,8 @@ static int group;
 static bool diskConflict;       // pidp1.config changed on disk while there are unsaved edits
 static char savedNote[512];     // after a save: what still needs a restart
 static bool savedNeedsRestart;
-static char statusNote[256];    // the last error, shown in the top strip
+static char statusNote[256];    // the last error, shown in the top strip until the next action
+static unsigned statusSeq;      // counts the errors shown, so an action keeps the error it raised
 static bool exitPending;        // leave once the running child and the queue are done
 static bool exitNow;
 
@@ -310,7 +334,7 @@ int slot;
     logCount++;
 }
 
-// Log an error and show it in the top strip until the next one.
+// Log an error and show it in the top strip until the next click or key press.
 static void
 appError(const char *fmtP, ...)
 {
@@ -319,6 +343,7 @@ va_list ap;
     va_start(ap, fmtP);
     vsnprintf(statusNote, sizeof(statusNote), fmtP, ap);
     va_end(ap);
+    statusSeq++;
     appLog("%s", statusNote);
 }
 
@@ -827,7 +852,7 @@ char path[PATH_MAX];
 }
 
 // The port the emulator's debugger link listens on, from pidp1.config as saved, read the way
-// the emulator reads it (configPort in src/blincolnlights/pdp1/ad1server.c): no line gives
+// the emulator reads it (configPort in src/pdp1/ad1server.c): no line gives
 // 1044; off, no, n, false or 0 close the link; on, yes, y, true and anything that is not a
 // port give 1044.
 // Returns the port, or 0 when the link is off.
@@ -2006,6 +2031,86 @@ char note[160];
     }
 }
 
+// The machine's state in a reply to run ?. An emulator older than the command replies ok to it.
+// Returns RUN_UNKNOWN for any other reply.
+static RunState
+runFromReply(const char *replyP)
+{
+    if( !strcmp(replyP, "running") )
+    {
+        return(RUN_RUNNING);
+    }
+
+    if( !strcmp(replyP, "halted") )
+    {
+        return(RUN_HALTED);
+    }
+
+    if( !strcmp(replyP, "power off") )
+    {
+        return(RUN_POWER_OFF);
+    }
+
+    return(RUN_UNKNOWN);
+}
+
+// Read the machine's state every RUN_POLL_MS while the emulator answers, for the strip's Run,
+// Continue and Halt. A program, a panel or ad1 can change it, so it is read, never assumed from
+// a click. Only a change is logged.
+// Called on every pass of the event loop.
+static void
+pollRun(void)
+{
+char reply[64];
+RunState state;
+
+    if( (pdp1Count == 0) || !portUp )
+    {
+        runState = RUN_UNKNOWN;
+        runMs = 0;
+        return;
+    }
+
+    if( (runMs != 0) && ((SDL_GetTicks() - runMs) < RUN_POLL_MS) )
+    {
+        return;
+    }
+
+    runMs = (SDL_GetTicks() | 1);       // never 0, which means read at once
+    state = ((portCommand(EMU_PORT, "run ?", reply, sizeof(reply)) == 0)?runFromReply(reply):RUN_UNKNOWN);
+    if( (state != RUN_UNKNOWN) && (state != runState) )
+    {
+        appLog("the machine is %s", reply);
+    }
+    runState = state;
+}
+
+// Press a panel key through the emulator: wordP is run, cont or halt. The state is read again
+// RUN_AFTER_MS later, by when the emulator's main loop has taken the key.
+static void
+runKey(const char *wordP)
+{
+char reply[128];
+int result;
+
+    result = portCommand(EMU_PORT, wordP, reply, sizeof(reply));
+    if( result != 0 )
+    {
+        appError("\"%s\" not sent: %s", wordP, ((result == -1)?"the emulator is not running" :
+            ((result == -2)?"no answer":"port error")));
+    }
+    else if( strcmp(reply, "ok") )
+    {
+        appError("\"%s\": %s", wordP, reply);
+    }
+    else
+    {
+        appLog("sent \"%s\" to the emulator on %d", wordP, EMU_PORT);
+    }
+
+    runMs = ((SDL_GetTicks() - RUN_POLL_MS + RUN_AFTER_MS) | 1);
+}
+
 // Put the audio back after a reload, and forget it when the emulator goes. It is never read,
 // since a read can start the sound (audioCommand).
 // Called on every pass of the event loop.
@@ -2341,7 +2446,7 @@ bool clicked;
 static void
 drawStatus(struct nk_context *ctxP)
 {
-static const float stripRatios[] = { 0.14f, 0.14f, 0.14f, 0.14f, 0.14f, 0.30f };
+static const float stripRatios[] = { 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.095f, 0.24f };
 const char *panelP, *interfaceP;
 char panelBuf[CONF_MAX_VALUE + 1];
 char interfaceBuf[CONF_MAX_VALUE + 1];
@@ -2376,8 +2481,10 @@ bool usb, t30, idle, running;
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
     running = (pdp1Count > 0);
-    // Five buttons, and the rest of the row for the running job and its seconds.
-    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 6, stripRatios);
+    // Eight buttons, and the rest of the row for the running job and its seconds.
+    // Start, Stop and Restart are the processes'; Run, Continue and Halt the machine's panel keys,
+    // each offered only in the state the emulator last reported, since a key's effect depends on it.
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 9, stripRatios);
     if( button(ctxP, "Start", (idle && !running)) )
     {
         queueScript("start");
@@ -2390,7 +2497,19 @@ bool usb, t30, idle, running;
     {
         queueScript("restart");
     }
-    if( button(ctxP, "Reload config", (idle && running)) )
+    if( button(ctxP, "Run", (idle && running && (runState == RUN_HALTED))) )
+    {
+        runKey("run");
+    }
+    if( button(ctxP, "Continue", (idle && running && (runState == RUN_HALTED))) )
+    {
+        runKey("cont");
+    }
+    if( button(ctxP, "Halt", (idle && running && (runState == RUN_RUNNING))) )
+    {
+        runKey("halt");
+    }
+    if( button(ctxP, "Reload", (idle && running)) )
     {
         queueScript("reload");
     }
@@ -2502,10 +2621,10 @@ char error[PATH_MAX + 64];
     statusMs = 0;               // count t30dpy again at once, so its button is disabled
 }
 
-// The Companions row: the typewriter, t30dpy and the screen console, with the commands of their
-// desktop launchers (tty.desktop, t30dpy.desktop) and, for the console, pdp1.sh's. There are no
-// lamps for the typewriter and the console: lxterminal serves every window from one process, so
-// whether one is open cannot be told, and a second click opens a second window.
+// The Companions row: Soroban, the typewriter terminal, t30dpy and the screen console, with the
+// commands of their desktop launchers (tty.desktop, t30dpy.desktop) and, for the console,
+// pdp1.sh's. There are no lamps for Soroban and the console: lxterminal serves every window from
+// one process, so whether one is open cannot be told, and a second click opens a second window.
 static void
 drawCompanions(struct nk_context *ctxP)
 {
@@ -2522,9 +2641,9 @@ bool answering;
     answering = (portUp && (pdp1Count > 0));
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 5, companionRatios);
     nk_label(ctxP, "Companions", NK_TEXT_LEFT);
-    if( button(ctxP, "Typewriter", answering) )
+    if( button(ctxP, "Soroban", answering) )
     {
-        launchCompanion("Typewriter", typewriterArgv);
+        launchCompanion("Soroban", typewriterArgv);
     }
     // pdp1control.sh never starts a second t30dpy, and neither does this.
     if( button(ctxP, "t30dpy", (answering && (t30Count == 0))) )
@@ -2557,6 +2676,31 @@ bool answering;
     }
 }
 
+// The note beside the "Also launch:" boxes: who has the display and who the typewriter. The
+// emulator serves each to one client: the display to the last to connect, the typewriter to
+// the first, refusing the rest. gui is neither apps nor web; there Soroban is never started.
+static const char *
+alsoLaunchNote(bool apps, bool web, bool t30, bool soroban)
+{
+    if( apps )
+    {
+        return("apps starts t30dpy");
+    }
+    if( !web )
+    {
+        return(t30 ? "t30dpy has the display; the gui has the typewriter" : "the gui has the typewriter");
+    }
+    if( t30 && soroban )
+    {
+        return("browser takes the display; Soroban has the typewriter");
+    }
+    if( t30 )
+    {
+        return("the browser display takes it while open");
+    }
+    return(soroban ? "Soroban keeps the typewriter from the browser" : "");
+}
+
 // The Control tab: start-time choices, paper tape, audio, the companions and the window's colors.
 static void
 drawControl(struct nk_context *ctxP)
@@ -2568,11 +2712,12 @@ static const char *panelLabels[] = { "PiDP-1 hardware", "virtual" };
 static const char *usbs[] = { "y", "n" };
 static const char *usbLabels[] = { "yes", "no" };
 static const float choiceRatios[] = { 0.25f, 0.25f, 0.50f };    // a label, a control, a note
+static const float alsoRatios[] = { 0.25f, 0.125f, 0.125f, 0.50f }; // two boxes in a control's room
 float ratios[MAX_SCHEMES + 1];
 char valueBuf[CONF_MAX_VALUE + 1];
 const char *whyP, *nameP, *withP;
-nk_bool t30;
-bool idle, apps, web;
+nk_bool t30, soroban;
+bool idle, apps, web, gui;
 int i, count;
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
@@ -2592,18 +2737,21 @@ int i, count;
         }
     }
 
-    // t30dpy beside the gui or web front end; apps starts it anyway. The emulator serves one
-    // client per display port, the last to connect, so the note says who has the display.
+    // t30dpy beside the gui or web front end; apps starts it anyway. Soroban, the typewriter
+    // terminal, beside web or apps; gui's window takes the typewriter at its start and quits
+    // without it, so the box is disabled there, its value kept for a switch back.
     apps = !strcmp(controlChoice("interface", "web", valueBuf), "apps");
     web = !strcmp(valueBuf, "web");
+    gui = !strcmp(valueBuf, "gui");
     t30 = (apps || !strcmp(controlChoice("t30dpy", "n", valueBuf), "y"));
-    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, choiceRatios);
-    nk_label(ctxP, "Type 30 display", NK_TEXT_LEFT);
+    soroban = !strcmp(controlChoice("soroban", "n", valueBuf), "y");
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, alsoRatios);
+    nk_label(ctxP, "Also launch:", NK_TEXT_LEFT);
     if( apps )
     {
         styleDisableBegin(ctxP);
     }
-    if( nk_checkbox_label(ctxP, "also start t30dpy", &t30) && !apps )
+    if( nk_checkbox_label(ctxP, "t30dpy", &t30) && !apps )
     {
         setControlChoice("t30dpy", (t30?"y":"n"));
     }
@@ -2611,9 +2759,19 @@ int i, count;
     {
         styleDisableEnd(ctxP);
     }
-    nk_label(ctxP, (apps?"apps starts t30dpy":(!t30?"":(web ?
-        "the browser display takes it while open":"t30dpy has it, not the gui's window"))),
-        NK_TEXT_LEFT);
+    if( gui )
+    {
+        styleDisableBegin(ctxP);
+    }
+    if( nk_checkbox_label(ctxP, "Soroban", &soroban) && !gui )
+    {
+        setControlChoice("soroban", (soroban?"y":"n"));
+    }
+    if( gui )
+    {
+        styleDisableEnd(ctxP);
+    }
+    nk_label(ctxP, alsoLaunchNote(apps, web, t30, soroban), NK_TEXT_LEFT);
 
     controlChoice("frontpanel", "virtual", valueBuf);
     nk_layout_row_dynamic(ctxP, ROW_H, 4);
@@ -2790,6 +2948,12 @@ startingValue(const SchemaEntry *entryP, char *outP, size_t outLen)
     case SCHEMA_TEXT:
         snprintf(outP, outLen, "0");
         break;
+    case SCHEMA_CHOICE:
+        if( !schemaChoiceAt(entryP, 0, outP, outLen) )
+        {
+            snprintf(outP, outLen, "0");
+        }
+        break;
     default:
         snprintf(outP, outLen, "%d", (entryP->hasRange?(int)entryP->rangeLow:0));
         break;
@@ -2865,24 +3029,96 @@ nk_flags flags;
     }
 }
 
+// A choice setting's values, split into choicesP; returns how many.
+// The widest value's text width goes to *widestP.
+static int
+splitChoices(struct nk_context *ctxP, const SchemaEntry *entryP, char choicesP[][sizeof(entryP->rangeStr)],
+    float *widestP)
+{
+const struct nk_user_font *fontP;
+float width;
+int n;
+
+    fontP = ctxP->style.font;
+    *widestP = 0.0f;
+    for( n = 0; (n < CHOICE_MAX) && schemaChoiceAt(entryP, n, choicesP[n], sizeof(choicesP[n])); n++ )
+    {
+        width = fontP->width(fontP->userdata, fontP->height, choicesP[n], (int)strlen(choicesP[n]));
+        if( width > *widestP )
+        {
+            *widestP = width;
+        }
+    }
+
+    return(n);
+}
+
 // One row of the settings editor: name, control, "default" box, when it applies.
+// A choice's control is a row of option buttons, not a drop-down: a combo's list opens only
+// downward, and in this scrolling group a row near the bottom would have it cut off by the
+// window. A choice with too many values to fit as buttons gets the drop-down anyway.
 static void
 drawSettingRow(struct nk_context *ctxP, int index, const SchemaEntry *entryP, const char *nameP)
 {
 static const float ratios[] = { 0.24f, 0.36f, 0.12f, 0.28f };
+float choiceRatios[3 + CHOICE_BUTTONS_MAX];
+char choices[CHOICE_MAX][sizeof(entryP->rangeStr)];
+const char *choicePs[CHOICE_MAX];
 char valueBuf[CONF_MAX_VALUE + 1];
 char newValue[CONF_MAX_VALUE + 1];
 char label[CONF_MAX_VALUE + 2];
 struct nk_rect bounds;
 const char *valueP;
 nk_bool isDefault, wasDefault, on;
-bool readOnly;
-int intValue, newInt;
+bool readOnly, buttons;
+int intValue, newInt, choiceCount, choiceIndex, picked, i;
+float widest, needed, spacing, space4, spaceN, buttonWidth;
 double floatValue, newFloat;
 
     valueP = getValue(editCfP, nameP, valueBuf);
     readOnly = (entryP && (entryP->applies == APPLIES_NONE));
-    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, ratios);
+
+    // A choice the file sets to one of its values gets the picker; any other value is shown in
+    // the text field, so a hand-edited one can be seen and corrected.
+    choiceCount = 0;
+    choiceIndex = -1;
+    buttons = false;
+    spaceN = space4 = buttonWidth = 0.0f;
+    if( entryP && (entryP->type == SCHEMA_CHOICE) && valueP && !readOnly &&
+        ((choiceIndex = schemaChoiceIndex(entryP, valueP)) >= 0) )
+    {
+        choiceCount = splitChoices(ctxP, entryP, choices, &widest);
+
+        // Nuklear shares a row's width less the gaps between its columns by the ratios, so a
+        // row with more columns has less to share. The ratios below put the name, default and
+        // applies columns where a four-column row has them, and the buttons, gaps included,
+        // fill the value column.
+        spacing = ctxP->style.window.spacing.x;
+        space4 = (nk_layout_widget_bounds(ctxP).w - (3.0f * spacing));
+        spaceN = (nk_layout_widget_bounds(ctxP).w - ((2 + choiceCount) * spacing));
+        buttonWidth = (((ratios[1] * space4) - ((choiceCount - 1) * spacing)) / choiceCount);
+
+        // Each button is its circle, the gap and the text.
+        needed = (widest + ctxP->style.font->height + ctxP->style.option.spacing +
+            (2.0f * ctxP->style.option.padding.x));
+        buttons = ((choiceCount <= CHOICE_BUTTONS_MAX) && (spaceN > 0.0f) && (buttonWidth >= needed));
+    }
+
+    if( buttons )
+    {
+        choiceRatios[0] = ((ratios[0] * space4) / spaceN);
+        for( i = 0; i < choiceCount; i++ )
+        {
+            choiceRatios[1 + i] = (buttonWidth / spaceN);
+        }
+        choiceRatios[1 + choiceCount] = ((ratios[2] * space4) / spaceN);
+        choiceRatios[2 + choiceCount] = ((ratios[3] * space4) / spaceN);
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, (3 + choiceCount), choiceRatios);
+    }
+    else
+    {
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, ratios);
+    }
 
     // The name, or its label, with the summary as its tooltip; a label's tooltip also gives the
     // name, since that is what the file holds.
@@ -2918,6 +3154,29 @@ double floatValue, newFloat;
     else if( readOnly )
     {
         nk_label(ctxP, valueP, NK_TEXT_LEFT);
+    }
+    else if( buttons )
+    {
+        for( i = 0; i < choiceCount; i++ )
+        {
+            if( nk_option_label(ctxP, choices[i], (i == choiceIndex)) && (i != choiceIndex) )
+            {
+                editSet(entryP, nameP, choices[i]);
+            }
+        }
+    }
+    else if( choiceIndex >= 0 )
+    {
+        for( i = 0; i < choiceCount; i++ )
+        {
+            choicePs[i] = choices[i];
+        }
+        picked = nk_combo(ctxP, choicePs, choiceCount, choiceIndex, ROW_H,
+            nk_vec2(nk_widget_width(ctxP), (float)(8 * (ROW_H + 4))));
+        if( picked != choiceIndex )
+        {
+            editSet(entryP, nameP, choices[picked]);
+        }
     }
     else if( !entryP || (entryP->type == SCHEMA_TEXT) )
     {
@@ -3951,6 +4210,8 @@ const char *rootArgP, *schemaArgP;
 char error[512];
 struct stat st;
 int opt, width, height, y;
+unsigned actionSeq;     // statusSeq when the current click or key press began
+bool actionEnded;       // a click or key press ended in this frame
 
     rootArgP = DEFAULT_ROOT;
     schemaArgP = NULL;
@@ -4040,9 +4301,11 @@ int opt, width, height, y;
     appLog("pdp1central started; root %s", rootPath);
     loadStyle(ctxP);
     exitNow = false;
+    actionSeq = statusSeq;
     while( !exitNow )
     {
         nk_input_begin(ctxP);
+        actionEnded = false;
         if( SDL_WaitEventTimeout(&event, (redrawNow?0:250)) )
         {
             do
@@ -4050,6 +4313,16 @@ int opt, width, height, y;
                 if( event.type == SDL_QUIT )
                 {
                     requestExit();
+                }
+                // Nuklear acts on the press, so the count taken here lets the release keep an
+                // error the press raised. Pointer moves and the wheel act on nothing.
+                if( (event.type == SDL_MOUSEBUTTONDOWN) || (event.type == SDL_KEYDOWN) )
+                {
+                    actionSeq = statusSeq;
+                }
+                if( (event.type == SDL_MOUSEBUTTONUP) || (event.type == SDL_KEYDOWN) )
+                {
+                    actionEnded = true;
                 }
                 dragWindow(windowP, &event);
                 nk_sdl_handle_event(&event);
@@ -4070,6 +4343,7 @@ int opt, width, height, y;
         }
         pollAudio();
         pollMuldiv();
+        pollRun();
 
         if( pendingScheme[0] )
         {
@@ -4079,6 +4353,15 @@ int opt, width, height, y;
 
         SDL_GetWindowSize(windowP, &width, &height);
         drawFrame(ctxP, width, height);
+
+        // The error goes once an action has ended with no newer error, after the frame that
+        // handled it: clearing it before would move the rows below the strip up under the
+        // pointer, and the click would land on the widget below the one aimed at.
+        if( actionEnded && statusNote[0] && (statusSeq == actionSeq) )
+        {
+            statusNote[0] = '\0';
+            redrawNow = true;
+        }
 
         SDL_SetRenderDrawColor(rendererP, styleColors[NK_COLOR_WINDOW].r, styleColors[NK_COLOR_WINDOW].g,
             styleColors[NK_COLOR_WINDOW].b, 255);

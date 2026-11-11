@@ -1,5 +1,5 @@
 /*
- * hscharness.c -- standalone C test harness for src/blincolnlights/pdp1/highSpeedChannels.c,
+ * hscharness.c -- standalone C test harness for src/pdp1/highSpeedChannels.c,
  * covering exactly the one property that IOTs/TestGateway/Tests/T01-T05.am1 structurally
  * cannot: true multi-channel priority arbitration in NORMAL (non-IMMEDIATE, non-THREADED)
  * mode -- see README.md's "What this suite does NOT cover, and why" section for the full

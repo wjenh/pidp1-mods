@@ -1,5 +1,5 @@
-INC=-I../blincolnlights
+INC=-I../common
 LIBS=-lpthread -lm
 
-scanpf: main.c ../blincolnlights/common.c
+scanpf: main.c ../common/common.c
 	cc -O3 -o $@ $^ $(INC) $(LIBS)

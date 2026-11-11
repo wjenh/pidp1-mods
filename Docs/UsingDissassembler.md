@@ -2,9 +2,9 @@
 
 This document describes the disassembler and how to use it.
 
-This is version 1.5 and covers disassembler version 2.5; it will be updated as needed.
+This is version 1.6 and covers disassembler version 2.6; it will be updated as needed.
 
-Edit date 24-Oct-2026\
+Edit date 06-Nov-2026\
 Add notes for how conversion is done.
 
 ## What is the disassembler?
@@ -40,6 +40,9 @@ An empty argument, *,,*, is passed as an empty string, *""*.
 Without *-L*, the loader is chosen from the tape's RIM block: the am1 loader if the RIM block is
 **am1**'s loader (*rpb* at 7752, after *eem* or *nop* at 7751), otherwise the bin loader.
 A *-L* flag always wins.
+
+A tape whose RIM block is the whole program needs no loader, see *Programs punched in RIM format*,
+below.
 
 New loaders can be easily implemented, although **disassembler** will need to be rebuilt when a new one is added.
 
@@ -145,8 +148,18 @@ blocks don't exist, but see *Labels*, below.
 There is also nothing to indicate what is data and what is instructions.
 Data that matches an instruction will be emitted as that instruction.
 
-A tape whose RIM block is the whole program with no loader after it needs *-k*, or no source will be output.
-It will just be a *stop* because it has been skipped over looking for a loader.
+## Programs punched in RIM format
+
+Some tapes are a RIM block with no loader.
+Read-in mode loads the program and the block's closing *jmp* starts it.
+**disassemble** takes a RIM block as the program when the tape ends at its *jmp*, or has only one word
+after the block.
+The block's words are then the program, with or without *-k*, and its *jmp* is the *start*.
+A loader named with *-L* is not used, except for the mem loader which reads no RIM block.
+
+A single word after the *jmp* is never loaded.
+It is reported by a warning on stderr and listed as a comment just before the *start* in the
+**am1** and **macro1** forms, and as a line with no address in a listing.
 
 ## How it works
 
@@ -158,7 +171,8 @@ Any non-binary character is ignored, even if in a word sequence.
 However, any non-binary characters that are seen up to the first binary character on a tape are considered to be
 part of a label for the tape and will be output in the form they would appear if you were looking at a physical tape.
 
-When the initial RIM code has ended or has not been processed, control is then passed to the loader that was specified.
+When the initial RIM code has ended, control is then passed to the loader that was specified
+unless the RIM block is the program, as above.
 The loader then returns address and data words for each memory location it finds and instruction disassembly
 is performed.
 

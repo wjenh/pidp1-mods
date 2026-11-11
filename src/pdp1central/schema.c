@@ -2,10 +2,17 @@
 // checks a value against it before it is written.
 // The file has one setting per line, nine fields separated by '|':
 //     name|group|type|range|default|reader|applies|label|summary
-// '#' in column 1 starts a comment, and blank lines are skipped. A range is "low..high" or
-// empty; a default of "-" means no reader has a single one. Applies is reload, panel, run,
-// restart, program or none, and reload, panel or run may carry "-sticky". The label, usually
-// empty, is shown instead of the name.
+// '#' in column 1 starts a comment, and blank lines are skipped.
+// Name is the config file name and also what is displayed.
+// group identifies the group it is displayed in, one listed when settings is selected.
+// type is the field datatype: bool, int, float, text, choice, port.
+// range is "lowval..highval" or empty; for a choice, its values, "str[,str...]".
+// default is the default value or "-" for none.
+// reader is the program that uses the setting, displayed when applies is 'program'.
+// applies is reload, panel, run, restart, program, or none,
+//    and reload, panel or run may also have "-sticky" appended.
+// label, if not empty, is shown instead of the name.
+// summary is what is shown as the "tip" when the name is hovered over.
 
 #include <ctype.h>
 #include <math.h>
@@ -80,6 +87,7 @@ int n;
     memset(entryP, 0, sizeof(*entryP));
     if( !copyField(entryP->name, sizeof(entryP->name), fieldsP[0]) || !fieldsP[0][0] ||
         !copyField(entryP->group, sizeof(entryP->group), fieldsP[1]) || !fieldsP[1][0] ||
+        !copyField(entryP->rangeStr, sizeof(entryP->rangeStr), fieldsP[3]) ||
         !copyField(entryP->defaultText, sizeof(entryP->defaultText), fieldsP[4]) || !fieldsP[4][0] ||
         !copyField(entryP->reader, sizeof(entryP->reader), fieldsP[5]) ||
         !copyField(entryP->label, sizeof(entryP->label), fieldsP[7]) ||
@@ -104,20 +112,44 @@ int n;
     {
         entryP->type = SCHEMA_TEXT;
     }
+    else if( !strcmp(fieldsP[2], "choice") )
+    {
+        entryP->type = SCHEMA_CHOICE;
+    }
     else if( !strcmp(fieldsP[2], "port") )
     {
         entryP->type = SCHEMA_PORT;
     }
     else
     {
-        return("the type is not bool, int, float, text or port");
+        return("the type is not bool, int, float, text, choice or port");
     }
 
-    if( fieldsP[3][0] )
+    // A choice's values are checked here, so the picker never meets an empty one.
+    if( entryP->type == SCHEMA_CHOICE )
+    {
+        if( !fieldsP[3][0] || (fieldsP[3][0] == ',') || strstr(fieldsP[3], ",,") ||
+            (fieldsP[3][strlen(fieldsP[3]) - 1] == ',') )
+        {
+            return("a choice's range is its values, comma separated, none empty");
+        }
+
+        if( strcmp(entryP->defaultText, "-") && (schemaChoiceIndex(entryP, entryP->defaultText) < 0) )
+        {
+            return("a choice's default is - or one of its values");
+        }
+    }
+    else if( fieldsP[3][0] )
     {
         if( !(dotsP = strstr(fieldsP[3], "..")) )
         {
             return("a range is low..high");
+        }
+
+        // "0...30" would read as 0 to .30.
+        if( dotsP[2] == '.' )
+        {
+            return("a range is low..high, with two dots");
         }
 
         *dotsP = '\0';
@@ -130,7 +162,7 @@ int n;
         entryP->hasRange = true;
     }
 
-    // A "-sticky" setting's reader assigns it only when a line is there, so a new value applies
+    // A "-sticky" setting's reader assigns it only when a line is in the config file, a new value applies
     // as stated, but going back to the default needs the reader restarted.
     if( (p = strstr(fieldsP[6], "-sticky")) && !p[7] )
     {
@@ -327,6 +359,15 @@ double value;
     case SCHEMA_TEXT:
         return(true);
 
+    case SCHEMA_CHOICE:
+        // The whole value, not a piece of the list: "56" is not "560".
+        if( schemaChoiceIndex(entryP, valueP) < 0 )
+        {
+            snprintf(errorP, errorLen, "%s: one of %s", entryP->name, entryP->rangeStr);
+            return(false);
+        }
+        return(true);
+
     case SCHEMA_PORT:
     case SCHEMA_INT:
         if( !parseNumber(valueP, true, &value) )
@@ -352,6 +393,55 @@ double value;
     }
 
     return(true);
+}
+
+// A choice's value number index, from 0, copied to outP.
+// Returns false when the choice has no such value, or it does not fit.
+bool
+schemaChoiceAt(const SchemaEntry *entryP, int index, char *outP, size_t outLen)
+{
+const char *p;
+size_t len;
+int i;
+
+    for( i = 0, p = entryP->rangeStr; (i < index) && (p = strchr(p, ',')); i++ )
+    {
+        p++;
+    }
+
+    if( (index < 0) || !p || !*p )
+    {
+        return(false);
+    }
+
+    len = strcspn(p, ",");
+    if( len >= outLen )
+    {
+        return(false);
+    }
+
+    memcpy(outP, p, len);
+    outP[len] = '\0';
+    return(true);
+}
+
+// Which of a choice's values the value is, from 0.
+// Returns -1 when it is none of them.
+int
+schemaChoiceIndex(const SchemaEntry *entryP, const char *valueP)
+{
+char choice[sizeof(entryP->rangeStr)];
+int i;
+
+    for( i = 0; schemaChoiceAt(entryP, i, choice, sizeof(choice)); i++ )
+    {
+        if( !strcmp(choice, valueP) )
+        {
+            return(i);
+        }
+    }
+
+    return(-1);
 }
 
 // The words the editor shows for when a change takes effect. Save reloads whatever is running

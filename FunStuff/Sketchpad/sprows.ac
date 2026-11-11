@@ -57,7 +57,7 @@ rowNeeds,
     ROWANY              // Edit: Delete
     0                   // Edit: Constr >, its Show always acting
     ROWIT               // Edit: Size >
-    ROWANY              // Edit: Scale, as Move
+    ROWANY              // Edit: Scale >, as its Part and All
     ROWM1               // Edit: Change >, as its Dwell and Seq
     ROWI                // Edit: Dismem
     ROWLI               // Edit: Keep >
@@ -128,3 +128,6 @@ rowNeeds,
     ROWLI               // Keep: x3
     ROWI                // Keep: Full
     ROWI                // Keep: Inch
+    ROWANY              // Scale: Part, as Move
+    ROWLAI              // Scale: Figure, a line, an arc or an instance to pick
+    ROWANY              // Scale: All

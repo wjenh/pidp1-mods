@@ -34,7 +34,8 @@ Sketchpad, a light pen drawing program for the Type 340
 //
 // 18-Oct-2026 Claude: first release.
 // 18-Oct-2026 Claude: production cleanup, comments only.
-// 4-Nov-2026 Version 2.0 adding the remainder of the thesis operations
+// 4-Nov-2026 Version 2.0 added the remainder of the thesis operations
+// 8-Nov-2026 Version 2.1 added the size operations for instances, etc.
 
 #include <TYPE340/type340alt.ah>
 #include <LIGHTPEN/lightpen.ah>
@@ -69,11 +70,15 @@ var menuHits, menuX, menuY, menuArmed
 var tgtHits, tgtX, tgtY
 
 // Kept by penISR from frame to frame, frame ends since the last menu hit, saturating at REARM,
-// target presentations since the last target hit, saturating at LOSTMIN, and the clock's
-// reading at the last target hit (the main loop also sets it when it restarts the count).
+// target presentations since the last target hit, saturating at LOSTMIN, counted from the
+// second frame end after it (the hit's own frame's are taken off: trackMiss starts at minus
+// callsPerFrame), and the clock's reading at the last target hit (the main loop also sets it
+// when it restarts the count, trackMiss at 0).
 // lastTgt is 1 when the pen's last hit was the target's, 0 once a menu, list or keyboard hit
-// has come after it, whatever the main loop's snapshot holds: delete mode's loss deletes only
-// at 1 (deleteLost), so the pen jumped to Stop deletes nothing.
+// has come after it, whatever the main loop's snapshot holds: a loss at 0 is no lift in any
+// mode (checkLost drops the stroke first), so the pen jumped to Stop deletes nothing and the
+// target carried to the bar commits, fixes or sizes nothing, and Pan's and Center's loss at 0
+// only notes the start again (the view module's vwEntry), so the trip moves no view.
 var menuGap, trackMiss, lastHitAt, lastTgt
 
 // Nonzero while the target is displayed; penISR moves the target only then.
@@ -281,7 +286,7 @@ itemAct,
     actDelete:4         // Edit: Delete
     nothing:4           // Edit: Constr, which owns a sublist
     nothing:4           // Edit: Size, which owns a sublist
-    actScale:4          // Edit: Scale
+    nothing:4           // Edit: Scale, which owns a sublist
     nothing:4           // Edit: Change, which owns a sublist
     actDism:4           // Edit: Dismem
     nothing:4           // Edit: Keep, which owns a sublist
@@ -352,6 +357,9 @@ itemAct,
     actScale:4          // Keep: x3
     actScale:4          // Keep: Full
     actScale:4          // Keep: Inch
+    actScale:4          // Scale: Part, the overlay scale (scActOv)
+    actScale:4          // Scale: Figure, the overlay gscale (spgscale.ac)
+    actScale:4          // Scale: All, likewise
 
 // Constr's rows from ICONS1, Truss's after them, and Dim's Dist, Change and Gap past Change's
 // and Number -> the constraint mode's type.
@@ -374,29 +382,15 @@ rowCons,
     CTCHG               // Dim: Change
     CTGAP               // Dim: Gap
 
-// The number keyboard's blocks for Change's Seq, the truss's Stiff and Keep's Inch, as Dwell's in
-// spinst.ac, and their prompts.
-stBlk, KBDEC
-    STIFFDIG
-    stPrm:3
-    cyBuf:7
-    stDone:4
-    0
-cySqBlk, KBDEC
-    NSEQ
-    cyPrmS:3
-    cyBuf:7
-    ckDone:4
-    0
-szBlk, KBDEC
-    SZDIGS
-    szPrm:3
-    cyBuf:7
-    szKbDone:014
-    0
+// The prompts of the number keyboards for Change's Seq, the truss's Stiff and Keep's Inch, whose
+// blocks are in bank 6's root (stBlk, cySqBlk, szBlk).
 cyPrmS, type340 "Sequence"
 stPrm, type340 "Stiffness"
 szPrm, type340 "Inches"
+
+// The status word's text for a failed load, nine characters as the tape's are (sptape.ac,
+// tpMsgs), which spinit.ac's drumFail copies through its 16-bit address.
+drumText, type340 "DRUM     "
 
 // The constraints on size (spsize.ac, spscale.ac's szSolveOv). What asks for a solve, szDirty, and
 // the source's word before; whether its entry is new; the row, szKind; the first thing picked; an
@@ -1048,7 +1042,8 @@ bank 0d11
 // (spscale.ac), kbd (spkbd.ac), defdism, Define and Dismember (spinst.ac), and truss, the truss's
 // analysis (sptruss.ac and spfloat.ac), the one persistent overlay; each is entered only through
 // root code under its entries' names, bank 6's for scale and kbd, bank 7's for defdism and bank
-// 11's for tape, library, plot and truss, so their callers call them as they always have. The root follows W: the scale module's (spscale.ac), Edit > Scale and its mode, entered
+// 11's for tape, library, plot and truss, so their callers call them as they always have. The root
+// follows W: the scale module's (spscale.ac), Edit > Scale and its mode, entered
 // by the main bank's gates; then the pen keyboard's (spkbd.ac), entered by its four entries,
 // whose list is in W. Each keeps here the words its overlay reaches directly.
 bank 6
@@ -1059,6 +1054,39 @@ OVWLAST+1/
 #include "spscale.ac"
 
 #include "spkbd.ac"
+
+#include "spgscale.ac"
+
+// The number keyboard's blocks for Change's Seq, the truss's Stiff and Keep's Inch, as Dwell's in
+// spinst.ac; their prompts are in bank 3. The keyboard reads both through their 16-bit
+// addresses. The instance module opens the first two and bank 12's szKbGo the third.
+stBlk, KBDEC
+    STIFFDIG
+    stPrm:3
+    cyBuf:7
+    stDone:4
+    0
+cySqBlk, KBDEC
+    NSEQ
+    cyPrmS:3
+    cyBuf:7
+    ckDone:4
+    0
+szBlk, KBDEC
+    SZDIGS
+    szPrm:3
+    cyBuf:7
+    szKbDone:014
+    0
+
+// An O's parameter by its digits' scale, x1 to x8 (cScBind), the gap in 32nds, with CUNUSED's
+// sign bit set, as a Length's is. Read by the constraint module through its 16-bit address; here
+// for bank 5's room.
+cGapTab,
+    CUNUSED + (GAPHALF + GAPMARGIN) * 0d32
+    CUNUSED + (0d2 * GAPHALF + GAPMARGIN) * 0d32
+    CUNUSED + (0d4 * GAPHALF + GAPMARGIN) * 0d32
+    CUNUSED + (0d8 * GAPHALF + GAPMARGIN) * 0d32
 
 constants
 
@@ -1213,32 +1241,11 @@ cGlyph,
     save gI:0 next(subroutine)
     save gZ:0 next(subroutine)
 
-// A roller's mark by its axis's direction, k * 22.5 degrees counterclockwise from level, k 0 to 7
-// (cRlDir).
-cRlTab,
-    save gO0:0 next(subroutine)
-    save gO1:0 next(subroutine)
-    save gO2:0 next(subroutine)
-    save gO3:0 next(subroutine)
-    save gO4:0 next(subroutine)
-    save gO5:0 next(subroutine)
-    save gO6:0 next(subroutine)
-    save gO7:0 next(subroutine)
-
-// Per direction k (cRlDir: k * 22.5 degrees from level), the direction of the mark's offset
-// from its place on the line, x then y, at right angles to it, in thousandths of the distance
-// (cMkPos scales it, quantizing once). Above a flat line (k 0 to 2, 6, 7), right of a steep one
-// (k 3 to 5), as the truss's readouts stand. The cosines and sines of 0, 22.5, 45 and 67.5
-// degrees.
-cOfX,
-    0
-    -0d383
-    -0d707
-    0d924
-    0d1000
-    0d924
-    0d707
-    0d383
+// Per direction k (cRlDir: k * 22.5 degrees from level), the y of the mark's offset from its
+// place on the line, at right angles to it, in thousandths of the distance (cMkPos scales it,
+// quantizing once); its x is cOfX, in bank 13 beside cMkPos, for this bank's room. Above a flat
+// line (k 0 to 2, 6, 7), right of a steep one (k 3 to 5), as the truss's readouts stand. The
+// cosines and sines of 0, 22.5, 45 and 67.5 degrees.
 cOfY,
     0d1000
     0d924
@@ -1362,13 +1369,45 @@ cPjTab,
     nop
     nop
 
-// An O's parameter by its digits' scale, x1 to x8 (cScBind), the gap in 32nds,
-// with CUNUSED's sign bit set, as a Length's is.
-cGapTab,
-    CUNUSED + (GAPHALF + GAPMARGIN) * 0d32
-    CUNUSED + (0d2 * GAPHALF + GAPMARGIN) * 0d32
-    CUNUSED + (0d4 * GAPHALF + GAPMARGIN) * 0d32
-    CUNUSED + (0d8 * GAPHALF + GAPMARGIN) * 0d32
+// The leader's vector by the class of the label's length (LEADROW): the longest length in each.
+// Read by bank 12's placeBox through its 16-bit address; here for bank 12's room.
+leadTab,
+    deltax(LEADLEN(3)) deltay(0) left visible end
+    deltax(LEADLEN(5)) deltay(0) left visible end
+    deltax(LEADLEN(7)) deltay(0) left visible end
+    deltax(LEADLEN(0d8)) deltay(0) left visible end
+
+// A roller's mark by its axis's direction, k * 22.5 degrees counterclockwise from level, k 0 to 7
+// (the marks module's cRlDir), read by the marks module through its 16-bit address; here for
+// bank 9's room.
+cRlTab,
+    save gO0:0 next(subroutine)
+    save gO1:0 next(subroutine)
+    save gO2:0 next(subroutine)
+    save gO3:0 next(subroutine)
+    save gO4:0 next(subroutine)
+    save gO5:0 next(subroutine)
+    save gO6:0 next(subroutine)
+    save gO7:0 next(subroutine)
+
+// The group's scale's root loop (spgscale.ac), here for bank 6's room. Call the overlay gscale's
+// entry gsEntOv; while it answers nonzero, having shut the instances' gates and set their new
+// sizes, write every instance again from the root (the instance module's IEVIEW), where the
+// variants' code builds each new size's words in the store (spvar.ac's vaOf), which it cannot do
+// while an overlay runs, and call gsEntOv again to finish.
+// AC and IO are clobbered. Called via jsp i [gsRun:5], from spscale.ac's root stubs.
+gsRun,
+    local grLoop, grRtnW
+    dac grRtnW
+grLoop,
+    %%ovcall gscale, gsEntOv
+    sza i               // skip if the instances are to be written again
+    jmp i grRtnW
+    lio [IEVIEW]
+    jsp i [instEntry:7]
+    jmp grLoop
+grRtnW, 0
+    endloc
 
 // The text module, in bank 10 with its tables. The main bank enters it through txCall, the
 // instance module and initVars at its entries, by their 16-bit addresses; its list is in bank 3.
@@ -1545,6 +1584,18 @@ cLnTab,
 
 #include "spmarks.ac"
 
+// Per direction k, the x of a one-line mark's offset from its place on the line, in thousandths
+// of the distance (cMkPos); its y, and what the directions are, is bank 9's cOfY.
+cOfX,
+    0
+    -0d383
+    -0d707
+    0d924
+    0d1000
+    0d924
+    0d707
+    0d383
+
 // Then the line search, which finds the nearest line to the target's center, and in Line,
 // Circle and Move the second nearest and the two lines' crossing, swept a slice a pass. The
 // main bank's placeLock
@@ -1567,9 +1618,13 @@ constants
 // row's base address and first coupled unknown (tdU), 1/D (tdRD) and the right side, then the
 // displacements (tdY); per member e_x and e_y (tdE); then the matrix's profile, run on through
 // bank 15 (tdK, tdK2). Numbers are three words (spfloat.ac).
+// The library's entry buffer, lbEBuf, LBBUFW words from the bank's start, shares them: a save
+// or a load writes it within one call of the overlay library (splib.ac), first setting
+// taReset, so that the truss starts again from its map rather than resume on a spoiled profile.
 bank 0d14
 0/
 
+lbEBuf,
 tdU,
     table TANU * 2
 tdRD,

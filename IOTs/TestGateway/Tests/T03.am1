@@ -12,7 +12,7 @@ T03: HSC GATEWAY THREADED MODE
  *
  * Why this test does NOT try to observe HSC_BUSY via hgs before calling hgw: once
  * HSCexecute() sets the channel busy, the emulator's main loop steals a cycle every
- * iteration until the fake break count (src/blincolnlights/pdp1/highSpeedChannels.c's
+ * iteration until the fake break count (src/pdp1/highSpeedChannels.c's
  * brkCount) drains to 0 -- and while any channel is busy, the main loop *never* calls
  * cycle() for the CPU (see main.c's "if (processHSCchannels()) steal; else cycle();"
  * dispatch). That means this program's own next instruction, whatever it is, simply cannot

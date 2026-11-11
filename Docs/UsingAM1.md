@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.5 and covers up through am1 version 5.6; it will be updated as needed.\
-Edit date 5-Nov-2026\
-Add assert, clarify bank behavior with start and stop
+This is version 3.6 and covers up through am1 version 5.6; it will be updated as needed.\
+Edit date 6-Nov-2026\
+More details for assert, tables, and block macros.
 
 ## What is **am1**?
 
@@ -434,6 +434,8 @@ The following can be produced:
 - *file*.osym - text output that lists the drum overlay symbols, written with the *sym* file
 - *file*.map - text output that says where each word came from, through any macros, written with the *lst* file
 
+A run that fails leaves none of them, and none of the optimizer's files either: any written before the failure is removed.
+Only *-k*'s *cpp* file and *-T*'s *dmp* file are kept.
 The *ovl* and *osym* files are written only for a program with overlays, *UsingOverlays.md* describes both.
 A program's *sym* file holds the root's symbols only, never an overlay symbol.
 
@@ -657,13 +659,15 @@ The body is every line in between, each a statement line of its own,  no *\\* or
 - In the expansion the lines are joined by *;*, a block expands to exactly what the same macro written on
   one line with *;* would give,and assembles to the same words.
   A line that already ends in *;* gets no second one.
+- Every line after a block's first follows a *;*.
+  The keywords that must begin a line,
+  *start*, *stop*, *constants*, *variables*, *import* and *export* cannot be in a macro, but *assert* can.
 - Blank lines add nothing, and comments are dropped, as for any *#define*.
   A comment can follow the opening *#define* or the *#enddef*.
 - Parameters, *##*, and nested macros work as in a one-line *#define*.
   A line ending in *\\* is still joined to the next.
 - A block cannot contain a directive.
-  A line in it starting with *#* is an error and the macro is not defined.
-  For an *#error* line, the error message shows its text.
+  A line starting with *#* is an error and the macro is not defined.
   A macro whose body is *#error* or *#warning* keeps the one-line form.
 - *#enddef* with no block open is an error and tokens after an *#enddef* on the same line give a warning.
   A block not closed by the end of its file is an error, reported at its *#define*.
@@ -1042,8 +1046,23 @@ table 5
 .+5/
 ```
 
-Using an initializer means that a 'tape' word will be written for each element of the table, which for large tables
-can significantly increase the size and load time.
+Using an initializer means that a 'tape' word will be written for each element of the table,
+which for large tables can significantly increase the size and load time.
+
+A count of 0 reserves nothing.
+A negative count is an error, *table count is negative (-N)*, at the table's line.
+
+A clever use is to create fixed-length strings:
+```
+#define ROWW 6
+#define ROW(name, txt)
+r ## name, 0
+    type340 txt
+    table r ## name + ROWW - ., 0
+#enddef
+```
+Each *ROW* is *ROWW* words; one whose label fills it exactly gets a count of 0, and one whose
+label is too long is reported at the line that used *ROW*.
 
 ## Operators
 
@@ -1435,10 +1454,12 @@ to show where banks were switched.
 
 ## Assert
 
-An *assert* checks a value that is known only once the program is assembled: an address, a
-size, a bank.
-It makes the assembly fail when the value is wrong.
-The preprocessor's *#if* cannot do this, since it sees only macros, never an assembled value.
+An *assert* checks a value such as an address, a size, or a bank.
+If the check fails, the assembly fails, printing a message.
+The checks are done after pass 2 of assembly so all symbols have their true value.
+
+The preprocessor's *#if* cannot do this since it doesn't know what the values of symbols that are
+resolved during assembly are.
 
 ```
 assert thisbank < 020000, "penmenulist.ac must be in bank 0 or 1"
@@ -1448,22 +1469,33 @@ assert pmBar:* < 020000
 ```
 
 The form is *assert expression* or *assert expression, "message"*, a statement on a line of its
-own.
-*assert* is a keyword, like *start*: it may be indented, but cannot be a label, follow a *;*,
-or be an operand.
-A name that only begins with it, such as *assertx*, is an ordinary name.
-An *assert* emits no word and does not move the location.
+own or after a *;*.
+*assert* is a keyword, like *start*.
+It may be indented, but cannot be a label or be an operand.
+Unlike *start* and the other keywords that begin a line, it can follow a *;*,
+it can be used inside macros that use semicolon for multiple instructions on one line.
 
-**When it is checked.** Every *assert* is checked once the whole source is assembled, so it may
-name a label defined after it.
-Its *.* is the location where the *assert* stands, *thisbank* is its bank, and *name:\**,
-*name:N* and *name:.* mean what they mean anywhere else (see *Bank and cross-bank references*).
-With *-O1* or *-O2* each is checked again after the optimizer, against the program as
-optimized, so a size check sees a table that the optimizer shrank.
+For example, a block can check its own size:
+```
+#define LABEL(name, txt)
+name, 0
+    type340 txt
+    assert . - name <= 6, "label too long"
+#enddef
+```
+An *assert* emits no code and does not change the current location.
 
-**A failure.** A zero value fails.
+**When it is checked.** Every *assert* is checked once the source is assembled and can
+reference a label defined after it.
+Its *.* is the location where the *assert* is given, *thisbank* is its bank, and *name:\**,
+*name:N* and *name:.* have the usual meaning, see *Bank and cross-bank references*.
+
+With *-O1* or *-O2* each is checked again after the optimizer pass
+so checks see the correct values for anything the optimizer changed.
+
+**A failure.** A zero value is false, a failure; nonzero is true and succeeds.
 **am1** prints *assert failed: message*, or *assert failed* if there is no message, at the
-*assert*'s own file and line, exits with status 1, and writes no output file.
+*assert*'s file and line, exits with status 1, and creates no output files.
 A failure only at the second check says *assert failed after optimization*.
 An *assert* in a macro body is reported at the line that expanded the macro.
 A name that is not defined is reported at the *assert*'s line.
@@ -1488,26 +1520,26 @@ Parentheses group them as usual.
 
 Values compare as signed 1's complement words, the way the arithmetic operators see them, and
 -0 equals +0.
-So 0777776 is -1, and less than 0.
+0777776 is -1, and less than 0.
 Every address, *name:\** included, is below 0400000, so it compares as a positive number.
 
 Both sides of *&&* and *||* are always evaluated, so an undefined name on either side is an
 error.
-Write blanks around *<* and *>*: *a\<b\>c* would be read as the library file name *\<b\>*.
+Use blanks around *<* and *>*: *a\<b\>c* would be read as the library file name *\<b\>*.
 
-**What it cannot contain.** A constant, *[...]*, cannot be used in an *assert*, since its value
+*What it cannot contain.** A constant, *[...]*, cannot be used in an *assert* since its value
 would be added to the program's constants.
 An *assert* cannot be used inside an *%%overlay*.
 
-**The outputs.** The listing shows an *assert* line with its location and no word, and
-**macro1** output, *-m*, has it as a comment.
-*-O=source* writes it back.
-The *.rim*, the *.sym*, the origin map and *-S* are those of the source without it.
+**The outputs.** The listing shows an *assert* line with its location,
+**macro1** output, *-m*, shows it as a comment.
+*-O=source* writes it out as given.
+The *.rim*, the *.sym*, the origin map and *-S* don't include it since it produces no code.
 
-**Ignoring them.** With *-A*, every *assert* is still parsed, so a syntax error 
-is still reported, but none are checked.
+**Ignoring them.** With *-A*, every *assert* is still parsed.
+A syntax error is still reported but no check is done.
 Every output, the listing and *-m* included, is without the *assert* lines,
-except for *-O=source* since the file it writes is the program's source.
+except for *-O=source*.
 
 ## %%optimize and %%endoptimize
 

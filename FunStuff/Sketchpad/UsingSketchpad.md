@@ -38,7 +38,7 @@ Instead, everything is done with the pen, on the screen, using drop-down menus.
 
 Wait, how is that historically accurate? There were no drop-down menus then.
 But, there certainly could have been if someone had thought of them, this program uses only
-devices that were actually available and would run on a real PDP-1 with sufficent memory and a Type 340 display.
+devices that were actually available and would run on a real PDP-1 with sufficient memory and a Type 340 display.
 
 What it can do, in brief:
 
@@ -229,7 +229,8 @@ or the selection is no longer applicable.
 | Dim > Dist, Change | two points and a number |
 | Dim > Gap | a point and a number |
 | Dim > Size | an instance and a number |
-| Edit > Move, Delete, Scale | a point, a text, or an instance |
+| Edit > Move, Delete, Scale > Part, All | a point, a text, or an instance |
+| Edit > Scale > Figure | a line, an arc, or an instance |
 | Constr > Horv, Length | a line |
 | Constr > Equal, Paral, Perp | two lines |
 | Constr > Mid | a line and a third point |
@@ -257,7 +258,7 @@ The entire menu structure is:
 | Bar item | Rows |
 |---|---|
 | Draw | Line, Circle, Truss > (Beam, Load, Roller, Axis, Forces, Stiff), Text, Dim > (Number, Dist, Change, Gap, Size) |
-| Edit | Move, Delete, Constr > (Horv, Equal, Paral, Perp, Length, Mid, Fix, Show), Size > (x1, x2, x4, x8), Scale, Change > (Master, Cycle, Dwell, Seq), Dismem, Keep > (x1/3, x1/2, x1, x2, x3, Full, Inch) |
+| Edit | Move, Delete, Constr > (Horv, Equal, Paral, Perp, Length, Mid, Fix, Show), Size > (x1, x2, x4, x8), Scale > (Part, Figure, All), Change > (Master, Cycle, Dwell, Seq), Dismem, Keep > (x1/3, x1/2, x1, x2, x3, Full, Inch) |
 | Picture | Define, Inst, Copy (each the masters' picker, M1 to M16), Clear, Tie, Desig, Name (the masters' picker) |
 | Misc | Save, Load, Drive n > (D1 to D8), Dir, Del cons, Unfix, Library > (Load, Save, Dir, Delete) |
 | Locate | Acts at once |
@@ -297,7 +298,9 @@ The other modes are chosen from the lists.
 | Edit | Constr > Mid | Keeps a point at the middle of a line |
 | Edit | Constr > Fix | Fixes a point in place, or frees it |
 | Edit | Size > x1, x2, x4, x8 | Sets an instance's or a text's size |
-| Edit | Scale | Resizes a line, a circle or an arc, a text, a number or an instance along a slider |
+| Edit | Scale > Part | Resizes a line, a circle or an arc, a text, a number or an instance along a slider |
+| Edit | Scale > Figure | Resizes a line, an arc, an instance or a number with everything joined to it, along a slider |
+| Edit | Scale > All | Resizes the whole drawing along a slider |
 | Edit | Change > Master | Gives an instance another master, picked on the masters' picker |
 | Edit | Change > Cycle | Starts or stops an instance cycling through the masters |
 | Edit | Change > Dwell | Sets how long a cycle shows a master, picked on the masters' picker |
@@ -482,15 +485,19 @@ A circle on a tie point follows also and if it cannot the size is refused.
 
 ### Scale
 
-Edit > Scale.
+Edit > Scale > Part, Figure or All.
+Part resizes one part at a time and is described first.
+Figure and All resize many parts at once, see *Figure and All* below.
+
+Edit > Scale > Part.
 Lift with the dot on a line, a circle or an arc, a text, a number, or an instance to select it.
 The dot is bright on something Scale applies to, dim otherwise.
-A slider appears just below the dot, or above it near the bottom of the canvas.
+A slider appears just above the dot, below if it is near the bottom of the canvas.
 It is a square wave read as a ruler, level runs joined by upright ticks that mark doublings,
-and beside the dot is the factor in digits, `x1.00`.
+next to the dot is the factor in digits, `x1.00`.
 Put the pen down and move it along the slider.
 To the right the part grows, to the left it shrinks, twice or half as large at each tick.
-The pen's up and down motion is ignored.
+The pen's vertical motion is ignored.
 Lift to select that size.
 Scale stays in force until another mode is selected or a Stop is done.
 
@@ -531,6 +538,43 @@ Locate selects the current resizing and stays in Scale.
 Stop puts it down and return to Locate mode.
 Choosing another menu item resizes it first.
 Undo reverts a scale.
+
+#### Figure and All
+
+Edit > Scale > Figure resizes a figure.
+Lift with the dot on a line, a circle or an arc, an
+instance, or a number's digits, and it is picked up with everything joined to it, the lines and
+arcs that share its points and theirs in turn, the instances tied to them by their tie points,
+and the numbers anchored on them.
+A text that is not a number belongs to no figure, a lift on one does nothing.
+Edit > Scale > All resizes the whole drawing.
+A lift anywhere selects everything.
+Figure's row is dim when the drawing has no line, arc or instance, All is when it is empty.
+
+A box is drawn around what was picked up with the same slider as Part's below the dot.
+As the pen moves along the slider the box grows or shrinks with the factor, but nothing in the
+drawing moves until the lift which then resizes every part at once:
+- The center is the middle of the box, or the figure's fixed point, which doesn't move.
+- Every point and instance's origin moves to its place at the factor exactly.
+- Texts and numbers step to the nearest of the sizes x1, x2, x4 and x8, and a number's Gap takes
+  the gap for its new size.
+- Instances take the slider's nearest size from x1/4 to x8, a cycling one the nearest of x1/4,
+  x1/2, x1, x2, x4 and x8.
+- Lengths and Changes on the lines are scaled as under Part.
+- The constraints then settle once.
+  A point held by one, a Gap's for instance, can end up a
+  little offset from where the factor alone puts it.
+
+Nothing moves, the drawing staying as it was, when:
+- two fixed points at different places are in what the lift would pick up.
+  CONFLICT is shown and nothing is picked up, the dot stays dim;
+- the lift would put a part off the screen, OFF EDGE is shown;
+- the drawing's instances would need more than sixteen sizes in all,
+  NO ROOM is given, see *Limits*.
+
+Locate, Stop or choosing another menu item with something picked up applies its last factor as
+a lift does.
+One Undo takes the entire resize back, even if the pen keyboard has been used in between.
 
 ### Dismem
 
@@ -757,21 +801,21 @@ Show is off when the program starts and after a load and is not saved with a pic
 
 **Undo** reverts the last thing added.
 That can be a line, an arc, a text, a number, an instance with its tie points, or a copy, with its
-texts, its merges, and its constraints, the drawing is put back to the way it was before the addition.
+texts, its merges, and its constraints, the drawing is restored to the way it was before the addition.
 It can be a constraint with whatever the program moved to satisfy it, a fix, an attacher, a
 designation, a member, a load, or a roller.
 It can be an instance taken apart, its parts with their merges and constraints restored, the
-instances it held removed, and the instance put back as it was, cycling again if it cycled.
+instances it held removed, and the instance restored to it was, cycling again if it cycled.
 It can be the start of a chain, or a circle's center or start.
-It can be a scale, the object put back as it was with the lines and arcs that followed it and
-any Length's value.
+It can be a scale, the object restored as it was with the lines and arcs that followed it and
+any Length's value, or a Figure's or All's, every part it resized also restored.
 
-Undo never leaves the mode it is pressed in.
+Undo never leaves the mode it is in when selected.
 In Line it removes the last line and the chain continues from the vertex before it.
 In Circle it goes back one lift.
 In Inst and Copy it removes what was being placed.
 
-There is one level of Undo and it only takes back additions or a scale.
+There is one level of Undo and it only reverts additions or a scale.
 An Undo cannot be undone
 
 after any of these Undo has no effect:
@@ -1306,23 +1350,39 @@ Afterward a word under the menu at its right shows the completion status until d
 After SAVED or LOADED the picture's name also shows under the status.
 If there is no tape or it cannot be read when Save, Load or Dir reads the directory, nothing opens.
 A tape that is write-protected is detected at the save itself, after the name is typed.
-Each picture holds its masters, which together may take at most 23 of the tape's blocks; a save
-whose masters need more is refused before it writes, TOO BIG showing, and the tape is left as it
-was.
-A picture saved by the earlier Sketchpad, with four masters, loads as EMPTY.
-The sample pictures, saved before a master could hold instances, load with their masters holding
-none.
 
-The directory is one block in the middle of the tape which each save rewrites after its picture.
-P6 and P7 are beside it, so they save and load in about 5 seconds.
-The further a picture is from the middle, the longer the tape runs,
+Sketchpad saves only to its own tapes or to blank ones, it checks for another program's data
+before it writes, but not everywhere on the tape.
+- For a blank tape, a newly mounted tape, or one made by `mkmicrotape blank`,
+  the first save reads the blocks it is about to write before writing them
+  and is refused with NOT BLANK if any of them holds another program's data.
+- A tape another program has written in the directory's block, in the middle of the tape,
+  shows twelve `-` in Dir and Load.
+  Save is refused with NOT BLANK after the name is typed and nothing is written.
+  To use the tape for pictures, erase it outside Sketchpad.
+- **Warning:** after its first save the tape is Sketchpad's, and later saves to other pictures'
+  locations are not checked.
+  On a tape whose middle block and first saved picture's place were never written,
+  another program's data elsewhere can be written over by a later save.
+  For example, a Z-machine save tape with a few saves, at the tape's start, loses them to a later Save to P1.
+  Use a new image, or one made by `mkmicrotape blank`, for pictures, never a tape that holds
+  another program's data unless you want it overwritten.
+
+Each picture holds its masters which together may take at most 23 of the tape's blocks.
+A save whose masters need more is refused before it is written, displaying TOO BIG, and the tape is left as it
+was.
+
+The directory is one block in the middle of the tape which each save rewrites after its picture is written.
+P6 and P7 are next to it, they save and load in about 5 seconds.
+The farther a picture is from the middle, the longer the tape runs,
 up to about 19 seconds for a load of P1 or P12 and 30 for a save.
 
 **Be patient!** It's a tape drive running at the actual speed the real one ran. Welcome to the '60s.
 
 The directory only lists the picture name.
-A save cut short can leave its line showing the old name, or `-` if the directory's block
-itself was damaged
+A save cut short can leave its line showing the old name.
+If the directory's block itself is damaged, Dir, Save and Load all show BAD BLOCK and nothing
+opens, so the pictures behind it are not written over.
 
 ## The library of masters
 
@@ -1331,34 +1391,46 @@ Here the library is a Microtape of its own holding masters only, up to 256 of th
 *entry* with a name.
 An entry holds the master's drawing, its attachers, the constraints kept with it, and its texts
 and numbers.
+An entry for a master that holds instances also holds every master those instances call, at any
+depth, each with its own drawing, attachers, constraints and texts, so that the whole figure
+can be loaded into another picture.
 The cycle's dwells and sequence belong to the picture and are not kept.
 
 Mount a tape for the library on a drive and choose that drive with Misc's **Drive n >**, as for
 pictures.
 - A blank tape is an empty library, the first save makes it one.
+- A tape another program has written on is refused by every library command, showing NOT BLANK,
+  and nothing is written if that program wrote anything in the library's directory in the middle of the tape.
+- **Warning:** that block is all Sketchpad looks at.
+  A tape whose middle block was never written is taken as blank, whatever is elsewhere on it,
+  and the library's saves will in time write over it
+  A Z-machine save tape with only a few saves is such a tape, its label and saves are at the tape's start.
+  Use a new image, or one made by `mkmicrotape blank`, for a library, never a tape that holds another program's data.
 - A library tape and a picture tape cannot be mistaken for each other.
 - A library command on a picture tape shows NOT LIB, and Save, Load or Dir of a picture on a
-library tape shows NOT PICT, each before anything is written.
+  library tape shows NOT PICT, each before anything is written.
 
 **Library >** opens a list of **Load**, **Save**, **Dir** and **Delete**.
 Save is dim until a master is defined.
 
-- **Dir** shows in place of the drawing a page of the library: sixteen entries, numbered,
-  1 to 8 down the left and 9 to 16 down the right, each with its name, a free slot dim and
-  marked `-`.
-  **Next** and **Prev** turn the page, sixteen pages in all; Next stops at the last page with an entry.
+- **Dir** shows in place of the drawing a page of the library with sixteen entries, numbered,
+  1 to 8 down the left and 9 to 16 down the right, each with its name.
+  A free slot is dim and marked `-`.
+  An entry that loads other masters with it shows a `+` between its number and its name.
+  **Next** and **Prev** flip the page, sixteen pages in all.
+  Next stops at the last page with an entry.
   **OK** closes it.
-- **Save** shows the masters' picker, a master with nothing in it dim.
-  Touching a master picks it, and the keyboard opens with the prompt `Lib name` on the master's
-  name, or on the name last saved for a master with no name.
-  **OK** writes the master to the tape as a new entry, in the first free slot, and gives the
+- **Save** shows the masters' picker with a master with nothing in it dim.
+  Touching a master picks it and the keyboard opens with the prompt `Lib name` on the master's
+  name or with the name last saved for a master with no name.
+  **OK** writes the master to the tape as a new entry in the first free slot and gives the
   master the name it was saved under.
   **Cancel**, on the picker or the keyboard, saves nothing and leaves the master's name.
-  A master that holds instances cannot be saved to the library: NESTED shows, and nothing is
-  written.
-- **Load** shows the library's page, with **Cancel** in place of OK, and Next and Prev.
+  A master that holds instances is saved with every master it calls, at any depth, in one
+  entry, under the one name, each of those keeps its own name in the entry.
+- **Load** shows the library's page with **Cancel** in place of OK,and with Next and Prev.
   Touching an entry picks it, then the masters' picker opens.
-  A master the drawing uses is dim: one with an instance, one held inside such a master at any
+  A master the drawing uses is dim such as one with an instance, one held inside such a master at any
   depth, every master while an instance cycles, and one whose instance Undo would bring back.
   Touching an empty or unused master replaces it with the entry, the entry's name becoming the
   master's, which then may be placed with Inst or Copy.
@@ -1366,24 +1438,31 @@ Save is dim until a master is defined.
   A master that others hold changes them as a redefinition does, see *Define*.
   If one of them could not take the entry the load is refused with nothing changed, TOO BIG,
   TOO SLOW, NO ROOM or DIGITS showing and that master's name under the word.
-  Such a load reads the entry from the tape twice, and takes the longer for it.
-- **Delete** shows the library's page; touching an entry deletes it, and its slot and its blocks
-  are free for a later save.
-  **Cancel** deletes nothing.
+  Such a load reads the entry from the tape twice.
+  An entry that brings other masters (`+` on its page) puts its own master in the one touched
+  and each of the others in an empty master, the first empty ones from M1 on, each with the
+  name it was saved under.
+  A master already holding the same drawing, or the same name, is not reused.
+  If there are too few empty masters, the load is refused with nothing changed, SLOTS showing.
+- **Delete** shows the library's page.
+  Touching an entry deletes it, and its slot and its blocks are free for a later save.
+  **Cancel** closes and deletes nothing.
 
 Undo cannot bring back a master a load replaced, nor an entry deleted.
 After SAVED, LOADED or DELETED the entry's name shows under the status word.
 
-A save of a master that would take more than ten of the tape's blocks is refused, TOO BIG, before
-anything is written.
-A load whose texts would not fit with the other masters' shows NO ROOM, and the master is left as
-it was.
-A load refused because of a master that holds the one replaced shows that master's name under the
+A save of a master that would take more than 32 of the tape's blocks, including the masters it also has,
+is refused showing TOO BIG before anything is written.
+A library Save or Load starts the truss's force calculation again.
+With Forces on, they disappear and come back once calculated again, within about 10 seconds.
+A load whose texts would not fit with the other masters' shows NO ROOM,
+and the master is left as it was.
+A load refused because of a master that holds the one being replaced shows that master's name under the
 word, as above.
 TAPE FULL means no run of free blocks is long enough for the entry.
 
-The library's directory sits in the middle of the tape, and a save puts its entry in the first
-free blocks just past it, so most transfers take a few seconds.
+The library's directory sits in the middle of the tape and a save puts its entry in the first
+free blocks just past it, so most transfers take only a few seconds.
 The first after a tape is mounted, which starts from the tape's beginning, takes about 20.
 A save cut short can leave blocks taken that no entry names, but never an entry whose blocks a
 later save could overwrite.
@@ -1541,22 +1620,22 @@ UNSTABLE is hidden while another message shows and returns once that message is 
 | NO TAPE | No tape is mounted on the drive chosen |
 | LOCKED | The tape is write-protected |
 | EMPTY | No picture or entry was saved in the slot or its save was cut short |
-| BAD BLOCK | A block of the picture, of the entry, or of the library's directory could not be read correctly |
+| BAD BLOCK | A block of the picture, of the entry, or of the tape's directory could not be read correctly |
 | NOT LIB | A library command found a picture tape on the drive; nothing was written |
 | NOT PICT | A picture command found a library tape on the drive; nothing was written |
+| NOT BLANK | The tape holds another program's data, so Save, or any library command, was refused; nothing was written |
 | TAPE FULL | The library tape has no free run of blocks long enough for the entry |
 | NO FLAG | A tape fault, shouldn't happen |
 | NO ROOM | A text, a number, or an instance's texts would exceed the program's limits; or a library entry's texts would not fit with the other masters', or a master that holds the one replaced could not be made again, see *The library of masters*; or Define was refused, see *Define*; or Scale's lift or Undo found no room for an instance's size, see *Limits* |
-| OFF EDGE | A text would run off the screen; or Define was refused, or a size kept by Keep or Dim > Size would take an instance off the screen |
-| CONFLICT | A constraint on size, or a number typed for one, contradicts its group, see *Keeping sizes* |
+| OFF EDGE | A text would run off the screen; or Define was refused, or a size kept by Keep or Dim > Size would take an instance off the screen; or Scale > Figure's or All's lift would take a part off the screen |
+| CONFLICT | A constraint on size, or a number typed for one, contradicts its group, see *Keeping sizes*; or Scale > Figure or All found two fixed points at different places in what it would pick up |
 | NO PARTS | Define was refused: nothing in the drawing draws, its lines all of no length |
-| TOO BIG | Define was refused: the drawing is too large for a master; or Save was refused: the masters together are too large for a picture, see *Saving and loading pictures*, or the master is too large for a library entry, see *The library of masters*; or a library load was refused: a master that holds the one replaced, named under the word, would be too large |
+| TOO BIG | Define was refused: the drawing is too large for a master; or Save was refused: the masters together are too large for a picture, see *Saving and loading pictures*, or the master, with the masters it brings, is too large for a library entry, see *The library of masters*; or a library load was refused: a master that holds the one replaced, named under the word, would be too large |
 | TOO SLOW | Define was refused: the drawing would take too long to draw as a master; or a library load was refused: a master that holds the one replaced, named under the word, would be too slow |
 | CONSTR | Define was refused: more than 16 constraints among the drawing's points |
 | CYCLING | Define was refused: an instance cycles |
 | TOO MANY | Define was refused: more than eight instances of other masters |
 | LOOP | Define was refused: an instance's master holds the master being defined |
-| NESTED | Library > Save was refused: the master holds instances |
 | SCALE | Define was refused: an instance of the master being defined holds one whose size would come to more than x8 or less than x1/4 |
 | DIGITS | Define was refused: an instance's master has a number among its texts; or a library load was refused: the entry has a number and a master, named under the word, holds the one replaced |
 | ARC SIZE | Define was refused: an instance's arc would be too large at its size |
@@ -1565,6 +1644,7 @@ UNSTABLE is hidden while another message shows and returns once that message is 
 | M2 ROOM | Define was refused: making M2 again would run out of room for texts or in the masters' store |
 | M2 DIGIT | Define was refused: the drawing has a number among its texts and M2 holds the master being defined |
 | UNSTABLE | The truss has no solution, see *The truss* |
+| SLOTS | A library load was refused: the entry brings more masters than there are empty ones, see *The library of masters* |
 | DRUM | Save, Load, Dir, the library's rows, Scale, Define, Dismember, the pen keyboard or the truss's forces could not be read from the drum, which holds another build's overlays or none; the mode is left, but for the forces, which are tried again every 10 seconds. Load the program again with *ovlload* |
 
 ## Limits
@@ -1575,8 +1655,8 @@ UNSTABLE is hidden while another message shows and returns once that message is 
   A master is up to 128 lines and 530 words of display list: a line drawn on from the last one's
   end takes a word, one elsewhere two, a long line more, and a small circle about 65.
   Every master is kept on the drum. The masters the drawing uses, its instances' and, while any
-  instance cycles, every master, are also kept whole in one of two stores in core, of 422 and 530
-  words, so together they are up to 952 words, and the room left can be enough in all and too
+  instance cycles, every master, are also kept whole in one of two stores in core, of 398 and 530
+  words, so together they are up to 928 words, and the room left can be enough in all and too
   little in either.
   A master nothing uses gives its room up when another needs it.
 - An instance at a size other than x1, x2, x4 or x8 draws a copy of its master's display list made
@@ -1585,6 +1665,8 @@ UNSTABLE is hidden while another message shows and returns once that message is 
   same digits share one, and so do sizes a doubling apart, x1.5 and x3.
   A copy nothing uses gives its room up when another needs it, and a master whose instances all
   draw copies is not itself kept in core.
+  Scale > Figure or All is refused with NO ROOM, nothing resized, when after it the drawing's
+  instances would need more than sixteen such copies, the instances it leaves alone counted.
 - Up to 64 constraints, counting fixed points, attachers and designations, the truss's members,
   loads and rollers, the distances Dist, Change and Gap keep, and Keep's and Dim > Size's.
 - Six attachers in a drawing, so six tie points an instance, and six designations.
@@ -1601,9 +1683,17 @@ UNSTABLE is hidden while another message shows and returns once that message is 
 - The view magnifies up to x8.
   An instance whose size times the view's exceeds x8 is hidden and a text is drawn at x8 at most.
 - A circle's radius is from 15 to 1294 units.
+- A circle swept at about one and a half turns a second (600 degrees a second) or faster can
+  lose the pen just after it starts, most often on an empty screen, and the lift then keeps only
+  its first few degrees as an arc. No hand draws that fast in use.
+- A bent arm's part, from a line's middle to its letter or on to the other line's, draws at most
+  508 units on each axis. A longer one, a letter set a ring or two apart between two lines most
+  of the screen's height apart, stops short there, so that the arm bends a little off its letter
+  or ends a little short of the second line.
 - A picture's name is up to 12 characters, and so is a master's and a library entry's.
-- A library tape holds up to 256 entries, each up to ten of the tape's blocks: a master at every
-  table's limit still fits, with up to 38 texts.
+- A library tape holds up to 256 entries, each up to 32 of the tape's blocks: any one master fits,
+  texts and all, and an entry holds about four masters at every table's limit without texts
+  (seven blocks each), or ten the size of the girl's (three each).
 - Many instances of a large master slow the display: 32 of the largest Define takes draw about
   a frame and a half a second, flickering. Nothing is lost, every command still works, a press
   held a moment longer, and deleting instances, or Undo, brings the speed back.
@@ -1614,35 +1704,37 @@ Every constraint and nearly every push button in the thesis is here, as a menu r
 
 Missing:
 - Rotation: rotated or mirrored instances, rotated text and digits, and the constraints that
-  turn a thing upright or set a text's angle. The Type 340 cannot rotate.
+  turn a something upright or set a text's angle.
+  The Type 340 cannot rotate.
 - The Constraint button, which made a constraint on loose points to be merged onto others later.
-  Each constraint is a row applied to what you pick, and a new kind is a master with its
+  Each constraint is applied to what you pick, and a new kind is a master with its
   constraints, placed with Copy.
-- Truss members inside instances. An instance is rigid, so its members could carry no force.
+- Truss members inside instances.
+  An instance is rigid, so its members can carry no force.
   Build a truss from copies, as the thesis's bridge was.
-- Order and Disorder, which sorted the lines for the plotter. Plot puts them in a good order
-  itself.
-- Punch, which punched a tape to drive the plotter later. Plot drives the plotter directly.
+- Order and Disorder, which sorted the lines for the plotter.
+  Plot puts them in the optimal order itself.
+- Punch, which punched a tape to drive the plotter later.
+  Plot drives the plotter directly.
 - A page larger than the screen, and magnification past x8.
 
-In addition:
-- Undo of the last thing added, and Desig undesignating, which the thesis calls an oversight.
+Added:
+- Undo of the last thing added and Desig undesignating, which the thesis calls an oversight.
 - Rollers, their axes and each member's stiffness in a truss, its forces solved exactly.
 - Instances cycling through the masters by themselves, Change's Cycle, Dwell and Seq.
+  The original required a button push for each step.
 - A name for each master and each picture, picked on screens that show them.
-- Keep > Inch at any size from 0.001 to 10 inches, where the thesis had six.
+- Keep > Inch at any size from 0.001 to 10 inches, where the thesis had only six.
 - Text and numbers typed with the pen, on the pen keyboard.
 - *sketchplot*, a saved picture drawn as a PNG.
 
 ## sketchplot, a picture as a PNG
 
 *sketchplot* draws a picture saved on a Microtape as a PNG file without the emulator needing to be running.
-It replaced the plotter that was on the TX-2 before the pidp-1 had one.
-Misc > Plot now draws the same page on the plotter, see *Plot*; *sketchplot* still gives it as a
-PNG without the emulator.
-It is a plain C program, linked with zlib.
+It subsitutes for the plotter and emulator if you want to produce a plot from a tape directly.
 The PNG it writes is compressed, a few kilobytes at the default size.
 It is in the *Render* directory and is built when sketchpad is built.
+Misc > Plot draws the same page on the plotter, see *Plot*.
 
 Usage.
 ```
@@ -1683,7 +1775,6 @@ sketchplot -t SketchpadBridge.img -i bridge.png
 
 This was designed and written by the coding team of Bill and Claude Opus using Sutherland's original thesis as
 the requirements.
-Not everything is here yet, but almost all of it is and the rest is coming.
 
 This is free to use in any way, just credit me.
 

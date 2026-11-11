@@ -304,6 +304,23 @@ thisbank[ \t]*      { return(THISBANK); }
                          */
 ^[ \t]*assert[ \t]*     { return(directiveToken(ASSERT)); }
 
+                        /* After a ';' as well, so that a block macro's later lines,
+                         * which the preprocessor joins with ';', may hold one. It
+                         * emits no word, so the ';' changes no layout. Anywhere
+                         * else it is the error the name rule gives a keyword; this
+                         * rule wins the tie with the name rule by coming first.
+                         */
+assert[ \t]*            {
+                            if( !sawSemi )
+                            {
+                                verrorl(lineno, "assert is an am1 keyword, allowed only at the start of a line");
+                            }
+
+                            directiveToken(ASSERT);
+                            optRegionTokenLine = lineno - 1;    // the ';' already counted the line
+                            return(ASSERT);
+                        }
+
 ascii[ \t]+             { return(ASCII); }
 text[ \t]+              { BEGIN DOTEXT; }
 
@@ -642,6 +659,7 @@ octal                   { decimalMode = false; }
                             else if( (symP = resolveLocalSymbol(yytext)) )
                             {
                                 yylval.symP = symP;
+                                nameTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
                                 return(LCLADDR);
                             }
                             /* A var name's line is recorded here, for the
@@ -1318,6 +1336,14 @@ int line;
     default:
         break;
     }
+}
+
+// Whether a ';' has been scanned on the line being scanned. Its rule counts the
+// line at once, so lineno is then one past the line the statement is written on.
+bool
+lexAfterSemi(void)
+{
+    return(sawSemi);
 }
 
 // Record where an optimizer directive was seen and return its token.

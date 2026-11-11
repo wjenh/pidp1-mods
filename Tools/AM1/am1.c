@@ -162,6 +162,11 @@
  *    out in place is named again by #includeonce or #uninclude, or a changed line's macro call runs on
  * 05-Nov-2026 claude - assert, a check on assembled values with the comparison and logical operators,
  *    and -A, which ignores every assert
+ * 06-Nov-2026 claude - an assert may follow a ';', so a block macro's later lines may hold one; a negative
+ *    table count is its own error; a syntax error at a line's end, an undefined symbol, and a type340 or
+ *    text after a ';' are reported on their own line and file
+ * 06-Nov-2026 claude - -m reports an undefined name:N; a failed run removes every output it had already
+ *    written, the .mac of -m -b and the optimizer's report among them
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -207,6 +212,12 @@ char *rawTitleP;                // the source's title line as written, when it i
 char pfilename[128];            // preprocessed file name
 char ofilename[1024];           // output file; -O=source's carries the source's directory
 char mfilename[1024];           // the origin map's file
+
+// The outputs written so far: a later failure removes them too, see leave().
+// One run writes at most nine (.opt .opt.am1 .mac .rim .ovl .lst .map .sym .osym).
+#define MAXOUTPUTS 10
+static char *outputsP[MAXOUTPUTS];
+static int outputCount;
 char basename[64];              // base name
 char incroot[256];              // root of includes
 char str1[256];                 // scratch strings
@@ -254,6 +265,7 @@ bool fileIsMain(char *nameP);
 void enableAllWarnings(void);
 void enableWarning(char *nameP);
 void leave(int);
+static void outputWritten(const char *nameP);
 void dumpParseTree(PNodeP);
 void dumpExpr(PNodeP);
 static void checkAsserts(bool afterOptimizer);
@@ -636,6 +648,10 @@ int top;                    // -S: one past a bank's highest word
         {
             unlink(ofilename);      // get rid of output
         }
+        else
+        {
+            outputWritten(ofilename);
+        }
 
         // -O1 and -O2 may have moved words, and the back ends write those.
         // A failure removes the report, the file ofilename names.
@@ -684,6 +700,8 @@ int top;                    // -S: one past a bank's highest word
                 fprintf(stderr, "am1: -O=source could not write %s\n", ofilename);
                 leave(0);
             }
+
+            outputWritten(ofilename);
         }
     }
 
@@ -715,6 +733,10 @@ int top;                    // -S: one past a bank's highest word
         if(!i)                    // codegen failed
         {
             unlink(ofilename);      // get rid of output
+        }
+        else
+        {
+            outputWritten(ofilename);
         }
     }
 
@@ -754,6 +776,10 @@ int top;                    // -S: one past a bank's highest word
         {
             unlink(ofilename);      // get rid of output
         }
+        else
+        {
+            outputWritten(ofilename);
+        }
 
         // The overlays' words, for the drum, go beside the tape.
         if( overlaysP )
@@ -770,6 +796,7 @@ int top;                    // -S: one past a bank's highest word
             ovlWriteOvl(outfP, (cP = strrchr(origFilenameP, '/'))?(cP + 1):origFilenameP);
             fclose(outfP);
             outfP = NILP;
+            outputWritten(ofilename);
         }
     }
 
@@ -794,6 +821,9 @@ int top;                    // -S: one past a bank's highest word
             leave(0);
         }
 
+        // Recorded now, so a failure in the listing removes the map with it.
+        outputWritten(mfilename);
+
         mapOpen(mapoutfP, origFilenameP);
         i = listCodegen(outfP, rootP);
         mapSymbols(banksP);
@@ -807,6 +837,10 @@ int top;                    // -S: one past a bank's highest word
         {
             unlink(ofilename);      // get rid of output
             unlink(mfilename);
+        }
+        else
+        {
+            outputWritten(ofilename);
         }
     }
 
@@ -824,6 +858,7 @@ int top;                    // -S: one past a bank's highest word
         listSymtab(outfP, filenameP, banksP);
         fclose(outfP);
         outfP = NILP;
+        outputWritten(ofilename);
 
         // The overlays' symbols, which the .sym file leaves out.
         if( overlaysP )
@@ -840,6 +875,7 @@ int top;                    // -S: one past a bank's highest word
             ovlWriteOsym(outfP, filenameP);
             fclose(outfP);
             outfP = NILP;
+            outputWritten(ofilename);
         }
     }
 
@@ -1429,7 +1465,9 @@ LocalContextP lP;
 void
 leave(int signo)
 {
-    if(signo)                     /* called via signal trap */
+int i;
+
+    if(signo)                    /* called via signal trap */
     {
         fprintf(stderr, "am1: caught signal %d\n", signo);
         signal(signo, SIG_IGN);   /* ignore the signal */
@@ -1447,7 +1485,26 @@ leave(int signo)
 
     unlink(ofilename);
 
+    for( i = 0; i < outputCount; i++ )
+    {
+        if( outputsP[i] )
+        {
+            unlink(outputsP[i]);
+        }
+    }
+
     exit(1);
+}
+
+// Record an output just written, for leave() to remove if a later step fails.
+static void
+outputWritten(const char *nameP)
+{
+    if( outputCount < MAXOUTPUTS )
+    {
+        outputsP[outputCount] = strdup(nameP);  // NILP if out of memory: then kept
+        outputCount++;
+    }
 }
 
 int

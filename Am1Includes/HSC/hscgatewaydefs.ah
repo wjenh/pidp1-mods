@@ -6,7 +6,7 @@
 // This is NOT a real device -- there is no Type 44 hardware, and the real Type 19 High
 // Speed Channel had no interface reachable from user code at all. This IOT and these
 // defines exist solely to let an am1 test program drive the emulator's internal HSC
-// implementation (src/blincolnlights/pdp1/highSpeedChannels.c) directly, for testing.
+// implementation (src/pdp1/highSpeedChannels.c) directly, for testing.
 // See IOTs/TestGateway/README.txt and the header comment in IOT_44.c for the full
 // rationale, including a deadlock hazard around hgw that any caller must respect.
 //
@@ -27,7 +27,7 @@
 #define hgd iot 0644        // dump scratch buffer to core; AC = control block addr
 #define hgr iot 0744        // reset (simulated front-panel abort); no params; IO out: HSC_OK
 
-// Status/error codes, copied from src/blincolnlights/pdp1/highSpeedChannels.h so am1 test
+// Status/error codes, copied from src/pdp1/highSpeedChannels.h so am1 test
 // programs don't need a separate mechanism to reach a C header. Keep these in sync if the
 // HSC status enum ever changes.
 #define HSC_OK 0

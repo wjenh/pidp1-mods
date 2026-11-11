@@ -1,6 +1,6 @@
 /*
  * IOT 44 -- "Test Gateway": a test-only IOT that exposes the internal High Speed Channel
- * (HSC, src/blincolnlights/pdp1/highSpeedChannels.c) API directly to a PDP-1 assembly
+ * (HSC, src/pdp1/highSpeedChannels.c) API directly to a PDP-1 assembly
  * program.
  *
  * Architectural scope: normally HSC is never reachable from user code -- it is a private
@@ -13,7 +13,7 @@
  * mode semantics, data movement correctness, address wraparound, error handling, and
  * (for normal/cycle-stealing mode specifically) channel priority arbitration -- none of
  * which has any other automated coverage. See Docs/UsingHighSpeedChannels.md for the
- * HSC API contract this plugin is testing against, and src/blincolnlights/pdp1/CLAUDE.md /
+ * HSC API contract this plugin is testing against, and src/pdp1/CLAUDE.md /
  * IOTs/Type340Display/CLAUDE.md for the history of bugs already found and fixed in that
  * module (02-Jul-26 conformance review).
  *
@@ -25,7 +25,7 @@
  *
  * Design constraint that shapes every command here: iotHandler() executes synchronously,
  * inline, on the MAIN emulator thread, as part of a single cycle()/iot() call (see
- * src/blincolnlights/pdp1/CLAUDE.md's "Machine Cycle Structure" section). HSCreset() and
+ * src/pdp1/CLAUDE.md's "Machine Cycle Structure" section). HSCreset() and
  * every HSC_MODE_IMMEDIATE/HSC_MODE_THREADED path is safe to call directly from here because
  * they need nothing more from this thread: HSCreset() and IMMEDIATE return at once, and
  * HSCwait() on a THREADED request only times the requester's own 5us a word (a spin when short,
@@ -56,7 +56,7 @@
  * exercise wraparound behave consistently whether the wrap happens inside HSCexecute()
  * itself or inside one of these helpers.
  *
- * Register-width gotcha: HSC_ERR (src/blincolnlights/pdp1/highSpeedChannels.h) is a plain
+ * Register-width gotcha: HSC_ERR (src/pdp1/highSpeedChannels.h) is a plain
  * C int, -1, returned as-is by HSCexecute()/HSCwait()/HSCgetStatus()/HSCfreeChannel() on
  * failure. The pdp1 struct's io/ac fields are "Word" (uint32_t), a 32-bit C type standing
  * in for an 18-bit PDP-1 register, and no existing device IOT had ever needed to put a

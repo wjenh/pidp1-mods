@@ -345,6 +345,11 @@ ofRtn, jmp .
 // A loss also takes from the mailbox the target hits penISR had counted by that reading, since
 // none is later than the hit it timed from. Left there, the next pass would take the last as a
 // new hit, re-arm the stroke, and declare a second loss at once, deleting a second line.
+// A loss after a menu, list or keyboard hit that came since the target's last (penISR's lastTgt
+// 0) is no lift: the pen carried the target to the bar, or went there while a long pass ran. The
+// stroke is dropped before the mode's handler runs, so no mode acts on it and the gesture under
+// way stays, to go on from where the target rests; Pan and Center note their start again there
+// (the view module's vePan).
 // AC and IO are clobbered. Called via jsp.
 checkLost,
     local rtn, lostCall, lostPtr, clHit, clMiss, clNow, clTgt, clMsOk
@@ -394,6 +399,9 @@ clMsOk,
     dac i [tgtHits:0]
     esm
     idx lostCount
+    lac i [lastTgt:0]   // each 1 or 0
+    and strokeLive
+    dac strokeLive      // dropped unless the target's hit was the last
     lac mode
     add [modeLost:3]
     dac lostPtr

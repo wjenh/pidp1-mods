@@ -1,7 +1,7 @@
 // A name=value settings file edited line by line, for pidp1.config and pdp1control.config.
 // The file is kept as its lines, so loading and saving with no edit gives back the same bytes,
 // and an edit changes only the value it names: comments, order and unknown settings survive.
-// What counts as a setting is what the emulator's parser (src/blincolnlights/pdp1/configuration.c)
+// What counts as a setting is what the emulator's parser (src/pdp1/configuration.c)
 // accepts: '#' in column 1 is a comment, an empty line is skipped, and anything else must match
 // sscanf "%63[a-zA-Z0-9] = %63s", read by fgets() into a 256-byte buffer. When a name appears on
 // more than one line, the last one wins, as it does in that parser.

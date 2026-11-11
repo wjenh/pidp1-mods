@@ -1,0 +1,181 @@
+// penmenu.ah -- the pen menu's definitions: the macros that turn the program's declaration of
+// its bar and lists into the display list and the tables, and every constant of the menu's
+// layout, timing and look. Each constant in #ifndef may be defined by the program before the
+// include to change it. penmenu.ac (the code) and penmenulist.ac (the display list) include
+// this file; README.md is the usage document.
+// 04-Nov-2026, Claude: the library, from Sketchpad's menu.
+
+#ifndef PENMENU_AH
+#define PENMENU_AH
+
+#include <TYPE340/type340cmds.ah>
+
+// The time difference both pen libraries take: AC = now - then, modulo PUI_WRAP, the clock's
+// count in ms; the BBN clock's rck counts 0 to 59999 and wraps (Docs/UsingTimesharingClock.md).
+// Entry: AC = now. Two instructions and a constant; AC is the difference, IO is untouched.
+#ifndef PUI_WRAP
+#define PUI_WRAP 0d60000
+#endif
+#ifndef PUI_SINCE
+#define PUI_SINCE(then) \
+    sub then; \
+    spa; \
+    add [PUI_WRAP]
+#endif
+
+// The bar: an item a column, on a 128-unit pitch from x = 0, so a hit's column is x >> 7; at
+// most PMCOLS items. Labels at character set 2, scale 1: 14 units a character, 13 tall. A label
+// is at most 7 characters, so that the gap to its neighbor (30 units) is more than the light
+// pen's aperture and one pen position never hits two labels. Every hit at or above PMBARYMIN
+// is on the bar.
+#define PMCOLS 0d8
+#ifndef PMMARGIN
+#define PMMARGIN 0d15
+#endif
+#ifndef PMBARY
+#define PMBARY 0d1000
+#endif
+#define PMBARYMIN (PMBARY - 0d8)
+#define PMCHARW 0d14
+
+// The lists. A list hangs below its bar item, its rows PMPITCH apart from PMROWY0, its labels
+// PMMARGIN into the column. Two rows are never hit together while the pitch is more than the
+// letters' 13 units plus twice the pen's reach (36 at the 22-unit aperture). A row's band starts
+// PMSLOP below its baseline, in the gap under its letters. A sublist stands PMSUBDX right of its
+// list, its first row level with the row that owns it, on the same pitch.
+#ifndef PMPITCH
+#define PMPITCH 0d36
+#endif
+#define PMROWY0 (PMBARY - PMPITCH)
+#ifndef PMSLOP
+#define PMSLOP 0d9
+#endif
+#ifndef PMSUBDX
+#define PMSUBDX 0d144
+#endif
+#define PMNOROW 0d63
+
+// The Select box, OK: a square PMBOXW across, PMBOXDX right of its list's or sublist's column,
+// its top PMBOXRISE above the lit row's baseline, "OK" in it on the baseline. A pen anywhere in
+// the square is within the reach of a side or of "OK". A hit from PMBOXSLOP left of the box on
+// is on the box; both edges are odd, so an even coordinate never equals them.
+#ifndef PMBOXDX
+#define PMBOXDX 0d144
+#endif
+#ifndef PMBOXW
+#define PMBOXW 0d32
+#endif
+#define PMBOXRISE 0d22
+#define PMBOXTDX 0d5
+#define PMBOXSLOP 0d15
+#define PMLEDGE (PMBOXDX - PMBOXSLOP)
+#define PMSEDGE (PMSUBDX + PMBOXDX - PMBOXSLOP)
+
+// The leader, a dim dotted line from the lit row's label to the box, PMLEADRISE above the
+// baseline, a dot every PMLEADSTEP units at PMLEADSCALE, so that a pen slid from the row onto
+// OK sees hits all the way and arrives in the same press. Without it the blank beside a short
+// label reads as a lift to a slow slide, and OK acts on arrival. PMLEADER 0 leaves it out.
+// PMLEADBACK steps lead back from the end of "OK" to PMLEADEND left of the box;
+// PMLEADLEN(n) is its length in steps after a label of n characters, ending PMLEADGAP right of
+// it.
+#ifndef PMLEADER
+#define PMLEADER 1
+#endif
+#define PMLEADSCALE 2
+#define PMLEADSTEP 4
+#define PMLEADRISE 4
+#define PMLEADEND 3
+#define PMLEADGAP 0d10
+#define PMLEADBACK ((PMBOXTDX + 0d2 * PMCHARW + PMLEADEND) / PMLEADSTEP)
+#define PMLEADLEN(n) ((PMBOXDX - PMMARGIN - PMLEADEND - PMLEADGAP - (n) * PMCHARW) / PMLEADSTEP)
+
+// The press. The pen reports no lift: a press ends after PMGAPMS with no menu hit. OK acts only
+// at a press's first hit, and a bar item fires at a press's first hit or when the pen comes to
+// it from another column, so a pen resting on a label fires it once. A list with no menu hit
+// for PMIDLEMS closes.
+#ifndef PMGAPMS
+#define PMGAPMS 0d250
+#endif
+#ifndef PMIDLEMS
+#define PMIDLEMS 0d4000
+#endif
+
+// The intensities, 0 to 7: a label, a label lit, the leader.
+#ifndef PMNORMI
+#define PMNORMI 5
+#endif
+#ifndef PMLITI
+#define PMLITI 7
+#endif
+#ifndef PMLEADI
+#define PMLEADI 3
+#endif
+
+// A label's parameter word, normal and lit, and the box's "OK".
+#define PMNORM (charsets(2) | scale(1) | intensity(PMNORMI) | lpon | next(point))
+#define PMLIT (charsets(2) | scale(1) | intensity(PMLITI) | lpon | next(point))
+#define PMBOXLBL (charsets(2) | scale(1) | intensity(PMNORMI) | lpon | next(character))
+
+// The declaration. The program defines PM_BAR(L, B) before including penmenulist.ac and
+// penmenu.ac: one L(name, "label", LIST) for each item owning a list, one B(name, "label",
+// action) for each button, in column order. Each LIST is a macro LIST(R, S) of its rows: one
+// R(name, "label", action) for a row that acts, one S(name, "label", SUBLIST) for a row that
+// owns a sublist, whose SUBLIST(R, S) has R rows only. Every name is unique in the menu; an
+// action is any nonzero word. The macros below expand it.
+
+// Nothing, for a row or an item an expansion passes over.
+// (An empty function-like body would open a block macro, so it names an empty one.)
+#define PM_EMPTY
+#define PM_NIL(name, txt, arg) PM_EMPTY
+
+// A sublist's own sublist, which the menu does not have.
+#define PM_SERR(name, txt, arg) #error "penmenu: a sublist's row may not own a sublist"
+
+// A record, three words: the label's block (its 16-bit address), the action (0 for a row or
+// item owning a list), and the list's descriptor (its 16-bit address; 0 for one that acts).
+#define PM_RACT(name, txt, act) pmr ## name:*; act; 0;
+#define PM_RSUB(name, txt, arg) pmr ## name:*; 0; pmd ## name:.;
+#define PM_BACT(name, txt, act) pmb ## name:*; act; 0;
+#define PM_BSUB(name, txt, arg) pmb ## name:*; 0; pmd ## name:.;
+#define PMRECW 3
+
+// A list's descriptor, three words: its records' 16-bit address, their count, and its tail
+// word's 16-bit address; then the records. PM_DSUBS gives each of a list's sublists the same.
+#define PM_DLIST(name, txt, LIST) \
+pmd ## name, pmR ## name:.; \
+    (pmE ## name - pmR ## name) / PMRECW; \
+    pmt ## name:*; \
+pmR ## name, LIST(PM_RACT, PM_RSUB) \
+pmE ## name, ;
+#define PM_DSUB(name, txt, SUB) \
+pmd ## name, pmR ## name:.; \
+    (pmE ## name - pmR ## name) / PMRECW; \
+    pmt ## name:*; \
+pmR ## name, SUB(PM_RACT, PM_SERR) \
+pmE ## name, ;
+#define PM_DSUBS(name, txt, LIST) LIST(PM_NIL, PM_DSUB)
+
+// A label's block in the list: its parameter word, its y and x (written by pmInit), its text.
+#define PM_LBLOCK(name, txt, arg) \
+pmr ## name, PMNORM; \
+    y(0) next(point); \
+    x(0) next(character); \
+    type340 txt;
+#define PM_LBAR(name, txt, arg) \
+pmb ## name, PMNORM; \
+    y(PMBARY) next(point); \
+    x(0) next(character); \
+    type340 txt;
+
+// A list's rows, then its tail word, which jumps to the box, or to its open sublist.
+#define PM_LLIST(name, txt, LIST) \
+    LIST(PM_LBLOCK, PM_LBLOCK) \
+    lpoff next(subroutine); \
+pmt ## name, jump pmBox:. next(parameter);
+#define PM_LSUB(name, txt, SUB) \
+    SUB(PM_LBLOCK, PM_SERR) \
+    lpoff next(subroutine); \
+pmt ## name, jump pmBox:. next(parameter);
+#define PM_LSUBS(name, txt, LIST) LIST(PM_NIL, PM_LSUB)
+
+#endif

@@ -40,10 +40,16 @@
 // of any other format reads as empty too, and so does one whose entries would run past its
 // slot. A save refuses, TOO BIG, a picture whose entries would, before it writes anything. The
 // directory block holds the magic, the format, TPDIRW and two zeros, then the twelve entries of
-// tpDir, each the picture's format word and its name's run. A save writes it after the picture, with the picture's
-// entry, so one cut short between the two leaves the directory naming the old picture. A load
-// judges a picture by its headers alone. A directory whose sum or header fails reads as
-// twelve empty entries; a library tape's (splib.ac) is refused, NOT PICT, by every command.
+// tpDir, each the picture's format word and its name's run. A save writes it after the picture,
+// with the picture's entry, so one cut short between the two leaves the directory naming the old
+// picture. A load judges a picture by its headers alone. A directory whose sum fails is refused,
+// BAD BLOCK, and a library tape's (splib.ac), NOT PICT, by every command. One of another format
+// reads as twelve empty entries, and so does a block that is not Sketchpad's at all: all zeros,
+// a blank tape, or another program's words, which a save then refuses, NOT BLANK, writing
+// nothing. A save onto a blank directory first reads every block it will write, and refuses the
+// same way unless all are zeros or the first holds a picture's magic (tpScan), since another
+// program may have left the directory's block alone and used the slot's (the Z-machine's saves
+// start at block 1).
 //
 // The transfer. The tape gives or wants a word every 200 us and does not wait, so the break
 // system is off while it runs and the display shows WAIT from waitList, a list that loops on
@@ -494,10 +500,11 @@ teTo, 0
 teN, 0
     endloc
 
-// The status word's texts, four words each, by the result, TSSAVED to TSNOTPIC. Nine characters
+// The status word's texts, four words each, by the result, TSSAVED to TSOTHER. Nine characters
 // each, padded with spaces (spframe.ac, msgWord). A load that failed after it began replacing
 // the tables reads BAD BLOCK, as a bad block does. TSOPEN's is never shown (tapeCall), nor are
-// TSMORE's and the library's three, TSLLOADED to TSNOTLIB, which only hold their places.
+// TSMORE's, the library's TSLLOADED to TSNOTLIB, nor any from TSFULL to TSDIGIT, the library's and
+// Plot's, which only hold their places, as zeros from TSFULL on.
 tpMsgs,
     type340 "SAVED    "
     type340 "LOADED   "
@@ -514,6 +521,8 @@ tpMsgs,
     type340 "         "
     type340 "         "
     type340 "NOT PICT "
+    table 4 * (TSOTHER - TSNOTPIC - 1), 0
+    type340 "NOT BLANK"
 
 // Name runs (NAMEW words, sketchpad.ah). Blank, which the keyboard reads as an empty text; and "-"
 // for no picture, written as codes, an upper shift and "-", since a text's end code may stand
@@ -555,13 +564,15 @@ tyP, 0
 // Save the picture: its stream, here, then each master's entry (tpMore) and the closing block
 // and the directory (tpSvEnd). The entries' blocks counted first (tpEnts), and a picture they
 // would carry past its slot refused, before anything is written; a new generation in the
-// header; the directory read again, since the tape may have changed since the picker read it;
-// the seek to the picture's first block and the stream's TPPBLOCKS blocks written; then the
-// first master's entry asked for (tpNext).
-// Exit: AC = the result, TSMORE, TSTOOBIG, or tpRdDir's, tpSeek's or tpWrite's failure, or
-// tpNext's. IO is clobbered. Called via jsp.
+// header; the directory read again, since the tape may have changed since the picker read it,
+// and another program's refused (tpOther); on a blank directory (tpDirZ), every block the save
+// will write read first, the stream's, the entries' and the closing one, and refused unless all
+// are zeros or the first holds a picture's magic (tpScan); the seek to the picture's first block
+// and the stream's TPPBLOCKS blocks written; then the first master's entry asked for (tpNext).
+// Exit: AC = the result, TSMORE, TSTOOBIG, TSOTHER, or tpRdDir's, tpSeek's, tpScan's or
+// tpWrite's failure, or tpNext's. IO is clobbered. Called via jsp.
 tpSave,
-    local rtn, tsBig
+    local rtn, tsBig, tsGo, tsNot
     dap rtn
     jsp tpEnts
     dac i [tpHdr:013+4]
@@ -581,6 +592,32 @@ tpSave,
     jsp tpRdDir
     sza                 // skip if the directory was read
     jmp rtn
+    lac tpOther
+    sza                 // skip unless another program's tape
+    jmp tsNot
+    lac tpDirZ
+    sza i               // skip if a blank directory, to read the blocks first
+    jmp tsGo
+    lac i [tpHdr:013+4]
+    add [TPPBLOCKS + 1]
+    cma
+    dac tpScB           // minus the blocks the save writes
+    jsp tpBase
+    dac i [tpWant:013]
+    dzm i [tpRev:013]
+    jsp i [tpSeek:013]
+    sza                 // skip if at the picture's first block
+    jmp rtn
+    jsp tpScan
+    sza                 // skip if read
+    jmp rtn
+    lac tpW0
+    sad [TPMAGIC]       // skip unless a picture's first block
+    jmp tsGo
+    lac tpOr
+    sza                 // skip if every word was zero
+    jmp tsNot
+tsGo,
     jsp tpBase
     dac i [tpWant:013]
     dzm i [tpRev:013]
@@ -600,6 +637,9 @@ tpSave,
     dzm i [tpOp:013]    // TESAVE
     dzm i [tpKN:013]
     jsp tpNext
+    jmp rtn
+tsNot,
+    law TSOTHER
     jmp rtn
 tsBig,
     lac [TSTOOBIG]
@@ -648,15 +688,20 @@ tpSvEnd,
 rtn, jmp .
     endloc
 
-// Read the tape's directory block into tpDir. A library tape's directory there (splib.ac) is
-// refused, NOT PICT, so that no save writes over it. A block whose sum is not zero, or whose
-// header is not the directory's, this format's or format 18's or 17's, reads as twelve empty
-// entries.
-// That is not a failure, so that a save can still be made, which writes it anew.
-// Exit: AC = 0, TSNOTPIC, or tpSeek's or tpRead's failure. IO is clobbered. Called via jsp.
+// Read the tape's directory block into tpDir, the rest of the block after it into tpEBuf. A
+// block whose sum is not zero is refused, BAD BLOCK, since the pictures behind it may still be
+// read; a library tape's directory (splib.ac), NOT PICT, so that no save writes over it. A
+// picture tape's directory of another format than this one, 18 or 17 reads as twelve empty
+// entries, as does a block with neither magic: tpDirZ set when every word of it is zero, a
+// blank tape, and tpOther when not, another program's, which a save refuses (tpSave). That is
+// not a failure, so that Dir and Load show the empty entries.
+// Exit: AC = 0, TSBAD, TSNOTPIC, or tpSeek's or tpRead's failure; tpDirZ and tpOther set. IO is
+// clobbered. Called via jsp.
 tpRdDir,
-    local rtn, trdNone, trdLoop, trdLib, trdFmt
+    local rtn, trdNone, trdLoop, trdSum, trdLib, trdFmt, trdTest, trdOther
     dap rtn
+    dzm tpDirZ
+    dzm tpOther
     lac [TPDIRBLK]
     dac i [tpWant:013]
     dzm i [tpRev:013]
@@ -671,8 +716,11 @@ tpRdDir,
     sza                 // skip unless a tape error
     jmp rtn
     lac i [tpBad:013]
-    sza                 // skip if the block's sum was zero
-    jmp trdNone
+    sza i               // skip if the block's sum failed
+    jmp trdSum
+    lac [TSBAD]
+    jmp rtn
+trdSum,
     lac tpHdrB
     sas [LBMAGIC]       // skip if a library tape's directory
     jmp trdLib
@@ -680,7 +728,7 @@ tpRdDir,
     jmp rtn
 trdLib,
     sas [TPMAGIC]       // skip if the magic
-    jmp trdNone
+    jmp trdTest
     lac tpHdrB+1
     sad [TPFORMAT17]    // skip unless format 17's, the same directory
     jmp trdFmt
@@ -694,6 +742,27 @@ trdFmt,
     jmp trdNone
     cla
     jmp rtn
+trdTest,                // neither magic: a blank tape or another program's
+    dzm tpOr
+    law i TPHDRWORDS
+    dac tpCnt
+    lac [tpHdrB:6]
+    jda tpOrN
+    law i TPDIRW
+    dac tpCnt
+    lac [tpDir:013]
+    jda tpOrN
+    law i TPDIRREST
+    dac tpCnt
+    lac [tpEBuf:6]
+    jda tpOrN
+    lac tpOr
+    sza                 // skip if every word is zero, a blank tape
+    jmp trdOther
+    idx tpDirZ
+    jmp trdNone
+trdOther,
+    idx tpOther
 trdNone,
     lac [tpDir:013]
     dac tpPtr
@@ -708,6 +777,89 @@ trdLoop,
     jmp trdLoop
     cla
 rtn, jmp .
+    endloc
+
+// The OR of -tpCnt words from a 16-bit address into tpOr, which the caller clears first.
+// Entry: AC = the first word's address. Exit: AC = tpOr. IO is preserved. Called via jda.
+tpOrN, 0
+    local rtn, onLoop
+    dap rtn
+    lac tpOrN
+    dac tpPtr
+onLoop,
+    lac i tpPtr
+    ior tpOr
+    dac tpOr
+    idx tpPtr
+    isp tpCnt           // skip once every word is taken
+    jmp onLoop
+rtn, jmp .
+    endloc
+
+// Read -tpScB blocks forward and keep none of their words, the seek having just found the
+// first block's flag: every data word ORed into tpOr, and the first block's first kept in tpW0.
+// Not the checksums, since a block never written gives a leading one of minus zero; no sum is
+// checked, since only zeros matter. A loop of its own, since tpRead's has no time for the OR at
+// a run change (CompletedTasks/TASK-SPEED-TAPE.md). The tape is stopped after the last.
+// Exit: AC = 0; TSBAD on a tape error. IO is clobbered. Called via jsp.
+tpScan,
+    local rtn, scBlock, scData, scNoDF, scBEF, scErr, scK, scW
+    dap rtn
+    lio [mtgo mtread]
+    mlc
+    dzm tpOr
+    dzm tpW0
+    law i 1
+    dac scW             // the first data word
+scBlock,
+    law i 2
+    dac scK             // the block's leading checksum, then its data
+scData,
+    mrs
+    spi i               // skip if the data flag is up
+    jmp scNoDF
+    mrd
+    isp scK             // skip past the leading checksum
+    jmp scData
+    lai
+    ior tpOr
+    dac tpOr
+    isp scW             // skip at the first block's first data word
+    jmp scData
+    dio tpW0
+    lac [0400000]       // and never again: more words than any tape holds
+    dac scW
+    jmp scData
+scNoDF,
+    ril 1s              // the block end flag to bit 0
+    spi
+    jmp scBEF
+    ril 1s              // the error flag to bit 0
+    spi
+    jmp scErr
+    ril 4s              // GO (bit 6) to bit 0, clear after a halt
+    spi
+    jmp scData
+    jmp scErr
+scBEF,
+    mrd                 // the trailing checksum
+    isp tpScB           // skip after the last block
+    jmp scBlock
+    mrs
+    dio tpScSt
+    cli
+    mlc                 // stop
+    lac tpScSt
+    and [mterf]
+    sza i               // skip if a tape error
+    jmp rtn             // AC = 0
+scErr,
+    cli
+    mlc                 // stop
+    lac [TSBAD]
+rtn, jmp .
+scK, 0
+scW, 0
     endloc
 
 // Load the picture: its stream, here, then each master's entry (tpMore) and the close
@@ -1311,35 +1463,57 @@ esP, 0
 
 // A loaded master's words, from its record (mrWords), put into the master store at its place
 // there when the save was made (mStart), as the instance module's msAddr places them; or left
-// out, the master out of the store then (MNOPOOL).
+// out, the master out of the store then (MNOPOOL). A place the store's regions no longer hold
+// whole, saved by a build whose regions were larger, leaves the master out too, and the
+// rebuild brings it in where it fits (spvar.ac's vaOf).
 // AC and IO are clobbered. Called via jsp.
 tpPool,
-    local rtn, tpR0, tpTo, tpQ
+    local rtn, tpR0, tpTo, tpOut, tpQ, tpM, tpN
     dap rtn
+    lac i [tpK:013]
+    add [mLen:5]
+    dac tpQ
+    lac i tpQ
+    dac tpN
     lac i [tpK:013]
     add [mStart:5]
     dac tpQ
     lac i tpQ
     sad [MNOPOOL]       // skip unless out of the store
     jmp rtn
+    dac tpM
     sub [MPOOL0]
     spa                 // skip if in region 1
     jmp tpR0
+    add tpN
+    sub [MPOOL1 + 1]
+    sma                 // skip if region 1 holds it whole
+    jmp tpOut
+    lac tpM
+    sub [MPOOL0]
     add [mpool1:1]
     jmp tpTo
 tpR0,
-    add [masters:0 + MPOOL0]
+    add tpN
+    sub [1]
+    sma                 // skip if region 0 holds it whole
+    jmp tpOut
+    lac tpM
+    add [masters:0]
 tpTo,
     dac tpRun
     lac [mrWords:5]
     dac tpPtr
-    lac i [tpK:013]
-    add [mLen:5]
-    dac tpQ
-    lac i tpQ
+    lac tpN
     jda tpMove
+    jmp rtn
+tpOut,
+    lac [MNOPOOL]
+    dac i tpQ
 rtn, jmp .
 tpQ, 0
+tpM, 0
+tpN, 0
     endloc
 
 // Copy n words from tpPtr to tpRun, both left past them.
@@ -1789,7 +1963,7 @@ tpLoadRuns,
 tpDirRRuns,
     TPRUN(tpHdrB:6, TPHDRWORDS)
     TPRUN(tpDir:013, TPDIRW)
-    TPSINK(0d256 - TPHDRWORDS - TPDIRW)
+    TPRUN(tpEBuf:6, TPDIRREST)
     TPSINK(1)
 tpDirWRuns,
     TPRUN(tpDHdr:6, TPHDRWORDS)
@@ -1802,6 +1976,12 @@ tpCyc,                  // the cycle's settings packed, as a save writes them an
     table TPCYC, 0
 tpZero, 0               // the word a save's padding repeats
 tpSink, 0               // where a load's unkept words go
+tpDirZ, 0               // the directory's block all zeros, a blank tape (tpRdDir)
+tpOther, 0              // the directory's block another program's (tpRdDir)
+tpOr, 0                 // the OR of the words read (tpOrN, tpScan)
+tpW0, 0                 // the slot's first block's first data word (tpScan)
+tpScB, 0                // the blocks tpScan reads, negative
+tpScSt, 0               // the status at tpScan's stop
 tpHdrA,                 // a load's leading header
     table TPHDRWORDS, 0
 tpHdrB,                 // and its closing one, or the directory's

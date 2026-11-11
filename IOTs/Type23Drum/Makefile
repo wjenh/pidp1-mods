@@ -1,11 +1,11 @@
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
-%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../Lib/iotLogger.h
+INC= -I../../src/common -I../../src/pdp1 -I.. -I../Lib
+%.o:%.c ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h ../Lib/iotLogger.h
 	gcc $(INC) -O3 -fPIC -c $< -o $@
 %.so:%.o ../Lib/iotLogger.o
 	gcc -shared $< ../Lib/iotLogger.o -o $@
 
 # IOT_61 writes the drum file through the write-behind queue (27-Sep-2026).
-IOT_61.o: IOT_61.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../Lib/iotLogger.h ../Lib/writeBehind.h ../../src/blincolnlights/pdp1/highSpeedChannels.h
+IOT_61.o: IOT_61.c ../iotHandler.h ../../src/pdp1/dynamicIots.h ../../src/pdp1/pdp1.h ../../src/pdp1/ad1intf.h ../Lib/iotLogger.h ../Lib/writeBehind.h ../../src/pdp1/highSpeedChannels.h
 	gcc $(INC) -O3 -fPIC -c $< -o $@
 
 IOT_61.so: IOT_61.o ../Lib/iotLogger.o ../Lib/writeBehind.o

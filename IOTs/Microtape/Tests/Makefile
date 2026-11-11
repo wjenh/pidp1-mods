@@ -22,7 +22,7 @@ CFLAGS  = -Wall -Wextra -O2 -I..
 CORE    = ../control550.c ../transport555.c
 HDRS    = ../control550.h ../transport555.h
 
-PLUGIN_INC = -I../../../src/blincolnlights -I../../../src/blincolnlights/pdp1 -I../.. -I../../Lib -I..
+PLUGIN_INC = -I../../../src/common -I../../../src/pdp1 -I../.. -I../../Lib -I..
 PLUGIN_SRC = ../../Reader/IOT_2.c ../microtape.c $(CORE)
 
 AM1     ?= am1
@@ -38,7 +38,7 @@ mttest: mttest.c $(CORE) $(HDRS)
 	$(CC) $(CFLAGS) -o $@ mttest.c $(CORE)
 
 # The plugin test builds with microtapes.txt and relative images in ./plugintest.d.
-plugintest: plugintest.c $(PLUGIN_SRC) $(HDRS) ../microtape.h ../../iotHandler.h ../../../src/blincolnlights/pdp1/dynamicIots.h ../../../src/blincolnlights/pdp1/pdp1.h ../../../src/blincolnlights/pdp1/ad1intf.h ../../../src/blincolnlights/pdp1/configuration.h ../../Lib/iotLogger.h ../../Lib/writeBehind.h
+plugintest: plugintest.c $(PLUGIN_SRC) $(HDRS) ../microtape.h ../../iotHandler.h ../../../src/pdp1/dynamicIots.h ../../../src/pdp1/pdp1.h ../../../src/pdp1/ad1intf.h ../../../src/pdp1/configuration.h ../../Lib/iotLogger.h ../../Lib/writeBehind.h
 	$(CC) $(PLUGIN_INC) -Wall -O2 '-DMT_BASE_DIR="plugintest.d"' -o $@ plugintest.c $(PLUGIN_SRC)
 	./plugintest
 

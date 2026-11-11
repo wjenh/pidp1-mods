@@ -39,6 +39,7 @@ typedef enum
     SCHEMA_INT,
     SCHEMA_FLOAT,
     SCHEMA_TEXT,
+    SCHEMA_CHOICE,
     SCHEMA_PORT
 } SchemaType;
 
@@ -58,6 +59,7 @@ typedef struct
     char name[CONF_MAX_VALUE + 1];
     char group[32];
     SchemaType type;
+    char rangeStr[64];          // the range column as written; a choice's values, comma separated
     bool hasRange;
     double rangeLow;
     double rangeHigh;
@@ -174,6 +176,8 @@ Schema *schemaLoad(const char *pathP, char *errorP, size_t errorLen);
 void schemaFree(Schema *schemaP);
 const SchemaEntry *schemaFind(const Schema *schemaP, const char *nameP);
 bool schemaCheck(const SchemaEntry *entryP, const char *valueP, char *errorP, size_t errorLen);
+bool schemaChoiceAt(const SchemaEntry *entryP, int index, char *outP, size_t outLen);
+int schemaChoiceIndex(const SchemaEntry *entryP, const char *valueP);
 bool schemaIsOn(const char *valueP);
 const char *schemaAppliesText(SchemaApplies applies);
 const char *schemaDisplayName(const SchemaEntry *entryP);

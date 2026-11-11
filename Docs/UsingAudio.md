@@ -66,7 +66,7 @@ It seems that the Raspberry Pi 5 generates a fair of low-level spurious signal n
 power supply filtering is the likely culprit.
 This noise is intrinsic, not a result of the audio implementation and is not excessive.
 
-If you want the full details, look at *audio.c* and *lowpass.c* in /opt/pidp1-mods/src/blicolnlights/pdp1.
+If you want the full details, look at *audio.c* and *lowpass.c* in /opt/pidp1-mods/src/pdp1.
 
 ## Ok, finally, changing parameters
 

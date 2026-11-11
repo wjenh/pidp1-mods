@@ -650,9 +650,9 @@ printf 'Test rg64: an assert with no message\n100/\nx, 0\nassert x - x\nstart x\
 run_test rg64_nomsg "$WORK/rg64_nomsg.am1" --xfail --xmsg "assert failed at line 4,"
 echo ""
 
-# rg65: assert is a keyword. As a label, at column 0 and indented, after a ';'
-# and as an operand it is reported as one; a name that only begins with it is
-# a name. The new operators are refused outside an assert, as is a constant
+# rg65: assert is a keyword. As a label, at column 0 and indented, and as an
+# operand it is reported as one; a name that only begins with it is a name.
+# After a ';' it is an assert, checked on its own line (rg68 has more). The new operators are refused outside an assert, as is a constant
 # inside one; a syntax error in one and one inside an overlay are refused, and
 # all of these still are under -A.
 run_test rg65_assert_prefix         "$SCRIPT_DIR/rg65_assert_prefix.am1"
@@ -663,7 +663,6 @@ rg65_leg() {    # leg name, the line written on line 4, the message
 }
 rg65_leg label      'assert, hlt'          "assert is an am1 keyword and cannot be a label"
 rg65_leg label_ind  '    assert , hlt'     "assert is an am1 keyword and cannot be a label"
-rg65_leg semi       '    hlt; assert x == 0100' "assert is an am1 keyword, allowed only at the start of a line"
 rg65_leg operand    '    lac assert'       "assert is an am1 keyword, allowed only at the start of a line"
 rg65_leg constant   'assert [5] == 5'      "a constant cannot be used in an assert, its word would be added to the program"
 rg65_leg syntax     'assert x == == 1'     "syntax error"
@@ -740,6 +739,143 @@ if [ ! -s "$WORK/rg67_silent.log" ] && [ -f rg67_assert_ignored.rim ]; then
 else
     rg_result rg67_ignored_silent "-A printed something, or wrote no tape"
 fi
+echo ""
+
+# rg68: an assert after a ';', so on a block macro's later lines, where the
+# preprocessor joins them with ';'. The true fixture's asserts hold, and its
+# rows sit ROWW apart; each leg below fails at its own assert's line, the one
+# that used the macro or the one-line form's. The other line-start keywords
+# are still refused after a ';'.
+run_test rg68_block_assert          "$SCRIPT_DIR/rg68_block_assert.am1"
+sed '20s/"Title"/"A title much too long"/' "$SCRIPT_DIR/rg68_block_assert.am1" > "$WORK/rg68_long.am1"
+run_test rg68_long "$WORK/rg68_long.am1" --xfail --xmsg "assert failed: label too long at line 20,"
+sed '22s/assert w == .*, "where"/assert w == 0, "where"/' "$SCRIPT_DIR/rg68_block_assert.am1" > "$WORK/rg68_oneline.am1"
+run_test rg68_oneline "$WORK/rg68_oneline.am1" --xfail --xmsg "assert failed: where at line 22,"
+printf 'Test rg68: after a semi\n100/\nx, 0\n    hlt; assert x == 0101, "semi"\n    hlt\nstart x\n' > "$WORK/rg68_semi.am1"
+run_test rg68_semi "$WORK/rg68_semi.am1" --xfail --xmsg "assert failed: semi at line 4,"
+rg68_kw() {     # leg name, the line written on line 4, the keyword
+    printf 'Test rg68: %s\n100/\nx, 0\n%s\n    hlt\nstart x\n' "$1" "$2" > "$WORK/rg68_$1.am1"
+    run_test rg68_$1 "$WORK/rg68_$1.am1" --xfail --xmsg "$3 is an am1 keyword, allowed only at the start of a line at line 4,"
+}
+rg68_kw start     '    0; start 100'  start
+rg68_kw constants '    0; constants'  constants
+echo ""
+
+# rg69: a table's count. 0 adds no word and a row that fits exactly takes
+# none, and the row's type340, after a ';' in the expansion, is listed at the
+# line that used the macro. A negative count, -0 (0777777) among them, is its
+# own error on the table's line, and writes no tape; so is a padded row too
+# long for its block. (-0 written as such is +0, as rg62 shows.)
+run_test rg69_table_zero            "$SCRIPT_DIR/rg69_table_zero.am1"
+rm -rf "$WORK/rg69_lst" && mkdir "$WORK/rg69_lst"
+if (cd "$WORK/rg69_lst" && cp "$SCRIPT_DIR/rg69_table_zero.am1" t.am1 && "$AM1" -l t.am1 > t.out 2>&1) &&
+   [ "$(grep -c '^ *[0-9]*: 0001[0-7][0-7] 000000  [0-7]\{6\}$' "$WORK/rg69_lst/t.lst")" -gt 0 ]; then
+    # Each row's type340 words, the lines after its "Type 340 table", carry
+    # the line of the label just before them, the macro's use.
+    bad=$(awk '/^ *[0-9]+: [0-7]+ [0-7]+ [a-z]+, 0;$/ { use = $1 }
+               /^\/\/ Type 340 table/ { t = 1; next }
+               /^\/\/ End/ { t = 0 }
+               t && $1 != use { print }' "$WORK/rg69_lst/t.lst")
+    rg_result rg69_type340_line "${bad:+a type340 word is listed off its macro use: $bad}"
+else
+    rg_result rg69_type340_line "the listing was not written, or has no type340 words"
+fi
+rg69_neg() {    # leg name, the line written on line 4, the count shown
+    printf 'Test rg69: %s\n100/\nx, 0\n%s\n    hlt\nstart x\n' "$1" "$2" > "$WORK/rg69_$1.am1"
+    rm -f "rg69_$1.rim"
+    run_test rg69_$1 "$WORK/rg69_$1.am1" --xfail --xmsg "table count is negative ($3) at line 4,"
+    if [ -e "rg69_$1.rim" ]; then
+        rg_result rg69_${1}_no_tape "the failed build left a .rim"
+    else
+        rg_result rg69_${1}_no_tape ""
+    fi
+}
+rg69_neg minus2   '    table 3 - 5, 0'  -2
+rg69_neg minus0   '    table 0777777'   -0
+sed '18s/"Truss >"/"A row much too long for it"/' "$SCRIPT_DIR/rg68_block_assert.am1" > "$WORK/rg69_row.am1"
+run_test rg69_row "$WORK/rg69_row.am1" --xfail --xmsg "table count is negative (-5) at line 18,"
+echo ""
+
+# rg70: the line a message names. A syntax error found at a line's end, with a
+# comment, after a ';', on a file's last line, in an include, at an include's
+# last line, in a block macro and before a blank line is on its own line and
+# file; one in mid-line, plain and after a ';', always was. An undefined name,
+# plain, local, cross-bank and in an include, is reported at its reference, in
+# its file, from the binary and the macro1 back ends.
+rg70_case() {   # leg name, body (lines 3 on), the message, flags...
+    local name=$1 body=$2 msg=$3
+    shift 3
+    printf 'Test rg70: %s\n100/\n%b    hlt\nstart 100\n' "$name" "$body" > "$WORK/rg70_$name.am1"
+    run_test rg70_$name "$WORK/rg70_$name.am1" "$@" --xfail --xmsg "$msg"
+}
+printf '    0\n    lac 1 +\n    0\n' > "$WORK/rg70_inc.ah"
+printf '    0\n    lac 1 +\n' > "$WORK/rg70_inclast.ah"
+printf '    0\n    lac nosuch\n' > "$WORK/rg70_incsym.ah"
+rg70_case eol          '    lac 1 +\n'                 "syntax error at line 3, file $WORK/rg70_eol.am1"
+rg70_case eol_comment  '    lac 1 + // a comment\n'   "syntax error at line 3, file $WORK/rg70_eol_comment.am1"
+rg70_case eol_semi     '    0; lac 1 +\n'              "syntax error at line 3, file $WORK/rg70_eol_semi.am1"
+rg70_case mid          '    lac ) 1\n'                 "syntax error at line 3, file $WORK/rg70_mid.am1"
+rg70_case mid_semi     '    0; lac ) 1\n'              "syntax error at line 3, file $WORK/rg70_mid_semi.am1"
+rg70_case eol_gap      '    lac 1 +\n\n// note\n'      "syntax error at line 3, file $WORK/rg70_eol_gap.am1"
+rg70_case include      '#include "rg70_inc.ah"\n'     "syntax error at line 2, file $WORK/rg70_inc.ah"
+rg70_case include_last '#include "rg70_inclast.ah"\n' "syntax error at line 2, file $WORK/rg70_inclast.ah"
+printf 'Test rg70: block\n#define B()\n    0\n    lac 1 +\n#enddef\n100/\n    B()\n    hlt\nstart 100\n' > "$WORK/rg70_block.am1"
+run_test rg70_block "$WORK/rg70_block.am1" --xfail --xmsg "syntax error at line 7, file $WORK/rg70_block.am1"
+printf 'Test rg70: last line\n100/\n    hlt\nstart 100 +\n' > "$WORK/rg70_lastline.am1"
+run_test rg70_lastline "$WORK/rg70_lastline.am1" --xfail --xmsg "syntax error at line 4, file $WORK/rg70_lastline.am1"
+for be in bin mac; do
+    flags=()
+    [ "$be" = mac ] && flags=(-m)
+    rg70_case undef_$be       '    lac nosuch\n    0\n'               "symbol nosuch has no defined value at line 3, file $WORK/rg70_undef_$be.am1" "${flags[@]}"
+    rg70_case local_$be       '    local q\n    lac q\n    endlocal\n' "local symbol q has no defined value at line 4, file $WORK/rg70_local_$be.am1" "${flags[@]}"
+    rg70_case incsym_$be      '#include "rg70_incsym.ah"\n'          "symbol nosuch has no defined value at line 2, file $WORK/rg70_incsym.ah" "${flags[@]}"
+    rg70_case xbank_$be       '    lac nosuch:3\n'                    "symbol nosuch in bank 3 has no defined value at line 3, file $WORK/rg70_xbank_$be.am1" "${flags[@]}"
+done
+echo ""
+
+# rg71: -m refuses an undefined name:N, in another bank, its own and an
+# include, as the binary back end does; a defined one still assembles. A
+# failed run removes every output it had written: -m -b's .mac, its message
+# given once, and -O's report. Each failure's twin that assembles leaves
+# those same files, so the check that they are gone can fail.
+printf '    0\n    lac nosuch:3\n' > "$WORK/rg71_incbref.ah"
+rg71_case() {   # leg name, body (lines 3 on), the message, flags...
+    local name=$1 body=$2 msg=$3
+    shift 3
+    printf 'Test rg71: %s\n100/\n%b    hlt\nstart 100\n' "$name" "$body" > "$WORK/rg71_$name.am1"
+    run_test rg71_$name "$WORK/rg71_$name.am1" "$@" --xfail --xmsg "$msg"
+}
+rg71_case own_mac  '    lac nosuch:0\n'                "symbol nosuch in bank 0 has no defined value at line 3, file $WORK/rg71_own_mac.am1" -m
+rg71_case inc_mac  '#include "rg71_incbref.ah"\n'      "symbol nosuch in bank 3 has no defined value at line 2, file $WORK/rg71_incbref.ah" -m
+printf 'Test rg71: defined\n100/\n    lac x:1\n    hlt\nbank 1\n100/\nx, 0\nstart 100\n' > "$WORK/rg71_defined.am1"
+run_test rg71_defined_mac "$WORK/rg71_defined.am1" -m
+rg71_left() {   # leg name, body (lines 3 on), the exit wanted, the outputs to look for, flags...
+    local name=$1 body=$2 want=$3 exts=$4 e rc bad=""
+    shift 4
+    rm -rf "$WORK/rg71_$name" && mkdir "$WORK/rg71_$name"
+    printf 'Test rg71: %s\n100/\n%b    hlt\nstart 100\n' "$name" "$body" > "$WORK/rg71_$name/t.am1"
+    (cd "$WORK/rg71_$name" && "$AM1" "$@" t.am1 > t.out 2>&1)
+    rc=$?
+    if [ "$want" = 0 ]; then
+        [ $rc -eq 0 ] || bad="exit $rc"
+        for e in $exts; do
+            [ -e "$WORK/rg71_$name/t.$e" ] || bad="$bad, no .$e"
+        done
+    else
+        [ $rc -ne 0 ] || bad="exit 0"
+        for e in $exts; do
+            [ -e "$WORK/rg71_$name/t.$e" ] && bad="$bad, .$e left"
+        done
+        [ "$(grep -c 'has no defined value\|would be overwritten' "$WORK/rg71_$name/t.out")" -eq 1 ] ||
+            bad="$bad, not one message"
+    fi
+    rg_result rg71_$name "${bad#, }"
+}
+rg71_left mb_ok      '    lac x:1\nbank 1\n100/\nx, 0\nbank 0\n' 0 "mac rim" -m -b
+rg71_left mb_undef   '    lac nosuch:3\n'                         1 "mac rim" -m -b
+rg71_left mb_over    '    0\n100/\n    1\n'                        1 "mac rim" -m -b
+rg71_left opt_ok     '    0\n'                                    0 "opt rim" -O -b
+rg71_left opt_over   '    0\n100/\n    1\n'                        1 "opt rim" -O -b
 echo ""
 
 # Not a failure: an --xfail test never gets far enough to have words to

@@ -3,6 +3,7 @@
 // Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
 // constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
 // 10-Nov-2026, Claude: the library.
+// 11-Nov-2026, Claude: the slot's count raised, so other descriptors of the file stay refused.
 
 #ifndef MTFDELETE_AC
 #define MTFDELETE_AC
@@ -14,7 +15,8 @@
 local dlRtn, dlFd, dlH, dlQ, dlE, dlA, dlN, dlS, dlSbm, dl1, dl2, dl3, dlBad, dlRo, dlEnd
 
 // Delete a file by its open descriptor: its entry is cleared and the directory written, and
-// the descriptor is closed. The file's words are not erased. A read-only file is refused. On a
+// the descriptor is closed. Any other descriptor open on the file is refused from then on,
+// even once a create has taken the same slot and blocks. The file's words are not erased. A read-only file is refused. On a
 // write error the entry is put back in the handle and the descriptor stays open. Sequence
 // breaks are off throughout and turned on again only if they were on.
 // Entry: AC = the descriptor's 16-bit address; it is the whole parameter block. Exit: AC =
@@ -66,6 +68,14 @@ dl1,
     farjda(mtfWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp dl2
+    lac dlFd
+    add [MTF_FSLOT]
+    dac dlQ
+    lac i dlQ
+    add [MTF_HSLOTS]
+    add dlH
+    dac dlQ
+    idx i dlQ                   // the file's other descriptors are no longer valid
     lac dlFd
     add [MTF_FFLAGS]
     dac dlQ

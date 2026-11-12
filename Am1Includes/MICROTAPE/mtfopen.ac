@@ -4,6 +4,7 @@
 // constants. It includes mtfdir.ac. Called as mtfdir.ac's entries are.
 // mtfFdOk is the check every call taking a descriptor makes first.
 // 10-Nov-2026, Claude: the library.
+// 11-Nov-2026, Claude: the slot's count recorded at the open and checked by mtfFdOk.
 
 #ifndef MTFOPEN_AC
 #define MTFOPEN_AC
@@ -22,6 +23,9 @@ assert MTF_FPOS == 5
 assert MTF_FINFO == 6
 assert MTF_FFLAGS == 7
 assert MTF_FMOUNT == 010
+assert MTF_FSTAMP == 011
+assert MTF_HSLOTS == MTF_HBUF + MTWDS
+assert MTF_TAPEW == MTF_HSLOTS + MTF_NENT
 assert MTF_DELEN == MTF_DEFIRST + 2
 assert MTF_DEINFO == MTF_DEFIRST + 3
 
@@ -178,9 +182,10 @@ ocRet,
     jmp i ocRtn
 
 // Whether a descriptor may be used: it is open, its handle is mounted and has not been mounted
-// or formatted again since the file was opened, and its slot still holds a file at its first
-// block. So a descriptor left open across a remount, a pack that moved its file, or a delete
-// through another descriptor is refused.
+// or formatted again since the file was opened, its slot still holds a file at its first
+// block, and the slot has not been cleared since. So a descriptor left open across a remount,
+// a pack that moved its file, or a delete or replace through another descriptor or call is
+// refused, even after a create has taken the same slot and first block.
 // Entry: AC = the descriptor's 16-bit address. Exit: AC = MTF_OK or MTF_EBADFD. IO is
 // preserved. Called via jda.
 mtfFdOk, 0
@@ -233,13 +238,29 @@ mtfFdOk, 0
     lac i fkQ
     sas fkM                     // skip if the same first block
     jmp fkBad
+    lac fkD
+    add [MTF_FSLOT]
+    dac fkQ
+    lac i fkQ
+    add [MTF_HSLOTS]
+    add fkH
+    dac fkQ
+    lac i fkQ
+    dac fkM
+    lac fkD
+    add [MTF_FSTAMP]
+    dac fkQ
+    lac i fkQ
+    sas fkM                     // skip if the slot has not been cleared since the open
+    jmp fkBad
     cla
     jmp i fkRtn
 fkBad,
     law MTF_EBADFD
     jmp i fkRtn
 
-// Fill the descriptor opFd from slot opK of the handle opH, open at position 0.
+// Fill the descriptor opFd from slot opK of the handle opH, open at position 0, with the
+// handle's mount count and the slot's count for mtfFdOk.
 // Called via jsp. AC is clobbered, IO is preserved.
 opFill,
     dap ofx
@@ -281,6 +302,13 @@ opFill,
     idx opQ
     lac i opE
     dac i opQ                   // MTF_FMOUNT
+    lac opK
+    add [MTF_HSLOTS]
+    add opH
+    dac opE
+    idx opQ
+    lac i opE
+    dac i opQ                   // MTF_FSTAMP
 ofx,
     jmp .
 

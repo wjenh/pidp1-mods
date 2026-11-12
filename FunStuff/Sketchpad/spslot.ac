@@ -1,0 +1,253 @@
+// spslot.ac -- a line slot's plan and vectors for the main bank's writeSlot (lnEmit): what
+// splitPlan and emitVecs do for it, in one routine with its words its own, so that nothing is
+// handed between banks. splitPlan and emitVecs (spaux.ac, bank 12) stay for the band (vwSeg,
+// sppen.ac), and the two must split a line alike: the words this writes are theirs, word for
+// word (Tests/slot_words.py, Tests/split_plan.py).
+//
+// Bank 11, after splock.ac, for room. Entered by jsp i [lnEmit:0d11] with the extend window
+// open; returns by jmp i. It reaches the main bank's fx, fy, tx, ty and slotBase, bank 12's vwHid
+// and bank 1's line slots through 16-bit addresses, and calls nothing outside itself.
+// Part of sketchpad.am1, included where it stands.
+
+// Write a line slot's vectors and give its gate word. For a line off the screen (vwHid) nothing
+// is written and the gate jumps past the area. Otherwise the line from (fx, fy) to (tx, ty), as
+// vwLine left them, goes in K steps, K the fewest with K * STEPMAX at least the larger of |dx|
+// and |dy|. Each step is |dx|/K and |dy|/K rounded down, plus a unit whenever the remainders
+// summed so far reach another K, so every step ends within a unit of the true line and the K
+// steps sum to it exactly. They fill the last K of the area's NBAND words, the last with the
+// vector end, and the gate enters the first. One step or two need no divide: a divide by 1 or 2
+// gives what the shifts give.
+// Entry: the main bank's fx, fy, tx, ty and slotBase; bank 12's vwHid. Exit: AC = the gate word.
+// IO is clobbered. Called via jsp i [lnEmit:0d11].
+lnEmit,
+    local rtn, leMY, leMax, leOne, leTwo, leMany, leLoop, leX, leY, leUX, leUY, leLX, leLY, \
+        leLUX, leLUY, leGate, leHid, \
+        leWord, leWX, leWd, leWr, leLast, leDX, leDY, leAX, leAY, leK, leSX, leSY, leRX, leRY, \
+        leBase, lePtr, leFirst, leN, leAccX, leAccY, leVec
+    dac rtn
+    lac i [slotBase:4]
+    add [SLOTVEC + NBAND - 1]
+    dac leLast          // the area's last word, the last step's
+    lac i [vwHid:014]
+    sza                 // skip unless the line is off the screen
+    jmp leHid
+    lac i [tx:4]
+    sub i [fx:4]
+    dac leDX
+    spa                 // skip unless dx is negative
+    cma
+    dac leAX
+    lac i [ty:4]
+    sub i [fy:4]
+    dac leDY
+    spa                 // skip unless dy is negative
+    cma
+    dac leAY
+    lac leAX
+    sub leAY
+    spa                 // skip if |dx| is the larger, or they are equal
+    jmp leMY
+    lac leAX
+    jmp leMax
+leMY,
+    lac leAY
+
+    // K = 1 within STEPMAX, 2 within twice that; otherwise (max + STEPMAX - 1) / STEPMAX by one
+    // divide, the dividend far under 2^17, so the divide cannot overflow.
+leMax,
+    dac leK             // the larger distance, for now
+    sub [STEPMAX + 1]
+    spa                 // skip unless within one step
+    jmp leOne
+    sub [STEPMAX]
+    spa                 // skip unless within two steps
+    jmp leTwo
+    lac leK
+    add [STEPMAX - 1]
+    dac leK
+    lio leK
+    cla
+    scl 1s
+    div [STEPMAX]
+    cla                 // no skip is overflow
+    dac leK
+
+    // The steps and remainders by the hardware divide. The dividend goes in shifted left one
+    // place, and a successful div skips. K is 3 or more, so the divide cannot overflow; if it
+    // did, the skipped cla would make the step 0.
+    lio leAX
+    cla
+    scl 1s
+    div leK
+    cla                 // no skip is overflow
+    dac leSX
+    dio leRX
+    lio leAY
+    cla
+    scl 1s
+    div leK
+    cla                 // no skip is overflow
+    dac leSY
+    dio leRY
+    jmp leMany
+
+    // Two steps: each half of the distance rounded down, the odd unit the remainder.
+leTwo,
+    law 2
+    dac leK
+    lac leAX
+    sar 1s
+    dac leSX
+    lac leAX
+    and [1]
+    dac leRX
+    lac leAY
+    sar 1s
+    dac leSY
+    lac leAY
+    and [1]
+    dac leRY
+
+    // The steps, each the base word with a unit added on an axis whose remainders, summed with
+    // K taken off, reach 0. The loop writes the first K - 1, leN counting them up from 1 - K;
+    // the last is written once, with the vector end, so the area's last word always ends it,
+    // as emitVecs leaves it. Each store goes through the open window, so the area may be in
+    // any bank.
+leMany,
+    jsp leWord
+    lac leLast
+    add [1]
+    sub leK
+    dac lePtr
+    dac leFirst
+    lac leK
+    cma
+    dac leAccX
+    dac leAccY
+    add [1]
+    dac leN
+leLoop,
+    lac leAccX
+    add leRX
+    dac leAccX
+    sma                 // skip unless the remainders reach another unit
+    jmp leUX
+    lac leBase
+leX,
+    dac leVec
+    lac leAccY
+    add leRY
+    dac leAccY
+    sma                 // skip unless the remainders reach another unit
+    jmp leUY
+    lac leVec
+leY,
+    dac i lePtr
+    idx lePtr
+    isp leN
+    jmp leLoop
+    lac leAccX
+    add leRX
+    sma                 // skip unless the remainders reach another unit
+    jmp leLUX
+    lac leBase
+leLX,
+    dac leVec
+    lac leAccY
+    add leRY
+    sma                 // skip unless the remainders reach another unit
+    jmp leLUY
+    lac leVec
+leLY,
+    ior [visible end]
+    dac i leLast
+    lac leFirst
+    jmp leGate
+leLUX,
+    lac leBase
+    add [1]             // a unit more of x
+    jmp leLX
+leLUY,
+    lac leVec
+    add [0400]          // a unit more of y
+    jmp leLY
+leUX,
+    sub leK
+    dac leAccX
+    lac leBase
+    add [1]             // a unit more of x
+    jmp leX
+leUY,
+    sub leK
+    dac leAccY
+    lac leVec
+    add [0400]          // a unit more of y
+    jmp leY
+
+    // One step: the whole distance, the vector end in the area's last word.
+leOne,
+    lac leAX
+    dac leSX
+    lac leAY
+    dac leSY
+    jsp leWord
+    ior [visible end]
+    dac i leLast
+    lac leLast
+leGate,
+    ior [jump next(vector)]
+    jmp i rtn
+
+    // Off the screen: the gate jumps past the area, nothing written.
+leHid,
+    lac leLast
+    add [1]
+    ior [jump next(parameter)]
+    jmp i rtn
+
+    // The base word: the rounded-down sizes, with their signs, visible. Neither size exceeds
+    // STEPMAX, 127, so each stays inside its 7-bit field. Exit: AC and leBase = the word. Called
+    // via jsp.
+leWord,
+    dap leWr
+    lac leSY
+    sal 8s
+    ior leSX
+    ior [visible]
+    dac leBase
+    lac leDY
+    sma                 // skip if dy is minus
+    jmp leWX
+    lac leBase
+    ior [0100000]
+    dac leBase
+leWX,
+    lac leDX
+    sma                 // skip if dx is minus
+    jmp leWd
+    lac leBase
+    ior [0200]
+    dac leBase
+leWd,
+    lac leBase
+leWr, jmp .
+
+rtn, 0
+leLast, 0
+leDX, 0
+leDY, 0
+leAX, 0
+leAY, 0
+leK, 0
+leSX, 0
+leSY, 0
+leRX, 0
+leRY, 0
+leBase, 0
+lePtr, 0
+leFirst, 0
+leN, 0
+leAccX, 0
+leAccY, 0
+leVec, 0
+    endloc

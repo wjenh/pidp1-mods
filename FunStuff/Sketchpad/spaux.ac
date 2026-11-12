@@ -562,8 +562,9 @@ spK, 0
 // unit of the true line and the K steps sum to it exactly. The unit is added to the packed
 // word. Neither size exceeds STEPMAX, 127, so it stays inside its 7-bit field: a size rounded
 // down to 127 has no remainder to add. Each store goes through
-// the open window, so the area may be in any bank. Its callers are writeBand's writeSeg and
-// writeSlot.
+// the open window, so the area may be in any bank. Its caller is writeBand's writeSeg; the line
+// slots' writeSlot has its own copy of this split and splitPlan's, bank 11's lnEmit (spslot.ac),
+// and the two must split a line alike.
 // Entry: emitArea = the area's full address; splitPlan's results, the main bank's splitDX,
 // splitDY, splitK, stepAbsX, stepAbsY, splitRemX and splitRemY. Exit: AC = the address of the
 // first word written. IO is preserved. Called via jsp i [emitVecs:014].

@@ -2,25 +2,24 @@
 
 This also documents the filesystem routines.
 
-This is version 1.1\
+This is version 1.3\
 11-Nov-2026
 
 ## What's here?
 
-- type550defs.ah, the six IOTs (`mmt`, `mse`, `mlc`, `mrd`, `mwr`,
-  `mrs`), the unit numbers, the `mlc` control word and its modes (`mtfmt`,
-  mode 7, erases a tape), the status bits, the results of `mmt` and the
-  search-word fields.
+- type550defs.ah, the six IOTs: `mmt`, `mse`, `mlc`, `mrd`, `mwr`,
+  `mrs`, the unit numbers, the `mlc` control word and its modes:
+   `mtfmt`, the status bits, the results of `mmt` and the search-word fields.
 - `mmt` is a nonstandard extension, it mounts a tape image named by a program.
 - A file system for the Microtape, an include library, that manages named files of any
   size, up to the tape's maximum, on a tape.
   Its routines are callable from any bank.
 
-  | File | Gives |
+  | File | Contains |
   |---|---|
-  | mtfs.ah | the status codes, the parameter blocks, the layouts, `MTF_TAPE` and `MTF_FILE` to reserve storage, `MTF_INFO_TYPE`, `MTF_INFO_APP` and `MTF_INFO_RO` |
-  | mtblock.ac | `mtbRead`, `mtbWrite`: whole blocks between a drive and memory; usable alone |
-  | mtfdir.ac | `mtfEntry` (a directory entry, for listing), `mtfFree` (free blocks and gaps); the directory code the others use |
+  | mtfs.ah | the status codes, the parameter blocks, the layouts |
+  | mtblock.ac | `mtbRead`, `mtbWrite` |
+  | mtfdir.ac | `mtfLookup`, `mtfEntry`, `mtfFree` |
   | mtfmount.ac | `mtfMount` |
   | mtfformat.ac | `mtfFormat` |
   | mtfopen.ac | `mtfOpenName`, `mtfOpenIndex`, `mtfClose` |
@@ -28,9 +27,11 @@ This is version 1.1\
   | mtfio.ac | `mtfRead`, `mtfWrite`, `mtfSeek` |
   | mtfinfo.ac | `mtfProtect`, `mtfSetType`, `mtfSetApp` |
   | mtfdelete.ac | `mtfDelete` |
+  | mtfrename.ac | `mtfRename` |
+  | mtftrim.ac | `mtfTrim` |
   | mtfpack.ac | `mtfPack` |
 
-See Docs/UsingType550Microtape.md for how to program the tape itself.
+See Docs/UsingType550Microtape.md for how to use the tape itself in a program.
 
 ## The file system
 
@@ -52,6 +53,8 @@ Each holds a name, the first block, the blocks allocated, the length in words, a
   Characters 0140-0177 are mapped into 0100-0137.
   The character `~` is `^` and `{` is `[`.
   Control characters are refused, and the first character cannot be a blank.
+  Nine characters will not hold DEC's six-and-three names (`PROGRM.MAC`, ten with the dot) or
+  MAC's two six-character names; a program porting such names has to shorten them.
 - **The information word**: bit 0 (0400000) is read-only, which the library enforces.
   Read-only file refuses `mtfWrite` and `mtfDelete` unless `mtfProtect` clears it.
   Bits 1-5 (0370000) and 6-17 (007777, the type) have no meaning to the library,
@@ -60,8 +63,9 @@ Each holds a name, the first block, the blocks allocated, the length in words, a
   each write.
   Mounting uses the directory in block 1 if it is valid, else block 2.
   A halt during a directory write loses at most one change.
-- **A file never grows past its allocation**, given when it is created, 1 to 511 (0777)
-  blocks. Its first free block is the first gap large enough when it is created, first fit.
+- **A file never grows past its allocation**, given when it is created, 1 to 511 (0777) blocks.
+  Its first free block is the first gap large enough when it is created, first fit.
+  `mtfTrim` trims the blocks its length does not use, they will be recovered after packing.
   `mtfPack` rewrites the tape, packing files and recovering gaps.
 - **A tape is formatted only by `mtfFormat`**, never by mounting.
   Format refuses a tape whose blocks 1 and 2 hold another program's data unless told to force it.
@@ -79,15 +83,21 @@ The library uses the PDP-1D instructions `lai`, `lia` and `sni`, so the emulator
 
 Working buffers are needed.
 The program reserves the storage, anywhere in any bank, using the macros:
-- `MTF_TAPE(name)`, a tape handle, 01010 words, the drive, the directory and a block buffer.
+- `MTF_TAPE(name)`, a tape handle, 01047 words, the drive, the directory, a block buffer and
+  a count for each directory slot.
   One per mounted tape.
-- `MTF_FILE(name)`, a file descriptor, 011 words.
+- `MTF_FILE(name)`, a file descriptor, 012 words.
   One per open file.
   It contains the tape handle's address, the slot, the first block, the blocks, the length,
-  the position (`MTF_FPOS`), the information word, the flags and the handle's mount count when it was opened.
+  the position (`MTF_FPOS`), the information word, the flags, and the handle's mount count and
+  the slot's count when it was opened.
   A program may read them, but should never set them.
 
 A program restarted without reloading keeps them as the last run left them.
+
+There is no unmount, a program done with a tape simply stops using its handle.
+That is safe once every file of the tape is closed, the library keeps no information about a
+tape outside its handle and the descriptors.
 
 ### Calling
 
@@ -105,10 +115,17 @@ AC holds the status, `MTF_OK`, 0, or an `MTF_E` code, and IO the result if the c
 Addresses in parameter blocks are 16-bit so the block, the buffers, the handle and the
 descriptors can each be in any bank.
 `mtfClose` and `mtfDelete` expect the descriptor's address in AC.
+The descriptor is not at the same word in every block: word 2 (`MTF_PFD`) for `mtfOpenName`
+and `mtfOpenIndex`, word 4 (`MTF_PCFD`) for `mtfCreate`.
 
-A descriptor is valid until it is closed and calls then return `MTF_EBADFD` when its tape handle is mounted
-or formatted again, or when its file is deleted or moved by `mtfPack`.
+A descriptor is valid until it is closed and calls then return `MTF_EBADFD` if its tape handle is mounted
+or formatted again, or when its file is deleted, replaced by `mtfRename`, or moved by `mtfPack`.
 A close that finds it invalid marks it closed and writes nothing.
+Renaming a file leaves its descriptors valid.
+A descriptor left open on a deleted or replaced file stays refused, even after a later
+`mtfCreate` takes the same directory slot and the same first block: each slot has a count in
+the handle, raised whenever the slot is cleared, and a descriptor keeps the count it was opened
+with.
 
 - **Sequence breaks are off during every call that moves the tape** and turned on again at
   the end only if they were on.
@@ -137,6 +154,7 @@ The parameter block's content, by the `mtfs.ah` names:
 |---|---|---|
 | `mtfFormat` | `MTF_PHANDLE` the handle, `MTF_PDRIVE` the drive, `MTF_PFORCE` nonzero to format the tape | the handle mounted on an empty directory |
 | `mtfMount` | `MTF_PHANDLE`, `MTF_PDRIVE` | the handle is mounted |
+| `mtfLookup` | `MTF_PHANDLE`, `MTF_PNAME` the name's address, `MTF_PNAMED` where its 3 sixbit words go | IO = the file's slot; `MTF_ENOTFOUND` with IO the first free slot, or -1 when there is none; the tape does not move |
 | `mtfEntry` | `MTF_PHANDLE`, `MTF_PINDEX` the slot, 0-036, `MTF_PDEST` where its 8 words go | the entry; a free slot's first word is 0 |
 | `mtfFree` | `MTF_PHANDLE`, `MTF_PNEED` blocks wanted | `MTF_PTOTAL` free blocks, `MTF_PLARGEST` the largest gap, `MTF_PFIT` the first gap of `MTF_PNEED` blocks or -1, set in the block |
 | `mtfCreate` | `MTF_PHANDLE`, `MTF_PNAME` the name's address, `MTF_PBLOCKS` 1-0777, `MTF_PINFO` the information word, `MTF_PCFD` the descriptor | the file, open at position 0, length 0 |
@@ -150,6 +168,8 @@ The parameter block's content, by the `mtfs.ah` names:
 | `mtfSetType` | `MTF_PFDESC`, `MTF_PVALUE` 0-07777 | the same |
 | `mtfSetApp` | `MTF_PFDESC`, `MTF_PVALUE` 0-037, right-justified | the same |
 | `mtfDelete` | AC = the descriptor | the entry cleared and the descriptor closed, the blocks are not erased |
+| `mtfRename` | `MTF_PHANDLE`, `MTF_PNAME` the old name's address, `MTF_PNEWNAME` the new name's, `MTF_PREPLACE` nonzero to replace a file of the new name | the entry renamed, and a replaced file's entry cleared, in one directory write |
+| `mtfTrim` | `MTF_PFDESC` the descriptor | the allocation set to the blocks the length needs, at least 1, and the entry written to the tape |
 | `mtfPack` | `MTF_PHANDLE`, `MTF_PSCRATCH` a buffer, `MTF_PSIZE`, at least 0400 | IO = the number of files moved |
 | `mtbRead`, `mtbWrite` | `MTB_PDRIVE`, `MTB_PBLOCK` the first block, `MTB_PCOUNT` the blocks, `MTB_PBUF` 0400 words a block | the blocks, read in forward order, checksums kept |
 
@@ -159,9 +179,24 @@ The parameter block's content, by the `mtfs.ah` names:
   A transfer is at most three passes over the tape.
   A write that would exceed the allocation is refused completely giving `MTF_ERANGE` and a read-only file refuses
   every write.
-- **A changed length or information word is only written to the tape at `mtfClose`.** A program that
+- **A changed length or information word is only written to the tape at `mtfClose`** (or by
+  `mtfTrim`). A program that
   writes and never closes leaves the directory's length as it was. If the close fails, the
   descriptor stays open and the close can be repeated.
+- **`mtfRename`** refuses with `MTF_ENOTFOUND` when the old name is not on the tape and with
+  `MTF_EEXISTS` when the new one is, unless `MTF_PREPLACE` is nonzero.
+  A replace clears the other file's entry in the same directory write as the rename, so a halt
+  leaves either both changes or neither; a read-only file is not replaced (`MTF_EREADONLY`).
+  A read-only file may itself be renamed.
+  A new name that is the same as the old one succeeds and writes nothing.
+- **`mtfTrim`** writes the file's entry immediately, the new allocation with the length and the
+  information word as `mtfClose` would write them, the close that follows has nothing left to write.
+  The freed blocks are a gap and a later write past the new allocation gives `MTF_ERANGE`.
+  A read-only file refuses (`MTF_EREADONLY`).
+  Another descriptor open on the same file keeps the old allocation, close it first.
+  Together the two calls let a program write a file before it knows its name or its size:
+  create a scratch file with room to spare, write it, trim it, and rename it with the real
+  name with `MTF_PREPLACE` set.
 - **`mtfPack`** moves each file down to the lowest free block, in order, copying whole blocks
   of the scratch buffer size at a time.
   One block is enough, more is faster.
@@ -174,6 +209,15 @@ The parameter block's content, by the `mtfs.ah` names:
 - **The block layer**, `mtblock.ac`, can be used alone, on any blocks of any tape, a file
   system's or not.
   It writes block 1 or 2 of a file-system tape as ordinary data blocks.
+
+### Text files
+
+The library stores words and does not itself attach any meaning to them.
+For text, programs use the form the `mtfs` tool reads and writes (`Docs/UsingMtfs.md`):
+two 8-bit characters a word, the first in the high half (bits 0-8), as am1's `ascii` packs
+them; each line ends in CR (015) alone; an odd last character leaves the low half 0.
+A text file the tool added then reads the same in a PDP-1 program, and one a program wrote
+extracts as host text.
 
 ### Status codes
 

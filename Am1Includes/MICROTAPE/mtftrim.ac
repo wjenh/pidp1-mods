@@ -1,0 +1,171 @@
+// mtftrim.ac -- mtfTrim: give back the blocks of an open file that its length does not use,
+// the file's entry written at once.
+// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
+// 11-Nov-2026, Claude: the call.
+
+#ifndef MTFTRIM_AC
+#define MTFTRIM_AC
+
+#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/mtfopen.ac>
+#include <AIDS/skipmacros.ah>
+
+// The length rounds up to blocks by a shift of 8; the entry's three words are consecutive.
+assert MTWDS == 0400
+assert MTF_DELEN == MTF_DEALLOC + 1
+assert MTF_DEINFO == MTF_DEALLOC + 2
+
+local tmRtn, tmP, tmFd, tmH, tmE, tmQ, tmA, tmL, tmI, tmOA, tmOL, tmOI, tmS, tmSbm, tmWr, \
+    tmUndo, tmBad, tmRo, tmEnd
+
+// Set an open file's allocation to the blocks its length needs, at least 1, and write its
+// entry at once: the allocation, and the length and information word as mtfClose writes them.
+// The descriptor is then marked unchanged, so mtfClose has nothing left to write. The freed
+// blocks are a gap as soon as the call returns. A trim that frees nothing, of a descriptor
+// with nothing to write, writes nothing. Another descriptor open on the file keeps the old
+// allocation, and its writes could reach the freed blocks: close it first. Sequence breaks
+// are off throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC). Exit: AC =
+// MTF_OK, MTF_EBADFD (mtfopen.ac's mtfFdOk), MTF_EREADONLY, or the block layer's error, after
+// which the handle and the descriptor are as they were. IO is clobbered. Called via jda.
+mtfTrim, 0
+    dac tmRtn
+    eem
+    lac mtfTrim
+    dac tmP
+    MTF_SBS_OFF(tmSbm)
+    lac i tmP
+    dac tmFd
+    farjda(mtfFdOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tmBad
+
+    // The entry's allocation word, the length, the blocks it needs, the information word.
+    lac tmFd
+    dac tmQ
+    lac i tmQ
+    dac tmH                     // MTF_FTAPE
+    idx tmQ
+    lac i tmQ                   // MTF_FSLOT
+    sal 3s                      // times MTF_ENTW
+    add [MTF_HDIR+MTF_DENT0+MTF_DEALLOC]
+    add tmH
+    dac tmE
+    lac tmFd
+    add [MTF_FLEN]
+    dac tmQ
+    lac i tmQ
+    dac tmL
+    add [MTWDS-1]
+    sar 8s
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    law 1                       // an empty file keeps one block
+    dac tmA
+    lac tmFd
+    add [MTF_FINFO]
+    dac tmQ
+    lac i tmQ
+    dac tmI
+    and [MTF_IRO]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tmRo
+
+    // Nothing to write when the allocation stays and the descriptor is unchanged.
+    lac tmFd
+    add [MTF_FALLOC]
+    dac tmQ
+    lac i tmQ
+    sas tmA                     // skip if the allocation stays
+    jmp tmWr
+    lac tmFd
+    add [MTF_FFLAGS]
+    dac tmQ
+    lac i tmQ
+    and [MTF_FCHANGED]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tmWr
+    cla
+    jmp tmEnd
+
+    // The entry's three words, the old ones kept for an undo, then the directory to the tape.
+tmWr,
+    lac tmE
+    dac tmQ
+    lac i tmQ
+    dac tmOA
+    lac tmA
+    dac i tmQ
+    idx tmQ                     // MTF_DELEN
+    lac i tmQ
+    dac tmOL
+    lac tmL
+    dac i tmQ
+    idx tmQ                     // MTF_DEINFO
+    lac i tmQ
+    dac tmOI
+    lac tmI
+    dac i tmQ
+    lac tmH
+    farjda(mtfWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp tmUndo
+
+    // The descriptor takes the allocation and is marked unchanged.
+    lac tmFd
+    add [MTF_FALLOC]
+    dac tmQ
+    lac tmA
+    dac i tmQ
+    lac tmFd
+    add [MTF_FFLAGS]
+    dac tmQ
+    lac i tmQ
+    and [~MTF_FCHANGED]
+    dac i tmQ
+    cla
+    jmp tmEnd
+
+    // The write failed: the entry's old words back.
+tmUndo,
+    dac tmS
+    lac tmE
+    dac tmQ
+    lac tmOA
+    dac i tmQ
+    idx tmQ
+    lac tmOL
+    dac i tmQ
+    idx tmQ
+    lac tmOI
+    dac i tmQ
+    lac tmS
+    jmp tmEnd
+tmBad,
+    law MTF_EBADFD
+    jmp tmEnd
+tmRo,
+    law MTF_EREADONLY
+tmEnd,
+    dac tmS
+    MTF_SBS_RESTORE(tmSbm)
+    lac tmS
+    jmp i tmRtn
+
+tmRtn, 0
+tmP, 0
+tmFd, 0
+tmH, 0
+tmE, 0
+tmQ, 0
+tmA, 0
+tmL, 0
+tmI, 0
+tmOA, 0
+tmOL, 0
+tmOI, 0
+tmS, 0
+tmSbm, 0
+endloc
+
+#endif

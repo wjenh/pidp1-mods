@@ -4,6 +4,9 @@
 // Definitions only; the code is in the mt*.ac files, which include this.
 // See README.md beside it for the calls.
 // 10-Nov-2026, Claude: the library.
+// 11-Nov-2026, Claude: mtfRename's parameter words.
+// 11-Nov-2026, Claude: the per-slot counts, so a descriptor of a deleted or replaced file
+// stays refused.
 
 #ifndef MTFS_AH
 #define MTFS_AH
@@ -57,7 +60,11 @@
 #define MTF_PBLOCKS 2       // mtfCreate: the blocks to allocate, 1 to MTF_MAXBLKS
 #define MTF_PINFO 3         // mtfCreate: the information word
 #define MTF_PCFD 4          // mtfCreate: the descriptor's 16-bit address
-// mtfRead's, mtfWrite's and mtfSeek's blocks start with the descriptor, not the handle.
+#define MTF_PNEWNAME 2      // mtfRename: the new name's 16-bit address, an am1 ascii string;
+                            // MTF_PNAME is the old name's
+#define MTF_PREPLACE 3      // mtfRename: nonzero to replace a file of the new name
+// mtfRead's, mtfWrite's, mtfSeek's and mtfTrim's blocks start with the descriptor, not the
+// handle.
 #define MTF_PFDESC 0        // the descriptor's 16-bit address
 #define MTF_PBUF 1          // mtfRead, mtfWrite: the buffer's 16-bit address
 #define MTF_PCOUNT 2        // mtfRead, mtfWrite: the words to move, at least 0
@@ -142,7 +149,9 @@
 #define MTF_HMOUNT 3        // counts the mounts and formats, so a descriptor knows its own
 #define MTF_HDIR 010        // the directory, MTWDS words
 #define MTF_HBUF 0410       // the block buffer, MTWDS words
-#define MTF_TAPEW 01010
+#define MTF_HSLOTS 01010    // a count per directory slot, MTF_NENT words, raised whenever the
+                            // slot is cleared, so a descriptor knows its file is still there
+#define MTF_TAPEW 01047
 
 // A file descriptor, MTF_FILEW words.
 #define MTF_FTAPE 0         // the tape handle's 16-bit address
@@ -154,7 +163,8 @@
 #define MTF_FINFO 6         // the information word
 #define MTF_FFLAGS 7        // MTF_FOPEN, MTF_FCHANGED
 #define MTF_FMOUNT 010      // the handle's MTF_HMOUNT when the file was opened
-#define MTF_FILEW 011
+#define MTF_FSTAMP 011      // its slot's MTF_HSLOTS count when the file was opened
+#define MTF_FILEW 012
 #define MTF_FOPEN 1
 #define MTF_FCHANGED 2
 

@@ -1,0 +1,26 @@
+Test rg77: -m keeps each comment's whole text, within 72 columns
+/ run_regression.sh assembles this with -m, compares the .mac with
+/ rg77_mac_comments.mac.ref, and requires each comment line of the .mac
+/ to be at most 72 columns wide (a tab ends at a multiple of 8).
+100/
+/ This comment, on a line by itself, is longer than one line of the
+/ macro1 source can hold, so it is broken at blanks into as many lines
+/ as it needs, none of them wider than 72 columns.
+    cla	/ a trailing comment starts on its statement's line, after a
+/ tab, and goes on well past the width, so the rest of it follows on
+/ lines of its own
+    hlt	/ short
+/ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+/ aaaaaaaaaaaaaaaaaaaaaa is one word wider than a line
+/ * A block comment reaches the .mac too, each of its lines a comment
+/ line of its own.
+    lac 0105	/ a constant reference closed by the end of its line
+/ keeps its comment, wrapped like any other
+here, 0
+/ This comment, after a blank line, is on a line of its own in the .mac
+/ too.
+    nop
+/ Constants for bank 0
+105/
+    000005
+start 100

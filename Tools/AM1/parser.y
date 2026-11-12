@@ -40,6 +40,7 @@ static int pendingLabelLine;
 int nameTokenLine;
 int nameTokenSrcLine;
 int divTokenSrcLine;        // the line of the last / or % the lexer returned, for setOpSource()
+int originTokenSrcLine;     // the line of the last origin the lexer returned
 // The start statement's line, and whether its operand is being parsed.
 static int startLine;
 static bool inStart;
@@ -640,7 +641,8 @@ one_stmt        : expr
                 | simple_expr ORIGIN
                 {
                     refuseInOverlay("an origin");
-                    $$ = newnode(lineno, curBankP->cur_pc, ORIGIN, NILP, NILP);
+                    // newnode() takes one off the line it is given
+                    $$ = newnode(originTokenSrcLine + 1, curBankP->cur_pc, ORIGIN, NILP, NILP);
                     bankOrigin(curBankP, evalExpr($1));
                     $$->value.ival = curBankP->cur_pc;
                     $$->exprP = $1;         // relayout holds the value and reads this
@@ -1069,6 +1071,7 @@ terminator      : terminators
                 | SEMI
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, SEMI, NILP, NILP);
+                    $$->value.ival = $<ival>1;    // 1: the lexer's, after an origin, not the source's
                 }
                 | COMMENT
                 {

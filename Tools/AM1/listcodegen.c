@@ -189,8 +189,10 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
             {
                 listOperand(outfP, nodeP->rightP);
             }
-            else
+            else if( !(nodeP->leftP && (nodeP->leftP->type == SEMI) && !nodeP->leftP->value.ival) )
             {
+                // A ';' the source wrote after the slash ends the line itself,
+                // as it does after any other statement.
                 output(outfP, doOutput,"\n");
             }
             break;
@@ -300,7 +302,12 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
             break;
 
         case SEMI:
-            output(outfP, doOutput, ";\n");
+            // The ';' the lexer puts after an origin is not in the source, and
+            // the origin has ended its line.
+            if( !nodeP->value.ival )
+            {
+                output(outfP, doOutput, ";\n");
+            }
             break;
 
         case EMPTYLINE:

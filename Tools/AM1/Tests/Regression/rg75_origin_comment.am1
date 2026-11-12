@@ -1,0 +1,24 @@
+Test rg75: a slash then a comment
+// A slash with no blank before it, then a // comment, at the end of a bare
+// statement's first expression is an origin, and the comment follows it.
+// In "200// c" the two slashes are the comment, so it is the word 200, and a
+// slash then a comment in a statement that is not bare stays a word too.
+100/
+    cla                 // 0100
+    hlt// c             // 0101: hlt, then the comment
+    200// c             // 0102: the word 200
+    300//* c */         // 0103: the word 300, a /* in mid line is not a comment
+x,  4/// c              // 0104: the word 4, the label ends the bare statement
+120/// an origin, then this comment
+    lac x               // 0120: lac 0104
+130+10/// the origin is an expression: 0140
+    lac 1               // 0140
+    cla; 150/// cla at 0141, then the origin after the ';'
+    nop                 // 0150
+160/
+y,
+170/
+    0                   // 0170
+y/// the origin is a label: 0160
+    lac y               // 0160: lac 0160
+start 100

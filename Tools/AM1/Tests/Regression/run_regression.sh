@@ -940,6 +940,67 @@ for be in bin mac; do
 done
 echo ""
 
+# rg75: "100/// c", a slash with no blank before it and then a comment, at the
+# end of a bare statement's first expression is an origin, and the comment
+# follows it; "200// c", "300//* c */" and a statement that is not bare stay a
+# word.  Before, every one was a word.  Its .ref is derived by hand, in its
+# comments.
+run_test rg75_origin_comment       "$SCRIPT_DIR/rg75_origin_comment.am1"
+
+# rg76: an origin with a statement or a comment after it is listed on its own
+# line's number, with no line holding only a ';' the source does not have, and
+# an origin ending a line after a ';' counts that line once.  The words are
+# checked by its .ref, the listing by rg76_origin_listing.lst.ref.
+run_test rg76_origin_listing       "$SCRIPT_DIR/rg76_origin_listing.am1"
+rm -f rg76_origin_listing.lst
+"$AM1" -l -I"$SCRIPT_DIR" "$SCRIPT_DIR/rg76_origin_listing.am1" > "$WORK/rg76_l.log" 2>&1
+if [ ! -f rg76_origin_listing.lst ]; then
+    echo "FAIL:  rg76_listing (the -l run wrote no .lst)"
+    sed 's/^/       /' "$WORK/rg76_l.log"
+    fail=$((fail+1))
+    FAILURES+=("rg76_listing")
+elif diff -q rg76_origin_listing.lst "$SCRIPT_DIR/rg76_origin_listing.lst.ref" > /dev/null 2>&1; then
+    echo "PASS:  rg76_listing"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg76_listing (the listing differs from rg76_origin_listing.lst.ref)"
+    echo "       < stored .lst.ref, > generated now"
+    diff "$SCRIPT_DIR/rg76_origin_listing.lst.ref" rg76_origin_listing.lst | sed 's/^/       /'
+    fail=$((fail+1))
+    FAILURES+=("rg76_listing")
+fi
+echo ""
+
+# rg77: -m writes each comment whole, broken at blanks into lines of at most 72
+# columns, and writes block comments too.  The words are checked by its .ref,
+# the .mac by rg77_mac_comments.mac.ref, and the width on its own as well, so a
+# .mac.ref made again from a wrong am1 cannot pass it.
+run_test rg77_mac_comments         "$SCRIPT_DIR/rg77_mac_comments.am1"
+rm -f rg77_mac_comments.mac
+"$AM1" -m -I"$SCRIPT_DIR" "$SCRIPT_DIR/rg77_mac_comments.am1" > "$WORK/rg77_m.log" 2>&1
+wide="$(grep '/ ' rg77_mac_comments.mac 2>/dev/null | expand -t 8 | awk 'length($0) > 72')"
+if [ ! -f rg77_mac_comments.mac ]; then
+    echo "FAIL:  rg77_mac (the -m run wrote no .mac)"
+    sed 's/^/       /' "$WORK/rg77_m.log"
+    fail=$((fail+1))
+    FAILURES+=("rg77_mac")
+elif [ -n "$wide" ]; then
+    echo "FAIL:  rg77_mac (comment lines wider than 72 columns)"
+    echo "$wide" | sed 's/^/       /'
+    fail=$((fail+1))
+    FAILURES+=("rg77_mac")
+elif diff -q rg77_mac_comments.mac "$SCRIPT_DIR/rg77_mac_comments.mac.ref" > /dev/null 2>&1; then
+    echo "PASS:  rg77_mac"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg77_mac (the .mac differs from rg77_mac_comments.mac.ref)"
+    echo "       < stored .mac.ref, > generated now"
+    diff "$SCRIPT_DIR/rg77_mac_comments.mac.ref" rg77_mac_comments.mac | sed 's/^/       /'
+    fail=$((fail+1))
+    FAILURES+=("rg77_mac")
+fi
+echo ""
+
 # Not a failure: an --xfail test never gets far enough to have words to
 # compare, and rg34 is checked through its listing instead. It is printed so a
 # new test cannot quietly join the suite with nothing but an exit code behind

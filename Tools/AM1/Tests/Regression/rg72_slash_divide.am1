@@ -1,0 +1,30 @@
+Test rg72: a slash before an operand that is not a name or a number
+// A slash with no blank before it divides, whatever its right operand starts
+// with.  It is an origin only at the end of the statement, or with a blank
+// after it at the end of a bare statement's expression, and then the rest of
+// the line is the next statement, whatever that starts with.
+100/
+    4/(2)               // 0100: 2, a bare statement
+    0d1012/(7*2)        // 0101: 0110
+x,  4/-2                // 0102: 777775
+    4/(-2)              // 0103: 777775
+    -4/(-2)             // 0104: 2
+    (4)/((2))           // 0105: 2
+    4/~1                // 0106: 777773, ~1 is -1
+    0d1000/'a'          // 0107: 012, 'a' is 0141
+    0400/.              // 0110: 3
+    -7%(2)              // 0111: 777776
+y,  4/ -2               // 0112: 777775, not bare, so a blank after the slash divides
+    lac [4/(2)]         // 0113: the pool's 2
+    lac [0d1012/(7*2)]  // 0114: the pool's 0110
+    lac [0400/z]        // 0115: a divisor defined later, the pool's 2
+    lac [0401%z]        // 0116: the pool's 077
+120/ (y)                // 0120: an origin, then the word 0112
+130/ -1                 // 0130: an origin, then 777776
+140/ (y)+1              // 0140: an origin, then 0113
+z,  0100                // 0141
+assert 4/(2) == 2
+assert 0d1012/(7*2) == 0110
+assert 4/-2 == -2
+assert -7%(2) == -1
+start 100

@@ -825,7 +825,7 @@ However, any code-generating statements following the / will of course generate 
 
 The syntax must be followed, the formal definition is:\
 *A slash with no blank before it and a blank or the end of the statement after it at the
-end of the first expression of a statement  is an origin and the rest of the line is the next statement.*
+end of the first expression of a statement is an origin and the rest of the line is the next statement.*
 
 **NOTE** the important wording. If you use division, /, it *must* have no blank following it.
 Otherwise it will be interpreted as the origin character.

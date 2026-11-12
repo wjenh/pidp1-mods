@@ -1,43 +1,44 @@
-// mtftrim.ac -- mtfTrim: give back the blocks of an open file that its length does not use,
+// fstrim.ac -- fsTrim: give back the blocks of an open file that its length does not use,
 // the file's entry written at once.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsopen.ac. Called as fsdir.ac's entries are.
 // 11-Nov-2026, Claude: the call.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtftrim.ac and renamed fs and FS_.
 
-#ifndef MTFTRIM_AC
-#define MTFTRIM_AC
+#ifndef FSTRIM_AC
+#define FSTRIM_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtfopen.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsopen.ac>
 #include <AIDS/skipmacros.ah>
 
 // The length rounds up to blocks by a shift of 8; the entry's three words are consecutive.
-assert MTWDS == 0400
-assert MTF_DELEN == MTF_DEALLOC + 1
-assert MTF_DEINFO == MTF_DEALLOC + 2
+assert FS_BLKW == 0400
+assert FS_DELEN == FS_DEALLOC + 1
+assert FS_DEINFO == FS_DEALLOC + 2
 
 local tmRtn, tmP, tmFd, tmH, tmE, tmQ, tmA, tmL, tmI, tmOA, tmOL, tmOI, tmS, tmSbm, tmWr, \
     tmUndo, tmBad, tmRo, tmEnd
 
 // Set an open file's allocation to the blocks its length needs, at least 1, and write its
-// entry at once: the allocation, and the length and information word as mtfClose writes them.
-// The descriptor is then marked unchanged, so mtfClose has nothing left to write. The freed
+// entry at once: the allocation, and the length and information word as fsClose writes them.
+// The descriptor is then marked unchanged, so fsClose has nothing left to write. The freed
 // blocks are a gap as soon as the call returns. A trim that frees nothing, of a descriptor
 // with nothing to write, writes nothing. Another descriptor open on the file keeps the old
 // allocation, and its writes could reach the freed blocks: close it first. Sequence breaks
 // are off throughout and turned on again only if they were on.
-// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC). Exit: AC =
-// MTF_OK, MTF_EBADFD (mtfopen.ac's mtfFdOk), MTF_EREADONLY, or the block layer's error, after
+// Entry: AC = the parameter block's 16-bit address: the descriptor (FS_PFDESC). Exit: AC =
+// FS_OK, FS_EBADFD (fsopen.ac's fsFdOk), FS_EREADONLY, or the block layer's error, after
 // which the handle and the descriptor are as they were. IO is clobbered. Called via jda.
-mtfTrim, 0
+fsTrim, 0
     dac tmRtn
     eem
-    lac mtfTrim
+    lac fsTrim
     dac tmP
-    MTF_SBS_OFF(tmSbm)
+    FS_SBS_OFF(tmSbm)
     lac i tmP
     dac tmFd
-    farjda(mtfFdOk:*)
+    farjda(fsFdOk:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp tmBad
 
@@ -45,50 +46,50 @@ mtfTrim, 0
     lac tmFd
     dac tmQ
     lac i tmQ
-    dac tmH                     // MTF_FTAPE
+    dac tmH                     // FS_FHANDLE
     idx tmQ
-    lac i tmQ                   // MTF_FSLOT
-    sal 3s                      // times MTF_ENTW
-    add [MTF_HDIR+MTF_DENT0+MTF_DEALLOC]
+    lac i tmQ                   // FS_FSLOT
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0+FS_DEALLOC]
     add tmH
     dac tmE
     lac tmFd
-    add [MTF_FLEN]
+    add [FS_FLEN]
     dac tmQ
     lac i tmQ
     dac tmL
-    add [MTWDS-1]
+    add [FS_BLKW-1]
     sar 8s
     SKIP_NEXT_IF_AC_NOT_ZERO
     law 1                       // an empty file keeps one block
     dac tmA
     lac tmFd
-    add [MTF_FINFO]
+    add [FS_FINFO]
     dac tmQ
     lac i tmQ
     dac tmI
-    and [MTF_IRO]
+    and [FS_IRO]
     SKIP_NEXT_IF_AC_ZERO
     jmp tmRo
 
     // Nothing to write when the allocation stays and the descriptor is unchanged.
     lac tmFd
-    add [MTF_FALLOC]
+    add [FS_FALLOC]
     dac tmQ
     lac i tmQ
     sas tmA                     // skip if the allocation stays
     jmp tmWr
     lac tmFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac tmQ
     lac i tmQ
-    and [MTF_FCHANGED]
+    and [FS_FCHANGED]
     SKIP_NEXT_IF_AC_ZERO
     jmp tmWr
     cla
     jmp tmEnd
 
-    // The entry's three words, the old ones kept for an undo, then the directory to the tape.
+    // The entry's three words, the old ones kept for an undo, then the directory to the volume.
 tmWr,
     lac tmE
     dac tmQ
@@ -96,32 +97,32 @@ tmWr,
     dac tmOA
     lac tmA
     dac i tmQ
-    idx tmQ                     // MTF_DELEN
+    idx tmQ                     // FS_DELEN
     lac i tmQ
     dac tmOL
     lac tmL
     dac i tmQ
-    idx tmQ                     // MTF_DEINFO
+    idx tmQ                     // FS_DEINFO
     lac i tmQ
     dac tmOI
     lac tmI
     dac i tmQ
     lac tmH
-    farjda(mtfWrDir:*)
+    farjda(fsWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp tmUndo
 
     // The descriptor takes the allocation and is marked unchanged.
     lac tmFd
-    add [MTF_FALLOC]
+    add [FS_FALLOC]
     dac tmQ
     lac tmA
     dac i tmQ
     lac tmFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac tmQ
     lac i tmQ
-    and [~MTF_FCHANGED]
+    and [~FS_FCHANGED]
     dac i tmQ
     cla
     jmp tmEnd
@@ -142,13 +143,13 @@ tmUndo,
     lac tmS
     jmp tmEnd
 tmBad,
-    law MTF_EBADFD
+    law FS_EBADFD
     jmp tmEnd
 tmRo,
-    law MTF_EREADONLY
+    law FS_EREADONLY
 tmEnd,
     dac tmS
-    MTF_SBS_RESTORE(tmSbm)
+    FS_SBS_RESTORE(tmSbm)
     lac tmS
     jmp i tmRtn
 

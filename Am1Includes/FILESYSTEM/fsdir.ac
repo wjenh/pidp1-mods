@@ -1,33 +1,36 @@
-// mtfdir.ac -- the file system's directory. mtfRdDir reads it into a tape handle and mtfWrDir
-// writes it back as its two copies, for the other mtf files; mtfDirOk tells a directory
-// block of this file system; mtfLookup finds a name, packed into sixbit by UTIL/sixbit.ac;
-// mtfEntry gives an entry by its slot, and mtfFree the free blocks and the gaps, from the
-// handle, without the tape.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtblock.ac and UTIL/sixbit.ac, which land beside it unless they were
+// fsdir.ac -- the file system's directory. fsRdDir reads it into a handle and fsWrDir writes
+// it back as its two copies, for the other fs files and a device's mount and format; fsDirOk
+// tells a directory block of this file system; fsLookup finds a name, packed into sixbit by
+// UTIL/sixbit.ac; fsEntry gives an entry by its slot, and fsFree the free blocks and the
+// gaps, from the handle, without the device.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsblock.ac and UTIL/sixbit.ac, which land beside it unless they were
 // included before.
 // Every entry is entered by jda with the window open, farjda (memory.ah) from another bank,
-// with AC a 16-bit address; it returns with the window open and AC the status, MTF_OK or an
-// MTF_E code. Not reentrant; not to be called from a break routine. mtfLookup, mtfEntry and
-// mtfFree do not move the tape; mtfRdDir and mtfWrDir leave the sequence breaks to their caller.
-// 10-Nov-2026, Claude: the library.
+// with AC a 16-bit address; it returns with the window open and AC the status, FS_OK or an
+// FS_E code. Not reentrant; not to be called from a break routine. fsLookup, fsEntry and
+// fsFree do not move the device; fsRdDir and fsWrDir leave the sequence breaks to their caller.
+// 10-Nov-2026, Claude: the library, as MICROTAPE/mtfdir.ac.
+// 12-Nov-2026, Claude: moved here and renamed; blocks move through fsblock.ac, and the volume's
+// blocks come from the handle.
 
-#ifndef MTFDIR_AC
-#define MTFDIR_AC
+#ifndef FSDIR_AC
+#define FSDIR_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtblock.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsblock.ac>
 #include <UTIL/sixbit.ac>
 #include <AIDS/skipmacros.ah>
 
 // The block buffer follows the directory in the handle, so the two copies go out in one write.
-assert MTF_HBUF == MTF_HDIR + MTWDS
-assert MTF_HGEN == MTF_HSTATE + 1
-assert MTF_DEALLOC == MTF_DEFIRST + 1
-assert MTF_ENTW == 010
+assert FS_HBUF == FS_HDIR + FS_BLKW
+assert FS_HGEN == FS_HSTATE + 1
+assert FS_DEALLOC == FS_DEFIRST + 1
+assert FS_ENTW == 010
 
-local rdRtn, rd1, rd2, rd3, rdNo, rdOk, rdRet, wdRtn, dkRtn, dkP, dkNo, dkRet, \
+local rdRtn, rd1, rd2, rd3, rdNo, rdOk, rdRet, wdRtn, dkRtn, dkP, dkB, dkNo, dkRet, mdBlks, \
     enRtn, enP, enK, enRange, enRet, frRtn, frP, frNeed, frTot, frLarge, frFit, frPos, frF, \
+    frEnd, \
     frA, frK, frE, frGap, frIter, frLoop, frScan, frNext, frBig, frFitT, frAdv, frDone, frRet, \
     mdH, mdP, mxBlk, mxCnt, mxOff, mxWr, mdXfer, mx1, mxx, mdCopy, mdCopyN, mcS, mcD, mcN, \
     mc1, mcx, mdMounted, mm1, mmx, lkRtn, lkP, lkD, lkE, lkN, lkSlot, lkFree, lkLoop, lkCmp, \
@@ -36,94 +39,102 @@ local rdRtn, rd1, rd2, rd3, rdNo, rdOk, rdRet, wdRtn, dkRtn, dkP, dkNo, dkRet, \
 // Read the directory into the handle: block 1 if it reads cleanly and is this file system's,
 // else block 2, copied over it. Then the handle is mounted, with the directory's generation.
 // The handle's mount count goes up, so descriptors opened before are refused.
-// Entry: AC = the handle's 16-bit address, its drive set. Exit: AC = MTF_OK, MTF_ENOFS when
-// neither copy is good, or the block layer's error. IO is clobbered. Called via jda.
-mtfRdDir, 0
+// Entry: AC = the handle's 16-bit address, its unit and device words set by a device's mount.
+// Exit: AC = FS_OK, FS_ENOFS when neither copy is good, or the block layer's error. IO is
+// clobbered. Called via jda.
+fsRdDir, 0
     dac rdRtn
-    lac mtfRdDir
+    lac fsRdDir
     dac mdH
-    add [MTF_HSTATE]
+    add [FS_HBLKS]
+    dac mdP
+    lac i mdP
+    dac mdBlks                  // what a good copy's header must say
+    lac mdH
+    add [FS_HSTATE]
     dac mdP
     dzm i mdP                   // not mounted until a copy has passed
     lac mdH
-    add [MTF_HMOUNT]
+    add [FS_HMOUNT]
     dac mdP
     idx i mdP                   // the old mount's descriptors are no longer valid
-    law MTF_DIRBLK
+    law FS_DIRBLK
     dac mxBlk
     law 1
     dac mxCnt
-    law MTF_HDIR
+    law FS_HDIR
     dac mxOff
     dzm mxWr
     jsp mdXfer
     SKIP_NEXT_IF_AC_ZERO
     jmp rd1
     lac mdH
-    add [MTF_HDIR]
-    jda mtfDirOk
+    add [FS_HDIR]
+    lio mdBlks
+    jda fsDirOk
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp rdOk
     jmp rd2
 rd1,
-    sad [MTF_EBADBLOCK]         // skip unless a bad block, which the copy may cover
+    sad [FS_EBADBLOCK]          // skip unless a bad block, which the copy may cover
     jmp rd2
     jmp rdRet
 
     // The copy, into the block buffer, then over the directory.
 rd2,
-    law MTF_DIRBLK2
+    law FS_DIRBLK2
     dac mxBlk
-    law MTF_HBUF
+    law FS_HBUF
     dac mxOff
     jsp mdXfer
     SKIP_NEXT_IF_AC_ZERO
     jmp rd3
     lac mdH
-    add [MTF_HBUF]
-    jda mtfDirOk
+    add [FS_HBUF]
+    lio mdBlks
+    jda fsDirOk
     SKIP_NEXT_IF_AC_ZERO
     jmp rdNo
     lac mdH
-    add [MTF_HBUF]
+    add [FS_HBUF]
     dac mcS
     lac mdH
-    add [MTF_HDIR]
+    add [FS_HDIR]
     dac mcD
     jsp mdCopy
     jmp rdOk
 rd3,
-    sad [MTF_EBADBLOCK]
+    sad [FS_EBADBLOCK]
     jmp rdNo
     jmp rdRet
 rdNo,
-    law MTF_ENOFS
+    law FS_ENOFS
     jmp rdRet
 rdOk,
     lac mdH
-    add [MTF_HDIR+MTF_DGEN]
+    add [FS_HDIR+FS_DGEN]
     dac mdP
     lio i mdP
     lac mdH
-    add [MTF_HSTATE]
+    add [FS_HSTATE]
     dac mdP
     law 1
     dac i mdP
     idx mdP
-    dio i mdP                   // MTF_HGEN
+    dio i mdP                   // FS_HGEN
     cla
 rdRet,
     jmp i rdRtn
 
-// Write the handle's directory to the tape as its two copies, blocks 1 and 2 in one pass, with
+// Write the handle's directory to the volume as its two copies, blocks 1 and 2 in one pass, with
 // a new generation in the directory and in the handle. The block buffer is overwritten.
 // Entry: AC = the handle's 16-bit address. Exit: AC = the block layer's status. IO is
 // clobbered. Called via jda.
-mtfWrDir, 0
+fsWrDir, 0
     dac wdRtn
-    lac mtfWrDir
+    lac fsWrDir
     dac mdH
-    add [MTF_HDIR+MTF_DGEN]
+    add [FS_HDIR+FS_DGEN]
     dac mdP
     lac i mdP
     add [1]
@@ -131,47 +142,48 @@ mtfWrDir, 0
     dac i mdP
     lia
     lac mdH
-    add [MTF_HGEN]
+    add [FS_HGEN]
     dac mdP
     dio i mdP
     lac mdH
-    add [MTF_HDIR]
+    add [FS_HDIR]
     dac mcS
     lac mdH
-    add [MTF_HBUF]
+    add [FS_HBUF]
     dac mcD
     jsp mdCopy
-    law MTF_DIRBLK
+    law FS_DIRBLK
     dac mxBlk
     law 2
     dac mxCnt
-    law MTF_HDIR
+    law FS_HDIR
     dac mxOff
     law 1
     dac mxWr
     jsp mdXfer
     jmp i wdRtn
 
-// Whether a directory block is this file system's: the magic, the version and the tape's
+// Whether a directory block is this file system's: the magic, the version and the volume's
 // blocks.
-// Entry: AC = the block's 16-bit address. Exit: AC = 0 if it is, else nonzero. IO is
-// preserved. Called via jda.
-mtfDirOk, 0
+// Entry: AC = the block's 16-bit address, IO = the volume's blocks (the handle's FS_HBLKS).
+// Exit: AC = 0 if it is, else nonzero. IO is preserved. Called via jda.
+fsDirOk, 0
     dac dkRtn
-    lac mtfDirOk
+    dio dkB
+    lac fsDirOk
     dac dkP
     lac i dkP
-    sas [MTF_MAGIC]             // skip if the magic
+    sas [FS_MAGIC]              // skip if the magic
     jmp dkNo
     idx dkP
     lac i dkP
-    sas [MTF_VERSION]
+    sas [FS_VERSION]
     jmp dkNo
     lac dkP
-    add [MTF_DBLKS-MTF_DVER]
+    add [FS_DBLKS-FS_DVER]
     dac dkP
     lac i dkP
-    sas [MTBLKS]
+    sas dkB
     jmp dkNo
     cla
     jmp dkRet
@@ -180,14 +192,14 @@ dkNo,
 dkRet,
     jmp i dkRtn
 
-// Copy directory slot MTF_PINDEX's MTF_ENTW words to MTF_PDEST.
+// Copy directory slot FS_PINDEX's FS_ENTW words to FS_PDEST.
 // Entry: AC = the parameter block's 16-bit address: the handle, the slot and the destination.
-// Exit: AC = MTF_OK, MTF_ENOFS if the tape is not mounted, or MTF_ERANGE for a slot past
-// MTF_NENT-1. IO is clobbered. Called via jda.
-mtfEntry, 0
+// Exit: AC = FS_OK, FS_ENOFS if the handle is not mounted, or FS_ERANGE for a slot past
+// FS_NENT-1. IO is clobbered. Called via jda.
+fsEntry, 0
     dac enRtn
     eem
-    lac mtfEntry
+    lac fsEntry
     dac enP
     lac i enP
     dac mdH
@@ -203,70 +215,75 @@ mtfEntry, 0
     lac enK
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp enRange
-    sub [MTF_NENT]
+    sub [FS_NENT]
     SKIP_NEXT_IF_AC_NEGATIVE
     jmp enRange
     lac enK
-    sal 3s                      // times MTF_ENTW
-    add [MTF_HDIR+MTF_DENT0]
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0]
     add mdH
     dac mcS
-    law i MTF_ENTW
+    law i FS_ENTW
     dac mcN
     jsp mdCopyN
     cla
     jmp enRet
 enRange,
-    law MTF_ERANGE
+    law FS_ERANGE
 enRet,
     jmp i enRtn
 
 // The free blocks, from the handle's directory: the total, the largest gap, and the first gap
-// of MTF_PNEED blocks. A gap is a run of blocks from MTF_FIRSTBLK on that no entry holds.
-// Entry: AC = the parameter block's 16-bit address: the handle and MTF_PNEED. Exit: AC =
-// MTF_OK or MTF_ENOFS; MTF_PTOTAL, MTF_PLARGEST and MTF_PFIT set, MTF_PFIT -1 when no gap is
-// large enough or MTF_PNEED is 0. IO is clobbered. Called via jda.
-mtfFree, 0
+// of FS_PNEED blocks. A gap is a run of blocks from FS_FIRSTBLK on that no entry holds.
+// Entry: AC = the parameter block's 16-bit address: the handle and FS_PNEED. Exit: AC =
+// FS_OK or FS_ENOFS; FS_PTOTAL, FS_PLARGEST and FS_PFIT set, FS_PFIT -1 when no gap is
+// large enough or FS_PNEED is 0. IO is clobbered. Called via jda.
+fsFree, 0
     dac frRtn
     eem
-    lac mtfFree
+    lac fsFree
     dac frP
     lac i frP
     dac mdH
     lac frP
-    add [MTF_PNEED]
+    add [FS_PNEED]
     dac mdP
     lac i mdP
     dac frNeed
     jsp mdMounted
     SKIP_NEXT_IF_AC_ZERO
     jmp frRet
+    lac mdH
+    add [FS_HBLKS]
+    dac mdP
+    lac i mdP
+    dac frEnd
     dzm frTot
     dzm frLarge
     law i 1
     dac frFit
-    law MTF_FIRSTBLK
+    law FS_FIRSTBLK
     dac frPos
-    law i MTF_NENT+1            // a gap before each entry, and the last; a bound on a bad directory
+    law i FS_NENT+1             // a gap before each entry, and the last; a bound on a bad directory
     dac frIter
 
     // The entry with the lowest first block at or past frPos: frF, its blocks frA; frF is
-    // MTBLKS when there is none.
+    // frEnd, the volume's blocks, when there is none.
 frLoop,
-    lac [MTBLKS]
+    lac frEnd
     dac frF
     dzm frA
     lac mdH
-    add [MTF_HDIR+MTF_DENT0]
+    add [FS_HDIR+FS_DENT0]
     dac frE
-    law i MTF_NENT
+    law i FS_NENT
     dac frK
 frScan,
     lac i frE                   // the name's first word, 0 for a free slot
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp frNext
     lac frE
-    add [MTF_DEFIRST]
+    add [FS_DEFIRST]
     dac mdP
     lac i mdP
     sub frPos
@@ -283,7 +300,7 @@ frScan,
     dac frA
 frNext,
     lac frE
-    add [MTF_ENTW]
+    add [FS_ENTW]
     dac frE
     isp frK
     jmp frScan
@@ -317,7 +334,7 @@ frFitT,
     dac frFit
 frAdv,
     lac frF
-    sad [MTBLKS]                // skip unless the tape's end
+    sad frEnd                   // skip unless the volume's end
     jmp frDone
     add frA
     dac frPos
@@ -325,7 +342,7 @@ frAdv,
     jmp frLoop
 frDone,
     lac frP
-    add [MTF_PTOTAL]
+    add [FS_PTOTAL]
     dac mdP
     lac frTot
     dac i mdP
@@ -341,14 +358,14 @@ frRet,
 
 // Look a name up in the handle's directory, packing it into sixbit on the way. Names match
 // whatever their case, since packing takes lower case as upper.
-// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the name's 16-bit
-// address, an am1 ascii string (MTF_PNAME), and where its 3 sixbit words go (MTF_PNAMED).
-// Exit: AC = MTF_OK with IO the slot; MTF_ENOTFOUND with IO the first free slot, or -1 when
-// there is none; MTF_ENAME (nmPack's rules) or MTF_ENOFS. Called via jda.
-mtfLookup, 0
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the name's 16-bit
+// address, an am1 ascii string (FS_PNAME), and where its 3 sixbit words go (FS_PNAMED).
+// Exit: AC = FS_OK with IO the slot; FS_ENOTFOUND with IO the first free slot, or -1 when
+// there is none; FS_ENAME (nmPack's rules) or FS_ENOFS. Called via jda.
+fsLookup, 0
     dac lkRtn
     eem
-    lac mtfLookup
+    lac fsLookup
     dac lkP
     lac i lkP
     dac mdH
@@ -369,7 +386,7 @@ mtfLookup, 0
     dac lkFree
     dzm lkSlot
     lac mdH
-    add [MTF_HDIR+MTF_DENT0]
+    add [FS_HDIR+FS_DENT0]
     dac lkE
 lkLoop,
     lac i lkE                   // the name's first word, 0 for a free slot
@@ -386,7 +403,7 @@ lkCmp,
     dac mcS
     lac lkD
     dac mcD
-    law i MTF_DENAMEW
+    law i FS_DENAMEW
     dac lkN
 lkC1,
     lac i mcS
@@ -401,26 +418,26 @@ lkC1,
     jmp lkRet
 lkNext,
     lac lkE
-    add [MTF_ENTW]
+    add [FS_ENTW]
     dac lkE
     idx lkSlot
-    sas [MTF_NENT]              // skip past the last slot
+    sas [FS_NENT]               // skip past the last slot
     jmp lkLoop
     lio lkFree
-    law MTF_ENOTFOUND
+    law FS_ENOTFOUND
 lkRet,
     jmp i lkRtn
 
-// Pack the am1 ascii string at nmS into MTF_DENAMEW sixbit words at nmD, both 16-bit
+// Pack the am1 ascii string at nmS into FS_DENAMEW sixbit words at nmD, both 16-bit
 // addresses, with UTIL/sixbit.ac's am1ToSixbit: at most 9 characters, blank-padded, lower case
-// raised. Exit: AC = 0, or MTF_ENAME for a name too long, with a control character, empty, or
+// raised. Exit: AC = 0, or FS_ENAME for a name too long, with a control character, empty, or
 // with a leading blank (it would pack as a free slot's zero word). IO is clobbered.
 // Called via jsp.
 nmPack,
     dap nmx
     lac nmD
     dac nmArg
-    lio [MTF_DENAMEW]
+    lio [FS_DENAMEW]
     lac nmS
     farjda(am1ToSixbit:*)
 nmArg, 0
@@ -433,42 +450,40 @@ nmArg, 0
     cla
     jmp nmx
 nmBad,
-    law MTF_ENAME
+    law FS_ENAME
 nmx,
     jmp .
 
-// Move blocks between the tape and the handle mdH: mxCnt blocks from block mxBlk, at mxOff in
-// the handle (MTF_HDIR or MTF_HBUF), written when mxWr is nonzero, else read.
+// Move blocks between the volume and the handle mdH: mxCnt blocks from block mxBlk, at mxOff
+// in the handle (FS_HDIR or FS_HBUF), written when mxWr is nonzero, else read.
 // Exit: AC = the block layer's status. IO is clobbered. Called via jsp.
 mdXfer,
     dap mxx
     lac mdH
-    dac mdP
-    lac i mdP                   // MTF_HDRIVE
-    dac mtfdPb+MTB_PDRIVE
+    dac fsdPb+FS_BHANDLE
     lac mxBlk
-    dac mtfdPb+MTB_PBLOCK
+    dac fsdPb+FS_BBLOCK
     lac mxCnt
-    dac mtfdPb+MTB_PCOUNT
+    dac fsdPb+FS_BCOUNT
     lac mdH
     add mxOff
-    dac mtfdPb+MTB_PBUF
-    lac [mtfdPb:.]
+    dac fsdPb+FS_BBUF
+    lac [fsdPb:.]
     lio mxWr
     sni                         // skip if writing
     jmp mx1
-    farjda(mtbWrite:*)
+    farjda(fsBWrite:*)
     jmp mxx
 mx1,
-    farjda(mtbRead:*)
+    farjda(fsBRead:*)
 mxx,
     jmp .
 
-// Copy MTWDS words, or mcN's negative count at mdCopyN, from mcS to mcD, both 16-bit
+// Copy FS_BLKW words, or mcN's negative count at mdCopyN, from mcS to mcD, both 16-bit
 // addresses, which are left past the words. Called via jsp. AC is clobbered, IO is preserved.
 mdCopy,
     dap mcx
-    law i MTWDS
+    law i FS_BLKW
     dac mcN
     jmp mc1
 mdCopyN,
@@ -483,12 +498,12 @@ mc1,
 mcx,
     jmp .
 
-// Whether the handle mdH is mounted. Exit: AC = 0 if it is, else MTF_ENOFS. IO is preserved.
+// Whether the handle mdH is mounted. Exit: AC = 0 if it is, else FS_ENOFS. IO is preserved.
 // Called via jsp.
 mdMounted,
     dap mmx
     lac mdH
-    add [MTF_HSTATE]
+    add [FS_HSTATE]
     dac mdP
     lac i mdP
     sas [1]                     // skip if mounted
@@ -496,7 +511,7 @@ mdMounted,
     cla
     jmp mmx
 mm1,
-    law MTF_ENOFS
+    law FS_ENOFS
 mmx,
     jmp .
 
@@ -504,6 +519,8 @@ rdRtn, 0
 wdRtn, 0
 dkRtn, 0
 dkP, 0
+dkB, 0
+mdBlks, 0
 enRtn, 0
 enP, 0
 enK, 0
@@ -520,6 +537,7 @@ frK, 0
 frE, 0
 frGap, 0
 frIter, 0
+frEnd, 0
 mdH, 0
 mdP, 0
 mxBlk, 0
@@ -540,9 +558,9 @@ nmS, 0
 nmD, 0
 endloc
 
-// The block layer's parameter block for this file's transfers, MTB_PW words; global so its
+// The block layer's parameter block for this file's transfers, FS_BW words; global so its
 // full address can be taken.
-mtfdPb,
-    table MTB_PW
+fsdPb,
+    table FS_BW
 
 #endif

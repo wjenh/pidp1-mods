@@ -1,0 +1,200 @@
+// fs.ah -- definitions for the device-independent file system: the status codes, the
+// parameter blocks, the volume's layout, the directory, the handle and the file descriptor,
+// the information word, and the macros that reserve a handle or a descriptor.
+// Definitions only; the code is in the fs*.ac files, which include this. A device's own
+// layer (MICROTAPE/microtape.ah, for one) includes it too, and fills a handle's device words
+// at its mount and format.
+// See README.md beside it for the calls.
+// 10-Nov-2026, Claude: the library, as MICROTAPE/mtfs.ah.
+// 11-Nov-2026, Claude: mtfRename's parameter words.
+// 11-Nov-2026, Claude: the per-slot counts, so a descriptor of a deleted or replaced file
+// stays refused.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfs.ah, renamed fs and FS_; the handle names
+// its device, its block entries and the volume's blocks; the block layer's parameter block.
+
+#ifndef FS_AH
+#define FS_AH
+
+#include <memory.ah>
+
+// The status every call returns in AC: 0 for success, else one of these. Some arise only on
+// some devices; README.md says which.
+#define FS_OK 0
+#define FS_ENOUNIT 1        // no such unit: a drive not 1-8, a volume not on the device
+#define FS_ENOMEDIUM 2      // no tape on the drive, or it has run off its reel
+#define FS_ELOCKED 3        // a write to a write-locked unit
+#define FS_EHALTED 4        // a halt stopped the transfer; the call may be repeated
+#define FS_EBADBLOCK 5      // a block did not total zero, or a word was missed
+#define FS_EENDZONE 6       // the tape ran into an end zone during a transfer
+#define FS_ENOFS 7          // the volume has no file-system directory, or the handle none
+#define FS_EFOREIGN 010     // format refused: the directory blocks hold another program's data
+#define FS_ENAME 011        // a name empty, too long, or with a character outside sixbit
+#define FS_EEXISTS 012      // a file of that name is already on the volume
+#define FS_ENOTFOUND 013    // no file of that name or index
+#define FS_EDIRFULL 014     // every directory slot is in use
+#define FS_ENOSPACE 015     // no gap on the volume is large enough
+#define FS_ERANGE 016       // a block, count or position past the volume or the file's allocation
+#define FS_EREADONLY 017    // the file is marked read-only
+#define FS_EBADFD 020       // the descriptor is not open
+#define FS_ESMALLBUF 021    // pack's buffer is smaller than one block
+#define FS_ETIMEOUT 022     // a tape search saw no block mark in its time
+
+// The block, the same on every device.
+#define FS_BLKW 0400
+
+// The devices, in a handle's FS_HDEV.
+#define FS_DEVMT 1          // a Type 550 Microtape
+#define FS_DEVDRUM 2        // the drum
+
+// The block layer's parameter block, FS_BW words, for fsBRead and fsBWrite and for a device's
+// handle entries, which they call.
+#define FS_BHANDLE 0        // the handle's 16-bit address
+#define FS_BBLOCK 1         // the first block, 0 to the volume's blocks less 1
+#define FS_BCOUNT 2         // the number of blocks, at least 1
+#define FS_BBUF 3           // the buffer's 16-bit address, FS_BLKW words a block
+#define FS_BW 4
+
+// The file system's parameter blocks. Every call's block starts with the handle's 16-bit
+// address; the words after it are the call's own. A device's mount and format have their own,
+// starting the same way.
+#define FS_PHANDLE 0
+#define FS_PINDEX 1         // fsEntry: the slot, 0 to FS_NENT-1
+#define FS_PDEST 2          // fsEntry: where its FS_ENTW words go, a 16-bit address
+#define FS_PNEED 1          // fsFree: the blocks wanted, 0 for none
+#define FS_PTOTAL 2         // fsFree, set: the free blocks
+#define FS_PLARGEST 3       // fsFree, set: the largest gap's blocks
+#define FS_PFIT 4           // fsFree, set: the first gap of FS_PNEED blocks, or -1
+#define FS_PNAME 1          // fsOpenName, fsCreate, fsLookup: the name's 16-bit address, an
+                            // am1 ascii string
+#define FS_PFD 2            // fsOpenName, fsOpenIndex: the descriptor's 16-bit address
+#define FS_PNAMED 2         // fsLookup: where the name's 3 sixbit words go, a 16-bit address
+#define FS_PBLOCKS 2        // fsCreate: the blocks to allocate, 1 to FS_MAXBLKS
+#define FS_PINFO 3          // fsCreate: the information word
+#define FS_PCFD 4           // fsCreate: the descriptor's 16-bit address
+#define FS_PNEWNAME 2       // fsRename: the new name's 16-bit address, an am1 ascii string;
+                            // FS_PNAME is the old name's
+#define FS_PREPLACE 3       // fsRename: nonzero to replace a file of the new name
+// fsRead's, fsWrite's, fsSeek's and fsTrim's blocks start with the descriptor, not the
+// handle.
+#define FS_PFDESC 0         // the descriptor's 16-bit address
+#define FS_PBUF 1           // fsRead, fsWrite: the buffer's 16-bit address
+#define FS_PCOUNT 2         // fsRead, fsWrite: the words to move, at least 0
+#define FS_PPOS 1           // fsSeek: the new position, 0 to the length
+#define FS_PVALUE 1         // fsProtect, fsSetType, fsSetApp: the new value
+// fsPack's block starts with the handle.
+#define FS_PSCRATCH 1       // the scratch buffer's 16-bit address
+#define FS_PSIZE 2          // its size in words, at least FS_BLKW; whole blocks of it are used
+
+// cks sets IO bit 6 while the processor is in sequence break mode.
+#define FS_CKSSBM 004000
+
+// Turns sequence breaks off, keeping in save whether they were on.
+// AC is preserved, IO is clobbered.
+#define FS_SBS_OFF(save)
+    cks
+    dio save
+    lsm
+#enddef
+
+// Turns sequence breaks on again if save says they were on, first clearing the requests made
+// while they were off; a tape requests one at every flag. AC is preserved, IO is clobbered.
+// The cbs clears every pending and held request, so a call must not be made from a break
+// routine. Not to be skipped over: it is several words.
+#define FS_SBS_RESTORE(save)
+    lio save
+    ril 6s                  // bit 6, the sequence break mode, to the sign
+    spi i                   // skip if breaks were on
+    jmp .+3
+    cbs
+    esm
+#enddef
+
+// The volume's layout: block 0 unused, so a tape's search back to the directory turns at its
+// reverse mark and never in the end zone; the directory and its copy; then the files.
+#define FS_DIRBLK 1
+#define FS_DIRBLK2 2
+#define FS_FIRSTBLK 3
+
+// The directory block's header. Words 4 to 7 are a device's own: written as zeros by
+// fsFormatVol and carried through every later directory write from the handle's copy, so a
+// device's layer may set them there.
+#define FS_DMAGIC 0         // FS_MAGIC: the volume holds this file system
+#define FS_DVER 1           // FS_VERSION
+#define FS_DGEN 2           // the generation, new for every write of the directory
+#define FS_DBLKS 3          // the blocks on the volume, the handle's FS_HBLKS
+#define FS_MAGIC 0556446    // MTF in sixbit, as the first tapes were written
+#define FS_VERSION 1
+
+// The directory's entries, FS_NENT of FS_ENTW words from word FS_DENT0.
+#define FS_DENT0 010
+#define FS_ENTW 010
+#define FS_NENT 037
+#define FS_DENAME 0         // 3 words, 9 sixbit characters, blank-padded; all zero: free
+#define FS_DENAMEW 3
+#define FS_DEFIRST 3        // the first block
+#define FS_DEALLOC 4        // the blocks allocated
+#define FS_DELEN 5          // the length in words
+#define FS_DEINFO 6         // the information word
+#define FS_DEMOVE 7         // 0; while pack moves the file, its new first block
+
+// The information word: bit 0 read-only (the library enforces it), bits 1-5 the
+// application's, bits 6-17 the file type, the application's.
+#define FS_IRO 0400000
+#define FS_IAPP 0370000
+#define FS_ITYPE 007777
+#define FS_IAPPMAX 037      // the application field's largest value, right-justified
+
+// An information word's fields, from the word in AC to AC, right-justified. IO is preserved.
+#define FS_INFO_RO and [FS_IRO]
+#define FS_INFO_APP and [FS_IAPP]; sar 9s; sar 3s
+#define FS_INFO_TYPE and [FS_ITYPE]
+
+// A handle, FS_HANDLEW words, one per mounted volume. A device's mount and format set
+// FS_HUNIT and the four device words; the file system reads blocks only through FS_HBREAD and
+// FS_HBWRITE, which take an FS_B parameter block.
+#define FS_HUNIT 0          // the unit, as the device's layer defines it: a tape's drive, 1-8
+#define FS_HSTATE 1         // 0 not mounted, 1 mounted
+#define FS_HGEN 2           // the directory's generation as read
+#define FS_HMOUNT 3         // counts the mounts and formats, so a descriptor knows its own
+#define FS_HDEV 4           // the device, FS_DEVMT or FS_DEVDRUM; 0 until a device's mount
+#define FS_HBREAD 5         // the device's block read entry, a 16-bit address
+#define FS_HBWRITE 6        // the device's block write entry, a 16-bit address
+#define FS_HBLKS 7          // the volume's blocks
+#define FS_HDIR 010         // the directory, FS_BLKW words
+#define FS_HBUF 0410        // the block buffer, FS_BLKW words
+#define FS_HSLOTS 01010     // a count per directory slot, FS_NENT words, raised whenever the
+                            // slot is cleared, so a descriptor knows its file is still there
+#define FS_HANDLEW 01047
+
+// A file descriptor, FS_FILEW words.
+#define FS_FHANDLE 0        // the handle's 16-bit address
+#define FS_FSLOT 1          // the directory slot, 0 to FS_NENT-1
+#define FS_FFIRST 2         // the first block
+#define FS_FALLOC 3         // the blocks allocated
+#define FS_FLEN 4           // the length in words
+#define FS_FPOS 5           // the position in words
+#define FS_FINFO 6          // the information word
+#define FS_FFLAGS 7         // FS_FOPEN, FS_FCHANGED
+#define FS_FMOUNT 010       // the handle's FS_HMOUNT when the file was opened
+#define FS_FSTAMP 011       // its slot's FS_HSLOTS count when the file was opened
+#define FS_FILEW 012
+#define FS_FOPEN 1
+#define FS_FCHANGED 2
+
+// A file's largest allocation: its length and position in words must stay positive.
+#define FS_MAXBLKS 0777
+
+// Reserve a handle or a file descriptor at the current location, zero when the program is
+// loaded: not mounted, not open. A program restarted without a reload finds them as it left
+// them, and should mount and open afresh.
+#define FS_HANDLE(name)
+name,
+    table FS_HANDLEW, 0
+#enddef
+
+#define FS_FILE(name)
+name,
+    table FS_FILEW, 0
+#enddef
+
+#endif

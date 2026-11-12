@@ -1,0 +1,183 @@
+// fsformat.ac -- fsFormatVol: give a volume an empty directory, both copies, and mount it. A
+// device's format sets the handle's unit and device words, then calls this; a program calls
+// the device's format (MICROTAPE/mtformat.ac, for one), not this.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsdir.ac.
+// 10-Nov-2026, Claude: the library, as MICROTAPE/mtfformat.ac.
+// 12-Nov-2026, Claude: moved here and renamed; the device's format sets the handle, and the
+// volume's blocks come from it.
+
+#ifndef FSFORMAT_AC
+#define FSFORMAT_AC
+
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsdir.ac>
+#include <AIDS/skipmacros.ah>
+
+local fmRtn, fmH, fmF, fmQ, fmA, fmN, fmS, fmSbm, fmBlk, fmOff, fmV, fmZ, fmB, fmNew, fmZero, \
+    fmEnd, fmForeign, fmRd, fr1, fr2, fr3, frx
+
+// Format a volume: an empty directory written as both copies, and the handle mounted on it.
+// Without force, a volume whose directory blocks hold another program's data is refused: one
+// of blocks 1 and 2 must be this file system's, or both all zeros, as a blank tape reads.
+// Files' blocks are not touched. Sequence breaks are off throughout and turned on again only
+// if they were on.
+// Entry: AC = the handle's 16-bit address, its FS_HUNIT and device words (FS_HDEV to
+// FS_HBLKS) set; IO = force, nonzero to format whatever is there. Exit: AC = FS_OK,
+// FS_EFOREIGN, or the block layer's error; the handle is mounted only on FS_OK. IO is
+// clobbered. Called via jda.
+fsFormatVol, 0
+    dac fmRtn
+    eem
+    dio fmF
+    lac fsFormatVol
+    dac fmH
+    FS_SBS_OFF(fmSbm)
+
+    // The handle: not mounted, its old descriptors refused, and the volume's blocks kept.
+    lac fmH
+    add [FS_HSTATE]
+    dac fmQ
+    dzm i fmQ
+    lac fmH
+    add [FS_HMOUNT]
+    dac fmQ
+    idx i fmQ
+    lac fmH
+    add [FS_HBLKS]
+    dac fmQ
+    lac i fmQ
+    dac fmB
+
+    // Unless forced, what blocks 1 and 2 hold: fmV counts this file system's, fmZ the zeros.
+    lac fmF
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fmNew
+    dzm fmV
+    dzm fmZ
+    law FS_DIRBLK
+    dac fmBlk
+    law FS_HDIR
+    dac fmOff
+    jsp fmRd
+    law FS_DIRBLK2
+    dac fmBlk
+    law FS_HBUF
+    dac fmOff
+    jsp fmRd
+    lac fmV
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fmNew
+    lac fmZ
+    sas [2]                     // skip if both zeros
+    jmp fmForeign
+
+    // The empty directory: zeros, then the header.
+fmNew,
+    lac fmH
+    add [FS_HDIR]
+    dac fmA
+    law i FS_BLKW
+    dac fmN
+fmZero,
+    dzm i fmA
+    idx fmA
+    isp fmN
+    jmp fmZero
+    lac fmH
+    add [FS_HDIR]
+    dac fmA
+    lac [FS_MAGIC]
+    dac i fmA
+    idx fmA
+    law FS_VERSION
+    dac i fmA
+    idx fmA
+    dzm i fmA                   // FS_DGEN; the write makes it 1
+    idx fmA
+    lac fmB
+    dac i fmA                   // FS_DBLKS
+    lac fmH
+    farjda(fsWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fmEnd
+    lac fmH
+    add [FS_HSTATE]
+    dac fmQ
+    law 1
+    dac i fmQ
+    cla
+fmEnd,
+    dac fmS
+    FS_SBS_RESTORE(fmSbm)
+    lac fmS
+    jmp i fmRtn
+fmForeign,
+    law FS_EFOREIGN
+    jmp fmEnd
+
+// Read block fmBlk into the handle at fmOff and class it: this file system's counts in fmV,
+// all zeros in fmZ, a bad block or another's in neither. Any other error ends the call.
+// Called via jsp. AC and IO are clobbered.
+fmRd,
+    dap frx
+    lac fmH
+    dac fsfPb+FS_BHANDLE
+    lac fmBlk
+    dac fsfPb+FS_BBLOCK
+    law 1
+    dac fsfPb+FS_BCOUNT
+    lac fmH
+    add fmOff
+    dac fsfPb+FS_BBUF
+    dac fmA
+    lac [fsfPb:.]
+    farjda(fsBRead:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fr1
+    lac fmA
+    lio fmB
+    farjda(fsDirOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fr2
+    idx fmV
+    jmp frx
+fr1,
+    sad [FS_EBADBLOCK]          // skip unless a bad block, which is neither
+    jmp frx
+    jmp fmEnd
+fr2,
+    law i FS_BLKW
+    dac fmN
+fr3,
+    lac i fmA
+    SKIP_NEXT_IF_AC_ZERO
+    jmp frx
+    idx fmA
+    isp fmN
+    jmp fr3
+    idx fmZ
+frx,
+    jmp .
+
+fmRtn, 0
+fmH, 0
+fmF, 0
+fmQ, 0
+fmA, 0
+fmN, 0
+fmS, 0
+fmSbm, 0
+fmBlk, 0
+fmOff, 0
+fmV, 0
+fmZ, 0
+fmB, 0
+endloc
+
+// The block layer's parameter block for this file's reads, FS_BW words; global so its full
+// address can be taken.
+fsfPb,
+    table FS_BW
+
+#endif

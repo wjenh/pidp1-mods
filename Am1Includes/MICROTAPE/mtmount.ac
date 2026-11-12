@@ -1,0 +1,49 @@
+// mtmount.ac -- mtMount: open a tape's file system on a drive, its directory read into a handle
+// (FILESYSTEM/fs.ah, FS_HANDLE), which the file system's calls then take.
+// Include MICROTAPE/microtape.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtblock.ac and FILESYSTEM/fsdir.ac. Called as fsdir.ac's entries are.
+// 10-Nov-2026, Claude: the library, as mtfmount.ac.
+// 12-Nov-2026, Claude: the tape's own mount, setting the handle's device words.
+
+#ifndef MTMOUNT_AC
+#define MTMOUNT_AC
+
+#include <MICROTAPE/microtape.ah>
+#include <MICROTAPE/mtblock.ac>
+#include <FILESYSTEM/fsdir.ac>
+
+local mnRtn, mnP, mnH, mnS, mnSbm
+
+// Mount a tape: the handle takes the drive, the tape's device words and the directory, the
+// copy in block 2 if block 1 is bad. Sequence breaks are off throughout and turned on again
+// only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE) and the drive
+// (MT_PDRIVE). Exit: AC = FS_OK, FS_ENOFS for a tape without this file system, or the block
+// layer's error; the handle is mounted only on FS_OK. IO is clobbered. Called via jda.
+mtMount, 0
+    dac mnRtn
+    eem
+    lac mtMount
+    dac mnP
+    FS_SBS_OFF(mnSbm)
+    lac i mnP
+    dac mnH
+    idx mnP
+    lio i mnP                   // MT_PDRIVE
+    lac mnH
+    farjda(mtbSetHandle:*)
+    lac mnH
+    farjda(fsRdDir:*)
+    dac mnS
+    FS_SBS_RESTORE(mnSbm)
+    lac mnS
+    jmp i mnRtn
+
+mnRtn, 0
+mnP, 0
+mnH, 0
+mnS, 0
+mnSbm, 0
+endloc
+
+#endif

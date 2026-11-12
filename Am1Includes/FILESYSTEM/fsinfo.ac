@@ -1,0 +1,133 @@
+// fsinfo.ac -- fsProtect, fsSetType and fsSetApp: change an open file's information word
+// (fs.ah, FS_IRO, FS_IAPP, FS_ITYPE). The change is in the descriptor at once, so a
+// write after fsProtect is refused, and reaches the directory when the file is closed.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsopen.ac. Called as fsdir.ac's entries are; none touches the device.
+// 10-Nov-2026, Claude: the library.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfinfo.ac and renamed fs and FS_.
+
+#ifndef FSINFO_AC
+#define FSINFO_AC
+
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsopen.ac>
+#include <AIDS/skipmacros.ah>
+
+assert FS_FFLAGS == FS_FINFO + 1
+
+local inRtn, inP, inQ, inV, inI, inGet, ig1, igx, inPut, inBad, inRange, inRet
+
+// Mark an open file read-only, or clear the mark. Read-only refuses fsWrite and fsDelete.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (FS_PFDESC) and the value
+// (FS_PVALUE), nonzero to mark it. Exit: AC = FS_OK or FS_EBADFD. IO is clobbered.
+// Called via jda.
+fsProtect, 0
+    dac inRtn
+    eem
+    lac fsProtect
+    dac inP
+    jsp inGet
+    lac inI
+    and [~FS_IRO]
+    dac inI
+    lac inV
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp inPut
+    lac inI
+    ior [FS_IRO]
+    dac inI
+    jmp inPut
+
+// Set an open file's type, bits 6-17 of its information word.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (FS_PFDESC) and the type
+// (FS_PVALUE), 0 to FS_ITYPE. Exit: AC = FS_OK, FS_EBADFD, or FS_ERANGE for a type past
+// FS_ITYPE. IO is clobbered. Called via jda.
+fsSetType, 0
+    dac inRtn
+    eem
+    lac fsSetType
+    dac inP
+    jsp inGet
+    lac inV
+    and [~FS_ITYPE]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp inRange
+    lac inI
+    and [~FS_ITYPE]
+    ior inV
+    dac inI
+    jmp inPut
+
+// Set an open file's application field, bits 1-5 of its information word.
+// Entry: AC = the parameter block's 16-bit address: the descriptor (FS_PFDESC) and the value
+// (FS_PVALUE), right-justified, 0 to FS_IAPPMAX. Exit: AC = FS_OK, FS_EBADFD, or
+// FS_ERANGE for a value past FS_IAPPMAX. IO is clobbered. Called via jda.
+fsSetApp, 0
+    dac inRtn
+    eem
+    lac fsSetApp
+    dac inP
+    jsp inGet
+    lac inV
+    and [~FS_IAPPMAX]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp inRange
+    lac inV
+    sal 9s
+    sal 3s                      // to bits 1-5
+    dac inV
+    lac inI
+    and [~FS_IAPP]
+    ior inV
+    dac inI
+    jmp inPut
+
+// From the parameter block whose 16-bit address is in inP: inQ the descriptor's flags word,
+// inV the value, inI the information word. Returns only for a descriptor fsFdOk accepts; for
+// another it ends the call with FS_EBADFD. Called via jsp. AC is clobbered, IO is preserved.
+inGet,
+    dap igx
+    lac i inP
+    add [FS_FINFO]
+    dac inQ
+    lac i inQ
+    dac inI
+    idx inQ                     // FS_FFLAGS
+    lac i inP
+    farjda(fsFdOk:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp inBad
+    idx inP
+    lac i inP
+    dac inV
+igx,
+    jmp .
+
+// The descriptor takes inI and is marked changed.
+inPut,
+    lac i inQ
+    ior [FS_FCHANGED]
+    dac i inQ
+    law i 1
+    add inQ                     // back to FS_FINFO
+    dac inQ
+    lac inI
+    dac i inQ
+    cla
+    jmp inRet
+inBad,
+    law FS_EBADFD
+    jmp inRet
+inRange,
+    law FS_ERANGE
+inRet,
+    jmp i inRtn
+
+inRtn, 0
+inP, 0
+inQ, 0
+inV, 0
+inI, 0
+endloc
+
+#endif

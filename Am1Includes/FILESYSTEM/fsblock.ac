@@ -1,0 +1,73 @@
+// fsblock.ac -- fsBRead and fsBWrite: whole blocks between a mounted or mounting volume and
+// memory, through the device entries its handle names (FS_HBREAD, FS_HBWRITE). The file
+// system moves every block through these, so it never asks which device a handle is; a program
+// may call them too.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's constants.
+// It includes no device's files: the entries are reached by their 16-bit addresses, which a
+// device's mount and format put in the handle.
+// Each entry is entered by jda with the window open, farjda (memory.ah) from another bank, with
+// AC the 16-bit address of an FS_B parameter block; it returns with the window open and AC the
+// device entry's status, FS_OK or an FS_E code. Not reentrant; not to be called from a break
+// routine.
+// 12-Nov-2026, Claude: the dispatch, for the file system made device-independent.
+
+#ifndef FSBLOCK_AC
+#define FSBLOCK_AC
+
+#include <FILESYSTEM/fs.ah>
+#include <AIDS/skipmacros.ah>
+
+local bdRtn, bdPar, bdOff, bdQ, bdEnt, bdEnt1, bdGo, bdNone
+
+// Read blocks into memory through the handle's device.
+// Entry: AC = the parameter block's 16-bit address: the handle, the first block, the count and
+// the buffer's 16-bit address (FS_BHANDLE to FS_BBUF). Exit: AC = the device's status, or
+// FS_ENOFS for a handle no device's mount or format has set; the buffer holds count x FS_BLKW
+// words. IO is clobbered. Called via jda.
+fsBRead, 0
+    dac bdRtn
+    lac fsBRead
+    dac bdPar
+    law FS_HBREAD
+    jmp bdGo
+
+// Write blocks from memory through the handle's device.
+// Entry and exit as fsBRead's. IO is clobbered. Called via jda.
+fsBWrite, 0
+    dac bdRtn
+    lac fsBWrite
+    dac bdPar
+    law FS_HBWRITE
+
+    // The entry's 16-bit address from the handle, then the call as farjda makes it, through
+    // the address at run time: the parameter block into the entry word, a jsp to the word
+    // after it. The entry returns here, and this to the caller.
+bdGo,
+    eem
+    dac bdOff
+    lac i bdPar                 // FS_BHANDLE
+    add bdOff
+    dac bdQ
+    lac i bdQ
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bdNone
+    dac bdEnt
+    add [1]
+    dac bdEnt1
+    lac bdPar
+    dac i bdEnt
+    jsp i bdEnt1
+    jmp i bdRtn
+bdNone,
+    law FS_ENOFS
+    jmp i bdRtn
+
+bdRtn, 0
+bdPar, 0
+bdOff, 0
+bdQ, 0
+bdEnt, 0
+bdEnt1, 0
+endloc
+
+#endif

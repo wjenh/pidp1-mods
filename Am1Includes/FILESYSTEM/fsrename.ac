@@ -1,49 +1,50 @@
-// mtfrename.ac -- mtfRename: give a file of a mounted tape a new name, replacing a file of
+// fsrename.ac -- fsRename: give a file of a mounted volume a new name, replacing a file of
 // that name if asked, in one directory write.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtfdir.ac. Called as mtfdir.ac's entries are.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsdir.ac. Called as fsdir.ac's entries are.
 // 11-Nov-2026, Claude: the call.
 // 11-Nov-2026, Claude: a replaced file's slot count raised, so its descriptors stay refused.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfrename.ac and renamed fs and FS_.
 
-#ifndef MTFRENAME_AC
-#define MTFRENAME_AC
+#ifndef FSRENAME_AC
+#define FSRENAME_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtfdir.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsdir.ac>
 #include <AIDS/skipmacros.ah>
 
-// The name is the entry's first MTF_DENAMEW words, as mtfLookup packs it.
-assert MTF_DENAME == 0
-assert MTF_ENTW == 010
+// The name is the entry's first FS_DENAMEW words, as fsLookup packs it.
+assert FS_DENAME == 0
+assert FS_ENTW == 010
 
 local rnRtn, rnP, rnH, rnNew, rnRep, rnK, rnJ, rnE, rnR, rnQ, rnS, rnSbm, rnFree, rnSame, \
     rnUndo, rnU1, rnRo, rnHas, rnEnd, cpS, cpD, cpN, rnCopy, rc1, rcx, rnClr, rz1, rzx
 
-// Rename a file. The old name must be on the tape. A file of the new name is refused unless
-// MTF_PREPLACE is nonzero; then its entry is cleared in the same directory write, so a halt
-// leaves the tape either as it was or with both changes. A read-only file may be renamed but
+// Rename a file. The old name must be on the volume. A file of the new name is refused unless
+// FS_PREPLACE is nonzero; then its entry is cleared in the same directory write, so a halt
+// leaves the volume either as it was or with both changes. A read-only file may be renamed but
 // not replaced. A new name that is the file's own, in any case, succeeds with nothing written.
 // A descriptor open on the renamed file stays valid; one open on a replaced file is refused
 // from then on, even once a create has taken the replaced file's slot and blocks.
 // Sequence breaks are off throughout and turned on again only if they were on.
-// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the old name's
-// 16-bit address (MTF_PNAME), the new name's (MTF_PNEWNAME), both am1 ascii strings, and
-// MTF_PREPLACE. Exit: AC = MTF_OK; MTF_ENOTFOUND for the old name, MTF_ENAME for either,
-// MTF_EEXISTS, MTF_EREADONLY for a read-only file to replace, MTF_ENOFS, or the block layer's
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the old name's
+// 16-bit address (FS_PNAME), the new name's (FS_PNEWNAME), both am1 ascii strings, and
+// FS_PREPLACE. Exit: AC = FS_OK; FS_ENOTFOUND for the old name, FS_ENAME for either,
+// FS_EEXISTS, FS_EREADONLY for a read-only file to replace, FS_ENOFS, or the block layer's
 // error, after which the handle's directory is as it was. IO is clobbered. Called via jda.
-mtfRename, 0
+fsRename, 0
     dac rnRtn
     eem
-    lac mtfRename
+    lac fsRename
     dac rnP
-    MTF_SBS_OFF(rnSbm)
+    FS_SBS_OFF(rnSbm)
     dzm rnR                     // no entry replaced yet
     lac i rnP
     dac rnH
-    dac mtfrPb+MTF_PHANDLE
+    dac fsrPb+FS_PHANDLE
     idx rnP
     lac i rnP
-    dac mtfrPb+MTF_PNAME
+    dac fsrPb+FS_PNAME
     idx rnP
     lac i rnP
     dac rnNew
@@ -51,23 +52,23 @@ mtfRename, 0
     lac i rnP
     dac rnRep
 
-    // The old name's slot; its packed name is kept in mtfrOld for an undo.
-    lac [mtfrOld:.]
-    dac mtfrPb+MTF_PNAMED
-    lac [mtfrPb:.]
-    farjda(mtfLookup:*)
+    // The old name's slot; its packed name is kept in fsrOld for an undo.
+    lac [fsrOld:.]
+    dac fsrPb+FS_PNAMED
+    lac [fsrPb:.]
+    farjda(fsLookup:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp rnEnd
     dio rnK
 
     // The new name: free, the file's own, or another file's.
     lac rnNew
-    dac mtfrPb+MTF_PNAME
-    lac [mtfrNew:.]
-    dac mtfrPb+MTF_PNAMED
-    lac [mtfrPb:.]
-    farjda(mtfLookup:*)
-    sad [MTF_ENOTFOUND]         // skip unless the name is free
+    dac fsrPb+FS_PNAME
+    lac [fsrNew:.]
+    dac fsrPb+FS_PNAMED
+    lac [fsrPb:.]
+    farjda(fsLookup:*)
+    sad [FS_ENOTFOUND]          // skip unless the name is free
     jmp rnFree
     SKIP_NEXT_IF_AC_ZERO
     jmp rnEnd
@@ -79,55 +80,55 @@ mtfRename, 0
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp rnHas
 
-    // The file to replace: refused if read-only, else kept in mtfrSv and cleared.
+    // The file to replace: refused if read-only, else kept in fsrSv and cleared.
     lac rnJ
-    sal 3s                      // times MTF_ENTW
-    add [MTF_HDIR+MTF_DENT0]
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0]
     add rnH
     dac rnQ
-    add [MTF_DEINFO]
+    add [FS_DEINFO]
     dac rnE
     lac i rnE
-    and [MTF_IRO]
+    and [FS_IRO]
     SKIP_NEXT_IF_AC_ZERO
     jmp rnRo
     lac rnQ
     dac rnR
     dac cpS
-    lac [mtfrSv:.]
+    lac [fsrSv:.]
     dac cpD
-    law i MTF_ENTW
+    law i FS_ENTW
     dac cpN
     jsp rnCopy
     lac rnR
     dac cpD
-    law i MTF_ENTW
+    law i FS_ENTW
     dac cpN
     jsp rnClr
 
-    // The new name into the file's entry, then the directory to the tape.
+    // The new name into the file's entry, then the directory to the volume.
 rnFree,
     lac rnK
     sal 3s
-    add [MTF_HDIR+MTF_DENT0]
+    add [FS_HDIR+FS_DENT0]
     add rnH
     dac rnE
-    lac [mtfrNew:.]
+    lac [fsrNew:.]
     dac cpS
     lac rnE
     dac cpD
-    law i MTF_DENAMEW
+    law i FS_DENAMEW
     dac cpN
     jsp rnCopy
     lac rnH
-    farjda(mtfWrDir:*)
+    farjda(fsWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp rnUndo
     lac rnR
     SKIP_NEXT_IF_AC_NOT_ZERO
-    jmp rnEnd                   // AC 0, MTF_OK: nothing replaced
+    jmp rnEnd                   // AC 0, FS_OK: nothing replaced
     lac rnJ
-    add [MTF_HSLOTS]
+    add [FS_HSLOTS]
     add rnH
     dac rnQ
     idx i rnQ                   // the replaced file's descriptors are no longer valid
@@ -137,21 +138,21 @@ rnFree,
     // The write failed: the old name back, and the replaced entry if there was one.
 rnUndo,
     dac rnS
-    lac [mtfrOld:.]
+    lac [fsrOld:.]
     dac cpS
     lac rnE
     dac cpD
-    law i MTF_DENAMEW
+    law i FS_DENAMEW
     dac cpN
     jsp rnCopy
     lac rnR
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp rnU1
-    lac [mtfrSv:.]
+    lac [fsrSv:.]
     dac cpS
     lac rnR
     dac cpD
-    law i MTF_ENTW
+    law i FS_ENTW
     dac cpN
     jsp rnCopy
 rnU1,
@@ -161,13 +162,13 @@ rnSame,
     cla
     jmp rnEnd
 rnHas,
-    law MTF_EEXISTS
+    law FS_EEXISTS
     jmp rnEnd
 rnRo,
-    law MTF_EREADONLY
+    law FS_EREADONLY
 rnEnd,
     dac rnS
-    MTF_SBS_RESTORE(rnSbm)
+    FS_SBS_RESTORE(rnSbm)
     lac rnS
     jmp i rnRtn
 
@@ -214,15 +215,15 @@ cpD, 0
 cpN, 0
 endloc
 
-// mtfLookup's parameter block for this file's calls, the two packed names, and the replaced
+// fsLookup's parameter block for this file's calls, the two packed names, and the replaced
 // entry while the directory is written; global so their full addresses can be taken.
-mtfrPb,
+fsrPb,
     table 3
-mtfrOld,
-    table MTF_DENAMEW
-mtfrNew,
-    table MTF_DENAMEW
-mtfrSv,
-    table MTF_ENTW
+fsrOld,
+    table FS_DENAMEW
+fsrNew,
+    table FS_DENAMEW
+fsrSv,
+    table FS_ENTW
 
 #endif

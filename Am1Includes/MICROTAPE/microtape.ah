@@ -1,0 +1,36 @@
+// microtape.ah -- definitions for the Microtape's layer of the file system: mtbRead's and
+// mtbWrite's parameter block, mtMount's and mtFormat's, and the search's wait. It includes the
+// file system's definitions (FILESYSTEM/fs.ah) and the tape's IOTs (type550defs.ah).
+// Definitions only; the code is in mtblock.ac, mtmount.ac and mtformat.ac, which include this.
+// See README.md beside it.
+// 10-Nov-2026, Claude: the library, as mtfs.ah.
+// 12-Nov-2026, Claude: the tape's own definitions, split from the file system's.
+
+#ifndef MICROTAPE_AH
+#define MICROTAPE_AH
+
+#include <FILESYSTEM/fs.ah>
+#include <MICROTAPE/type550defs.ah>
+
+// The file system's block is the tape's.
+assert MTWDS == FS_BLKW
+
+// mtbRead's and mtbWrite's parameter block, MTB_PW words.
+#define MTB_PDRIVE 0        // the drive, 1-8
+#define MTB_PBLOCK 1        // the first block, 0 to MTBLKS-1
+#define MTB_PCOUNT 2        // the number of blocks, at least 1
+#define MTB_PBUF 3          // the buffer's 16-bit address, MTWDS words a block
+#define MTB_PW 4
+
+// mtMount's and mtFormat's parameter block: the handle's 16-bit address (FS_PHANDLE), then
+// these.
+#define MT_PDRIVE 1         // the drive, 1-8
+#define MT_PFORCE 2         // mtFormat: nonzero formats whatever the directory blocks hold
+
+// Polls of mrs a search waits for the next block mark before giving up, at 55 us a poll about
+// 3.3 s. The longest gap is a newly mounted tape's first search: it starts at the load point,
+// before the 10 feet of end zone, so block 0's mark comes after the 200 ms start and 1.5 s of
+// end zone.
+#define MTB_POLLS 0d60000
+
+#endif

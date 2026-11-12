@@ -1,60 +1,61 @@
-// mtfopen.ac -- open a file of a mounted tape into a file descriptor (mtfs.ah, MTF_FILE), by
+// fsopen.ac -- open a file of a mounted volume into a file descriptor (fs.ah, FS_FILE), by
 // its name or its directory slot, and close it, writing its entry back if it changed.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtfdir.ac. Called as mtfdir.ac's entries are.
-// mtfFdOk is the check every call taking a descriptor makes first.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsdir.ac. Called as fsdir.ac's entries are.
+// fsFdOk is the check every call taking a descriptor makes first.
 // 10-Nov-2026, Claude: the library.
-// 11-Nov-2026, Claude: the slot's count recorded at the open and checked by mtfFdOk.
+// 11-Nov-2026, Claude: the slot's count recorded at the open and checked by fsFdOk.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfopen.ac and renamed fs and FS_.
 
-#ifndef MTFOPEN_AC
-#define MTFOPEN_AC
+#ifndef FSOPEN_AC
+#define FSOPEN_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtfdir.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsdir.ac>
 #include <AIDS/skipmacros.ah>
 
 // opFill copies the entry's words in this order.
-assert MTF_FTAPE == 0
-assert MTF_FSLOT == 1
-assert MTF_FFIRST == 2
-assert MTF_FALLOC == 3
-assert MTF_FLEN == 4
-assert MTF_FPOS == 5
-assert MTF_FINFO == 6
-assert MTF_FFLAGS == 7
-assert MTF_FMOUNT == 010
-assert MTF_FSTAMP == 011
-assert MTF_HSLOTS == MTF_HBUF + MTWDS
-assert MTF_TAPEW == MTF_HSLOTS + MTF_NENT
-assert MTF_DELEN == MTF_DEFIRST + 2
-assert MTF_DEINFO == MTF_DEFIRST + 3
+assert FS_FHANDLE == 0
+assert FS_FSLOT == 1
+assert FS_FFIRST == 2
+assert FS_FALLOC == 3
+assert FS_FLEN == 4
+assert FS_FPOS == 5
+assert FS_FINFO == 6
+assert FS_FFLAGS == 7
+assert FS_FMOUNT == 010
+assert FS_FSTAMP == 011
+assert FS_HSLOTS == FS_HBUF + FS_BLKW
+assert FS_HANDLEW == FS_HSLOTS + FS_NENT
+assert FS_DELEN == FS_DEFIRST + 2
+assert FS_DEINFO == FS_DEFIRST + 3
 
 local onRtn, oiRtn, ocRtn, opP, opH, opK, opFd, opQ, opE, opS, opSbm, onRet, \
     oiNofs, oiRange, oiNf, oiRet, opFill, ofx, ocDone, ocBad, ocRet, fkRtn, fkD, fkH, fkQ,     fkM, fkBad
 
 // Open a file by its name.
-// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the name's 16-bit
-// address, an am1 ascii string (MTF_PNAME), and the descriptor's (MTF_PFD). Exit: AC = MTF_OK
-// with the descriptor open at position 0; MTF_ENOTFOUND, MTF_ENAME or MTF_ENOFS. IO is
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the name's 16-bit
+// address, an am1 ascii string (FS_PNAME), and the descriptor's (FS_PFD). Exit: AC = FS_OK
+// with the descriptor open at position 0; FS_ENOTFOUND, FS_ENAME or FS_ENOFS. IO is
 // clobbered. Called via jda.
-mtfOpenName, 0
+fsOpenName, 0
     dac onRtn
     eem
-    lac mtfOpenName
+    lac fsOpenName
     dac opP
     lac i opP
     dac opH
-    dac mtfoPb+MTF_PHANDLE
+    dac fsoPb+FS_PHANDLE
     idx opP
     lac i opP
-    dac mtfoPb+MTF_PNAME
+    dac fsoPb+FS_PNAME
     idx opP
     lac i opP
     dac opFd
-    lac [mtfoNm:.]
-    dac mtfoPb+MTF_PNAMED
-    lac [mtfoPb:.]
-    farjda(mtfLookup:*)
+    lac [fsoNm:.]
+    dac fsoPb+FS_PNAMED
+    lac [fsoPb:.]
+    farjda(fsLookup:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp onRet
     dio opK
@@ -63,15 +64,15 @@ mtfOpenName, 0
 onRet,
     jmp i onRtn
 
-// Open a file by its directory slot, as mtfEntry lists them.
-// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the slot
-// (MTF_PINDEX) and the descriptor's 16-bit address (MTF_PFD). Exit: AC = MTF_OK with the
-// descriptor open at position 0; MTF_ENOTFOUND for a free slot, MTF_ERANGE for a slot past
-// MTF_NENT-1, or MTF_ENOFS. IO is clobbered. Called via jda.
-mtfOpenIndex, 0
+// Open a file by its directory slot, as fsEntry lists them.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the slot
+// (FS_PINDEX) and the descriptor's 16-bit address (FS_PFD). Exit: AC = FS_OK with the
+// descriptor open at position 0; FS_ENOTFOUND for a free slot, FS_ERANGE for a slot past
+// FS_NENT-1, or FS_ENOFS. IO is clobbered. Called via jda.
+fsOpenIndex, 0
     dac oiRtn
     eem
-    lac mtfOpenIndex
+    lac fsOpenIndex
     dac opP
     lac i opP
     dac opH
@@ -82,7 +83,7 @@ mtfOpenIndex, 0
     lac i opP
     dac opFd
     lac opH
-    add [MTF_HSTATE]
+    add [FS_HSTATE]
     dac opQ
     lac i opQ
     sas [1]                     // skip if mounted
@@ -90,12 +91,12 @@ mtfOpenIndex, 0
     lac opK
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp oiRange
-    sub [MTF_NENT]
+    sub [FS_NENT]
     SKIP_NEXT_IF_AC_NEGATIVE
     jmp oiRange
     lac opK
-    sal 3s                      // times MTF_ENTW
-    add [MTF_HDIR+MTF_DENT0+MTF_DENAME]
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0+FS_DENAME]
     add opH
     dac opQ
     lac i opQ
@@ -105,79 +106,79 @@ mtfOpenIndex, 0
     cla
     jmp oiRet
 oiNofs,
-    law MTF_ENOFS
+    law FS_ENOFS
     jmp oiRet
 oiRange,
-    law MTF_ERANGE
+    law FS_ERANGE
     jmp oiRet
 oiNf,
-    law MTF_ENOTFOUND
+    law FS_ENOTFOUND
 oiRet,
     jmp i oiRtn
 
 // Close a file: if a write lengthened it or an information-word setter changed it, its entry
 // in the handle takes the new length and information word and the directory is written. On an
 // error the descriptor stays open and changed, so the close may be repeated. A descriptor
-// mtfFdOk refuses is closed with nothing written.
+// fsFdOk refuses is closed with nothing written.
 // Entry: AC = the descriptor's 16-bit address; it is the whole parameter block. Exit: AC =
-// MTF_OK, MTF_EBADFD (mtfFdOk), or the block layer's error. IO is clobbered. Called via jda.
-mtfClose, 0
+// FS_OK, FS_EBADFD (fsFdOk), or the block layer's error. IO is clobbered. Called via jda.
+fsClose, 0
     dac ocRtn
     eem
-    lac mtfClose
+    lac fsClose
     dac opFd
-    jda mtfFdOk
+    jda fsFdOk
     SKIP_NEXT_IF_AC_ZERO
     jmp ocBad
     lac opFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac opQ
     lac i opQ
-    and [MTF_FCHANGED]
+    and [FS_FCHANGED]
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp ocDone
-    MTF_SBS_OFF(opSbm)
+    FS_SBS_OFF(opSbm)
     lac opFd
     dac opQ
     lac i opQ
-    dac opH                     // MTF_FTAPE
+    dac opH                     // FS_FHANDLE
     idx opQ
-    lac i opQ                   // MTF_FSLOT
+    lac i opQ                   // FS_FSLOT
     sal 3s
-    add [MTF_HDIR+MTF_DENT0+MTF_DELEN]
+    add [FS_HDIR+FS_DENT0+FS_DELEN]
     add opH
     dac opE
     lac opFd
-    add [MTF_FLEN]
+    add [FS_FLEN]
     dac opQ
     lac i opQ
     dac i opE
-    idx opE                     // MTF_DEINFO
+    idx opE                     // FS_DEINFO
     lac opFd
-    add [MTF_FINFO]
+    add [FS_FINFO]
     dac opQ
     lac i opQ
     dac i opE
     lac opH
-    farjda(mtfWrDir:*)
+    farjda(fsWrDir:*)
     dac opS
-    MTF_SBS_RESTORE(opSbm)
+    FS_SBS_RESTORE(opSbm)
     lac opS
     SKIP_NEXT_IF_AC_ZERO
     jmp ocRet
 ocDone,
     lac opFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac opQ
     dzm i opQ
     cla
     jmp ocRet
 ocBad,
     lac opFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac opQ
     dzm i opQ
-    law MTF_EBADFD
+    law FS_EBADFD
 ocRet,
     jmp i ocRtn
 
@@ -186,69 +187,69 @@ ocRet,
 // block, and the slot has not been cleared since. So a descriptor left open across a remount,
 // a pack that moved its file, or a delete or replace through another descriptor or call is
 // refused, even after a create has taken the same slot and first block.
-// Entry: AC = the descriptor's 16-bit address. Exit: AC = MTF_OK or MTF_EBADFD. IO is
+// Entry: AC = the descriptor's 16-bit address. Exit: AC = FS_OK or FS_EBADFD. IO is
 // preserved. Called via jda.
-mtfFdOk, 0
+fsFdOk, 0
     dac fkRtn
-    lac mtfFdOk
+    lac fsFdOk
     dac fkD
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac fkQ
     lac i fkQ
-    and [MTF_FOPEN]
+    and [FS_FOPEN]
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp fkBad
-    lac i fkD                   // MTF_FTAPE
+    lac i fkD                   // FS_FHANDLE
     dac fkH
-    add [MTF_HSTATE]
+    add [FS_HSTATE]
     dac fkQ
     lac i fkQ
     sas [1]                     // skip if mounted
     jmp fkBad
     lac fkH
-    add [MTF_HMOUNT]
+    add [FS_HMOUNT]
     dac fkQ
     lac i fkQ
     dac fkM
     lac fkD
-    add [MTF_FMOUNT]
+    add [FS_FMOUNT]
     dac fkQ
     lac i fkQ
     sas fkM                     // skip if the same mount
     jmp fkBad
     lac fkD
-    add [MTF_FSLOT]
+    add [FS_FSLOT]
     dac fkQ
     lac i fkQ
-    sal 3s                      // times MTF_ENTW
-    add [MTF_HDIR+MTF_DENT0]
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0]
     add fkH
     dac fkQ
     lac i fkQ                   // the name's first word, 0 for a free slot
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp fkBad
     lac fkQ
-    add [MTF_DEFIRST]
+    add [FS_DEFIRST]
     dac fkQ
     lac i fkQ
     dac fkM
     lac fkD
-    add [MTF_FFIRST]
+    add [FS_FFIRST]
     dac fkQ
     lac i fkQ
     sas fkM                     // skip if the same first block
     jmp fkBad
     lac fkD
-    add [MTF_FSLOT]
+    add [FS_FSLOT]
     dac fkQ
     lac i fkQ
-    add [MTF_HSLOTS]
+    add [FS_HSLOTS]
     add fkH
     dac fkQ
     lac i fkQ
     dac fkM
     lac fkD
-    add [MTF_FSTAMP]
+    add [FS_FSTAMP]
     dac fkQ
     lac i fkQ
     sas fkM                     // skip if the slot has not been cleared since the open
@@ -256,59 +257,59 @@ mtfFdOk, 0
     cla
     jmp i fkRtn
 fkBad,
-    law MTF_EBADFD
+    law FS_EBADFD
     jmp i fkRtn
 
 // Fill the descriptor opFd from slot opK of the handle opH, open at position 0, with the
-// handle's mount count and the slot's count for mtfFdOk.
+// handle's mount count and the slot's count for fsFdOk.
 // Called via jsp. AC is clobbered, IO is preserved.
 opFill,
     dap ofx
     lac opK
     sal 3s
-    add [MTF_HDIR+MTF_DENT0+MTF_DEFIRST]
+    add [FS_HDIR+FS_DENT0+FS_DEFIRST]
     add opH
     dac opE
     lac opFd
     dac opQ
     lac opH
-    dac i opQ                   // MTF_FTAPE
+    dac i opQ                   // FS_FHANDLE
     idx opQ
     lac opK
-    dac i opQ                   // MTF_FSLOT
+    dac i opQ                   // FS_FSLOT
     idx opQ
     lac i opE
-    dac i opQ                   // MTF_FFIRST
+    dac i opQ                   // FS_FFIRST
     idx opE
     idx opQ
     lac i opE
-    dac i opQ                   // MTF_FALLOC
+    dac i opQ                   // FS_FALLOC
     idx opE
     idx opQ
     lac i opE
-    dac i opQ                   // MTF_FLEN
+    dac i opQ                   // FS_FLEN
     idx opQ
-    dzm i opQ                   // MTF_FPOS
+    dzm i opQ                   // FS_FPOS
     idx opE
     idx opQ
     lac i opE
-    dac i opQ                   // MTF_FINFO
+    dac i opQ                   // FS_FINFO
     idx opQ
-    law MTF_FOPEN
-    dac i opQ                   // MTF_FFLAGS
+    law FS_FOPEN
+    dac i opQ                   // FS_FFLAGS
     lac opH
-    add [MTF_HMOUNT]
+    add [FS_HMOUNT]
     dac opE
     idx opQ
     lac i opE
-    dac i opQ                   // MTF_FMOUNT
+    dac i opQ                   // FS_FMOUNT
     lac opK
-    add [MTF_HSLOTS]
+    add [FS_HSLOTS]
     add opH
     dac opE
     idx opQ
     lac i opE
-    dac i opQ                   // MTF_FSTAMP
+    dac i opQ                   // FS_FSTAMP
 ofx,
     jmp .
 
@@ -330,11 +331,11 @@ fkQ, 0
 fkM, 0
 endloc
 
-// mtfLookup's parameter block for this file's calls, and the packed name it returns; global so
+// fsLookup's parameter block for this file's calls, and the packed name it returns; global so
 // their full addresses can be taken.
-mtfoPb,
+fsoPb,
     table 3
-mtfoNm,
-    table MTF_DENAMEW
+fsoNm,
+    table FS_DENAMEW
 
 #endif

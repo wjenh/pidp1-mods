@@ -1,40 +1,42 @@
-// mtfpack.ac -- mtfPack: move a mounted tape's files down to close the gaps between them, so
+// fspack.ac -- fsPack: move a mounted volume's files down to close the gaps between them, so
 // the free blocks are one gap at the end.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtfdir.ac. Called as mtfdir.ac's entries are.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsdir.ac. Called as fsdir.ac's entries are.
 // 10-Nov-2026, Claude: the library.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfpack.ac and renamed fs and FS_; blocks
+// move through fsblock.ac, and the volume's blocks come from the handle.
 
-#ifndef MTFPACK_AC
-#define MTFPACK_AC
+#ifndef FSPACK_AC
+#define FSPACK_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtfdir.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsdir.ac>
 #include <AIDS/skipmacros.ah>
 
-assert MTWDS == 0400
+assert FS_BLKW == 0400
 
 local pkRtn, pkP, pkH, pkBuf, pkNb, pkPos, pkIter, pkSel, pkF, pkA, pkE, pkK, pkQ, pkSrc, \
     pkDst, pkRem, pkN, pkBlk, pkWr, pkMoved, pkS, pkSbm, pkLoop, pkScan, pkNext, pkCopy, pk1, \
-    pk2, pkCopied, pkStay, pkDone, pkEnd, pkUnmk, pkNofs, pkSmall, pkXfer, px1, pxx
+    pk2, pkCopied, pkStay, pkDone, pkEnd, pkUnmk, pkNofs, pkSmall, pkXfer, px1, pxx, pkVol
 
-// Pack a tape: each file, in order of its first block, moves down to the lowest free block,
+// Pack a volume: each file, in order of its first block, moves down to the lowest free block,
 // copied a buffer's worth of blocks at a time from its first block up, which is safe though
 // the old and new places overlap. Before a file moves, the directory is written with the new
-// first block in its entry's MTF_DEMOVE word; after, with the new first block and MTF_DEMOVE
-// 0. A halt or an error during a move leaves that file marked, as mtfEntry shows, and its
+// first block in its entry's FS_DEMOVE word; after, with the new first block and FS_DEMOVE
+// 0. A halt or an error during a move leaves that file marked, as fsEntry shows, and its
 // words partly moved; pack does not resume it, and a later pack leaves a marked file where its
-// entry says it is. Files open on the tape should be closed first: the descriptor of a file
-// that moves answers MTF_EBADFD from then on. Sequence breaks are off throughout and turned on again only if they were on.
-// Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the scratch
-// buffer's 16-bit address (MTF_PSCRATCH) and its size in words (MTF_PSIZE). Exit: AC =
-// MTF_OK, MTF_ENOFS, MTF_ESMALLBUF for a buffer under MTWDS words, or the block layer's error;
+// entry says it is. Files open on the volume should be closed first: the descriptor of a file
+// that moves answers FS_EBADFD from then on. Sequence breaks are off throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the scratch
+// buffer's 16-bit address (FS_PSCRATCH) and its size in words (FS_PSIZE). Exit: AC =
+// FS_OK, FS_ENOFS, FS_ESMALLBUF for a buffer under FS_BLKW words, or the block layer's error;
 // IO = the files moved. Called via jda.
-mtfPack, 0
+fsPack, 0
     dac pkRtn
     eem
-    lac mtfPack
+    lac fsPack
     dac pkP
-    MTF_SBS_OFF(pkSbm)
+    FS_SBS_OFF(pkSbm)
     dzm pkMoved
     lac i pkP
     dac pkH
@@ -45,40 +47,45 @@ mtfPack, 0
     lac i pkP
     dac pkNb
     lac pkH
-    add [MTF_HSTATE]
+    add [FS_HSTATE]
     dac pkQ
     lac i pkQ
     sas [1]                     // skip if mounted
     jmp pkNofs
     lac pkNb
-    sub [MTWDS]
+    sub [FS_BLKW]
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp pkSmall
     lac pkNb
     sar 8s                      // the buffer's whole blocks
     dac pkNb
-    law MTF_FIRSTBLK
+    lac pkH
+    add [FS_HBLKS]
+    dac pkQ
+    lac i pkQ
+    dac pkVol
+    law FS_FIRSTBLK
     dac pkPos
-    law i MTF_NENT+1            // a bound on a bad directory
+    law i FS_NENT+1             // a bound on a bad directory
     dac pkIter
 
     // The entry in use with the lowest first block at or past pkPos: pkSel its address, pkF
     // its first block; pkSel 0 when there is none.
 pkLoop,
     dzm pkSel
-    lac [MTBLKS]
+    lac pkVol                   // past every first block
     dac pkF
     lac pkH
-    add [MTF_HDIR+MTF_DENT0]
+    add [FS_HDIR+FS_DENT0]
     dac pkE
-    law i MTF_NENT
+    law i FS_NENT
     dac pkK
 pkScan,
     lac i pkE                   // the name's first word, 0 for a free slot
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp pkNext
     lac pkE
-    add [MTF_DEFIRST]
+    add [FS_DEFIRST]
     dac pkQ
     lac i pkQ
     sub pkPos
@@ -94,21 +101,21 @@ pkScan,
     dac pkSel
 pkNext,
     lac pkE
-    add [MTF_ENTW]
+    add [FS_ENTW]
     dac pkE
     isp pkK
     jmp pkScan
     lac pkSel
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp pkDone
-    add [MTF_DEALLOC]
+    add [FS_DEALLOC]
     dac pkQ
     lac i pkQ
     dac pkA
 
     // A file marked by an earlier pack, or already at pkPos, stays where it is.
     lac pkSel
-    add [MTF_DEMOVE]
+    add [FS_DEMOVE]
     dac pkQ
     lac i pkQ
     SKIP_NEXT_IF_AC_ZERO
@@ -120,9 +127,9 @@ pkNext,
 
     // Marked, copied, then given its new first block.
     lac pkPos
-    dac i pkQ                   // MTF_DEMOVE
+    dac i pkQ                   // FS_DEMOVE
     lac pkH
-    farjda(mtfWrDir:*)
+    farjda(fsWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp pkUnmk
     lac pkF
@@ -170,16 +177,16 @@ pk2,
     jmp pkCopy
 pkCopied,
     lac pkSel
-    add [MTF_DEFIRST]
+    add [FS_DEFIRST]
     dac pkQ
     lac pkPos
     dac i pkQ
     lac pkSel
-    add [MTF_DEMOVE]
+    add [FS_DEMOVE]
     dac pkQ
     dzm i pkQ
     lac pkH
-    farjda(mtfWrDir:*)
+    farjda(fsWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp pkEnd
     idx pkMoved
@@ -195,7 +202,7 @@ pkDone,
     cla
 pkEnd,
     dac pkS
-    MTF_SBS_RESTORE(pkSbm)
+    FS_SBS_RESTORE(pkSbm)
     lio pkMoved
     lac pkS
     jmp i pkRtn
@@ -203,35 +210,33 @@ pkUnmk,
     dzm i pkQ                   // the mark, not written: nothing has moved
     jmp pkEnd
 pkNofs,
-    law MTF_ENOFS
+    law FS_ENOFS
     jmp pkEnd
 pkSmall,
-    law MTF_ESMALLBUF
+    law FS_ESMALLBUF
     jmp pkEnd
 
 // Move pkN blocks from block pkBlk to or from the scratch buffer, written when pkWr is
-// nonzero, else read, on the handle pkH's drive.
+// nonzero, else read, on the handle pkH's volume.
 // Exit: AC = the block layer's status. IO is clobbered. Called via jsp.
 pkXfer,
     dap pxx
     lac pkH
-    dac pkQ
-    lac i pkQ                   // MTF_HDRIVE
-    dac mtfpPb+MTB_PDRIVE
+    dac fspPb+FS_BHANDLE
     lac pkBlk
-    dac mtfpPb+MTB_PBLOCK
+    dac fspPb+FS_BBLOCK
     lac pkN
-    dac mtfpPb+MTB_PCOUNT
+    dac fspPb+FS_BCOUNT
     lac pkBuf
-    dac mtfpPb+MTB_PBUF
-    lac [mtfpPb:.]
+    dac fspPb+FS_BBUF
+    lac [fspPb:.]
     lio pkWr
     sni                         // skip if writing
     jmp px1
-    farjda(mtbWrite:*)
+    farjda(fsBWrite:*)
     jmp pxx
 px1,
-    farjda(mtbRead:*)
+    farjda(fsBRead:*)
 pxx,
     jmp .
 
@@ -257,11 +262,12 @@ pkWr, 0
 pkMoved, 0
 pkS, 0
 pkSbm, 0
+pkVol, 0
 endloc
 
 // The block layer's parameter block for this file's transfers; global so its full address can
 // be taken.
-mtfpPb,
-    table MTB_PW
+fspPb,
+    table FS_BW
 
 #endif

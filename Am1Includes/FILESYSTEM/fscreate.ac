@@ -1,0 +1,181 @@
+// fscreate.ac -- fsCreate: a new file on a mounted volume, its blocks the first gap large
+// enough, its entry written to the volume, and returned open.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsopen.ac. Called as fsdir.ac's entries are.
+// 10-Nov-2026, Claude: the library.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfcreate.ac and renamed fs and FS_.
+
+#ifndef FSCREATE_AC
+#define FSCREATE_AC
+
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsopen.ac>
+#include <AIDS/skipmacros.ah>
+
+// The entry is written word by word in this order.
+assert FS_DENAME == 0
+assert FS_DEFIRST == 3
+assert FS_DEALLOC == 4
+assert FS_DELEN == 5
+assert FS_DEINFO == 6
+assert FS_DEMOVE == 7
+
+local crRtn, crP, crH, crN, crI, crFd, crK, crE, crS, crSbm, cr1, crUndo, crFull, crNoSp, \
+    crRange, crEnd
+
+// Create a file: a name not on the volume, a free slot, and the first gap of the blocks asked
+// for. The entry takes the name, the blocks, length 0 and the information word as given, and
+// the directory is written; the descriptor is then open at position 0. Sequence breaks are off
+// throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the name's 16-bit
+// address, an am1 ascii string (FS_PNAME), the blocks (FS_PBLOCKS, 1 to FS_MAXBLKS), the
+// information word (FS_PINFO) and the descriptor's 16-bit address (FS_PCFD). Exit: AC =
+// FS_OK; FS_EEXISTS, FS_EDIRFULL, FS_ENOSPACE, FS_ERANGE for fewer than 1 block or more
+// than FS_MAXBLKS, FS_ENAME, FS_ENOFS, or the block layer's error, after which the handle
+// has no entry for the file (the volume may, if the write stopped after block 1). IO is
+// clobbered. Called via jda.
+fsCreate, 0
+    dac crRtn
+    eem
+    lac fsCreate
+    dac crP
+    FS_SBS_OFF(crSbm)
+    lac i crP
+    dac crH
+    dac fscPb+FS_PHANDLE
+    dac fscFr+FS_PHANDLE
+    idx crP
+    lac i crP
+    dac fscPb+FS_PNAME
+    idx crP
+    lac i crP
+    dac crN
+    idx crP
+    lac i crP
+    dac crI
+    idx crP
+    lac i crP
+    dac crFd
+    lac [fscNm:.]
+    dac fscPb+FS_PNAMED
+    lac [fscPb:.]
+    farjda(fsLookup:*)
+    sad [FS_ENOTFOUND]          // skip unless not found, as wanted
+    jmp cr1
+    SKIP_NEXT_IF_AC_ZERO
+    jmp crEnd
+    law FS_EEXISTS
+    jmp crEnd
+cr1,
+    dio crK                     // the first free slot, or -1
+    lac crK
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp crFull
+    lac crN
+    sma sza i                   // skip if at least 1 block
+    jmp crRange
+    sub [FS_MAXBLKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp crRange
+    lac crN
+    dac fscFr+FS_PNEED
+    lac [fscFr:.]
+    farjda(fsFree:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp crEnd
+    lac fscFr+FS_PFIT
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp crNoSp
+
+    // The entry, then the directory to the volume.
+    lac crK
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0]
+    add crH
+    dac crE
+    lac fscNm
+    dac i crE
+    idx crE
+    lac fscNm+1
+    dac i crE
+    idx crE
+    lac fscNm+2
+    dac i crE
+    idx crE
+    lac fscFr+FS_PFIT
+    dac i crE
+    idx crE
+    lac crN
+    dac i crE
+    idx crE
+    dzm i crE                   // FS_DELEN
+    idx crE
+    lac crI
+    dac i crE
+    idx crE
+    dzm i crE                   // FS_DEMOVE
+    lac crH
+    farjda(fsWrDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp crUndo
+
+    // Open it.
+    lac crH
+    dac fscOp+FS_PHANDLE
+    lac crK
+    dac fscOp+FS_PINDEX
+    lac crFd
+    dac fscOp+FS_PFD
+    lac [fscOp:.]
+    farjda(fsOpenIndex:*)
+    jmp crEnd
+
+    // The write failed: the slot is freed in the handle.
+crUndo,
+    dac crS
+    lac crK
+    sal 3s
+    add [FS_HDIR+FS_DENT0]
+    add crH
+    dac crE
+    dzm i crE
+    lac crS
+    jmp crEnd
+crFull,
+    law FS_EDIRFULL
+    jmp crEnd
+crNoSp,
+    law FS_ENOSPACE
+    jmp crEnd
+crRange,
+    law FS_ERANGE
+crEnd,
+    dac crS
+    FS_SBS_RESTORE(crSbm)
+    lac crS
+    jmp i crRtn
+
+crRtn, 0
+crP, 0
+crH, 0
+crN, 0
+crI, 0
+crFd, 0
+crK, 0
+crE, 0
+crS, 0
+crSbm, 0
+endloc
+
+// The parameter blocks of this file's calls, and the packed name; global so their full
+// addresses can be taken.
+fscPb,
+    table 3
+fscNm,
+    table FS_DENAMEW
+fscFr,
+    table FS_PFIT+1
+fscOp,
+    table 3
+
+#endif

@@ -1,15 +1,16 @@
-// mtfdelete.ac -- mtfDelete: remove an open file from its tape's directory; its blocks become
+// fsdelete.ac -- fsDelete: remove an open file from its volume's directory; its blocks become
 // free.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsopen.ac. Called as fsdir.ac's entries are.
 // 10-Nov-2026, Claude: the library.
 // 11-Nov-2026, Claude: the slot's count raised, so other descriptors of the file stay refused.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfdelete.ac and renamed fs and FS_.
 
-#ifndef MTFDELETE_AC
-#define MTFDELETE_AC
+#ifndef FSDELETE_AC
+#define FSDELETE_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtfopen.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsopen.ac>
 #include <AIDS/skipmacros.ah>
 
 local dlRtn, dlFd, dlH, dlQ, dlE, dlA, dlN, dlS, dlSbm, dl1, dl2, dl3, dlBad, dlRo, dlEnd
@@ -20,41 +21,41 @@ local dlRtn, dlFd, dlH, dlQ, dlE, dlA, dlN, dlS, dlSbm, dl1, dl2, dl3, dlBad, dl
 // write error the entry is put back in the handle and the descriptor stays open. Sequence
 // breaks are off throughout and turned on again only if they were on.
 // Entry: AC = the descriptor's 16-bit address; it is the whole parameter block. Exit: AC =
-// MTF_OK, MTF_EBADFD (mtfopen.ac's mtfFdOk), MTF_EREADONLY, or the block layer's error. IO is clobbered. Called via
+// FS_OK, FS_EBADFD (fsopen.ac's fsFdOk), FS_EREADONLY, or the block layer's error. IO is clobbered. Called via
 // jda.
-mtfDelete, 0
+fsDelete, 0
     dac dlRtn
     eem
-    lac mtfDelete
+    lac fsDelete
     dac dlFd
-    MTF_SBS_OFF(dlSbm)
+    FS_SBS_OFF(dlSbm)
     lac dlFd
-    farjda(mtfFdOk:*)
+    farjda(fsFdOk:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp dlBad
     lac dlFd
-    add [MTF_FINFO]
+    add [FS_FINFO]
     dac dlQ
     lac i dlQ
-    and [MTF_IRO]
+    and [FS_IRO]
     SKIP_NEXT_IF_AC_ZERO
     jmp dlRo
 
-    // The entry, kept in mtfeSv, then cleared.
+    // The entry, kept in fseSv, then cleared.
     lac dlFd
     dac dlQ
     lac i dlQ
-    dac dlH                     // MTF_FTAPE
+    dac dlH                     // FS_FHANDLE
     idx dlQ
-    lac i dlQ                   // MTF_FSLOT
-    sal 3s                      // times MTF_ENTW
-    add [MTF_HDIR+MTF_DENT0]
+    lac i dlQ                   // FS_FSLOT
+    sal 3s                      // times FS_ENTW
+    add [FS_HDIR+FS_DENT0]
     add dlH
     dac dlE
     dac dlA
-    lac [mtfeSv:.]
+    lac [fseSv:.]
     dac dlQ
-    law i MTF_ENTW
+    law i FS_ENTW
     dac dlN
 dl1,
     lac i dlA
@@ -65,19 +66,19 @@ dl1,
     isp dlN
     jmp dl1
     lac dlH
-    farjda(mtfWrDir:*)
+    farjda(fsWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp dl2
     lac dlFd
-    add [MTF_FSLOT]
+    add [FS_FSLOT]
     dac dlQ
     lac i dlQ
-    add [MTF_HSLOTS]
+    add [FS_HSLOTS]
     add dlH
     dac dlQ
     idx i dlQ                   // the file's other descriptors are no longer valid
     lac dlFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac dlQ
     dzm i dlQ
     cla
@@ -86,9 +87,9 @@ dl1,
     // The write failed: the entry back.
 dl2,
     dac dlS
-    lac [mtfeSv:.]
+    lac [fseSv:.]
     dac dlQ
-    law i MTF_ENTW
+    law i FS_ENTW
     dac dlN
 dl3,
     lac i dlQ
@@ -100,13 +101,13 @@ dl3,
     lac dlS
     jmp dlEnd
 dlBad,
-    law MTF_EBADFD
+    law FS_EBADFD
     jmp dlEnd
 dlRo,
-    law MTF_EREADONLY
+    law FS_EREADONLY
 dlEnd,
     dac dlS
-    MTF_SBS_RESTORE(dlSbm)
+    FS_SBS_RESTORE(dlSbm)
     lac dlS
     jmp i dlRtn
 
@@ -122,7 +123,7 @@ dlSbm, 0
 endloc
 
 // The entry while it is written; global so its full address can be taken.
-mtfeSv,
-    table MTF_ENTW
+fseSv,
+    table FS_ENTW
 
 #endif

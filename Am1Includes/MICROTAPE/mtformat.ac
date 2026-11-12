@@ -1,0 +1,48 @@
+// mtformat.ac -- mtFormat: give a tape an empty directory, both copies, and mount it.
+// Include MICROTAPE/microtape.ah, then this file once, in any bank, and place that bank's
+// constants. It includes mtblock.ac and FILESYSTEM/fsformat.ac. Called as fsdir.ac's entries
+// are.
+// 12-Nov-2026, Claude: the tape's own format, setting the handle's device words, split from
+// the library's mtfformat.ac of 10-Nov-2026.
+
+#ifndef MTFORMAT_AC
+#define MTFORMAT_AC
+
+#include <MICROTAPE/microtape.ah>
+#include <MICROTAPE/mtblock.ac>
+#include <FILESYSTEM/fsformat.ac>
+
+local foRtn, foP, foH
+
+// Format a tape: the handle takes the drive and the tape's device words, then fsFormatVol
+// writes an empty directory as both copies and mounts the handle on it. Without force, a tape
+// whose blocks 1 and 2 hold another program's data is refused; a blank tape is not. Files'
+// blocks are not touched. Sequence breaks are off throughout and turned on again only if they
+// were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the drive
+// (MT_PDRIVE) and force (MT_PFORCE, nonzero to format whatever is there). Exit: AC = FS_OK,
+// FS_EFOREIGN, or the block layer's error; the handle is mounted only on FS_OK. IO is
+// clobbered. Called via jda.
+mtFormat, 0
+    dac foRtn
+    eem
+    lac mtFormat
+    dac foP
+    lac i foP
+    dac foH
+    idx foP
+    lio i foP                   // MT_PDRIVE
+    lac foH
+    farjda(mtbSetHandle:*)
+    idx foP
+    lio i foP                   // MT_PFORCE
+    lac foH
+    farjda(fsFormatVol:*)
+    jmp i foRtn
+
+foRtn, 0
+foP, 0
+foH, 0
+endloc
+
+#endif

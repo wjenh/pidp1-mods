@@ -1,27 +1,37 @@
 // mtblock.ac -- the Microtape block layer: mtbRead and mtbWrite move whole blocks of MTWDS
-// words between a drive and memory, forward, keeping the checksums. The file system uses it,
-// and a program may use it alone.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
+// words between a drive and memory, forward, keeping the checksums. A program may use it
+// alone. For the file system it also has the handle's entries, mtbHRead and mtbHWrite, which
+// mtbSetHandle puts in a handle with the drive.
+// Include MICROTAPE/microtape.ah, then this file once, in any bank, and place that bank's
 // constants. The code runs with the extend window open and reaches the caller's parameter
 // block and buffer by their 16-bit addresses. Each entry is entered by jda, farjda
-// (memory.ah) from another bank, with AC the 16-bit address of its parameter block (mtfs.ah,
-// MTB_PDRIVE to MTB_PBUF); it returns with the window open and AC the status, MTF_OK or an
-// MTF_E code. Not reentrant; not to be called from a break routine.
+// (memory.ah) from another bank, with AC the 16-bit address of its parameter block
+// (microtape.ah, MTB_PDRIVE to MTB_PBUF; for the handle's entries fs.ah, FS_BHANDLE to
+// FS_BBUF); it returns with the window open and AC the status, FS_OK or an FS_E code. Not
+// reentrant; not to be called from a break routine.
 // A call blocks until it is done and leaves the tape stopped. Sequence breaks are off
-// throughout and turned on again at the end only if they were on (MTF_SBS_RESTORE). The tape
+// throughout and turned on again at the end only if they were on (FS_SBS_RESTORE). The tape
 // is polled with mrs, as Docs/UsingType550Microtape.md's example polls it.
 // 10-Nov-2026, Claude: the library.
+// 12-Nov-2026, Claude: the handle's entries and mtbSetHandle, for the file system made
+// device-independent; its names from FILESYSTEM/fs.ah.
 
 #ifndef MTBLOCK_AC
 #define MTBLOCK_AC
 
-#include <MICROTAPE/mtfs.ah>
+#include <MICROTAPE/microtape.ah>
 #include <AIDS/skipmacros.ah>
+
+// mtbSetHandle fills the device words in order.
+assert FS_HBREAD == FS_HDEV + 1
+assert FS_HBWRITE == FS_HDEV + 2
+assert FS_HBLKS == FS_HDEV + 3
 
 local mbRtn, mbPar, mbWr, mbWm, mbDrv, mbBlk, mbCnt, mbAt, mbSbm, mbStat, mbWc, mbSum, mbBad, \
     mbTmo, mbWord, mbN, mbGo, mbRange, mbNoDrv, mbNoTape, mbExit, mbFault, mf0, mf1, mf2, \
     mf3, mbBlock, mbx, mbSeek, msx, ms1, ms2, ms3, ms4, ms5, ms6, ms7, ms8, \
-    mr1, mr2, mr3, mr4, mr5, mr7, mr8, mr9, mw1, mw2, mw3, mw4, mw5, mw6, mw7
+    mr1, mr2, mr3, mr4, mr5, mr7, mr8, mr9, mw1, mw2, mw3, mw4, mw5, mw6, mw7, \
+    hbRtn, hbPar, hbWr, hbQ, hbGo, hb1
 
 // Read blocks from a drive into memory.
 // Entry: AC = the parameter block's 16-bit address: the drive, the first block, the count
@@ -45,7 +55,7 @@ mtbWrite, 0
 
 mbGo,
     eem
-    MTF_SBS_OFF(mbSbm)
+    FS_SBS_OFF(mbSbm)
     dzm mbWm
 
     // The parameters.
@@ -165,7 +175,7 @@ mr4,
     mlc
     lac mbBad
     SKIP_NEXT_IF_AC_ZERO
-    law MTF_EBADBLOCK
+    law FS_EBADBLOCK
     jmp mbExit
 mr5,
     jsp mbBlock
@@ -253,7 +263,7 @@ mw7,
     jmp mf2
     cli
     mlc
-    law MTF_OK
+    law FS_OK
     jmp mbExit
 mw4,
     jsp mbBlock
@@ -285,17 +295,17 @@ mw6,
 // Entry: AC = the status. Reached by jmp.
 mbExit,
     dac mbStat
-    MTF_SBS_RESTORE(mbSbm)
+    FS_SBS_RESTORE(mbSbm)
     lac mbStat
     jmp i mbRtn
 mbNoDrv,
-    law MTF_ENODRIVE
+    law FS_ENOUNIT
     jmp mbExit
 mbRange,
-    law MTF_ERANGE
+    law FS_ERANGE
     jmp mbExit
 mbNoTape,
-    law MTF_ENOTAPE
+    law FS_ENOMEDIUM
     jmp mbExit
 
 // A fault: the status read before the tape is stopped, since a stop clears the errors, and
@@ -304,10 +314,10 @@ mbNoTape,
 // mf1 is entered for GO cleared, a halt; mf2 for a bad block; mbFault with AC the code.
 // Reached by jmp; ends the call.
 mf1,
-    law MTF_EHALTED
+    law FS_EHALTED
     jmp mbFault
 mf2,
-    law MTF_EBADBLOCK
+    law FS_EBADBLOCK
 mbFault,
     dac mbStat
     mrs
@@ -319,21 +329,21 @@ mbFault,
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp mf3
     lio mbWm
-    law MTF_ENOTAPE
+    law FS_ENOMEDIUM
     SKIP_NEXT_IF_IO_IS_ZERO
-    law MTF_ELOCKED
+    law FS_ELOCKED
     jmp mbExit
 mf3,
     lac mbWord
     and [mtend]
     SKIP_NEXT_IF_AC_ZERO
-    law MTF_EENDZONE
+    law FS_EENDZONE
     SKIP_NEXT_IF_AC_ZERO        // AC is still the masked status when END is not up
     jmp mbExit
     lac mbWord
     and [mtmiss]
     SKIP_NEXT_IF_AC_ZERO
-    law MTF_EBADBLOCK
+    law FS_EBADBLOCK
     SKIP_NEXT_IF_AC_ZERO
     jmp mbExit
     lac mbStat
@@ -431,8 +441,77 @@ ms8,
     jmp mf1
     isp mbTmo
     jmp ms2
-    law MTF_ETIMEOUT
+    law FS_ETIMEOUT
     jmp mbFault
+
+// The file system's entries for a tape, which a handle names (fs.ah, FS_HBREAD and
+// FS_HBWRITE): blocks of the handle's drive, through mtbRead or mtbWrite. The tape is the
+// whole volume, so their range check is the volume's.
+// Entry: AC = an FS_B parameter block's 16-bit address: the handle, the first block, the count
+// and the buffer's 16-bit address. Exit: as mtbRead's. IO is clobbered. Called via jda,
+// through fsBRead or fsBWrite.
+mtbHRead, 0
+    dac hbRtn
+    lac mtbHRead
+    dac hbPar
+    dzm hbWr
+    jmp hbGo
+mtbHWrite, 0
+    dac hbRtn
+    lac mtbHWrite
+    dac hbPar
+    law 1
+    dac hbWr
+hbGo,
+    eem
+    lac i hbPar                 // FS_BHANDLE
+    dac hbQ
+    lac i hbQ                   // FS_HUNIT, the drive
+    dac mtbhPb+MTB_PDRIVE
+    idx hbPar
+    lac i hbPar
+    dac mtbhPb+MTB_PBLOCK
+    idx hbPar
+    lac i hbPar
+    dac mtbhPb+MTB_PCOUNT
+    idx hbPar
+    lac i hbPar
+    dac mtbhPb+MTB_PBUF
+    lac [mtbhPb:.]
+    lio hbWr
+    sni                         // skip if writing
+    jmp hb1
+    jda mtbWrite
+    jmp i hbRtn
+hb1,
+    jda mtbRead
+    jmp i hbRtn
+
+// Set a handle for a tape: the drive, the device, the entries above, and the tape's blocks as
+// the volume's. mtMount and mtFormat call it; a program moving blocks through fsBRead and
+// fsBWrite without a mount may call it too. The drive is checked at the first transfer.
+// Entry: AC = the handle's 16-bit address, IO = the drive, 1-8. Exit: AC is clobbered, IO is
+// preserved. Called via jda.
+mtbSetHandle, 0
+    dac hbRtn
+    eem
+    lac mtbSetHandle
+    dac hbQ
+    dio i hbQ                   // FS_HUNIT
+    add [FS_HDEV]
+    dac hbQ
+    law FS_DEVMT
+    dac i hbQ
+    idx hbQ
+    lac [mtbHRead:.]
+    dac i hbQ
+    idx hbQ
+    lac [mtbHWrite:.]
+    dac i hbQ
+    idx hbQ
+    lac [MTBLKS]
+    dac i hbQ                   // FS_HBLKS
+    jmp i hbRtn
 
 mbRtn, 0
 mbPar, 0
@@ -450,6 +529,15 @@ mbBad, 0
 mbTmo, 0
 mbWord, 0
 mbN, 0
+hbRtn, 0
+hbPar, 0
+hbWr, 0
+hbQ, 0
 endloc
+
+// mtbRead's parameter block for the handle's entries, MTB_PW words; global so its full address
+// can be taken.
+mtbhPb,
+    table MTB_PW
 
 #endif

@@ -1,25 +1,27 @@
-// mtfio.ac -- mtfRead, mtfWrite and mtfSeek: words between an open file and memory, from the
+// fsio.ac -- fsRead, fsWrite and fsSeek: words between an open file and memory, from the
 // file's position, which then advances.
-// Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
-// constants. It includes mtfopen.ac. Called as mtfdir.ac's entries are.
-// A transfer moves whole blocks straight between the tape and the caller's buffer; a part of
-// a block at either end goes through the tape handle's block buffer, read first and, for a
-// write, changed and written back. So a transfer is at most three passes of the tape.
+// Include FILESYSTEM/fs.ah, then this file once, in any bank, and place that bank's
+// constants. It includes fsopen.ac. Called as fsdir.ac's entries are.
+// A transfer moves whole blocks straight between the volume and the caller's buffer; a part of
+// a block at either end goes through the handle's block buffer, read first and, for a
+// write, changed and written back. So a transfer is at most three transfers.
 // 10-Nov-2026, Claude: the library.
+// 12-Nov-2026, Claude: moved here from MICROTAPE/mtfio.ac and renamed fs and FS_; blocks move
+// through fsblock.ac.
 
-#ifndef MTFIO_AC
-#define MTFIO_AC
+#ifndef FSIO_AC
+#define FSIO_AC
 
-#include <MICROTAPE/mtfs.ah>
-#include <MICROTAPE/mtfopen.ac>
+#include <FILESYSTEM/fs.ah>
+#include <FILESYSTEM/fsopen.ac>
 #include <AIDS/skipmacros.ah>
 
 // The position splits into a block and an offset by shifts of 8.
-assert MTWDS == 0400
-assert MTF_FALLOC == MTF_FFIRST + 1
-assert MTF_FLEN == MTF_FFIRST + 2
-assert MTF_FPOS == MTF_FFIRST + 3
-assert MTF_FINFO == MTF_FFIRST + 4
+assert FS_BLKW == 0400
+assert FS_FALLOC == FS_FFIRST + 1
+assert FS_FLEN == FS_FFIRST + 2
+assert FS_FPOS == FS_FFIRST + 3
+assert FS_FINFO == FS_FFIRST + 4
 
 local ioRtn, ioP, ioWr, ioFd, ioH, ioBuf, ioRem, ioFirst, ioAlloc, ioLen, ioPos, ioInfo, \
     ioDone, ioBlk, ioOff, ioK, ioM, ioN, ioA, ioB, ioXb, ioDir, ioQ, ioS, ioSbm, ioGo, \
@@ -28,34 +30,34 @@ local ioRtn, ioP, ioWr, ioFd, ioH, ioBuf, ioRem, ioFirst, ioAlloc, ioLen, ioPos,
 
 // Read words from the position: the count asked for, or fewer where the file's length ends
 // first, as C's read.
-// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC), the buffer's
-// 16-bit address (MTF_PBUF) and the count (MTF_PCOUNT, at least 0). Exit: AC = MTF_OK,
-// MTF_EBADFD, MTF_ERANGE for a negative count, or the block layer's error; IO = the words
+// Entry: AC = the parameter block's 16-bit address: the descriptor (FS_PFDESC), the buffer's
+// 16-bit address (FS_PBUF) and the count (FS_PCOUNT, at least 0). Exit: AC = FS_OK,
+// FS_EBADFD, FS_ERANGE for a negative count, or the block layer's error; IO = the words
 // read, by which the position has advanced. Sequence breaks are off throughout and turned on
 // again only if they were on. Called via jda.
-mtfRead, 0
+fsRead, 0
     dac ioRtn
     eem
-    lac mtfRead
+    lac fsRead
     dac ioP
     dzm ioWr
     jmp ioGo
 
 // Write words at the position, which may lengthen the file up to its allocation; a write
 // that would go past it is refused whole. A lengthened file's entry is written at its close.
-// Entry: as mtfRead's. Exit: AC = MTF_OK, MTF_EBADFD, MTF_EREADONLY, MTF_ERANGE for a
+// Entry: as fsRead's. Exit: AC = FS_OK, FS_EBADFD, FS_EREADONLY, FS_ERANGE for a
 // negative count or one past the allocation, or the block layer's error; IO = the words
-// written, by which the position has advanced. Sequence breaks as mtfRead's. Called via jda.
-mtfWrite, 0
+// written, by which the position has advanced. Sequence breaks as fsRead's. Called via jda.
+fsWrite, 0
     dac ioRtn
     eem
-    lac mtfWrite
+    lac fsWrite
     dac ioP
     law 1
     dac ioWr
 
 ioGo,
-    MTF_SBS_OFF(ioSbm)
+    FS_SBS_OFF(ioSbm)
     dzm ioDone
     lac i ioP
     dac ioFd
@@ -66,15 +68,15 @@ ioGo,
     lac i ioP
     dac ioRem
     lac ioFd
-    farjda(mtfFdOk:*)
+    farjda(fsFdOk:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp ioBadFd
     lac ioFd
     dac ioQ
     lac i ioQ
-    dac ioH                     // MTF_FTAPE
+    dac ioH                     // FS_FHANDLE
     lac ioFd
-    add [MTF_FFIRST]
+    add [FS_FFIRST]
     dac ioQ
     lac i ioQ
     dac ioFirst
@@ -99,11 +101,11 @@ ioGo,
 
     // A write: not read-only, and all of it within the allocation.
     lac ioInfo
-    and [MTF_IRO]
+    and [FS_IRO]
     SKIP_NEXT_IF_AC_ZERO
     jmp ioRo
     lac ioAlloc
-    sal 8s                      // times MTWDS
+    sal 8s                      // times FS_BLKW
     sub ioPos
     sub ioRem
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
@@ -131,16 +133,16 @@ ioLoop,
     add ioFirst
     dac ioBlk
     lac ioPos
-    and [MTWDS-1]
+    and [FS_BLKW-1]
     dac ioOff
     SKIP_NEXT_IF_AC_ZERO
     jmp ioPart
     lac ioRem
-    sub [MTWDS]
+    sub [FS_BLKW]
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp ioPart
 
-    // Whole blocks, straight between the tape and the caller's buffer.
+    // Whole blocks, straight between the volume and the caller's buffer.
     lac ioRem
     sar 8s
     dac ioK
@@ -157,7 +159,7 @@ ioLoop,
 
     // Part of one block, ioM words at ioOff, through the handle's block buffer.
 ioPart,
-    lac [MTWDS]
+    lac [FS_BLKW]
     sub ioOff
     dac ioM
     sub ioRem
@@ -167,7 +169,7 @@ ioPart,
     dac ioM
 io2,
     lac ioH
-    add [MTF_HBUF]
+    add [FS_HBUF]
     dac ioXb
     law 1
     dac ioK
@@ -229,7 +231,7 @@ ioOk,
 ioErr,
     dac ioS
     lac ioFd
-    add [MTF_FPOS]
+    add [FS_FPOS]
     dac ioQ
     lac ioPos
     dac i ioQ
@@ -241,66 +243,64 @@ ioErr,
     sma sza i                   // skip if past the length
     jmp ioEnd
     lac ioFd
-    add [MTF_FLEN]
+    add [FS_FLEN]
     dac ioQ
     lac ioPos
     dac i ioQ
     lac ioFd
-    add [MTF_FFLAGS]
+    add [FS_FFLAGS]
     dac ioQ
     lac i ioQ
-    ior [MTF_FCHANGED]
+    ior [FS_FCHANGED]
     dac i ioQ
 ioEnd,
-    MTF_SBS_RESTORE(ioSbm)
+    FS_SBS_RESTORE(ioSbm)
     lio ioDone
     lac ioS
     jmp i ioRtn
 ioBadFd,
-    law MTF_EBADFD
+    law FS_EBADFD
     dac ioS
     jmp ioEnd
 ioRo,
-    law MTF_EREADONLY
+    law FS_EREADONLY
     jmp ioErr
 ioRange,
-    law MTF_ERANGE
+    law FS_ERANGE
     jmp ioErr
 
 // Move ioK blocks from block ioBlk to or from the 16-bit address ioXb, written when ioDir is
-// nonzero, else read, on the handle ioH's drive.
+// nonzero, else read, on the handle ioH's volume.
 // Exit: AC = the block layer's status. IO is clobbered. Called via jsp.
 ioXfer,
     dap ixx
     lac ioH
-    dac ioQ
-    lac i ioQ                   // MTF_HDRIVE
-    dac mtfiPb+MTB_PDRIVE
+    dac fsiPb+FS_BHANDLE
     lac ioBlk
-    dac mtfiPb+MTB_PBLOCK
+    dac fsiPb+FS_BBLOCK
     lac ioK
-    dac mtfiPb+MTB_PCOUNT
+    dac fsiPb+FS_BCOUNT
     lac ioXb
-    dac mtfiPb+MTB_PBUF
-    lac [mtfiPb:.]
+    dac fsiPb+FS_BBUF
+    lac [fsiPb:.]
     lio ioDir
     sni                         // skip if writing
     jmp ix1
-    farjda(mtbWrite:*)
+    farjda(fsBWrite:*)
     jmp ixx
 ix1,
-    farjda(mtbRead:*)
+    farjda(fsBRead:*)
 ixx,
     jmp .
 
 // Set the position. Past the length is refused, so a file has no unwritten words inside it.
-// Entry: AC = the parameter block's 16-bit address: the descriptor (MTF_PFDESC) and the
-// position (MTF_PPOS). Exit: AC = MTF_OK, MTF_EBADFD, or MTF_ERANGE for a position below 0 or
-// past the length. IO is clobbered. Called via jda. It does not move the tape.
-mtfSeek, 0
+// Entry: AC = the parameter block's 16-bit address: the descriptor (FS_PFDESC) and the
+// position (FS_PPOS). Exit: AC = FS_OK, FS_EBADFD, or FS_ERANGE for a position below 0 or
+// past the length. IO is clobbered. Called via jda. It does not touch the device.
+fsSeek, 0
     dac skRtn
     eem
-    lac mtfSeek
+    lac fsSeek
     dac ioP
     lac i ioP
     dac ioFd
@@ -308,29 +308,29 @@ mtfSeek, 0
     lac i ioP
     dac ioPos
     lac ioFd
-    farjda(mtfFdOk:*)
+    farjda(fsFdOk:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp skBad
     lac ioPos
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp skRange
     lac ioFd
-    add [MTF_FLEN]
+    add [FS_FLEN]
     dac ioQ
     lac i ioQ
     sub ioPos
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp skRange
-    idx ioQ                     // MTF_FPOS
+    idx ioQ                     // FS_FPOS
     lac ioPos
     dac i ioQ
     cla
     jmp skRet
 skBad,
-    law MTF_EBADFD
+    law FS_EBADFD
     jmp skRet
 skRange,
-    law MTF_ERANGE
+    law FS_ERANGE
 skRet,
     jmp i skRtn
 
@@ -364,7 +364,7 @@ endloc
 
 // The block layer's parameter block for this file's transfers; global so its full address can
 // be taken.
-mtfiPb,
-    table MTB_PW
+fsiPb,
+    table FS_BW
 
 #endif

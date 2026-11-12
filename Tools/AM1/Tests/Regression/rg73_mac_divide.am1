@@ -1,0 +1,17 @@
+Test rg73: -m writes the word the tape gets for a division
+// run_regression.sh assembles this with -m and requires each word in
+// the .mac to be the .ref's, in order:
+// 777775 777776 777773 777774 3 777775 777773 777776 110
+// So the lines from the origin to the hlt hold no comments.
+100/
+    -4/2
+    -3/2
+    4/-1
+    7/-2
+    -7/-2
+    ~4/2
+    4/~1
+    -7%2
+    (0d1024-0d12)/0d14
+    hlt
+start 100

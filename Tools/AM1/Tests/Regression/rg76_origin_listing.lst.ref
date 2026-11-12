@@ -1,0 +1,21 @@
+Test rg76: an origin with a statement after it, in the listing
+   2: 000004 760200 cla
+   3: 000005        100/
+   3: 000100 200005 lac 5
+   4: 000101        101/;
+   4: 000101 200006 lac 6
+   5: 000102        102/
+      // a comment after the origin
+   6: 000102 760200 cla;
+   6: 000103        103/
+   6: 000103 760400 hlt
+   7: 000104 760200 cla;
+   7: 000105        105/
+   8: 000105 760000 nop
+   9: 000106        106/
+   9: 000106        107/
+   9: 000107 761000 cma
+  10: 000110        110/
+      // a comment against the slash
+  11: 000110 760400 hlt
+start 4

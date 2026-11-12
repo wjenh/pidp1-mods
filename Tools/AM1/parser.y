@@ -39,6 +39,8 @@ static int pendingLabelLine;
 // The varname rules record it, setVarsPC() placing the var later leaves it alone.
 int nameTokenLine;
 int nameTokenSrcLine;
+int divTokenSrcLine;        // the line of the last / or % the lexer returned, for setOpSource()
+int originTokenSrcLine;     // the line of the last origin the lexer returned
 // The start statement's line, and whether its operand is being parsed.
 static int startLine;
 static bool inStart;
@@ -157,6 +159,7 @@ void vwarnl(int errType, int lineno, const char *msgP, ...);
 void verrorl(int lineno, const char *msgP, ...);
 void verrorlf(int lineno, const char *fileNameP, const char *msgP, ...);
 void setRefSource(PNodeP nodeP);
+static void setOpSource(PNodeP nodeP);
 static int tableCount(PNodeP exprP, int line);
 bool lexAfterSemi(void);        // lexer.l: a ';' has been scanned on this line
 
@@ -638,7 +641,8 @@ one_stmt        : expr
                 | simple_expr ORIGIN
                 {
                     refuseInOverlay("an origin");
-                    $$ = newnode(lineno, curBankP->cur_pc, ORIGIN, NILP, NILP);
+                    // newnode() takes one off the line it is given
+                    $$ = newnode(originTokenSrcLine + 1, curBankP->cur_pc, ORIGIN, NILP, NILP);
                     bankOrigin(curBankP, evalExpr($1));
                     $$->value.ival = curBankP->cur_pc;
                     $$->exprP = $1;         // relayout holds the value and reads this
@@ -1067,6 +1071,7 @@ terminator      : terminators
                 | SEMI
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, SEMI, NILP, NILP);
+                    $$->value.ival = $<ival>1;    // 1: the lexer's, after an origin, not the source's
                 }
                 | COMMENT
                 {
@@ -1184,8 +1189,8 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 | simple_expr PLUS simple_expr     { $$ = binop(lineno, curBankP->cur_pc, PLUS, $1, $3); }
                 | simple_expr MINUS simple_expr    { $$ = binop(lineno, curBankP->cur_pc, MINUS, $1, $3); }
                 | simple_expr MUL simple_expr      { $$ = binop(lineno, curBankP->cur_pc, MUL, $1, $3); }
-                | simple_expr DIV simple_expr      { $$ = binop(lineno, curBankP->cur_pc, DIV, $1, $3); }
-                | simple_expr MOD simple_expr      { $$ = binop(lineno, curBankP->cur_pc, MOD, $1, $3); }
+                | simple_expr DIV simple_expr      { $$ = binop(lineno, curBankP->cur_pc, DIV, $1, $3); setOpSource($$); }
+                | simple_expr MOD simple_expr      { $$ = binop(lineno, curBankP->cur_pc, MOD, $1, $3); setOpSource($$); }
                 | simple_expr AND simple_expr      { $$ = binop(lineno, curBankP->cur_pc, AND, $1, $3); }
                 | simple_expr OR simple_expr       { $$ = binop(lineno, curBankP->cur_pc, OR, $1, $3); }
                 | simple_expr XOR simple_expr      { $$ = binop(lineno, curBankP->cur_pc, XOR, $1, $3); }
@@ -1217,7 +1222,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, OPORABLE, NILP, NILP);
                     $$->value.symP = $1;
-                    if( doMacro && ($1->flags & SYMF_1DOP) )
+                    if( $1->flags & SYMF_1DOP )
                     {
                         vwarn(WARN_1D, "%s is a PDP-1D instruction", $1->name );
                     }
@@ -2331,6 +2336,16 @@ void
 setRefSource(PNodeP nodeP)
 {
     nodeP->srcLine = nameTokenSrcLine;
+    nodeP->srcFileP = (char *)internFileName(filenameP);
+}
+
+// Record where a / or % was written, for evalExpr's error if its divisor is 0,
+// which may come after the parse.  The operator is on its operands' line, and
+// an expression never spans a line, so the last / or % scanned is on it too.
+static void
+setOpSource(PNodeP nodeP)
+{
+    nodeP->srcLine = divTokenSrcLine;
     nodeP->srcFileP = (char *)internFileName(filenameP);
 }
 

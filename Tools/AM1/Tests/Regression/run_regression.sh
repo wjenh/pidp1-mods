@@ -878,6 +878,129 @@ rg71_left opt_ok     '    0\n'                                    0 "opt rim" -O
 rg71_left opt_over   '    0\n100/\n    1\n'                        1 "opt rim" -O -b
 echo ""
 
+# rg72: a slash with no blank before it divides whatever its right operand
+# starts with, "a/(b)", "a/-b", "a/~b", "a/'c'" and "a/." among them, in a
+# statement, a literal and an assert; a blank after it in a statement that is
+# not bare still divides, and in one that is, the origin is followed by its
+# statement whatever that starts with.  Its .ref is derived by hand, in its
+# comments.  The divisor defined later checks the literal pool's hash, which
+# divided by the hash of an undefined name and trapped.
+run_test rg72_slash_divide         "$SCRIPT_DIR/rg72_slash_divide.am1"
+
+# rg73: -m writes a division as the word the tape gets, a negative operand's
+# included, not its two words divided as unsigned.  Every word from the .mac,
+# in order, must be the .ref's, less its hlt and start, and the .ref must be
+# the one rg73's source lists, or the comparison would agree with a wrong .ref.
+run_test rg73_mac_divide           "$SCRIPT_DIR/rg73_mac_divide.am1"
+rm -f rg73_mac_divide.mac
+"$AM1" -m -I"$SCRIPT_DIR" "$SCRIPT_DIR/rg73_mac_divide.am1" > "$WORK/rg73_m.log" 2>&1
+got="$(sed -n '/^100\//,/hlt/p' rg73_mac_divide.mac 2>/dev/null | sed '1d;$d' | awk '{ print $1 }' | tr '\n' ' ')"
+want="$(sed '$d' "$SCRIPT_DIR/rg73_mac_divide.ref" | sed '$d' | awk '{ print $2 }' | sed 's/^0*\(.\)/\1/' | tr '\n' ' ')"
+if [ "$want" != "777775 777776 777773 777774 3 777775 777773 777776 110 " ]; then
+    echo "FAIL:  rg73_mac_words (rg73_mac_divide.ref is not the words its source lists: $want)"
+    fail=$((fail+1))
+    FAILURES+=("rg73_mac_words")
+elif [ "$got" = "$want" ]; then
+    echo "PASS:  rg73_mac_words"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg73_mac_words (the .mac has \"$got\", the tape \"$want\")"
+    sed 's/^/       /' "$WORK/rg73_m.log"
+    fail=$((fail+1))
+    FAILURES+=("rg73_mac_words")
+fi
+
+# rg74: a divisor or modulus of 0, or of -0, is an error naming its own line
+# and file, from the binary and the macro1 back ends, wherever the division
+# is: a statement, a literal, an assert, an origin, a var's initializer, after
+# a ';', in an include, and with a divisor that is 0 only once a name defined
+# later is known.  Before, am1 died on the host's divide trap with no message,
+# which the --xmsg of each leg refuses.
+printf '    0\n    4%%(2-2)\n' > "$WORK/rg74_inc.ah"
+rg74_case() {   # leg name, body (lines 3 on), the message, flags...
+    local name=$1 body=$2 msg=$3
+    shift 3
+    printf 'Test rg74: %s\n100/\n%b    hlt\nstart 100\n' "$name" "$body" > "$WORK/rg74_$name.am1"
+    run_test rg74_$name "$WORK/rg74_$name.am1" "$@" --xfail --xmsg "$msg"
+}
+for be in bin mac; do
+    flags=()
+    [ "$be" = mac ] && flags=(-m)
+    rg74_case div_$be       '    4/0\n'                    "division by zero at line 3, file $WORK/rg74_div_$be.am1" "${flags[@]}"
+    rg74_case mod_$be       '    4%0\n'                    "modulo by zero at line 3, file $WORK/rg74_mod_$be.am1" "${flags[@]}"
+    rg74_case minus0_$be    '    0\n    4/~0\n'            "division by zero at line 4, file $WORK/rg74_minus0_$be.am1" "${flags[@]}"
+    rg74_case expr_$be      '    0\n    lac 4/(1-1)\n'     "division by zero at line 4, file $WORK/rg74_expr_$be.am1" "${flags[@]}"
+    rg74_case literal_$be   '    lac [4%~0]\n'             "modulo by zero at line 3, file $WORK/rg74_literal_$be.am1" "${flags[@]}"
+    rg74_case assert_$be    '    0\nassert 4/0 == 1\n'     "division by zero at line 4, file $WORK/rg74_assert_$be.am1" "${flags[@]}"
+    rg74_case origin_$be    '    0\n4/0/\n'                "division by zero at line 4, file $WORK/rg74_origin_$be.am1" "${flags[@]}"
+    rg74_case var_$be       '    var a, b=4/0\n    variables\n' "division by zero at line 3, file $WORK/rg74_var_$be.am1" "${flags[@]}"
+    rg74_case semi_$be      '    0; 4/0\n'                 "division by zero at line 3, file $WORK/rg74_semi_$be.am1" "${flags[@]}"
+    rg74_case later_$be     '    0\n    4/(z-z)\nz,  0\n'  "division by zero at line 4, file $WORK/rg74_later_$be.am1" "${flags[@]}"
+    rg74_case include_$be   '#include "rg74_inc.ah"\n'     "modulo by zero at line 2, file $WORK/rg74_inc.ah" "${flags[@]}"
+done
+echo ""
+
+# rg75: "100/// c", a slash with no blank before it and then a comment, at the
+# end of a bare statement's first expression is an origin, and the comment
+# follows it; "200// c", "300//* c */" and a statement that is not bare stay a
+# word.  Before, every one was a word.  Its .ref is derived by hand, in its
+# comments.
+run_test rg75_origin_comment       "$SCRIPT_DIR/rg75_origin_comment.am1"
+
+# rg76: an origin with a statement or a comment after it is listed on its own
+# line's number, with no line holding only a ';' the source does not have, and
+# an origin ending a line after a ';' counts that line once.  The words are
+# checked by its .ref, the listing by rg76_origin_listing.lst.ref.
+run_test rg76_origin_listing       "$SCRIPT_DIR/rg76_origin_listing.am1"
+rm -f rg76_origin_listing.lst
+"$AM1" -l -I"$SCRIPT_DIR" "$SCRIPT_DIR/rg76_origin_listing.am1" > "$WORK/rg76_l.log" 2>&1
+if [ ! -f rg76_origin_listing.lst ]; then
+    echo "FAIL:  rg76_listing (the -l run wrote no .lst)"
+    sed 's/^/       /' "$WORK/rg76_l.log"
+    fail=$((fail+1))
+    FAILURES+=("rg76_listing")
+elif diff -q rg76_origin_listing.lst "$SCRIPT_DIR/rg76_origin_listing.lst.ref" > /dev/null 2>&1; then
+    echo "PASS:  rg76_listing"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg76_listing (the listing differs from rg76_origin_listing.lst.ref)"
+    echo "       < stored .lst.ref, > generated now"
+    diff "$SCRIPT_DIR/rg76_origin_listing.lst.ref" rg76_origin_listing.lst | sed 's/^/       /'
+    fail=$((fail+1))
+    FAILURES+=("rg76_listing")
+fi
+echo ""
+
+# rg77: -m writes each comment whole, broken at blanks into lines of at most 72
+# columns, and writes block comments too.  The words are checked by its .ref,
+# the .mac by rg77_mac_comments.mac.ref, and the width on its own as well, so a
+# .mac.ref made again from a wrong am1 cannot pass it.
+run_test rg77_mac_comments         "$SCRIPT_DIR/rg77_mac_comments.am1"
+rm -f rg77_mac_comments.mac
+"$AM1" -m -I"$SCRIPT_DIR" "$SCRIPT_DIR/rg77_mac_comments.am1" > "$WORK/rg77_m.log" 2>&1
+wide="$(grep '/ ' rg77_mac_comments.mac 2>/dev/null | expand -t 8 | awk 'length($0) > 72')"
+if [ ! -f rg77_mac_comments.mac ]; then
+    echo "FAIL:  rg77_mac (the -m run wrote no .mac)"
+    sed 's/^/       /' "$WORK/rg77_m.log"
+    fail=$((fail+1))
+    FAILURES+=("rg77_mac")
+elif [ -n "$wide" ]; then
+    echo "FAIL:  rg77_mac (comment lines wider than 72 columns)"
+    echo "$wide" | sed 's/^/       /'
+    fail=$((fail+1))
+    FAILURES+=("rg77_mac")
+elif diff -q rg77_mac_comments.mac "$SCRIPT_DIR/rg77_mac_comments.mac.ref" > /dev/null 2>&1; then
+    echo "PASS:  rg77_mac"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg77_mac (the .mac differs from rg77_mac_comments.mac.ref)"
+    echo "       < stored .mac.ref, > generated now"
+    diff "$SCRIPT_DIR/rg77_mac_comments.mac.ref" rg77_mac_comments.mac | sed 's/^/       /'
+    fail=$((fail+1))
+    FAILURES+=("rg77_mac")
+fi
+echo ""
+
 # Not a failure: an --xfail test never gets far enough to have words to
 # compare, and rg34 is checked through its listing instead. It is printed so a
 # new test cannot quietly join the suite with nothing but an exit code behind

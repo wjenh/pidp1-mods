@@ -172,6 +172,13 @@ SymNodeP symP;
         // Math operator, handle the one's cmpl adjustments
         lval = twosComplAdj(lval);
         rval = twosComplAdj(rval);
+
+        // -0 is 0 here too, and either is the program's error, not the host's trap
+        if( (rval == 0) && ((op == DIV) || (op == MOD)) )
+        {
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, (op == DIV)?"division by zero":"modulo by zero");
+        }
+
         switch( op )
         {
         case DIV:
@@ -409,14 +416,17 @@ SymNodeP symP;
         hirval = rval & ~0777777;
         rval &= 0777777;
 
+        // A divisor of 0 here may be a name not yet defined, whose hash has no low bits,
+        // so it is not an error.  Any fixed value will do: the key's text tells such
+        // literals apart, and evaluating a true zero divisor reports it.
         switch( nodeP->value.ival )
         {
         case DIV:
-            partial = onesComplAdj(twosComplAdj(lval) / twosComplAdj(rval));
+            partial = (twosComplAdj(rval) == 0)?0:onesComplAdj(twosComplAdj(lval) / twosComplAdj(rval));
             break;
 
         case MOD:
-            partial = onesComplAdj(twosComplAdj(lval) % twosComplAdj(rval));
+            partial = (twosComplAdj(rval) == 0)?0:onesComplAdj(twosComplAdj(lval) % twosComplAdj(rval));
             break;
 
         case PLUS:

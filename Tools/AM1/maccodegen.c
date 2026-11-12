@@ -2,6 +2,8 @@
  * Process a parse tree to generate macro source output.
 */
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
@@ -12,6 +14,14 @@
 #include "type340chars.h"
 
 #define LOADER_HALT 07772       // the halt instruction in our loader, keep in sync with xldr
+
+// macro1 reads at most 94 characters of a line and assembles the rest as a line of its own,
+// so a comment is wrapped well inside that: no comment line is wider than this, the whole
+// line counted, the statement before a trailing comment included.
+#define MACLINEWIDTH 72
+#define MACTABSTOP 8            // a tab moves to the next multiple of this column
+
+static int macColumn;           // the column the next character written to the .mac lands in
 
 extern bool sawBank;
 extern bool ignoreAsserts;
@@ -30,17 +40,24 @@ static void emitText(FILE *outfP, FlexText flexText);
 static void emitVars(FILE *outfP, PNodeListP listP);
 static int emitConstants(FILE *outfP, SymNodeP nodeP);
 static void emitOverlayDirective(FILE *outfP, PNodeP nodeP);
+static void emitCommentText(FILE *outfP, const char *strP, bool ownLine);
+static void emitComment(FILE *outfP, const char *textP, int len, bool trailing);
+static void emitBlockComment(FILE *outfP, const char *textP);
+static const char *commentLineEnd(const char *textP, const char *endP, int col);
+static int nextColumn(int col, char ch);
+static void macPrintf(FILE *outfP, const char *fmtP, ...) __attribute__((format(printf, 2, 3)));
 
 extern void verror(char *msgP, ...);
 extern void verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...);
 
-// Walk a tree and emit equivalent macro1 code.
-void
+// Walk a tree and emit equivalent macro1 code.  Returns 1; an error exits through verror().
+int
 macCodegen(FILE *outfP, PNodeP rootP)
 {
     // The root is a HEADER.
     // The root lhs is the program body, the rhs the START or STOP at the end of the program.
-    fprintf(outfP,"%s\n", rootP->value.strP);
+    macColumn = 0;
+    macPrintf(outfP,"%s\n", rootP->value.strP);
     emitStatements(outfP, rootP->leftP);
 
     // Finish any trailing constants and vars
@@ -48,15 +65,15 @@ macCodegen(FILE *outfP, PNodeP rootP)
     {
         if( bankP->constSymP )
         {
-            fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
-            fprintf(outfP, "%o/\n", bankP->constPC);
+            macPrintf(outfP, "/ Constants for bank %d\n", bankP->bank);
+            macPrintf(outfP, "%o/\n", bankP->constPC);
             emitConstants(outfP, bankP->constSymP);
         }
 
         if( bankP->varNodesP )
         {
-            fprintf(outfP, "/ Vars for bank %d\n", bankP->bank);
-            fprintf(outfP, "%o/\n", bankP->varPC);
+            macPrintf(outfP, "/ Vars for bank %d\n", bankP->bank);
+            macPrintf(outfP, "%o/\n", bankP->varPC);
             emitVars(outfP, bankP->varNodesP);
         }
     }
@@ -68,12 +85,14 @@ macCodegen(FILE *outfP, PNodeP rootP)
             fprintf(stderr,"am1: WARNING: stop is not supported by macro1, replacing with a jump to hlt\n");
         }
 
-        fprintf(outfP,"start %o\n", LOADER_HALT);
+        macPrintf(outfP,"start %o\n", LOADER_HALT);
     }
     else
     {
-        fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
+        macPrintf(outfP,"start %o\n", rootP->rightP->value.ival);
     }
+
+    return(1);
 }
 
 static void
@@ -83,64 +102,44 @@ int i, j;
 PNodeP node2P;
 PNodeP prevP = NILP;    // the node before this one, for EMPTYLINE
 bool noNl = false;
-bool sawTerm = true;    // because we just output the header, which terminated its line
 char *cP;
-char str[128];
 
     while( nodeP )
     {
         switch( nodeP->type )
         {
         case COMMENT:
-            if( !sawTerm )
-            {
-                // silly macro needs a tab
-                fprintf(outfP,"\t");
-            }
+            emitCommentText(outfP, nodeP->value.strP, ((nodeP->flags & PN_SOL) != 0));
+            break;
 
-            cP = nodeP->value.strP;
-            while( isspace(*cP) )
-            {
-                ++cP;           // dump leading spaces
-            }
-
-            if( strlen(cP) > 70 )
-            {
-                // macro screws up on long lines
-                strncpy(str, cP, 70);
-                cP[71] = 0;
-                fprintf(outfP, "/ %s\n", str);
-                fprintf(outfP, "/ %s\n", cP + 70);
-            }
-            else
-            {
-                fprintf(outfP, "/ %s\n", cP);
-            }
+        case CSCOMMENT:
+            emitBlockComment(outfP, nodeP->value.strP);
+            noNl = true;        // the lexer's newline after the "*/" is the comment's own
             break;
 
         case ORIGIN:
-            fprintf(outfP, "%o/", nodeP->value.ival);
+            macPrintf(outfP, "%o/", nodeP->value.ival);
             if( nodeP->rightP )
             {
-                fprintf(outfP," ");
+                macPrintf(outfP," ");
                 emitOperand(outfP, nodeP->rightP);
             }
             else
             {
-                fprintf(outfP, "\n");
+                macPrintf(outfP, "\n");
             }
             break;
 
         case EXPR:
-            fprintf(outfP, "    ");
+            macPrintf(outfP, "    ");
             emitOperand(outfP, nodeP->rightP);
             break;
 
         case LOCATION:
-            fprintf(outfP, "%s,", nodeP->value.symP->name);
+            macPrintf(outfP, "%s,", nodeP->value.symP->name);
             if( nodeP->rightP )
             {
-                fprintf(outfP," ");
+                macPrintf(outfP," ");
                 // TEXT/ASCII/TYPE340 right children come from labelTrailer
                 // matching a text directive on the same line as the label.
                 // They cannot be passed to emitOperand, so dispatch to the
@@ -166,7 +165,7 @@ char str[128];
         case LCLLOCATION:
             if( nodeP->rightP )
             {
-                fprintf(outfP, "    ");
+                macPrintf(outfP, "    ");
                 // Same TEXT/ASCII/TYPE340 handling as LOCATION above.
                 switch( nodeP->rightP->type )
                 {
@@ -187,7 +186,7 @@ char str[128];
             break;
 
         case VARS:
-            fprintf(outfP,"/ variables\n");
+            macPrintf(outfP,"/ variables\n");
             emitVars(outfP, (PNodeListP)(nodeP->value.ptr));
             break;
 
@@ -197,7 +196,7 @@ char str[128];
                 fprintf(stderr,"am1: WARNING: banks are not supported by macro1!\n");
             }
 
-            fprintf(outfP,"/ BANK - following is in bank %d\n", nodeP->value.ival );
+            macPrintf(outfP,"/ BANK - following is in bank %d\n", nodeP->value.ival );
             noNl = true;
             break;
 
@@ -209,33 +208,33 @@ char str[128];
             break;
 
         case CONSTANTS:
-            fprintf(outfP,"/ constants\n");
+            macPrintf(outfP,"/ constants\n");
             emitConstants(outfP, nodeP->value.symP);
             break;
 
         case TEXT:
-            fprintf(outfP, "/ Text table\n");
+            macPrintf(outfP, "/ Text table\n");
             emitText(outfP, nodeP->value.flexText);
-            fprintf(outfP, "/ End\n");
+            macPrintf(outfP, "/ End\n");
             noNl = true;
             break;
 
         case ASCII:
-            fprintf(outfP, "/ Ascii table\n");
+            macPrintf(outfP, "/ Ascii table\n");
             emitAscii(outfP, nodeP->value.strP);
-            fprintf(outfP, "/ End\n");
+            macPrintf(outfP, "/ End\n");
             noNl = true;
             break;
 
         case TYPE340:
-            fprintf(outfP, "/ Type 340 character table\n");
+            macPrintf(outfP, "/ Type 340 character table\n");
             emitText(outfP, nodeP->value.flexText);
-            fprintf(outfP, "/ End\n");
+            macPrintf(outfP, "/ End\n");
             noNl = true;
             break;
 
         case TABLE:
-            fprintf(outfP, "/ Data table\n");
+            macPrintf(outfP, "/ Data table\n");
 
             if( nodeP->rightP )     // has initializer
             {
@@ -244,35 +243,35 @@ char str[128];
                 for( i = 0; i < nodeP->value.ival; ++i )
                 {
                     nodeP->pc++;
-                    fprintf(outfP, "    %o\n", j);
+                    macPrintf(outfP, "    %o\n", j);
                 }
             }
             else
             {
-                fprintf(outfP, ".+%o/\n", nodeP->value.ival);
+                macPrintf(outfP, ".+%o/\n", nodeP->value.ival);
             }
 
-            fprintf(outfP, "/ End\n");
+            macPrintf(outfP, "/ End\n");
             noNl = true;
             break;
 
         case IMPORT:
             if( *(nodeP->value.strP) != '<' )
             {
-                fprintf(outfP, "/ import \"%s\"\n", nodeP->value.strP);
+                macPrintf(outfP, "/ import \"%s\"\n", nodeP->value.strP);
             }
             else
             {
-                fprintf(outfP, "/ import %s\n", nodeP->value.strP);
+                macPrintf(outfP, "/ import %s\n", nodeP->value.strP);
             }
             break;
 
         case EXPORT:
-            fprintf(outfP, "/ export ");
+            macPrintf(outfP, "/ export ");
             for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
             {
                 cP = (node2P->type == NAME)?node2P->value.strP:node2P->value.symP->name;
-                fprintf(outfP, "%s%s", cP, (node2P->leftP)?", ":"\n");
+                macPrintf(outfP, "%s%s", cP, (node2P->leftP)?", ":"\n");
             }
             break;
 
@@ -290,7 +289,7 @@ char str[128];
             if( !ignoreAsserts )
             {
                 cP = assertText(nodeP);
-                fprintf(outfP, "/ %s\n", cP);
+                macPrintf(outfP, "/ %s\n", cP);
                 free(cP);
             }
 
@@ -298,18 +297,19 @@ char str[128];
             break;
 
         case SEMI:
-            fprintf(outfP, "\n");
+            macPrintf(outfP, "\n");
             break;
 
         case EMPTYLINE:
             // A constant reference left unclosed ("lac [5") is closed by the
             // newline, which the lexer hands back as an empty line, so no
-            // TERMINATOR ended the statement's line: end it here.
-            if( prevP && ((prevP->type == EXPR) ||
+            // TERMINATOR ended the statement's line: end it here, unless the constant's
+            // trailing comment already has.
+            if( prevP && (macColumn != 0) && ((prevP->type == EXPR) ||
                           (((prevP->type == LOCATION) || (prevP->type == LCLLOCATION) ||
                             (prevP->type == ORIGIN)) && prevP->rightP)) )
             {
-                fprintf(outfP, "\n");
+                macPrintf(outfP, "\n");
             }
 
             noNl = false;
@@ -318,22 +318,16 @@ char str[128];
         case TERMINATOR:
             if( !noNl )
             {
-                fprintf(outfP, "\n");
+                macPrintf(outfP, "\n");
             }
 
             noNl = false;
-            sawTerm = true;
             break;
 
         default:
             // just ignore
             noNl = true;
             break;
-        }
-
-        if( (nodeP->type != TERMINATOR) && (nodeP->type != COMMENT) )
-        {
-            sawTerm = false;
         }
 
         prevP = nodeP;
@@ -364,11 +358,11 @@ SymNodeP symP;
             rval = onesComplAdj(evalExpr(nodeP->rightP));
             if( rval & 010000 )
             {
-                fprintf(outfP,"law i %o", rval & ~010000);
+                macPrintf(outfP,"law i %o", rval & ~010000);
             }
             else
             {
-                fprintf(outfP,"law %o", rval);
+                macPrintf(outfP,"law %o", rval);
             }
         }
         else if( nodeP->value.ival == XOR )
@@ -376,34 +370,27 @@ SymNodeP symP;
             // there is no xor in macro1, have to reduce everything
             lval = onesComplAdj(evalExpr(nodeP->leftP));
             rval = onesComplAdj(evalExpr(nodeP->rightP));
-            fprintf(outfP,"%o", (lval ^ rval) & WRDMASK);
+            macPrintf(outfP,"%o", (lval ^ rval) & WRDMASK);
         }
-        else if( nodeP->value.ival == DIV )
+        else if( (nodeP->value.ival == DIV) || (nodeP->value.ival == MOD) )
         {
-            // there is no divide in macro1, have to reduce everything
-            lval = evalExpr(nodeP->leftP);
-            rval = evalExpr(nodeP->rightP);
-            fprintf(outfP,"%o", onesComplAdj(lval / rval) & WRDMASK);
-        }
-        else if( nodeP->value.ival == MOD )
-        {
-            // there is no mod in macro1, have to reduce everything.
-            // The value is the one the tape gets.
-            fprintf(outfP,"%o", evalExpr(nodeP));
+            // there is no divide or mod in macro1, have to reduce everything.
+            // The value is the one the tape gets, its errors included.
+            macPrintf(outfP,"%o", evalExpr(nodeP));
         }
         else if( nodeP->value.ival == LSHIFT )
         {
             // there is no << in macro1, have to reduce everything
             lval = onesComplAdj(evalExpr(nodeP->leftP));
             rval = onesComplAdj(evalExpr(nodeP->rightP));
-            fprintf(outfP,"%o", (lval << rval) & WRDMASK);
+            macPrintf(outfP,"%o", (lval << rval) & WRDMASK);
         }
         else if( nodeP->value.ival == RSHIFT )
         {
             // there is no >> in macro1, have to reduce everything
             lval = onesComplAdj(evalExpr(nodeP->leftP));
             rval = onesComplAdj(evalExpr(nodeP->rightP));
-            fprintf(outfP,"%o", (lval >> rval) & WRDMASK);
+            macPrintf(outfP,"%o", (lval >> rval) & WRDMASK);
         }
         else
         {
@@ -435,7 +422,7 @@ SymNodeP symP;
                 return;
             }
 
-            fprintf(outfP,"%c", ch);
+            macPrintf(outfP,"%c", ch);
             emitOperand(outfP, nodeP->rightP);
         }
         break;
@@ -448,12 +435,12 @@ SymNodeP symP;
             break;
         case UMINUS:
             rval = onesComplAdj(evalExpr(nodeP));
-            fprintf(outfP, "%o", (rval) & WRDMASK);
+            macPrintf(outfP, "%o", (rval) & WRDMASK);
             break;
         case CMPL:
             // there is no complement in macro1, have to reduce
             rval = onesComplAdj(evalExpr(nodeP));
-            fprintf(outfP, "%o", (rval) & WRDMASK);
+            macPrintf(outfP, "%o", (rval) & WRDMASK);
             break;
         default:
             verror("unknown unary op %d in emitOperand", nodeP->value.ival);
@@ -461,21 +448,21 @@ SymNodeP symP;
         break;
 
     case CONSTANT:
-        fprintf(outfP,"%04o",nodeP->value.symP->value);
+        macPrintf(outfP,"%04o",nodeP->value.symP->value);
         if( nodeP->rightP )
         {
-            fprintf(outfP,"\t/ %s", nodeP->rightP->value.strP);
+            emitCommentText(outfP, nodeP->rightP->value.strP, false);
         }
         break;
 
     case DOT:
-        fprintf(outfP,".");
+        macPrintf(outfP,".");
         break;
 
     case OPORABLE:
     case OPCODE:
     case OPADDR:
-        fprintf(outfP,"%s", nodeP->value.symP->name );
+        macPrintf(outfP,"%s", nodeP->value.symP->name );
         break;
 
     case BREF:
@@ -493,7 +480,7 @@ SymNodeP symP;
             fprintf(stderr,"am1: WARNING: bank references are not supported by macro1!\n");
         }
 
-        fprintf(outfP,"BREF %s:%d", nodeP->value.symP->name, nodeP->value2.ival );
+        macPrintf(outfP,"BREF %s:%d", nodeP->value.symP->name, nodeP->value2.ival );
         break;
 
     case LCLADDR:
@@ -503,7 +490,7 @@ SymNodeP symP;
         {
             if( (symP->flags & SYM_MASK) == SYM_GLOB )
             {
-                fprintf(outfP, "%s", symP->name);
+                macPrintf(outfP, "%s", symP->name);
             }
             else
             {
@@ -511,11 +498,11 @@ SymNodeP symP;
                 rval = nodeP->pc;
                 if( lval >= rval )
                 {
-                    fprintf(outfP, ".+%o", lval - rval );
+                    macPrintf(outfP, ".+%o", lval - rval );
                 }
                 else
                 {
-                    fprintf(outfP, ".-%o", rval - lval );
+                    macPrintf(outfP, ".-%o", rval - lval );
                 }
             }
             break;
@@ -530,7 +517,7 @@ SymNodeP symP;
         symP = nodeP->value.symP;
         if( symP->flags & SYMF_RESOLVED )
         {
-            fprintf(outfP, "%s", symP->name );
+            macPrintf(outfP, "%s", symP->name );
         }
         else
         {
@@ -541,16 +528,16 @@ SymNodeP symP;
     case LITCHAR:
     case CHAR:
     case FLEXO:
-        fprintf(outfP, "%06o", nodeP->value.ival & WRDMASK);
+        macPrintf(outfP, "%06o", nodeP->value.ival & WRDMASK);
         break;
 
     case INTEGER:
-        fprintf(outfP, "%o", nodeP->value.ival & WRDMASK);
+        macPrintf(outfP, "%o", nodeP->value.ival & WRDMASK);
         break;
 
     case VALUESPEC:
     case IMOD:
-        fprintf(outfP, "%s", nodeP->value.symP->name);
+        macPrintf(outfP, "%s", nodeP->value.symP->name);
         break;
 
     case LOCAL:
@@ -561,7 +548,7 @@ SymNodeP symP;
         break;      // ignore
 
     case TERMINATOR:
-        fprintf(outfP, "\n");
+        macPrintf(outfP, "\n");
         break;
 
     default:
@@ -579,24 +566,24 @@ int i;
     {
         if( !i )
         {
-            fprintf(outfP, "    ");
+            macPrintf(outfP, "    ");
         }
 
-        fprintf(outfP, "%03o", *strP++);
+        macPrintf(outfP, "%03o", *strP++);
 
         if( i )
         {
-            fprintf(outfP, "\n");
+            macPrintf(outfP, "\n");
         }
     }
 
     if( i )
     {
-        fprintf(outfP, "000\n");
+        macPrintf(outfP, "000\n");
     }
     else
     {
-        fprintf(outfP, "    000000\n");
+        macPrintf(outfP, "    000000\n");
     }
 }
 
@@ -614,7 +601,7 @@ char *bufP;
     {
         if( i && !(i % 3) )
         {
-            fprintf(outfP, "    %06o\n", val);
+            macPrintf(outfP, "    %06o\n", val);
             val = 0;
         }
 
@@ -628,11 +615,11 @@ char *bufP;
         {
             val <<= 6;
         }
-        fprintf(outfP, "    %06o\n", val);
+        macPrintf(outfP, "    %06o\n", val);
     }
     else if( (i >= flexText.nchars) && !( i % 3) )
     {
-        fprintf(outfP, "    %06o\n", val);      // didn't emit the word yet
+        macPrintf(outfP, "    %06o\n", val);      // didn't emit the word yet
     }
 }
 
@@ -647,7 +634,7 @@ SymNodeP symP;
     {
         nodeP = listP->nodeP;
         symP = nodeP->value.symP;
-        fprintf(fP,"%s, %06o\n", symP->name, (nodeP->leftP)?evalExpr(nodeP->leftP):0);
+        macPrintf(fP,"%s, %06o\n", symP->name, (nodeP->leftP)?evalExpr(nodeP->leftP):0);
 
         listP = listP->nextP;
     }
@@ -667,9 +654,9 @@ PNodeP node2P;
     {
     case OVERLAYDECL:
         ovP = (OverlayContextP)(nodeP->value.ptr);
-        fprintf(outfP, "/ OVERLAY %s - following runs in window %s, bank %d, loaded from the drum\n",
+        macPrintf(outfP, "/ OVERLAY %s - following runs in window %s, bank %d, loaded from the drum\n",
             ovP->nameP, ovP->windowP->nameP, ovP->windowP->bank);
-        fprintf(outfP, "%o/\n", ovP->windowP->first + OVHEADERWORDS);
+        macPrintf(outfP, "%o/\n", ovP->windowP->first + OVHEADERWORDS);
         break;
 
     case ENDOVERLAY:
@@ -677,17 +664,17 @@ PNodeP node2P;
 
         if( ovP->ctx.constSymP )
         {
-            fprintf(outfP, "/ Constants for overlay %s\n", ovP->nameP);
+            macPrintf(outfP, "/ Constants for overlay %s\n", ovP->nameP);
             emitConstants(outfP, ovP->ctx.constSymP);
         }
 
         if( ovP->ctx.varNodesP )
         {
-            fprintf(outfP, "/ Vars for overlay %s\n", ovP->nameP);
+            macPrintf(outfP, "/ Vars for overlay %s\n", ovP->nameP);
             emitVars(outfP, ovP->ctx.varNodesP);
         }
 
-        fprintf(outfP, "/ END OVERLAY %s\n", ovP->nameP);
+        macPrintf(outfP, "/ END OVERLAY %s\n", ovP->nameP);
 
         // The first root node after it has the root's pc.
         for( node2P = nodeP->leftP; node2P && node2P->overlay; node2P = node2P->leftP )
@@ -697,28 +684,28 @@ PNodeP node2P;
 
         if( node2P )
         {
-            fprintf(outfP, "%o/\n", node2P->pc);
+            macPrintf(outfP, "%o/\n", node2P->pc);
         }
         break;
 
     case OVTABLE:
-        fprintf(outfP, "/ Overlay descriptor table, ovTable\n");
+        macPrintf(outfP, "/ Overlay descriptor table, ovTable\n");
 
         for( i = 0; i < nodeP->value.ival; ++i )
         {
-            fprintf(outfP, "    %o\n", ovTableWordsP[i]);
+            macPrintf(outfP, "    %o\n", ovTableWordsP[i]);
         }
         break;
 
     case OVCALL:
-        fprintf(outfP, "/ %%%%%s %s%s%s\n", OVCALLNAME(nodeP), nodeP->value.strP, OVCALLSEP(nodeP),
+        macPrintf(outfP, "/ %%%%%s %s%s%s\n", OVCALLNAME(nodeP), nodeP->value.strP, OVCALLSEP(nodeP),
             OVCALLENTRY(nodeP));
 
         for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
         {
-            fprintf(outfP, "    ");
+            macPrintf(outfP, "    ");
             emitOperand(outfP, node2P->rightP);
-            fprintf(outfP, "\n");
+            macPrintf(outfP, "\n");
         }
         break;
 
@@ -738,10 +725,235 @@ int val;
         return(0);
     }
 
-    fprintf(fP,"    %06o\n", symP->value2 & 0777777);
+    macPrintf(fP,"    %06o\n", symP->value2 & 0777777);
 
     val = emitConstants(fP, symP->leftP);
     val += emitConstants(fP, symP->rightP);
 
     return(val);
+}
+
+// Write a comment node's text, its leading and trailing blanks dropped.  The text is the
+// listing's too, so it is only read.  A comment that began its source line begins its own
+// line here too; any other trails what is already on the line.
+static void
+emitCommentText(FILE *outfP, const char *strP, bool ownLine)
+{
+int len;
+
+    while( isspace((unsigned char)*strP) )
+    {
+        ++strP;
+    }
+
+    len = strlen(strP);
+    while( (len > 0) && isspace((unsigned char)strP[len - 1]) )
+    {
+        --len;
+    }
+
+    if( ownLine && (macColumn != 0) )
+    {
+        macPrintf(outfP, "\n");
+    }
+
+    emitComment(outfP, strP, len, (macColumn != 0));
+}
+
+// Write a comment of len characters as "/ " lines no wider than MACLINEWIDTH, broken at
+// blanks, and inside a word only when the word is wider than a line.  A trailing comment
+// starts on its statement's line, after a tab, when its first word fits there.
+static void
+emitComment(FILE *outfP, const char *textP, int len, bool trailing)
+{
+const char *endP;
+const char *lineEndP;
+const char *cP;
+int col;
+
+    endP = (textP + len);
+
+    if( trailing )
+    {
+        // the column the first word would end in, after the tab and the "/ "
+        col = nextColumn(macColumn, '\t') + 2;
+        for( cP = textP; (cP < endP) && !isblank((unsigned char)*cP); ++cP )
+        {
+            col = nextColumn(col, *cP);
+        }
+
+        if( col <= MACLINEWIDTH )
+        {
+            macPrintf(outfP, "\t");     // macro1 needs a tab before a trailing comment
+        }
+        else
+        {
+            macPrintf(outfP, "\n");
+        }
+    }
+
+    do
+    {
+        macPrintf(outfP, "/ ");
+        lineEndP = commentLineEnd(textP, endP, macColumn);
+        macPrintf(outfP, "%.*s\n", (int)(lineEndP - textP), textP);
+        textP = lineEndP;
+
+        // A break at a blank takes that one blank, so joining the lines with one blank
+        // gives back the comment as written.
+        if( (textP < endP) && isblank((unsigned char)*textP) )
+        {
+            ++textP;
+        }
+    } while( textP < endP );
+}
+
+// Write a block comment's lines as "/ " comments, the "/*" and each line's leading and
+// trailing blanks dropped.  Its first and last lines are left out when nothing else is on
+// them, so "/*" and "*/" alone on their lines write nothing.
+static void
+emitBlockComment(FILE *outfP, const char *textP)
+{
+const char *lineP;
+const char *nlP;
+const char *endP;
+const char *cP;
+bool first;
+bool last;
+
+    if( macColumn != 0 )
+    {
+        macPrintf(outfP, "\n");
+    }
+
+    first = true;
+    for( lineP = textP; ; lineP = (nlP + 1) )
+    {
+        // the text holds the lines up to, not including, the "*/"
+        nlP = strchr(lineP, '\n');
+        last = (nlP == NULL);
+        endP = (last)? (lineP + strlen(lineP)): nlP;
+
+        for( cP = lineP; (cP < endP) && isspace((unsigned char)*cP); ++cP )
+        {
+            ;
+        }
+
+        if( first && (strncmp(cP, "/*", 2) == 0) )
+        {
+            for( cP += 2; (cP < endP) && isspace((unsigned char)*cP); ++cP )
+            {
+                ;
+            }
+        }
+
+        while( (endP > cP) && isspace((unsigned char)endP[-1]) )
+        {
+            --endP;
+        }
+
+        if( (cP < endP) || !(first || last) )
+        {
+            emitComment(outfP, cP, (int)(endP - cP), false);
+        }
+
+        if( last )
+        {
+            break;
+        }
+
+        first = false;
+    }
+}
+
+// The end of the part of a comment, from textP, that fits on a line whose text starts in
+// column col: the last blank before the line would be too wide, or, with no blank, the
+// last character that fits.  At least one character is taken, so a comment always ends.
+static const char *
+commentLineEnd(const char *textP, const char *endP, int col)
+{
+const char *cP;
+const char *breakP;
+
+    breakP = NULL;
+    for( cP = textP; cP < endP; ++cP )
+    {
+        if( isblank((unsigned char)*cP) && (cP > textP) )
+        {
+            breakP = cP;
+        }
+
+        col = nextColumn(col, *cP);
+        if( col > MACLINEWIDTH )
+        {
+            if( breakP )
+            {
+                return(breakP);
+            }
+
+            return((cP > textP)? cP: (cP + 1));
+        }
+    }
+
+    return(endP);
+}
+
+// The column after ch is written in column col.
+static int
+nextColumn(int col, char ch)
+{
+    if( ch == '\n' )
+    {
+        return(0);
+    }
+
+    if( ch == '\t' )
+    {
+        return(((col / MACTABSTOP) + 1) * MACTABSTOP);
+    }
+
+    return(col + 1);
+}
+
+// fprintf to the .mac, keeping macColumn, which a comment's wrapping starts from.
+static void
+macPrintf(FILE *outfP, const char *fmtP, ...)
+{
+va_list args;
+va_list argsCopy;
+char buf[256];
+char *textP;
+char *cP;
+int len;
+
+    va_start(args, fmtP);
+    va_copy(argsCopy, args);
+    len = vsnprintf(buf, sizeof(buf), fmtP, args);
+    textP = buf;
+
+    if( (len >= (int)sizeof(buf)) && (textP = malloc(len + 1)) )
+    {
+        vsnprintf(textP, (len + 1), fmtP, argsCopy);
+    }
+
+    va_end(argsCopy);
+    va_end(args);
+
+    if( (len < 0) || !textP )
+    {
+        verror("can't write the macro1 source");
+        return;
+    }
+
+    for( cP = textP; *cP; ++cP )
+    {
+        macColumn = nextColumn(macColumn, *cP);
+    }
+
+    fputs(textP, outfP);
+
+    if( textP != buf )
+    {
+        free(textP);
+    }
 }

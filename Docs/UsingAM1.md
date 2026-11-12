@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.6 and covers up through am1 version 5.6; it will be updated as needed.\
-Edit date 6-Nov-2026\
-More details for assert, tables, and block macros.
+This is version 3.8 and covers up through am1 version 5.9; it will be updated as needed.\
+Edit date 11-Nov-2026\
+Small change, additional info for / vs // interpretation.
 
 ## What is **am1**?
 
@@ -824,11 +824,16 @@ New code will be placed starting at the address before the /.
 However, any code-generating statements following the / will of course generate code.
 
 The syntax must be followed, the formal definition is:\
-*A slash with no blank before it and a blank after it, at the
-end of the first expression of a statement, is an origin and the rest of the line is the next statement.*
+*A slash with no blank before it and a blank or the end of the statement after it at the
+end of the first expression of a statement is an origin and the rest of the line is the next statement.*
+
+A comment also ends a statement, *100/// c* is an origin followed by the comment *// c*.
+In *100// c* the two slashes are the comment itself, it is the word 100 and not an origin.
 
 **NOTE** the important wording. If you use division, /, it *must* have no blank following it.
 Otherwise it will be interpreted as the origin character.
+Any other slash is a division, whatever its right operand starts with: *4/(2)*, *4/-2* and *4/'a'* divide.
+The rest of the line after an origin is the next statement whatever it starts with, so *100/ -1* puts -1 at 100.
 ```
 foo/5/ cli   valid
 foo /5/      valid
@@ -1082,10 +1087,11 @@ The priority is the same as that for **C** and the operations are the same.
 | ( )      | expression nesting     |
 
 Internally, 2's complement arithmetic is used for most of the operators, but the result is adjusted to be
-a 1's complement value.
+a 1's complement value.\
 The 1's complement -0 value, 0777777, can be produced by math operations such as -1+1,
-but by default will be converted to +0.
-This can be overridden if -0 is to be kept, see *Usage*.
+but by default will be converted to +0.\
+This can be overridden if -0 is to be kept, see *Usage*.\
+A divisor or modulus of 0 or -0 is an error, reported at its location.
 
 Bitwise operations can of course affect any bit and their result is not adjusted, they are not math.
 If a -0 bit pattern results, it is kept as-is.

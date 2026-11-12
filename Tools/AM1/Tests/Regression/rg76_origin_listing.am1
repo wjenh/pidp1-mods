@@ -1,0 +1,12 @@
+Test rg76: an origin with a statement after it, in the listing
+    cla
+100/ lac 5
+101/;lac 6
+102/ // a comment after the origin
+    cla; 103/ hlt
+    cla; 105/
+    nop
+106/ 107/ cma
+110/// a comment against the slash
+    hlt
+start 4

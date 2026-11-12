@@ -23,6 +23,11 @@ static bool noIncrement = false;
 // What the slash rule needs to know about the statement so far, kept by yylex()
 static bool stmtBare = true;    // nothing yet but one expression with no separator in it
 static int parenDepth = 0;      // open parentheses in that expression
+static bool afterOperand = false;   // the last token can end an operand
+
+// The origin rules push back a ';' to make the rest of the line the next statement.
+// The SEMI it scans as is marked, so the listing prints no ';' the source does not have.
+static bool originSemi = false;
 
 // Whether the statement being scanned is an assert, kept by yylex(): only an
 // assert takes the comparison and logical operators, and it takes no constant.
@@ -40,6 +45,8 @@ extern int labelTokenLine;          // the line the comma just scanned is on
 extern int nameTokenLine;           // the line the NAME or ADDR just scanned is on
 extern int nameTokenSrcLine;        // and the line it is written on, after a ';' lineno
                                     // is already one ahead
+extern int divTokenSrcLine;         // the line the last / or % operator is written on
+extern int originTokenSrcLine;      // the line the last origin's slash is written on
 extern SymNodeP permSymP;
 extern BankContextP curBankP;
 extern int curBank;
@@ -65,6 +72,7 @@ extern void vwarn(int errtype, char *msgP, ...);
 static const char *lineKeywords[] = { "start", "stop", "constants", "variables", "import", "export",
                                       "assert" };
 static int directiveToken(int token);
+static int originToken(void);
 static void checkAssertToken(int token);
 static void noteStatement(int token);
 
@@ -158,6 +166,17 @@ DIRENDFL        [^A-Za-z0-9_]
 
 [ \t]*"//".*\n      {
                     char *cP;
+
+                        // In "100/// c" the first slash ends a bare statement's first
+                        // expression, so it is an origin, and the comment ends the
+                        // statement as it would after any other. "100// c" and
+                        // "100 /// c" leave no such slash: there the comment is all.
+                        if( (yytext[0] == '/') && (yytext[2] == '/') && afterOperand &&
+                            stmtBare && (parenDepth == 0) )
+                        {
+                            yyless(1);
+                            return(originToken());
+                        }
 
                         cP = strchr(yytext, '/') + 2;
                         yylval.strP = malloc(strlen(cP) + 1);
@@ -490,7 +509,8 @@ octal                   { decimalMode = false; }
                         if( stmtBare && (parenDepth == 0) )
                         {
                             unput(';');
-                            return(ORIGIN);
+                            originSemi = true;
+                            return(originToken());
                         }
 
                         return(DIV);
@@ -709,24 +729,47 @@ octal                   { decimalMode = false; }
                     /*
                      * The '%' in this lookahead makes "x/%..." lex as DIV then
                      * MOD, a syntax error, rather than an origin and a %.
+                     * This rule is longer than the two above, so it also takes
+                     * "a/(b)", "a/-b" and "a/ (b)", which are divisions unless
+                     * they are an origin as the rule above defines one.
                      */
 \/[ \t]*[^a-zA-Z0-9\~\%\[\/] {
                     int ch;
+                    int token;
 
                         ch = yytext[yyleng-1];
+
+                        // An origin only where the slash ends the statement, or where
+                        // blanks follow it at the end of a bare statement's expression.
+                        if( (ch != '\n') && (ch != ';') && (ch != '\r') )
+                        {
+                            unput( ch );
+
+                            if( (yyleng > 2) && stmtBare && (parenDepth == 0) )
+                            {
+                                // the rest of the line is the next statement, as above
+                                unput(';');
+                                originSemi = true;
+                                return(originToken());
+                            }
+
+                            return(DIV);
+                        }
+
+                        token = originToken();    // its line, before the newline is counted
+
                         if( ch == '\n' )
                         {
-                            ++lineno;
+                            // After a ';' the line is counted already.
+                            if( !sawSemi )
+                            {
+                                ++lineno;
+                            }
                             noIncrement = true;    // we don't want terminator to inc again
                         }
 
                         unput( ch );
-
-                        if( ch == '/' )
-                        {
-                            unput(' ');    // preserve a space between origin and comment
-                        }
-                        return(ORIGIN);
+                        return(token);
                     }
 
 ^\n                     {
@@ -764,6 +807,8 @@ octal                   { decimalMode = false; }
                                 }
 
                                 sawSemi = true;
+                                yylval.ival = originSemi;    // 1 for an origin's own
+                                originSemi = false;
                                 return(SEMI);
                             }
                             else
@@ -1155,8 +1200,8 @@ gdbtarget()
 }
 
 // The scanner the parser calls.
-// It returns what the generated scanner returns/ and from each token keeps
-// stmtBare and parenDepth for the slash rule.s
+// It returns what the generated scanner returns and from each token keeps
+// stmtBare and parenDepth for the slash rules.
 // Only the tokens that can be part of an origin's expression leave the statement bare.
 // Any other token, a separator and a label's comma included, ends that so a
 // directive's operands are never mistaken for an origin.
@@ -1165,12 +1210,11 @@ gdbtarget()
 // Additionally, the rule for a complement swallows the blanks in front
 // of the ~ so that "a & ~b" and "(~b)" need no separator, and that leaves
 // "lac ~07" with no separator token between the two operands.
-// When a // complement that had a blank in front of it follows an operand, that blank was
+// When a complement that had a blank in front of it follows an operand, that blank was
 // the separator and it is handed over as one ahead of the complement.
 int
 yylex(void)
 {
-    static bool afterOperand = false;    // the last token can end an operand
     static bool haveCmpl = false;        // a complement is queued behind a separator
     int token;
 
@@ -1242,8 +1286,6 @@ yylex(void)
     case PLUS:
     case MINUS:
     case MUL:
-    case DIV:
-    case MOD:
     case AND:
     case OR:
     case XOR:
@@ -1252,6 +1294,13 @@ yylex(void)
     case RSHIFT:
     case BREF:       // the colon of a bank reference, "name:bank"
     case WILDTAG:    // the ":*" of "name:*"
+        break;
+
+    // For a zero divisor's error: the operator's node is made after its right
+    // operand, perhaps with the next line's token already read.
+    case DIV:
+    case MOD:
+        divTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
         break;
 
     case '(':
@@ -1344,6 +1393,16 @@ bool
 lexAfterSemi(void)
 {
     return(sawSemi);
+}
+
+// Record the line an origin's slash is written on and return its token.
+// The parser reduces an origin with the newline after it counted or not
+// yet reached, so lineno alone cannot give the origin's line.
+static int
+originToken(void)
+{
+    originTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
+    return(ORIGIN);
 }
 
 // Record where an optimizer directive was seen and return its token.

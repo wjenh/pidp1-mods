@@ -7,7 +7,7 @@
 // Bank 12, after spaux.ac. Every entry runs with the extend window open and is entered by
 // jsp i [X:014], vwEntry from the main bank's actView, panLost, centerLost, afMode and
 // panLocate, vwIn from its placeFind, vwInit from initVars and from the tape module's tpFresh
-// after a load, vwLine and vwEmit from its writeSlot, vwSeg from its writeSeg, vwClipX from the
+// after a load, vwLine from its writeSlot, vwSeg from its writeSeg, vwClipX from the
 // arcs' code in bank 13 (spvarc.ac), vwBox from the instance module's instView in bank 7,
 // vwCross from the arc module's markAt in bank 2, and arOne, the constraints' arms, from the
 // marks module's mkMarks in bank 13. clipLock (spaux.ac) calls vwDot to place the dot.
@@ -220,16 +220,17 @@ veIn,
 rtn, jmp .
     endloc
 
-// Plan a line's slot through the view (writeSlot). Its ends are taken to the screen and clipped
-// (vwClip), then split as splitPlan does. A line of no length gets a 1-unit x delta, since a
-// (0,0) vector stops the 340; it goes toward the middle at x 1023, where +1 would pass the edge.
-// Entry: the main bank's fx, fy, tx, ty on the page. Exit: fx, fy, tx, ty on the screen and
-// splitPlan's results; vwHid set if none of the line is on the screen, when nothing is planned;
-// the constraints' marks stale (bank 8's cMkDirty), since a one-point mark stands clear of its
-// point's lines, whose far ends need not be any entry's points.
+// A line's ends through the view for its slot (writeSlot), which bank 11's lnEmit then splits.
+// They are taken to the screen and clipped (vwClip). A line of no length gets a 1-unit x delta,
+// since a (0,0) vector stops the 340; it goes toward the middle at x 1023, where +1 would pass
+// the edge.
+// Entry: the main bank's fx, fy, tx, ty on the page. Exit: fx, fy, tx, ty on the screen; vwHid
+// set if none of the line is on the screen; the constraints' marks stale (bank 8's cMkDirty),
+// since a one-point mark stands clear of its point's lines, whose far ends need not be any
+// entry's points.
 // AC is clobbered, IO preserved. Called via jsp i [vwLine:014].
 vwLine,
-    local rtn, vlPlan
+    local rtn
     dac rtn
     law 1
     dac i [cMkDirty:010]
@@ -239,17 +240,15 @@ vwLine,
     jmp i rtn
     lac i [tx:4]
     sas i [fx:4]        // skip if the x are the same
-    jmp vlPlan
+    jmp i rtn
     lac i [ty:4]
     sas i [fy:4]        // skip if the y are the same too, no length
-    jmp vlPlan
+    jmp i rtn
     lac i [tx:4]
     add [1]
     sad [0d1024]        // skip unless that passes the right edge
     law 0d1022
     dac i [tx:4]
-vlPlan,
-    jsp i [splitPlan:014]
     jmp i rtn
 rtn, 0
     endloc
@@ -299,27 +298,6 @@ vsDraw,
 vsPlan,
     jsp i [splitPlan:014]
     cla
-    jmp i rtn
-rtn, 0
-    endloc
-
-// The word writeSlot puts in a slot's gate, the vectors' entry once emitVecs has written them
-// into the area, or for a line off the screen (vwHid) a jump past the slot, nothing written.
-// Entry: emitArea = the slot's vector area; vwLine's results. Exit: AC = the gate word. IO is
-// preserved. Called via jsp i [vwEmit:014].
-vwEmit,
-    local rtn, veDraw
-    dac rtn
-    lac vwHid
-    sza i               // skip if the line is off the screen
-    jmp veDraw
-    lac emitArea
-    add [NBAND]
-    ior [jump next(parameter)]
-    jmp i rtn
-veDraw,
-    jsp i [emitVecs:014]
-    ior [jump next(vector)]
     jmp i rtn
 rtn, 0
     endloc

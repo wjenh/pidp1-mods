@@ -658,7 +658,7 @@
 
 // Move. Up to MAXDRAG of a dragged point's lines are rewritten in place as it moves; a point
 // with more has the whole list rebuilt instead, which is slow.
-#define MAXDRAG 0d32
+#define MAXDRAG 0d64
 
 // Scale. The slider, drawn in the band's words, in screen units, is a square wave read as a
 // ruler: a level run of SCDOUBLE units a doubling at SLIDESCALE (x2, so a doubling of up to 254

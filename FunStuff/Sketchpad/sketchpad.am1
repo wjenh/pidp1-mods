@@ -35,6 +35,7 @@ Sketchpad, a light pen drawing program for the Type 340
 // 18-Oct-2026 Claude: first release.
 // 18-Oct-2026 Claude: production cleanup, comments only.
 // 4-Nov-2026 Version 2.0 adding the remainder of the thesis operations
+// 11-Nov-2026 Version 2.2 a number of limits were increased
 
 #include <TYPE340/type340alt.ah>
 #include <LIGHTPEN/lightpen.ah>
@@ -1506,7 +1507,8 @@ constants
 // Each module here is placed after the banks it reaches but 12 to 15, so that nearly every
 // reference it makes to them is a backward one. Then the display of what a lift will take
 // (splock.ac); the main bank enters it through showDot and the entries its header names, and
-// it calls nothing outside banks 11 and 12. Last, the overlay table, which the manager reads,
+// it calls nothing outside banks 11 and 12. Then a line slot's plan and vectors (spslot.ac), which
+// the main bank's writeSlot enters at lnEmit. Last, the overlay table, which the manager reads,
 // after the last overlay (truss), as am1 requires.
 bank 0d11
 
@@ -1530,6 +1532,8 @@ bank 0d11
 #include "spsize.ac"
 
 #include "splock.ac"
+
+#include "spslot.ac"
 
 // The masters' texts, for the text module (sptext.ac), which reaches them through their 16-bit
 // addresses: mtN of them, mtM naming the master and mtDX, mtDY the offset from its origin; their

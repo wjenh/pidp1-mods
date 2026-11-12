@@ -3,9 +3,9 @@
 This document describes Sketchpad, a reproduction of Sutherland's Sketchpad for the PiDP-1 and its Type 340
 display, and how to use it.
 
-This is version 2.1\
+This is version 2.2\
 Edit date 11-Nov-2026\
-Increase limits on various items
+Increase number of draggable lines attached to a point.
 
 ## What is Sketchpad?
 
@@ -63,7 +63,7 @@ support native rotation.
 There are also some major improvements in the internal structures.
 While the external behavior tries to closely follow the original functionality described in the thesis,
 the use of the Type 340 to offload the graphics processing along with some major changes in how data is represented
-means the PDP-1 version is up to 60 times faster that the TX-2 version. That is not a typo.
+means the PDP-1 version is up to 60 times faster than the TX-2 version. That is not a typo.
 The truss bridge example took about 30 seconds to recompute the forces after every change on the TX-2,
 this version does it in under 3 seconds while still preserving the iterative convergence of the original.
 
@@ -91,7 +91,7 @@ the creation of a standard png file of what would have been plotted.
 | File | What it is |
 |---|---|
 | *sketchpad.am1* | The program's main source file; it includes the others |
-| *sp\*.ac* | The rest of the source, forty-one files included by *sketchpad.am1* |
+| *sp\*.ac* | The rest of the source, forty-two files included by *sketchpad.am1* |
 | *sketchpad.ah* | The program's constants, sizes, times and limits, included by *sketchpad.am1* |
 | *intensities.ah* | The brightness of each kind of object drawn, included by *sketchpad.am1* |
 | *Tapes/SketchpadGirl.mtp* | A Microtape image holding a drawing of the famous girl, as picture P1 |
@@ -1383,7 +1383,7 @@ up to about 19 seconds for a load of P1 or P12 and 30 for a save.
 The directory only lists the picture name.
 A save cut short can leave its line showing the old name.
 If the directory's block itself is damaged, Dir, Save and Load all show BAD BLOCK and nothing
-opens,so the pictures are not written over.
+opens, so the pictures are not written over.
 
 Pictures saved by an earlier release of Sketchpad are not read.
 Dir and Load show their lines as `-`, and a Load of one shows EMPTY and keeps the current drawing.
@@ -1655,7 +1655,7 @@ UNSTABLE is hidden while another message shows and returns once that message is 
 
 ## Limits
 
-- Up to 256 points, 256 lines, 34 arcs. and 48 instances.
+- Up to 256 points, 256 lines, 34 arcs and 48 instances.
 - Sixteen masters, with up to 16 constraints kept with each master, and up to eight instances
   of other masters held inside each.
   A master is up to 128 lines and 530 words of display list.
@@ -1664,8 +1664,8 @@ UNSTABLE is hidden while another message shows and returns once that message is 
   Every master is kept on the drum.
   The masters the drawing uses, its instances and, while any
   instance cycles, every master, are also kept in one of two stores in core, of 341 and 530
-  words, together they are up to 871 word.
-  A master nothing uses storage is freeed when another one needs space.
+  words, together they are up to 871 words.
+  A master nothing uses storage is freed when another one needs space.
 - An instance at a size other than x1, x2, x4 or x8 draws a copy of its master's display list
   at that size, as long as the master's and kept in the same two stores.
   There are up to sixteen such copies, one for each master and size in use.
@@ -1674,7 +1674,7 @@ UNSTABLE is hidden while another message shows and returns once that message is 
   are copies is not itself kept in core.
   Scale > Figure or All is refused with NO ROOM, nothing resized, if the drawing's
   instances would need more than sixteen such copies.
-- Up to 64 constraints, counting fixed points, attacher,s and designations, the truss's members,
+- Up to 64 constraints, counting fixed points, attachers, and designations, the truss's members,
   loads, and rollers, the distances Dist, Change, and Gap keep, and Keep's and Dim > Size's.
 - Six attachers in a drawing, six tie points an instance, and six designations.
 - Up to 64 texts in the drawing and 64 across the masters all together, each of up to 24 characters.

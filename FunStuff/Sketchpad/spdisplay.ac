@@ -352,10 +352,10 @@ rdLim, 0
 rdLine, 0
     endloc
 
-// Write line i's slot: the y and x words of its start, then splitPlan's steps to its end in the
-// last K of the NBAND vector words, which the gate then enters; both ends through the view and
-// clipped to the screen (vwLine), and for a line off the screen the gate jumping past the slot
-// (vwEmit). A displayed slot is rewritten
+// Write line i's slot: the y and x words of its start, then the steps to its end in the last K
+// of the NBAND vector words, which the gate then enters; both ends through the view and clipped
+// to the screen (vwLine), the steps and the gate word bank 11's lnEmit's, and for a line off the
+// screen the gate jumping past the slot. A displayed slot is rewritten
 // blank, write, unblank: the gate first jumps past the slot, so the display skips the line,
 // then the words are written, then the gate enters the vectors. So a frame draws the old line,
 // nothing, or the new one, never a mix of the two, which with up to NBAND vectors could run
@@ -439,10 +439,7 @@ wsBody,
     dac wsPtr
     lac wsX
     dac i wsPtr
-    lac slotBase
-    add [SLOTVEC]
-    dac i [emitArea:014]
-    jsp i [vwEmit:014]
+    jsp i [lnEmit:0d11]
     dac i wsGate
 rtn, jmp .
 wsGate, 0

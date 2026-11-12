@@ -213,7 +213,7 @@ A change rewrites only the slots it changes.
 A commit or a deletion marks its slots stale, and the rebuild writes those alone, so at 192 lines
 across the screen a change stops the main loop for 3 to 6 ms.
 The whole list is written only after a load, a change of view, or a drag or a Scale step that
-moves a point with more than 32 lines, about 0.35 s at 64 short lines and about 1 s at 192 lines
+moves a point with more than 64 lines, about 0.35 s at 64 short lines and about 1 s at 192 lines
 across the screen.
 
 ### Lines
@@ -666,7 +666,7 @@ or left on one point dropped.
 A line dropped on a line merges end into nearer end, the thesis's merging of like with like.
 
 While a point is dragged, only its lines' slots are rewritten, from a list made at the pick-up, up
-to 32 lines.
+to 64 lines.
 
 ### Points on lines and circles
 
@@ -1384,6 +1384,7 @@ Not built.
 | *spsize.ac* | 11 | The constraints on size: the root runner that brings each master record the resolver wants |
 | *spfloat.ac* | 6 | The floating point, the end of the truss's overlay |
 | *splock.ac* | 11 | The dot, the lock mark, the lit line |
+| *spslot.ac* | 11 | A line slot's steps and gate word, for `writeSlot` (`lnEmit`) |
 | *spaux.ac* | 12 | Routines kept out of banks 0 and 4 for room, start-up's first part |
 | *spview.ac* | 12 | The view, clipping, the constraints' arms |
 | *spmarks.ac* | 13 | The constraints' marks |

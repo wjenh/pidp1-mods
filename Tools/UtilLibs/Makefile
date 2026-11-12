@@ -3,7 +3,7 @@
 # so the tools need nothing built here
 # "make" here compiles every file just as a check.
 # The link client needs the emulator's ad1proto.h, the wire format.
-INC=-I../../src/blincolnlights/pdp1
+INC=-I../../src/pdp1
 files := $(wildcard *.c)
 
 %.o:%.c

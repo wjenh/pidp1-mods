@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v5.7 6-Nov-2026"
-#define AM1SHORTVERSION "am1 v5.7"
+#define AM1VERSION "am1 v5.8 12-Nov-2026"
+#define AM1SHORTVERSION "am1 v5.8"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -166,8 +166,9 @@ typedef struct parsenode
                                 // RELAYOUT node the deleted word's, NILP elsewhere
     int srcLine;                // on a BREF, ADDR or LCLADDR made from a name, the line and file it
     char *srcFileP;             // was written on, for the error given after the
-                                // parse if its symbol never resolves, and on an
-                                // OVCALL its own.
+                                // parse if its symbol never resolves, on an
+                                // OVCALL its own, and on a / or % the operator's,
+                                // for a zero divisor's error.
                                 // 0 and NILP elsewhere
     int overlay;                // the number of the overlay the node is in, 0 for the root
     const struct PPOrigin *originP; // the macros that made its statement, NULL for none

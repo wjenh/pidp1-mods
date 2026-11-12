@@ -378,17 +378,10 @@ SymNodeP symP;
             rval = onesComplAdj(evalExpr(nodeP->rightP));
             fprintf(outfP,"%o", (lval ^ rval) & WRDMASK);
         }
-        else if( nodeP->value.ival == DIV )
+        else if( (nodeP->value.ival == DIV) || (nodeP->value.ival == MOD) )
         {
-            // there is no divide in macro1, have to reduce everything
-            lval = evalExpr(nodeP->leftP);
-            rval = evalExpr(nodeP->rightP);
-            fprintf(outfP,"%o", onesComplAdj(lval / rval) & WRDMASK);
-        }
-        else if( nodeP->value.ival == MOD )
-        {
-            // there is no mod in macro1, have to reduce everything.
-            // The value is the one the tape gets.
+            // there is no divide or mod in macro1, have to reduce everything.
+            // The value is the one the tape gets, its errors included.
             fprintf(outfP,"%o", evalExpr(nodeP));
         }
         else if( nodeP->value.ival == LSHIFT )

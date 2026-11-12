@@ -167,6 +167,8 @@
  *    text after a ';' are reported on their own line and file
  * 06-Nov-2026 claude - -m reports an undefined name:N; a failed run removes every output it had already
  *    written, the .mac of -m -b and the optimizer's report among them
+ * 12-Nov-2026 claude/wje - a/(b), a/-b and similar are a division, not an origin; a divisor or modulus
+ *    of 0 or -0 is an error; -m writes a division's correct value
 */
 #include <unistd.h>
 #include <stdlib.h>

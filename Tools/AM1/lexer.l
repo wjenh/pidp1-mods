@@ -40,6 +40,7 @@ extern int labelTokenLine;          // the line the comma just scanned is on
 extern int nameTokenLine;           // the line the NAME or ADDR just scanned is on
 extern int nameTokenSrcLine;        // and the line it is written on, after a ';' lineno
                                     // is already one ahead
+extern int divTokenSrcLine;         // the line the last / or % operator is written on
 extern SymNodeP permSymP;
 extern BankContextP curBankP;
 extern int curBank;
@@ -709,11 +710,31 @@ octal                   { decimalMode = false; }
                     /*
                      * The '%' in this lookahead makes "x/%..." lex as DIV then
                      * MOD, a syntax error, rather than an origin and a %.
+                     * This rule is longer than the two above, so it also takes
+                     * "a/(b)", "a/-b" and "a/ (b)", which are divisions unless
+                     * they are an origin as the rule above defines one.
                      */
 \/[ \t]*[^a-zA-Z0-9\~\%\[\/] {
                     int ch;
 
                         ch = yytext[yyleng-1];
+
+                        // An origin only where the slash ends the statement, or where
+                        // blanks follow it at the end of a bare statement's expression.
+                        if( (ch != '\n') && (ch != ';') && (ch != '\r') )
+                        {
+                            unput( ch );
+
+                            if( (yyleng > 2) && stmtBare && (parenDepth == 0) )
+                            {
+                                // the rest of the line is the next statement, as above
+                                unput(';');
+                                return(ORIGIN);
+                            }
+
+                            return(DIV);
+                        }
+
                         if( ch == '\n' )
                         {
                             ++lineno;
@@ -1155,8 +1176,8 @@ gdbtarget()
 }
 
 // The scanner the parser calls.
-// It returns what the generated scanner returns/ and from each token keeps
-// stmtBare and parenDepth for the slash rule.s
+// It returns what the generated scanner returns and from each token keeps
+// stmtBare and parenDepth for the slash rules.
 // Only the tokens that can be part of an origin's expression leave the statement bare.
 // Any other token, a separator and a label's comma included, ends that so a
 // directive's operands are never mistaken for an origin.
@@ -1165,7 +1186,7 @@ gdbtarget()
 // Additionally, the rule for a complement swallows the blanks in front
 // of the ~ so that "a & ~b" and "(~b)" need no separator, and that leaves
 // "lac ~07" with no separator token between the two operands.
-// When a // complement that had a blank in front of it follows an operand, that blank was
+// When a complement that had a blank in front of it follows an operand, that blank was
 // the separator and it is handed over as one ahead of the complement.
 int
 yylex(void)
@@ -1242,8 +1263,6 @@ yylex(void)
     case PLUS:
     case MINUS:
     case MUL:
-    case DIV:
-    case MOD:
     case AND:
     case OR:
     case XOR:
@@ -1252,6 +1271,13 @@ yylex(void)
     case RSHIFT:
     case BREF:       // the colon of a bank reference, "name:bank"
     case WILDTAG:    // the ":*" of "name:*"
+        break;
+
+    // For a zero divisor's error: the operator's node is made after its right
+    // operand, perhaps with the next line's token already read.
+    case DIV:
+    case MOD:
+        divTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
         break;
 
     case '(':

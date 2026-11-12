@@ -173,6 +173,7 @@
  *    its own line and prints no ';' line after it; "cla; 100/" no longer counts its line twice
  * 12-Nov-2026 claude - -m (maccodegen.c) keeps a long comment's whole text, wrapped at blanks into
  *    lines of at most 72 columns, and writes block comments too
+ * 12-Nov-2026 wje - the 1Dop warning was only enabled for macro, now for am1 also
 */
 #include <unistd.h>
 #include <stdlib.h>

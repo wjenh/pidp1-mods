@@ -1222,7 +1222,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, OPORABLE, NILP, NILP);
                     $$->value.symP = $1;
-                    if( doMacro && ($1->flags & SYMF_1DOP) )
+                    if( $1->flags & SYMF_1DOP )
                     {
                         vwarn(WARN_1D, "%s is a PDP-1D instruction", $1->name );
                     }

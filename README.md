@@ -182,7 +182,7 @@ Mouse button up means the lightpen has been moved away from the screen.
 As far as code is concered, the operation looks just the same as the original lightpen.
 
 The simulation is remarkably accurate, but because there is no real detection of light on the screen
-some magic hand waving is done in the emulator to correlate mouse coordinates with the dpy instructions.
+some magic handwaving is done in the emulator to correlate mouse coordinates with the dpy instructions.
 There is also motion prediction logic to deal with the fact that modern displays are raster displays
 and communication is via sockets through the Linux stack.
 
@@ -238,7 +238,7 @@ Another is standard extensions like high speed channels.
 These remain in the emulator itself.
 
 An effort has been made to add these features in a reasonably authentic way. For example, the -1D extensions operate
-in the correct subcycles. But, the high speed channels worry more about the external behavior and operate internally
+in the current sub-cycles. But, the high speed channels worry more about the external behavior and operate internally
 without replicating all of the flip-flops, etc. High speed channels still replicate the timing and the cycle-stealing
 the original hardware did, but not necessarily at the same internal time points.
 Again, it's a black box.

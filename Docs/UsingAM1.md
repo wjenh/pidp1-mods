@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.7 and covers up through am1 version 5.7; it will be updated as needed.\
+This is version 3.8 and covers up through am1 version 5.9; it will be updated as needed.\
 Edit date 11-Nov-2026\
-Explain the rules for/ as an origin vs as a divide more explicitly.
+Small change, additional info for / vs // interpretation.
 
 ## What is **am1**?
 
@@ -826,6 +826,9 @@ However, any code-generating statements following the / will of course generate 
 The syntax must be followed, the formal definition is:\
 *A slash with no blank before it and a blank or the end of the statement after it at the
 end of the first expression of a statement is an origin and the rest of the line is the next statement.*
+
+A comment also ends a statement, *100/// c* is an origin followed by the comment *// c*.
+In *100// c* the two slashes are the comment itself, it is the word 100 and not an origin.
 
 **NOTE** the important wording. If you use division, /, it *must* have no blank following it.
 Otherwise it will be interpreted as the origin character.

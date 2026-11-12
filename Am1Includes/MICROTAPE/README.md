@@ -2,7 +2,7 @@
 
 This also documents the filesystem routines.
 
-This is version 1.2\
+This is version 1.3\
 11-Nov-2026
 
 ## What's here?
@@ -83,12 +83,14 @@ The library uses the PDP-1D instructions `lai`, `lia` and `sni`, so the emulator
 
 Working buffers are needed.
 The program reserves the storage, anywhere in any bank, using the macros:
-- `MTF_TAPE(name)`, a tape handle, 01010 words, the drive, the directory and a block buffer.
+- `MTF_TAPE(name)`, a tape handle, 01047 words, the drive, the directory, a block buffer and
+  a count for each directory slot.
   One per mounted tape.
-- `MTF_FILE(name)`, a file descriptor, 011 words.
+- `MTF_FILE(name)`, a file descriptor, 012 words.
   One per open file.
   It contains the tape handle's address, the slot, the first block, the blocks, the length,
-  the position (`MTF_FPOS`), the information word, the flags and the handle's mount count when it was opened.
+  the position (`MTF_FPOS`), the information word, the flags, and the handle's mount count and
+  the slot's count when it was opened.
   A program may read them, but should never set them.
 
 A program restarted without reloading keeps them as the last run left them.
@@ -120,12 +122,10 @@ A descriptor is valid until it is closed and calls then return `MTF_EBADFD` if i
 or formatted again, or when its file is deleted, replaced by `mtfRename`, or moved by `mtfPack`.
 A close that finds it invalid marks it closed and writes nothing.
 Renaming a file leaves its descriptors valid.
-
-**Close every descriptor of a file before deleting it or renaming another file over it.**
-A descriptor left open on a deleted or replaced file is refused only until a later `mtfCreate`
-takes the same directory slot and the same first block, which the first free slot and the
-first fit make likely.
-From then on the old descriptor passes every check and its reads and writes use the new file.
+A descriptor left open on a deleted or replaced file stays refused, even after a later
+`mtfCreate` takes the same directory slot and the same first block: each slot has a count in
+the handle, raised whenever the slot is cleared, and a descriptor keeps the count it was opened
+with.
 
 - **Sequence breaks are off during every call that moves the tape** and turned on again at
   the end only if they were on.

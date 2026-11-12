@@ -3,6 +3,7 @@
 // Include MICROTAPE/mtfs.ah, then this file once, in any bank, and place that bank's
 // constants. It includes mtfdir.ac. Called as mtfdir.ac's entries are.
 // 11-Nov-2026, Claude: the call.
+// 11-Nov-2026, Claude: a replaced file's slot count raised, so its descriptors stay refused.
 
 #ifndef MTFRENAME_AC
 #define MTFRENAME_AC
@@ -22,7 +23,8 @@ local rnRtn, rnP, rnH, rnNew, rnRep, rnK, rnJ, rnE, rnR, rnQ, rnS, rnSbm, rnFree
 // MTF_PREPLACE is nonzero; then its entry is cleared in the same directory write, so a halt
 // leaves the tape either as it was or with both changes. A read-only file may be renamed but
 // not replaced. A new name that is the file's own, in any case, succeeds with nothing written.
-// A descriptor open on the renamed file stays valid; one open on a replaced file is not.
+// A descriptor open on the renamed file stays valid; one open on a replaced file is refused
+// from then on, even once a create has taken the replaced file's slot and blocks.
 // Sequence breaks are off throughout and turned on again only if they were on.
 // Entry: AC = the parameter block's 16-bit address: the handle (MTF_PHANDLE), the old name's
 // 16-bit address (MTF_PNAME), the new name's (MTF_PNEWNAME), both am1 ascii strings, and
@@ -121,6 +123,15 @@ rnFree,
     farjda(mtfWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
     jmp rnUndo
+    lac rnR
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rnEnd                   // AC 0, MTF_OK: nothing replaced
+    lac rnJ
+    add [MTF_HSLOTS]
+    add rnH
+    dac rnQ
+    idx i rnQ                   // the replaced file's descriptors are no longer valid
+    cla
     jmp rnEnd
 
     // The write failed: the old name back, and the replaced entry if there was one.

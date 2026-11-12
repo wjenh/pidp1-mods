@@ -5,7 +5,7 @@ This document describes how Sketchpad, the light pen drawing program for the PiD
 Where the program does something differently from the thesis, it says what and why.
 How to use the program is *UsingSketchpad.md*.
 
-This is version 2.1\
+This is version 2.2\
 Edit date 11-Nov-2026\
 Updated to include the remainder of the variable size operations
 

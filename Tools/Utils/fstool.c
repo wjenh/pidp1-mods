@@ -1504,7 +1504,7 @@ long tracks;
     drTracks = (int) tracks;
 }
 
-// List the directory, in octal, with warnings for what the library routines report as warnings.
+// List the directory with warnings for what the library routines report as warnings.
 static int
 cmdList(void)
 {

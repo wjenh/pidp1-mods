@@ -768,10 +768,10 @@ drumlist [-i drumfile] [file.ovl ...]
 - a program **drumupdater** loaded, with its label and start address
 - Adventure's tracks
 - a Z-machine story's tracks with the story's version and serial number
--  a file system volume's tracks with the volume's tracks, name, generation and files otherwise "not initialized".
+- a file system volume's tracks with the volume's tracks, name, generation and files otherwise "not initialized".
 
 ```
-Track 24: file system volume of 8 tracks (fstool -D 30,10), generation 2, 1 file
+Track 24: file system volume of 8 tracks (fstool -D 20,8), generation 2, 1 file
 Track 25: file system volume from track 24
 ```
 

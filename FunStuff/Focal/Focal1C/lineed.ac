@@ -1,0 +1,253 @@
+// lineed.ac -- PDP-1 FOCAL's line editor: getLine reads one line into lnBuf
+// with FOCAL,1969's editing:
+// - each character is echoed as it is stored, RETURN as CR LF;
+// - RUBOUT (DEL or BS) removes the last character and echoes a backslash;
+//   on an empty line it does nothing;
+// - left arrow empties the line and echoes itself, and typing goes on;
+// - FF, ALT MODE (} or ESC) and NUL are ignored, unechoed;
+// - lower case folds to upper outside a quoted string, and echoes folded;
+// - the buffer holds LN_MAX characters, RETURN included.
+//   A line of more than LN_OK characters is refused at RETURN, after its
+//   echo, with ?10.:5.
+//   The character that would be the next past LN_MAX is refused at once,
+//   unechoed, with ?10.:5, and is kept as the first of the next line.
+// On the typewriter nothing is echoed, since it prints what is typed.
+//
+// A line read from the paper tape (rdOn, ptape.ac) is not echoed either,
+// useTty being set, except that RUBOUT echoes its backslash, as FOCAL,1969
+// does.
+// It has no limit but the free space.
+// Besides lnBuf, each of its characters is packed into the free space above
+// the last stored line, where store.ac's stLong takes a line longer than
+// lnBuf (lnLong).
+// A line that outgrows the free space is refused at once with ?10.:5.
+//
+// Called via jsp, from bank 0, with the extend window open; lnBuf is in bank
+// 1 (termdata.ac).
+// Include the file where it is not executed.
+// Needs focal.ah, <AIDS/skipmacros.ah> and termio.ac.
+
+local glRtn, glLoop, glChar, glCrSet, glAct, glKeep, glQuote, glFold, \
+    glStore, glSt2, glEcho, glRub, glRubQ, glRubE, glRubT, glLarrow, glRet, \
+    glRetE, glLong, glTape, glOver, glRefuse, glC, glP, lkX, lkFull
+
+// getLine -- read a line into lnBuf, one ASCII character a word, without its
+// RETURN, and its length into lnLen; lnLong is set when a line from the tape
+// is too long for lnBuf, and is then only in the free space.
+// A refused line, Ctrl-C and a lost connection leave by jmp i tmErr
+// (termio.ac) and do not return.
+// AC and IO are clobbered.
+// Called via jsp; returns by jmp i glRtn.
+getLine, dac glRtn
+    dzm lnLen
+    dzm lnLong
+    dzm lnQuo
+    lac lnCarry             // the character a refused line left over
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glLoop
+    dzm lnCarry
+    jmp glChar
+glLoop, jsp getc
+    lai
+    and [0177]
+    // an LF just after a CR is the rest of the same RETURN
+    SKIP_NEXT_IF_SAME [CH_LF]
+    jmp glChar
+    dac glC
+    lac lnCr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glKeep
+    dzm lnCr
+    jmp glLoop
+glKeep, lac glC
+
+// the character in AC, lnCr set when it is a CR
+glChar, dac glC
+    dzm lnCr
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp glCrSet
+    jmp glAct
+glCrSet, law 1
+    dac lnCr
+glAct, lac glC
+    SKIP_NEXT_IF_DIFFERENT [CH_DEL]
+    jmp glRub
+    SKIP_NEXT_IF_DIFFERENT [CH_BS]
+    jmp glRub
+    SKIP_NEXT_IF_DIFFERENT [CH_LARROW]
+    jmp glLarrow
+    SKIP_NEXT_IF_DIFFERENT [CH_FF]
+    jmp glLoop
+    SKIP_NEXT_IF_DIFFERENT [CH_ALT]
+    jmp glLoop
+    SKIP_NEXT_IF_DIFFERENT [CH_ESC]
+    jmp glLoop
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glLoop
+    // with the buffer full, this character, RETURN too, is the one too
+    // many, except on the tape
+    lac rdOn
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glTape
+    lac lnLen
+    SKIP_NEXT_IF_DIFFERENT [LN_MAX]
+    jmp glOver
+glTape, lac glC
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    jmp glRet
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp glRet
+    // a quote opens or closes a string; outside one, lower case folds
+    SKIP_NEXT_IF_DIFFERENT [CH_QUOTE]
+    jmp glQuote
+    lac lnQuo
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glStore
+glFold, lac glC
+    sub [0141]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp glStore             // below a
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp glStore             // above z
+    lac glC
+    sub [040]
+    dac glC
+    jmp glStore
+glQuote, lac lnQuo
+    xor [1]
+    dac lnQuo
+glStore, lac lnLen
+    sub [LN_MAX]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp glSt2               // past lnBuf, in the free space only
+    lac lnLen
+    add [lnBuf:1]
+    dac glP
+    lac glC
+    dac i glP
+glSt2, lac rdOn
+    SKIP_NEXT_IF_AC_ZERO
+    jsp lnPack
+    idx lnLen
+glEcho, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glLoop
+    lio glC
+    jsp putc
+    jmp glLoop
+
+// RUBOUT: removing a quote restores the quoting before it; past lnBuf the
+// character is the free space's
+glRub, lac lnLen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glLoop
+    sub [1]
+    dac lnLen
+    sub [LN_MAX]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp glRubT
+    lac lnLen
+    add [lnBuf:1]
+    dac glP
+    lac i glP
+    SKIP_NEXT_IF_SAME [CH_QUOTE]
+    jmp glRubE
+glRubQ, lac lnQuo
+    xor [1]
+    dac lnQuo
+// the backslash, echoed for a RUBOUT read from the tape too
+glRubE, law 0134
+    dac glC
+    lac rdOn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp glEcho
+    lio glC
+    jsp putc
+    jmp glLoop
+glRubT, lac txTop
+    add [3]
+    dac chA
+    lio lnLen
+    jsp chGet
+    lai
+    SKIP_NEXT_IF_SAME [CH_QUOTE]
+    jmp glRubE
+    jmp glRubQ
+
+glLarrow, dzm lnLen
+    dzm lnQuo
+    jmp glEcho
+
+// RETURN: echoed, then the line is refused if it is too long; from the tape,
+// one longer than lnBuf is marked
+glRet, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glLong
+    jsp newline
+glLong, lac rdOn
+    SKIP_NEXT_IF_AC_ZERO
+    jmp glRetE
+    lac lnLen
+    sub [LN_OK+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp glRefuse
+    jmp i glRtn
+glRetE, lac lnLen
+    sub [LN_MAX+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    idx lnLong
+    jmp i glRtn
+
+// one character too many, kept for the next line, unechoed
+glOver, lac glC
+    dac lnCarry
+glRefuse, dzm lnLen
+    lac [ERR_TEXT]
+    jmp i tmErr
+
+// lnPack -- pack glC, character lnLen of a line read from the tape, into the
+// free space from txTop+3, where stLong takes a stored line's text.
+// With no room, a character past lnBuf refuses the line (?10.:5), and one
+// within it is in lnBuf alone.
+// In FOCAL-1C the room ends at the variables (focal.ah), which a line not
+// yet stored must leave as they are.
+// AC and IO are clobbered.
+// Called via jsp.
+lnPack, dap lkX
+    lac lnLen
+    rar 1s
+    and [0377777]
+    add txTop
+    add [3]
+#ifndef FOCAL_1C
+    sub [TX_END]
+#else
+    sub vrTop
+#endif
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lkFull
+    lac txTop
+    add [3]
+    dac chA
+    lac lnLen
+    dac chK
+    lio glC
+    jsp chPut
+lkX, jmp .
+lkFull, lac lnLen
+    sub [LN_MAX]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp glRefuse
+    jmp lkX
+
+glRtn, 0
+glC, 0
+glP, 0
+endloc
+
+lnLen, 0                    // the characters in lnBuf
+lnQuo, 0                    // 1 inside a quoted string
+lnCr, 0                     // the last character read was CR
+lnCarry, 0                  // a refused line's last character, 0 for none
+lnLong, 0                   // not 0 when the tape's line is longer than lnBuf

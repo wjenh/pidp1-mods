@@ -1,0 +1,1882 @@
+// fpconv.ac -- PDP-1 FOCAL's decimal conversion: a number read from its
+// digits (fpIn), and a number typed under the format %x.yy (fpOut).
+//
+// Both are exact.
+// A literal's value is rounded once to 35 bits, half away from zero, and a
+// typed value once to its last digit, half away from zero.
+// The arithmetic is on multiword integers (bn, 17-bit limbs, low limb first)
+// in place of a table of powers of ten.
+// A literal is its digits' integer D times 5^E and 2^E; a typed value is
+// M 2^(e-35) times 10^p, the 5^p and 2^p apart.
+//
+// Characters are ASCII, upper case.
+// Goes in bank 1 with fparith.ac, whose words (FA, the hooks, lmTab, mkShl
+// and mkShr) it uses, and whose calling rules it keeps.
+// Every entry is entered and left with the extend window open.
+//
+// FOCAL-1C (FOCAL_1C defined) leaves out the two fast paths, fpIn's two-limb
+// digits with inFast and fpOut's q2F.
+// Every number then goes through bn, with the same result.
+
+// The multiword integer: bnN limbs, the top one nonzero, or none for zero.
+bnN, 0
+bnL,
+    table BN_MAX
+bnB, 0                  // bnTo35's bit count
+bmM, 0                  // bnMulS's multiplier
+baV, 0                  // bnAddS's addend
+bdD, 0                  // bnDivS's divisor
+bsS, 0                  // bnShl's and bnShr's count
+bpP, 0                  // bnPow5's and bnDiv5's power
+
+// 5^0 to 5^7; 5^7 = 78125 is the largest power below 2^17.
+// bnPow5 and bnDiv5 take 5^0 to 5^6 from it, q2F all eight.
+p5Tab, 1
+    5
+    0d25
+    0d125
+    0d625
+    0d3125
+    0d15625
+    0d78125
+
+// bn = M, FA's magnitude.
+// AC is clobbered; IO is preserved.
+// Called via jsp.
+bnLdM, dap blX
+    lac fa0
+    dac bnL
+    lac fa1
+    dac bnL+1
+    lac fa2
+    dac bnL+2
+    law 3
+    dac bnN
+blX, jmp .
+
+// bn = bn times bmM, below 2^17.
+// AC and IO are clobbered.
+// Called via jsp.
+bnMulS, dap bmX
+    local loop, nc, done, p, n, c, hi, lo
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bmX
+    cma
+    dac n
+    dzm c
+    lac [bnL:.]
+    dac p
+loop,
+    // limb times bmM plus the carry in, below 2^34.
+    // lo is the new limb, hi the carry.
+    lac i p
+    mul bmM
+    dac hi
+    dio lo
+    lac lo
+    rar 1s
+    and [0377777]
+    add c
+    dac lo
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp nc
+    and [0377777]
+    dac lo
+    idx hi
+nc,
+    lac lo
+    dac i p
+    lac hi
+    dac c
+    idx p
+    isp n
+    jmp loop
+    lac c
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bmX
+    dac i p                 // a new top limb
+    idx bnN
+    jmp bmX
+p, 0
+n, 0
+c, 0
+hi, 0
+lo, 0
+    endloc
+bmX, jmp .
+
+// bn = bn plus baV, below 2^17.
+// AC and IO are clobbered.
+// Called via jsp.
+bnAddS, dap baX
+    local loop, nc, nx, top, p, n, c
+    lac baV
+    dac c
+    lac [bnL:.]
+    dac p
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp top
+    cma
+    dac n
+loop,
+    lac c
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp baX                 // nothing more to carry
+    add i p
+    dzm c
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp nc
+    and [0377777]
+    dac i p
+    law 1
+    dac c
+    jmp nx
+nc,
+    dac i p
+nx,
+    idx p
+    isp n
+    jmp loop
+top,
+    lac c
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp baX
+    dac i p                 // a new top limb
+    idx bnN
+    jmp baX
+p, 0
+n, 0
+c, 0
+    endloc
+baX, jmp .
+
+// bn = bn divided by bdD, 1 to 2^17 - 1; AC = the remainder.
+// IO is clobbered.
+// Called via jsp.
+bnDivS, dap bdX
+    local loop, done, p, n, r
+    dzm r
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp done
+    cma
+    dac n
+    lac bnN
+    add [bnL:.]
+    sub [1]
+    dac p
+loop,
+    // (r 2^17 + limb) / bdD, the remainder carried down to the next limb
+    lac r
+    lio i p
+    ril 1s
+    div bdD
+    hlt                     // overflow cannot happen, r < bdD
+    dac i p
+    dio r
+    lac p
+    sub [1]
+    dac p
+    isp n
+    jmp loop
+    // the quotient is at most one limb shorter
+    lac bnN
+    add [bnL:.]
+    sub [1]
+    dac p
+    lac i p
+    SKIP_NEXT_IF_AC_ZERO
+    jmp done
+    lac bnN
+    sub [1]
+    dac bnN
+done,
+    lac r
+    jmp bdX
+p, 0
+n, 0
+r, 0
+    endloc
+bdX, jmp .
+
+// bsQ = bsS div 17, bsR = bsS mod 17.
+// AC and IO are clobbered.
+// Called via jsp.
+bsQR, dap bqX
+    cla
+    lio bsS
+    ril 1s
+    div [0d17]
+    hlt                     // overflow cannot happen, bsS is below 2^17
+    dac bsQ
+    dio bsR
+bqX, jmp .
+bsQ, 0
+bsR, 0
+
+// bn = bn times 2^bsS.
+// AC and IO are clobbered.
+// Called via jsp.
+bnShl, dap bhX
+    local mv, zl, bits, bl, b0, s, d, n
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bhX
+    jsp bsQR
+    lac bsQ
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bits
+    // whole limbs up, the top first, then zeros below them
+    lac bnN
+    add [bnL:.]
+    sub [1]
+    dac s
+    add bsQ
+    dac d
+    lac bnN
+    cma
+    dac n
+mv,
+    lac i s
+    dac i d
+    lac s
+    sub [1]
+    dac s
+    lac d
+    sub [1]
+    dac d
+    isp n
+    jmp mv
+    lac [bnL:.]
+    dac d
+    lac bsQ
+    cma
+    dac n
+zl,
+    dzm i d
+    idx d
+    isp n
+    jmp zl
+    lac bnN
+    add bsQ
+    dac bnN
+bits,
+    lac bsR
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bhX
+    dac mkC
+    jsp mkShl
+    // the new top limb, the top bsR bits of the old one.
+    // AC is 0, IO the old top.
+    lac bnN
+    add [bnL:.]
+    dac d
+    sub [1]
+    dac s
+    cla
+    lio i s
+    ril 1s
+    xct mkA
+    xct mkB
+    dac i d
+    // each limb from the pair it straddles, the top first; scl keeps AC's
+    // sign, 0, and drops the bits that would move into it
+    lac bnN
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp b0
+    cma
+    dac n
+bl,
+    lac s
+    dac d
+    sub [1]
+    dac s
+    lac i d
+    lio i s
+    ril 1s
+    xct mkA
+    xct mkB
+    dac i d
+    isp n
+    jmp bl
+b0,
+    lac [bnL:.]
+    dac d
+    lac i d
+    cli
+    xct mkA
+    xct mkB
+    dac i d
+    // the top limb counts if it is not zero
+    lac bnN
+    add [bnL:.]
+    dac d
+    lac i d
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bhX
+    idx bnN
+    jmp bhX
+s, 0
+d, 0
+n, 0
+    endloc
+bhX, jmp .
+
+// bn = bn divided by 2^bsS, rounded down.
+// AC and IO are clobbered.
+// Called via jsp.
+bnShr, dap brX
+    local mv, keep, bits, bl, top, zero, s, d, n, t
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp brX
+    jsp bsQR
+    lac bsQ
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bits
+    // whole limbs down, the bottom first; all of them is zero
+    lac bnN
+    sub bsQ
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp keep
+    jmp zero
+keep,
+    dac bnN
+    cma
+    dac n
+    lac [bnL:.]
+    dac d
+    add bsQ
+    dac s
+mv,
+    lac i s
+    dac i d
+    idx s
+    idx d
+    isp n
+    jmp mv
+bits,
+    lac bsR
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp brX
+    dac mkC
+    jsp mkShr
+    // each limb from the pair it straddles, the bottom first.
+    // AC the upper, IO the lower in its top 17 bits; IO's top 17 bits are
+    // then the new lower.
+    lac [bnL:.]
+    dac d
+    lac bnN
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp top
+    cma
+    dac n
+bl,
+    lac d
+    add [1]
+    dac s
+    lac i s
+    lio i d
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac i d
+    lac s
+    dac d
+    isp n
+    jmp bl
+top,
+    lac i d
+    xct mkA
+    xct mkB
+    dac i d
+    SKIP_NEXT_IF_AC_ZERO
+    jmp brX
+    lac bnN
+    sub [1]
+    dac bnN
+    jmp brX
+zero,
+    dzm bnN
+    jmp brX
+s, 0
+d, 0
+n, 0
+t, 0
+    endloc
+brX, jmp .
+
+// bn = bn times 5^bpP.
+// AC and IO are clobbered.
+// Called via jsp.
+bnPow5, dap bpX
+    local loop, last, t
+loop,
+    lac bpP
+    sub [7]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp last
+    dac bpP
+    lac [0d78125]
+    dac bmM
+    jsp bnMulS
+    jmp loop
+last,
+    lac bpP
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bpX
+    add [p5Tab:.]
+    dac t
+    lac i t
+    dac bmM
+    jsp bnMulS
+    jmp bpX
+t, 0
+    endloc
+bpX, jmp .
+
+// bn = bn divided by 5^bpP, rounded down.
+// AC and IO are clobbered.
+// Called via jsp.
+bnDiv5, dap b5X
+    local loop, last, t
+loop,
+    lac bpP
+    sub [7]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp last
+    dac bpP
+    lac [0d78125]
+    dac bdD
+    jsp bnDivS
+    jmp loop
+last,
+    lac bpP
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp b5X
+    add [p5Tab:.]
+    dac t
+    lac i t
+    dac bdD
+    jsp bnDivS
+    jmp b5X
+t, 0
+    endloc
+b5X, jmp .
+
+// AC = bn's bit count, 0 for zero.
+// IO is clobbered.
+// Called via jsp.
+bnBits, dap bbX
+    local loop, done, t, c
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bbX
+    // 17 per limb below the top one, then the top one's bits
+    sub [1]
+    mul [0d17]
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac c
+    lac bnN
+    add [bnL:.]
+    sub [1]
+    dac t
+    lac i t
+loop,
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp done
+    sar 1s
+    dac t
+    idx c
+    lac t
+    jmp loop
+done,
+    lac c
+    jmp bbX
+t, 0
+c, 0
+    endloc
+bbX, jmp .
+
+// FA's magnitude = bn, not zero, rounded once to 35 bits, half away from zero,
+// and bnB = bn's bit count, one more when the rounding carries to 2^35.
+// bn is then FA 2^(bnB-35).
+// faS and faE stand; bn is clobbered.
+// AC and IO are clobbered.
+// Called via jsp.
+// bnRnd is its second half, the fixed steps that round into FA a bn of
+// exactly 36 bits in bnL to bnL+2, its bit count already in bnB.
+// Called via jsp, with bnTo35's contract.
+bnTo35, dap btX
+    local shr, up, t, hb
+    jsp bnBits
+    dac bnB
+    // bn to exactly 36 bits, the 35 kept and the round bit
+    sub [0d36]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp up
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp shr
+    cma
+    dac bsS
+    jsp bnShl
+    jmp up
+shr,
+    dac bsS
+    jsp bnShr
+    jmp up
+bnRnd, dap btX
+up,
+    // bnL+2 is 2 or 3, so fa2 is 1; fa1 is its low bit, then bnL+1's top 16
+    // bits; fa0 bnL+1's low bit, then bnL's top 16; bnL's low bit rounds
+    law 1
+    dac fa2
+    lac bnL+2
+    rar 1s
+    and [0400000]
+    rar 1s
+    dac hb                  // bnL+2's low bit as 2^16
+    lac bnL+1
+    rar 1s
+    dac t                   // its low bit in bit 0, the rest one place down
+    and [0177777]
+    ior hb
+    dac fa1
+    lac t
+    and [0400000]
+    rar 1s
+    dac hb                  // bnL+1's low bit as 2^16
+    lac bnL
+    rar 1s
+    dac t                   // the round bit in bit 0
+    and [0177777]
+    ior hb
+    dac fa0
+    lac t
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp btX
+    // up one, carrying through fa1 to 2^35, which is 2^34 one place up
+    lac fa0
+    add [1]
+    dac fa0
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp btX
+    dzm fa0
+    lac fa1
+    add [1]
+    dac fa1
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp btX
+    dzm fa1
+    idx bnB
+    jmp btX
+t, 0
+hb, 0
+    endloc
+btX, jmp .
+
+// AC = the value of the character in IO as a digit, letters as digits (A = 1
+// to Z = 26, E excepted), or -1 if it is not one.
+// IO is preserved.
+// Called via jsp, which takes AC for the return.
+dgVal, dap dvX
+    local no, dig, c
+    dio c
+    lac c
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp no                  // below 0
+    sub [012]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp dig                 // 0 to 9
+    lac c
+    sad [0105]
+    jmp no                  // E
+    sub [0101]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp no                  // below A
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp no                  // past Z
+    lac c
+    sub [0100]
+    jmp dvX
+dig,
+    lac c
+    sub [060]
+    jmp dvX
+no,
+    law i 1
+    jmp dvX
+c, 0
+    endloc
+dvX, jmp .
+
+// FA = the number whose first character is in AC, a digit, a letter or a
+// point, read on through fpGetc; AC = the character that ended it.
+// IO is clobbered.
+// Called via farjda(fpIn:1).
+// Errors: ?07.22 for a second point or E, or a point or E in the E part;
+// ?23.36 above the range.
+// The digits' integer D stops growing at BN_DMAX limbs, a digit dropped before
+// the point then counting as a power of ten; the E part stops at BN_XCAP.
+// D is first kept in two limbs, inH and inL, while inTw is 1; a digit that
+// finds inH at 13107 or more moves it to bn for the rest.
+// A D still in two limbs, with -7 <= E <= 7, is converted by inFast; any
+// other goes to bn and the multiword conversion.
+// Both give the same number.
+fpIn, 0
+    local mant, dmax, grow, fdig, fnc, fmv, notd, point, next, expo, eminus
+    addlocal eplus, edig, eok, enotd, eneg, epos, conv, cexact, fconv, fslow
+    addlocal neg, big, zero, range, twoE, t, c
+    dac inRtn
+    dzm bnN
+    dzm inFr
+    dzm inFd
+    dzm inDr
+#ifndef FOCAL_1C
+    dzm inH
+    dzm inL
+    law 1
+    dac inTw
+#endif
+    lac fpIn
+mant,
+    dac c
+    lio c
+    jsp dgVal
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp notd
+    dac baV
+#ifndef FOCAL_1C
+    lac inTw
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fdig
+#endif
+dmax,
+    lac bnN
+    sub [BN_DMAX]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp grow
+    lac inFr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp next                // a dropped fraction digit counts for nothing
+    idx inDr
+    jmp next
+grow,
+    law 0d10
+    dac bmM
+    jsp bnMulS
+    jsp bnAddS
+    lac inFr
+    SKIP_NEXT_IF_AC_ZERO
+    idx inFd
+    jmp next
+#ifndef FOCAL_1C
+fdig,
+    // D 10 + v in two limbs.
+    // inL 10 + v is inL and a carry t of at most 10, and inH 10 + t stays
+    // below 2^17 while inH is below 13107.
+    lac inH
+    sub [0d13107]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fmv
+    lac inL
+    mul [0d10]
+    dac t
+    rir 1s                  // IO bit 17, the product's sign (F15D, mul), is
+                            // 0 and rotates to the top, leaving the low limb
+    dio inL
+    lac inL
+    add baV
+    dac inL
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fnc
+    and [0377777]
+    dac inL
+    idx t
+fnc,
+    lac inH                 // inH 10 + t as (4 inH + inH) 2 + t
+    ral 2s
+    add inH
+    ral 1s
+    add t
+    dac inH
+    lac inFr
+    SKIP_NEXT_IF_AC_ZERO
+    idx inFd
+    jmp next
+fmv,
+    jsp inMv
+    jmp dmax
+#endif
+notd,
+    lac c
+    sad [056]
+    jmp point
+    sad [0105]
+    jmp expo
+    lac inDr
+    sub inFd
+    dac inX
+    jmp conv
+point,
+    lac inFr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp twoE
+    law 1
+    dac inFr
+next,
+    jsp i fpGetc
+    jmp mant
+expo,
+    // E, an optional sign, then digits, which saturate at BN_XCAP
+    dzm inX
+    dzm inSg
+    jsp i fpGetc
+    sad [053]
+    jmp eplus
+    sad [055]
+    jmp eminus
+    jmp edig
+eminus,
+    law 1
+    dac inSg
+eplus,
+    jsp i fpGetc
+edig,
+    dac c
+    lio c
+    jsp dgVal
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp enotd
+    dac t
+    lac inX                 // inX 10 + t as (4 inX + inX) 2 + t
+    ral 2s
+    add inX
+    ral 1s
+    add t
+    dac inX
+    sub [BN_XCAP]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp eok
+    lac [BN_XCAP]
+    dac inX
+eok,
+    jsp i fpGetc
+    jmp edig
+enotd,
+    lac c
+    sad [056]
+    jmp twoE
+    sad [0105]
+    jmp twoE
+    // the power of ten is the E part, plus the dropped digits, less the
+    // fraction's
+    lac inSg
+    SKIP_NEXT_IF_AC_ZERO
+    jmp eneg
+    lac inDr
+    add inX
+    jmp epos
+eneg,
+    lac inDr
+    sub inX
+epos,
+    sub inFd
+    dac inX
+conv,
+    dzm faS
+#ifndef FOCAL_1C
+    lac inTw
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fconv
+#endif
+cexact,
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    lac inX
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp neg
+    // D 10^E, E >= 0, as D 5^E 2^E; from 10^617 up it is past 2^2047
+    sub [0d617]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp big
+    lac inX
+    dac bpP
+    jsp bnPow5
+    jsp bnTo35
+    lac bnB
+    add inX
+    jmp range
+neg,
+    // D 10^-q as D 2^t / 5^q, then 2^(-t-q); t brings the quotient to at
+    // least 37 bits, enough to round.
+    // From 10^-720 down it is below 2^-2049.
+    cma
+    dac inQ
+    sub [0d720]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zero
+    cla
+    lio inQ
+    ril 1s
+    div [3]
+    hlt                     // overflow cannot happen
+    dac t                   // t = 39 + 2q + floor(q/3) - D's bits, at least 0
+    lac inQ
+    ral 1s
+    add t
+    add [0d39]
+    dac t
+    jsp bnBits
+    cma
+    add t
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    cla
+    dac t
+    dac bsS
+    jsp bnShl
+    lac inQ
+    dac bpP
+    jsp bnDiv5
+    jsp bnTo35
+    lac bnB
+    sub t
+    sub inQ
+range,
+    dac faE
+    sub [FP_EMAX]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp big
+    lac faE
+    add [FP_EMIN]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp zero
+    lac c
+    jmp i inRtn
+zero,
+    jsp faZero
+    lac c
+    jmp i inRtn
+big,
+    lac [ERR_LITBIG]
+    jmp i fpErr
+twoE,
+    lac [ERR_TWOE]
+    jmp i fpErr
+#ifndef FOCAL_1C
+fconv,
+    // D in two limbs: zero, or the fast conversion for -7 <= E <= 7, or bn
+    lac inH
+    ior inL
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    lac inX
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    cma
+    dac inQ
+    sub [0d8]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fslow
+    jsp inFast
+    jmp range
+fslow,
+    jsp inMv
+    jmp cexact
+#endif
+t, 0
+c, 0
+    endloc
+inRtn, 0
+inFr, 0                 // 1 once the point is read
+inFd, 0                 // digits read after the point
+inDr, 0                 // digits dropped before it
+inX, 0                  // the E part, then the power of ten
+inSg, 0                 // 1 for a minus after E
+inQ, 0                  // |E|, from fconv to inFast; q, for E = -q
+#ifndef FOCAL_1C
+inTw, 0                 // 1 while D is in inH and inL, not in bn
+inH, 0                  // D's high limb, then D' 's
+inL, 0                  // D's low limb, then D' 's
+
+// bn = D, from inH and inL, and inTw = 0, so D leaves its two limbs.
+// AC is clobbered; IO is preserved.
+// Called via jsp.
+inMv, dap imX
+    dzm inTw
+    dzm bnN
+    lac inL
+    dac bnL
+    SKIP_NEXT_IF_AC_ZERO
+    idx bnN
+    lac inH
+    dac bnL+1
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp imX
+    law 2
+    dac bnN
+imX, jmp .
+
+// 5^0 to 5^7 each shifted up k places to [2^16, 2^17), then each k.
+c5Tab, 0200000
+    0240000
+    0310000
+    0372000
+    0234200
+    0303240
+    0364110
+    0d78125
+c5K, 0d16
+    0d14
+    0d12
+    0d10
+    0d7
+    0d5
+    0d3
+    0
+
+// FA = D 10^E for D = inH 2^17 + inL, not zero, and E = inX, -7 to 7, with
+// |E| in inQ; faS stands.
+// D is normalized to D' = D 2^u in [2^33, 2^34) and 5^|E| to
+// c' = 5^|E| 2^k in [2^16, 2^17).
+// For E >= 0, X = D' c'; for E = -q < 0, X = floor(D' 2^34 / c'), which, of
+// at least 36 bits, rounds as the exact quotient does.
+// X, 50 to 52 bits, is made in bnL to bnL+3; its top 36 bits are then
+// rounded by bnRnd.
+// AC = FA's exponent, b + E - u - k or b + E + k - u - 34, b being X's bit
+// count (one more on a carry); faE is not set.
+// inH, inL and bn are clobbered.
+// AC is the result; IO is clobbered.
+// Called via jsp.
+inFast, dap ifX
+    local hi, n8, n1, nl, nd, neg, cut, cl, t, h, u, c, o, p, n
+    // AC:IO = D, IO's top 17 bits the low limb; 17 places at once when the
+    // high limb is 0, then 8 at once if AC is below 2^9, then one at a time
+    // until AC reaches 2^16
+    lac inH
+    SKIP_NEXT_IF_AC_ZERO
+    jmp hi
+    law 0d17
+    dac u
+    lac inL
+    cli
+    jmp n8
+hi,
+    dzm u
+    lio inL
+    ril 1s
+n8,
+    dac t
+    and [0377000]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp n1
+    law 0d8
+    add u
+    dac u
+    lac t
+    scl 8s
+    jmp nl
+n1,
+    lac t
+nl,
+    dac t
+    and [0200000]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp nd
+    idx u                   // idx leaves u in AC, so it precedes lac t
+    lac t
+    scl 1s
+    jmp nl
+nd,
+    lac t
+    dac inH
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac inL
+    // c' and k for |E|; o = E - u less k (E >= 0) or plus k less 34 (E < 0)
+    lac inQ
+    add [c5Tab:.]
+    dac p
+    lac i p
+    dac c
+    lac inQ
+    add [c5K:.]
+    dac p
+    lac inX
+    sub u
+    dac o
+    lac inX
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp neg
+    // for E >= 0, X = D' c' in three limbs, from inL c' and inH c', two each
+    lac o
+    sub i p
+    dac o
+    lac inL
+    mul c
+    dac h
+    rir 1s                  // the low limb, bit 17's 0 rotated to the top
+    dio bnL
+    lac inH
+    mul c
+    dac bnL+2
+    rir 1s
+    dio t
+    lac t
+    add h                   // below 2^18
+    dac t
+    and [0377777]
+    dac bnL+1
+    lac t
+    ral 1s
+    and [1]                 // the carry
+    add bnL+2
+    dac bnL+2
+    dzm bnL+3
+    // 51 bits when bnL+2 reaches 2^16, else 50
+    law 0d50
+    dac bnB
+    lac bnL+2
+    and [0200000]
+    SKIP_NEXT_IF_AC_ZERO
+    idx bnB
+    jmp cut
+neg,
+    // for E < 0, X = floor(D' 2^34 / c'), a limb at a time from the top of
+    // inH, inL, 0, 0; each remainder is below c', so no div overflows
+    lac o
+    add i p
+    sub [0d34]
+    dac o
+    cla
+    lio inH
+    ril 1s
+    div c
+    hlt                     // overflow cannot happen
+    dac bnL+3
+    dio t
+    lac t
+    lio inL
+    ril 1s
+    div c
+    hlt
+    dac bnL+2
+    dio t
+    lac t
+    cli
+    div c
+    hlt
+    dac bnL+1
+    dio t
+    lac t
+    cli
+    div c
+    hlt
+    dac bnL
+    // 52 bits when bnL+3 is 1, else 51
+    law 0d51
+    dac bnB
+    lac bnL+3
+    SKIP_NEXT_IF_AC_ZERO
+    idx bnB
+cut,
+    // Y = X shifted right b - 36 places, 14 to 16, into bnL to bnL+2.
+    // Each limb from the pair it straddles, the bottom first, AC the upper and
+    // IO the lower in its top 17 bits.
+    lac bnB
+    sub [0d36]
+    dac mkC
+    jsp mkShr
+    lac [bnL:.]
+    dac p
+    law i 3
+    dac n
+cl,
+    lac p
+    add [1]
+    dac t
+    lac i t
+    lio i p
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac i p
+    idx p
+    isp n
+    jmp cl
+    jsp bnRnd
+    lac bnB
+    add o
+    jmp ifX
+t, 0
+h, 0
+u, 0
+c, 0
+o, 0
+p, 0
+n, 0
+    endloc
+ifX, jmp .
+#endif
+
+// Types FA under the format: =, a minus or a blank, then the number.
+// With fpFmX 0 it is E format with six digits; else fixed, fpFmX digits in
+// all and at most fpFmY after the point, or E format with fpFmX digits when
+// the integer part needs more.
+// FA stands.
+// AC and IO are clobbered.
+// Called via farjsp.
+fpOut, dac ouRtn
+    local full, dset, pf, pset, fixed, carry, fzero, e6, ex, ef, efz, eok, eplus, t
+    lio [075]
+    jsp put
+    lio [040]
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    lio [055]
+    jsp put
+    lac fpFmX
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp e6
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp fzero
+    // below 1, with at most 6 digits after the point, needs no e10.
+    // One digit before the point, the rest after it, and no carry can reach 10.
+    lac faE
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp full
+    law 1
+    dac ouD
+    jsp ouMinF
+    lac ouF
+    sub [7]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp full
+    lac ouF
+    dac ouP
+    jsp rAt
+    jmp fixed
+full,
+    jsp e10s
+    // d = max(1, e10) digits before the point; more than x is E format
+    lac ouE10
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp dset
+    law 1
+dset,
+    dac ouD
+    lac fpFmX
+    sub ouD
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ex
+    jsp ouMinF
+    // p = min(f, 6 - e10) digits of it rounded after the point
+    law 6
+    sub ouE10
+    dac t
+    sub ouF
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pf
+    lac t
+    jmp pset
+pf,
+    lac ouF
+pset,
+    dac ouP
+    jsp rAt
+    // a carry to one more digit than d + p makes R 10^(d+p), d one more
+    lac ouD
+    add ouP
+    sub ouN
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fixed
+carry,
+    idx ouD
+    lac fpFmX
+    sub ouD
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ex
+    law 1
+    dac ouN
+    dac dg
+    lac ouD
+    cma
+    add [1]
+    dac ouP                 // p = 1 - d, so R = 1 then d - 1 + f zeros
+    jsp ouMinF
+fixed,
+    // x - d - f blanks, then d + f digits: d + p - n zeros, R's n digits,
+    // f - p zeros, with the point after the first d
+    lac fpFmX
+    sub ouD
+    sub ouF
+    dac pnC
+    lio [040]
+    jsp putN
+    lac ouD
+    dac pdL
+    lac ouD
+    add ouP
+    sub ouN
+    dac zsN
+    jsp zeros
+    jsp rDigs
+    lac ouF
+    sub ouP
+    dac zsN
+    jsp zeros
+    jmp i ouRtn
+fzero,
+    law 1
+    dac ouD
+    jsp ouMinF
+    lac ouF
+    dac ouP
+    dzm ouN
+    jmp fixed
+e6,
+    law 6
+    dac ouX
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp efz
+    jsp e10s
+    jmp ef
+ex,
+    lac fpFmX
+    dac ouX
+ef,
+    // 0. then min(n, 6) significant digits, zeros to n, then E and e10
+    lac ouX
+    sub [6]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    cla
+    add [6]
+    dac ouSg
+    sub ouE10
+    dac ouP
+    jsp rAt
+    lac ouSg
+    sub ouN
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp eok
+    law 1                   // 10^sig is 1 then zeros, e10 one more
+    dac ouN
+    dac dg
+    idx ouE10
+eok,
+    lio [060]
+    jsp put
+    lio [056]
+    jsp put
+    lac [0d1000]
+    dac pdL                 // no point among these digits
+    jsp rDigs
+    lac ouX
+    sub ouN
+    dac zsN
+    jsp zeros
+    lio [0105]
+    jsp put
+    lio [053]
+    lac ouE10
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp eplus
+    cma
+    dac ouE10
+    lio [055]
+eplus,
+    jsp put
+    // e10's digits, at least two
+    lac ouE10
+    dac bnL
+    law 1
+    dac bnN
+    jsp digs
+    law 2
+    sub ouN
+    dac zsN
+    jsp zeros
+    jsp rDigs
+    jmp i ouRtn
+efz,
+    lio [060]
+    jsp put
+    lio [056]
+    jsp put
+    lac [0d1000]
+    dac pdL
+    lac ouX
+    dac zsN
+    jsp zeros
+    lio [0105]
+    jsp put
+    lio [053]
+    jsp put
+    lac [0d1000]
+    dac pdL
+    law 2
+    dac zsN
+    jsp zeros
+    jmp i ouRtn
+t, 0
+    endloc
+ouRtn, 0
+ouX, 0                  // the digits of E format
+ouSg, 0                 // its significant digits
+ouD, 0                  // the digits before the point
+ouF, 0                  // the digits after it
+ouP, 0                  // the power of ten R is rounded at
+ouN, 0                  // R's digits, in dg, the lowest first
+ouE10, 0                // 10^(e10-1) <= |FA| < 10^e10
+dg,
+    table DG_MAX
+
+// ouF = min(fpFmY, fpFmX - ouD).
+// AC is clobbered; IO is preserved.
+// Called via jsp.
+ouMinF, dap omX
+    lac fpFmX
+    sub ouD
+    dac ouF
+    lac fpFmY
+    sub ouF
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp omX
+    lac fpFmY
+    dac ouF
+omX, jmp .
+
+// bn = floor(2 |FA| 10^ouP), ouP of either sign, as M 2^(e-34+p) 5^p.
+// FA stands.
+// AC and IO are clobbered.
+// Called via jsp.
+q2At, dap qaX
+    local sneg, pneg, tneg, dq, t, q
+    jsp bnLdM
+    lac ouP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pneg
+    // for p >= 0, times 2^(e-34+p) and 5^p, the 2s after the 5s when they
+    // divide
+    lac faE
+    sub [0d34]
+    add ouP
+    dac t
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp sneg
+    dac bsS
+    jsp bnShl
+    lac ouP
+    dac bpP
+    jsp bnPow5
+    jmp qaX
+sneg,
+    lac ouP
+    dac bpP
+    jsp bnPow5
+    lac t
+    cma
+    dac bsS
+    jsp bnShr
+    jmp qaX
+pneg,
+    // for p = -q < 0, times 2^(e-34-q), over 5^q
+    cma
+    dac q
+    lac faE
+    sub [0d34]
+    sub q
+    dac t
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp tneg
+    dac bsS
+    jsp bnShl
+    jmp dq
+tneg,
+    cma
+    dac bsS
+    jsp bnShr
+dq,
+    lac q
+    dac bpP
+    jsp bnDiv5
+    jmp qaX
+t, 0
+q, 0
+    endloc
+qaX, jmp .
+
+#ifndef FOCAL_1C
+// Q2 = floor(2 |FA| 10^ouP) in qfH and qfL, its high and low 17-bit limbs,
+// by the fast path, for 0 <= ouP <= 7.
+// M 5^p is made by two mul into four limbs (M's top limb is 1), then shifted
+// right by s = 34 - e - p, so that the 2^p of 10^p is part of the shift.
+// It is the integer q2At makes, by fewer and fixed steps.
+// AC = 0 when the fast path was taken; AC is not zero when p is outside 0 to
+// 7 or the result does not fit two limbs, qfH and qfL then meaningless.
+// FA, not zero, stands.
+// IO is clobbered.
+// Called via jsp.
+q2F, dap qfX
+    local no, zero, qloop, qset, s, c, h, k, t, p
+    lac ouP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp no
+    sub [0d8]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp no
+    law 0d34
+    sub faE
+    sub ouP
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp .+2
+    jmp no                  // s <= 0, so Q2 is 2^34 or more
+    dac s
+    sub [0d52]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zero                // s >= 52 and M 5^p is below 2^52, so Q2 is 0
+    lac ouP
+    add [p5Tab:.]
+    dac t
+    lac i t
+    dac c
+    // fa0 c and fa1 c, each with AC the high limb and IO the low one in its
+    // top 17 bits; with fa2 c, which is c, their sum in qfM to qfM+3
+    lac fa0
+    mul c
+    dac h
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac qfM
+    lac fa1
+    mul c
+    dac k
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    add h                   // below 2^18
+    dac t
+    and [0377777]
+    dac qfM+1
+    lac t
+    ral 1s
+    and [1]                 // the carry
+    add k
+    add c                   // below 2^18
+    dac t
+    and [0377777]
+    dac qfM+2
+    lac t
+    ral 1s
+    and [1]
+    dac qfM+3
+    // s = 17 q + r, where limb q is the lowest the result is made from, and r
+    // the bits shifted off it
+    lac [qfM:.]
+    dac p
+    lac s
+qloop,
+    dac t                   // what is left of s
+    sub [0d17]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp qset
+    dac s
+    idx p
+    lac s
+    jmp qloop
+qset,
+    lac t
+    dac mkC
+    jsp mkShr
+    // each limb of the result from the pair it straddles, AC the upper, IO
+    // the lower in its top 17 bits; after the shift IO's top 17 bits are the
+    // new limb.
+    // The third must be 0, or Q2 is 2^34 or more.
+    lio i p
+    idx p
+    lac i p
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac qfL
+    lio i p
+    idx p
+    lac i p
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac qfH
+    lio i p
+    idx p
+    lac i p
+    ril 1s
+    xct mkA
+    xct mkB
+    SKIP_NEXT_IF_AC_ZERO
+    jmp no
+    dio t
+    lac t
+    and [0777776]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp no
+    jmp qfX
+zero,
+    dzm qfH
+    dzm qfL
+    cla
+    jmp qfX
+no,
+    law 1
+    jmp qfX
+s, 0
+c, 0
+h, 0
+k, 0
+t, 0
+p, 0
+    endloc
+qfX, jmp .
+qfH, 0
+qfL, 0
+qfM,                    // M 5^p, the low limb first; the last three stay 0
+    table 7
+#endif
+
+// R = |FA| 10^ouP rounded half away from zero, (Q2 + 1) / 2, its digits in dg,
+// the lowest first, and their count in ouN; none for 0.
+// By the fast path when q2F takes it and Q2 is below 19 2^17, so that R is
+// below 10 2^17 and div by 10 on two words gives each digit; else on the
+// multiword integers.
+// AC and IO are clobbered.
+// Called via jsp.
+rAt, dap raX
+    local slow, nc, fdig, p, t
+#ifndef FOCAL_1C
+    jsp q2F
+    SKIP_NEXT_IF_AC_ZERO
+    jmp slow
+    lac qfH
+    sub [0d19]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp slow
+    dzm ouN
+    lac [dg:.]
+    dac p
+    // Q2 + 1, its low limb into IO's top 17 bits; then AC:IO one place right
+    // is R as div takes a dividend
+    lac qfL
+    add [1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp nc
+    idx qfH                 // the low limb reached 2^17
+    cla
+nc,
+    dac t
+    lio t
+    ril 1s
+    lac qfH
+    scr 1s
+    // R = 0 has no digits
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fdig
+    dio t
+    lac t
+    and [0777776]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp raX
+    cla
+fdig,
+    div [0d10]
+    hlt                     // overflow cannot happen, R is below 10 2^17
+    dac t                   // the quotient
+    dio i p                 // the digit
+    idx p
+    idx ouN
+    // the quotient, below 2^17, is the next dividend, AC 0 and IO it in its
+    // top 17 bits
+    lac t
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp raX
+    lio t
+    ril 1s
+    cla
+    jmp fdig
+#endif
+slow,
+    jsp q2At
+    law 1
+    dac baV
+    jsp bnAddS
+    law 1
+    dac bsS
+    jsp bnShr
+    jsp digs
+    jmp raX
+p, 0
+t, 0
+    endloc
+raX, jmp .
+
+// bn's decimal digits into dg, the lowest first, their count in ouN; bn is
+// then zero.
+// AC and IO are clobbered.
+// Called via jsp.
+digs, dap dsgX
+    local loop, p
+    dzm ouN
+    lac [dg:.]
+    dac p
+loop,
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp dsgX
+    law 0d10
+    dac bdD
+    jsp bnDivS
+    dac i p
+    idx p
+    idx ouN
+    jmp loop
+p, 0
+    endloc
+dsgX, jmp .
+
+// ouE10 = e10, 10^(e10-1) <= |FA| < 10^e10, FA not zero.
+// It starts from a guess off the binary exponent, then steps up or down until
+// floor(|FA| 10^(6-e10)) has six digits.
+// AC and IO are clobbered.
+// Called via jsp.
+e10s, dap esX
+    local neg, gset, try, fhi, slow, small, big, one
+    // floor((e - 1) log10 2) + 1, log10 2 as 39457 / 2^17; within one either way
+    lac faE
+    sub [1]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp neg
+    mul [0d39457]
+    jmp gset
+neg,
+    cma
+    mul [0d39457]
+    cma
+gset,
+    add [1]
+    dac ouE10
+try,
+    // T = floor(|FA| 10^(6-g)), Q2 / 2; g is right when 10^5 <= T < 10^6
+    law 6
+    sub ouE10
+    dac ouP
+#ifndef FOCAL_1C
+    jsp q2F
+    SKIP_NEXT_IF_AC_ZERO
+    jmp slow
+    // by the fast path, 2 10^5 <= Q2 < 2 10^6.
+    // 2 10^5 is 2^17 + 68928, and 2 10^6 is 15 2^17 + 33920.
+    lac qfH
+    sub [0d15]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fhi
+    lac qfH
+    sub [1]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp small
+    SKIP_NEXT_IF_AC_ZERO
+    jmp esX                 // 2 to 14 2^17, six digits
+    lac qfL
+    sub [0d68928]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp esX
+    jmp small
+fhi,
+    SKIP_NEXT_IF_AC_ZERO
+    jmp big
+    lac qfL
+    sub [0d33920]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp big
+    jmp esX
+#endif
+slow,
+    jsp q2At
+    law 1
+    dac bsS
+    jsp bnShr
+    lac bnN
+    sub [3]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp big                 // 2^34 or more
+    lac bnN
+    sub [2]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp one
+    // two limbs, where 10^6 is 7 2^17 + 82496
+    lac bnL+1
+    sub [7]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp esX                 // from 2^17 to 7 2^17, six digits
+    SKIP_NEXT_IF_AC_ZERO
+    jmp big
+    lac bnL
+    sub [0d82496]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp big
+    jmp esX
+one,
+    lac bnN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp small
+    lac bnL
+    sub [0d100000]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp esX
+small,
+    lac ouE10
+    sub [1]
+    dac ouE10
+    jmp try
+big,
+    idx ouE10
+    jmp try
+t, 0
+    endloc
+esX, jmp .
+
+// Types the character in IO through fpPutc.
+// AC and IO are clobbered.
+// Called via jsp.
+put, dap ptX
+    jsp i fpPutc
+ptX, jmp .
+
+// Types pnC copies of the character in IO, none for 0 or less.
+// AC and IO are clobbered.
+// Called via jsp.
+putN, dap pnX
+    local loop
+    dio pnCh
+    lac pnC
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp .+2
+    jmp pnX
+    cma
+    dac pnC
+loop,
+    lio pnCh
+    jsp put
+    isp pnC
+    jmp loop
+    endloc
+pnX, jmp .
+pnC, 0
+pnCh, 0
+
+// Types the digit whose value is in IO, a point first when pdL, the digits
+// still before the point, is 0.
+// AC and IO are clobbered.
+// Called via jsp.
+pdig, dap pgX
+    local nopt, t
+    dio t
+    lac t
+    add [060]
+    dac t
+    lac pdL
+    SKIP_NEXT_IF_AC_ZERO
+    jmp nopt
+    lio [056]
+    jsp put
+    law i 1
+    dac pdL                 // past the point, never 0 again
+nopt,
+    lac pdL
+    sub [1]
+    dac pdL
+    lio t
+    jsp put
+    jmp pgX
+t, 0
+    endloc
+pgX, jmp .
+pdL, 0
+
+// Types zsN zeros through pdig, none for 0 or less.
+// AC and IO are clobbered.
+// Called via jsp.
+zeros, dap zsX
+    local loop, n
+    lac zsN
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp .+2
+    jmp zsX
+    cma
+    dac n
+loop,
+    cli
+    jsp pdig
+    isp n
+    jmp loop
+    jmp zsX
+n, 0
+    endloc
+zsX, jmp .
+zsN, 0
+
+// Types R's ouN digits from dg through pdig, the highest first.
+// AC and IO are clobbered.
+// Called via jsp.
+rDigs, dap rdX
+    local loop, p, n
+    lac ouN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rdX
+    cma
+    dac n
+    lac ouN
+    add [dg:.]
+    dac p
+loop,
+    lac p
+    sub [1]
+    dac p
+    lio i p
+    jsp pdig
+    isp n
+    jmp loop
+    jmp rdX
+p, 0
+n, 0
+    endloc
+rdX, jmp .

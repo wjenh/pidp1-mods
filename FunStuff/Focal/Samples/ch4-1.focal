@@ -1,0 +1,7 @@
+C-PDP-1 FOCAL, 1969/2026
+
+01.05 T "     I         SINE      COSINE        LOG             E"!
+01.10 FOR I=1,.00001,1.0001; DO 2.05
+01.20 QUIT
+
+02.05 T %7.06,I," ",FSIN(I)," ",FCOS<I>," ",%,FLOG[I]," ",FEXP(I),!!

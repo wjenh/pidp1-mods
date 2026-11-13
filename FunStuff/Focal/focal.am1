@@ -1,0 +1,111 @@
+PDP-1 FOCAL
+
+// focal.am1 -- PDP-1 FOCAL, 1969/2026, FOCAL-69 rewritten for the PDP-1,
+// version 1.0. One user on DCS2 channel 0, port 2030, or on the typewriter
+// while sense switch 6 is on.
+//
+// Requires mul and div (muldiv=on), the BBN clock (the reader's time limit)
+// and at least 8 banks of memory. It uses a Type 550 Microtape and tracks
+// 030 to 037 of the Type 23 drum for LIBRARY, the CalComp plotter for FMOV
+// and FDRW, and the Type 62 line printer for OUTPUT PRINTER. The banks:
+//   bank 0  the interpreter, the terminal, the program store
+//   bank 1  the number package, the terminal's tables and buffers
+//   banks 2 and 3  the program text
+//   bank 4  the variables
+//   bank 5  the push-down list
+//   bank 6  the shared file system, library 2.1, and its handle
+//   bank 7  the paper tape, FOCAL's library over the file system with its
+//           buffer, the plotter and the line printer
+// The extend window is open throughout.
+//
+// Build with this directory on the include path.
+//
+// 11-Nov-2026 Claude/wje initial version
+// 12-Nov-2026 Claude/wje FMOV and FDRW on the plotter (plotter.ac), and
+//   functions of two arguments (expr.ac)
+// 12-Nov-2026 Claude/wje OUTPUT PRINTER and OUTPUT TERMINAL, TYPE and WRITE
+//   on the line printer (lpt.ac)
+// 13-Nov-2026 Claude/wje LIBRARY on the shared file system (fslib.ac, bank 6)
+//   in place of FOCAL's own Microtape library
+// 13-Nov-2026 Claude/wje LIBRARY UNIT 0, the library on the drum
+// 13-Nov-2026 Claude/wje comments of every source cleaned for release
+
+#include <AIDS/skipmacros.ah>
+#include <DCS/dcs2defs.ah>
+#include <CLOCK/clockdefs.ah>
+#include <MICROTAPE/microtape.ah>
+#include <DRUM/drum.ah>
+#include <PLOTTER/plotterdefs.ah>
+#include <LPT/type62defs.ah>
+#include "focal.ah"
+
+100/
+// go -- the start. Sets up the terminal and its hooks, clears the program
+// and the variables, and sets the format %8.04, FRAN's seed and Microtape
+// drive 1. Then prints the name on the device (tmReady) and *.
+// Entered at 0100 by start; does not return.
+go, lem
+    eem
+    jsp tmInit
+    lac [errH]
+    dac tmErr
+    lac [vrClear]
+    dac stVarClr
+    lac [errH]
+    dac i [fpErr:1]
+    lac [fpSrc]
+    dac i [fpGetc:1]
+    lac [fpPc]
+    dac i [fpPutc:1]
+    law 0d8
+    dac i [fpFmX:1]
+    law 4
+    dac i [fpFmY:1]
+    dzm exPd
+    FPCALL(fnRanI)
+    law 1
+    dac lbDrive
+    jsp stInit
+    jsp vrClear
+    jmp ready
+
+#include "interp.ac"
+#include "expr.ac"
+#include "iocmd.ac"
+#include "vars.ac"
+#include "termio.ac"
+#include "lineed.ac"
+#include "store.ac"
+#include "editcmd.ac"
+
+constants
+
+bank 1
+#include "fparith.ac"
+#include "fpconv.ac"
+#include "fpfunc.ac"
+#include "fncoef.ac"
+#include "ttytab.ac"
+#include "termdata.ac"
+constants
+
+bank 6
+#include <FILESYSTEM/fsio.ac>
+#include <FILESYSTEM/fscreate.ac>
+#include <FILESYSTEM/fsdelete.ac>
+#include <MICROTAPE/mtmount.ac>
+#include <MICROTAPE/mtformat.ac>
+#include <DRUM/drmount.ac>
+#include <DRUM/drformat.ac>
+constants
+FS_HANDLE(flHnd)
+FS_FILE(flFd)
+
+bank 7
+#include "ptape.ac"
+#include "fslib.ac"
+#include "plotter.ac"
+#include "lpt.ac"
+constants
+
+start go

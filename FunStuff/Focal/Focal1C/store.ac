@@ -1,0 +1,911 @@
+// store.ac -- PDP-1 FOCAL's program store: the stored lines, in the text area
+// (banks 2 and 3), kept in line-number order; reading and printing a line
+// number; and the source, the characters a command or a statement is read
+// from.
+//
+// A line number is one word: the group in bits 0-7 (1 to 255), the step in
+// bits 8-17 (1 to 999, a three-digit fraction, so 1.1 is step 100).
+// Step 0 is a whole group, and the word 0 is everything.
+// Group 255 sets bit 0, so line numbers are compared as unsigned numbers
+// (lnCmp).
+//
+// A stored line is its line-number word, its number of characters, then the
+// characters two to a word, the first in the high nine bits, as putAsc's
+// text is.
+// A zero word follows the last line; txTop is its address.
+// A line entered moves the lines above it up, an erased one moves them down.
+//
+// The source is the line buffer (lnBuf, one character a word) or a stored
+// line (two a word); its end reads as CR.
+//
+// Every routine is called via jsp, from bank 0, with the extend window open,
+// and leaves it open; pointers are full addresses.
+// Errors leave by jmp i tmErr with the code in AC (termio.ac).
+// Include the file where it is not executed, since its data words follow
+// its code.
+// Needs focal.ah, <AIDS/skipmacros.ah>, termio.ac and lineed.ac.
+
+// stInit -- empty the text area, leaving no lines.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local siX
+stInit, dap siX
+    lac [TX_BASE]
+    dac txTop
+    dzm i txTop
+siX, jmp .
+endloc
+
+// lnCmp -- compare the line word in IO with lcB, as unsigned numbers.
+// AC is negative when IO's is below lcB's, 0 when they are equal, positive
+// when it is above.
+// IO is preserved.
+// Called via jsp.
+local lcX, lcA, lcSame, lcLow, lcEq
+lnCmp, dap lcX
+    dio lcA
+    lac lcA
+    SKIP_NEXT_IF_DIFFERENT lcB
+    jmp lcEq
+    // if bit 0 differs, the one with it set is the larger
+    xor lcB
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lcSame
+    lac lcA
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lcLow
+    law 1
+    jmp lcX
+lcLow, law i 1
+    jmp lcX
+// both in one half of the range, so the difference is exact and not 0
+lcSame, lac lcA
+    sub lcB
+    jmp lcX
+lcEq, cla
+lcX, jmp .
+lcA, 0
+endloc
+
+// stSize -- the words of the line at stP, its two words included.
+// AC is the size, IO is preserved.
+// Called via jsp.
+local szX, szT
+stSize, dap szX
+    lac stP
+    add [1]
+    dac szT
+    lac i szT
+    add [1]
+    rar 1s
+    and [0377777]
+    add [2]
+szX, jmp .
+szT, 0
+endloc
+
+// stSkip -- move stP on to the next line.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local skX
+stSkip, dap skX
+    jsp stSize
+    add stP
+    dac stP
+skX, jmp .
+endloc
+
+// stFind -- find the line whose number is in IO, or where it would go.
+// stP is the first line whose number is not below it, or the zero word
+// after the last; AC is 0 when stP's number is the one sought, else not 0.
+// IO is clobbered.
+// Called via jsp.
+local sfX, sfLoop, sfEnd
+stFind, dap sfX
+    dio lcB
+    lac [TX_BASE]
+    dac stP
+sfLoop, lio i stP
+    SKIP_NEXT_IF_IO_NOT_ZERO
+    jmp sfEnd
+    jsp lnCmp
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp sfX                 // the first not below
+    jsp stSkip
+    jmp sfLoop
+sfEnd, law 1
+sfX, jmp .
+endloc
+
+// txMove -- move mvN words from mvS to mvD; the two may overlap.
+// mvS and mvD are clobbered.
+// AC and IO are clobbered.
+// Called via jsp.
+local mvX, mvK, mvDn, mvUp, mvUpL
+txMove, dap mvX
+    lac mvN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mvX
+    cma
+    dac mvK
+    lac mvD
+    sub mvS
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mvX
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mvUp
+// to a lower address, from the bottom
+mvDn, lac i mvS
+    dac i mvD
+    idx mvS
+    idx mvD
+    isp mvK
+    jmp mvDn
+    jmp mvX
+// to a higher address, from the top
+mvUp, lac mvS
+    add mvN
+    sub [1]
+    dac mvS
+    lac mvD
+    add mvN
+    sub [1]
+    dac mvD
+mvUpL, lac i mvS
+    dac i mvD
+    lac mvS
+    sub [1]
+    dac mvS
+    lac mvD
+    sub [1]
+    dac mvD
+    isp mvK
+    jmp mvUpL
+mvX, jmp .
+mvK, 0
+endloc
+
+// txRev -- reverse the order of the rvN words from rvA.
+// rvA is clobbered.
+// AC and IO are clobbered.
+// Called via jsp.
+local rvX, rvB, rvLoop
+txRev, dap rvX
+    lac rvA
+    add rvN
+    sub [1]
+    dac rvB
+rvLoop, lac rvA
+    sub rvB
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp rvX                 // the two ends have met
+    lac i rvA
+    lio i rvB
+    dac i rvB
+    dio i rvA
+    idx rvA
+    lac rvB
+    sub [1]
+    dac rvB
+    jmp rvLoop
+rvX, jmp .
+rvB, 0
+endloc
+
+// chGet -- get character number IO, from 0, of the packed text at chA.
+// IO is the character; AC is clobbered.
+// Called via jsp.
+local cgX, cgHi, cgOut, cgK, cgP
+chGet, dap cgX
+    dio cgK
+    lac cgK
+    rar 1s
+    and [0377777]
+    add chA
+    dac cgP
+    lac cgK
+    and [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cgHi
+    lac i cgP
+    and [0377]
+    jmp cgOut
+cgHi, lac i cgP
+    rar 9s
+    and [0377]
+cgOut, lia
+cgX, jmp .
+cgK, 0
+cgP, 0
+endloc
+
+// chPut -- store the character in IO as character chK of the packed text
+// at chA.
+// A character in a high half clears the low half after it.
+// AC and IO are clobbered.
+// Called via jsp.
+local cpX, cpHi, cpC, cpP
+chPut, dap cpX
+    dio cpC
+    lac chK
+    rar 1s
+    and [0377777]
+    add chA
+    dac cpP
+    lac chK
+    and [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cpHi
+    lac i cpP
+    and [0777000]
+    ior cpC
+    dac i cpP
+    jmp cpX
+cpHi, lac cpC
+    ral 9s
+    dac i cpP
+cpX, jmp .
+cpC, 0
+cpP, 0
+endloc
+
+// cuSetL -- read from the line buffer, from character IO on.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local cslX
+cuSetL, dap cslX
+    dzm cuSrc
+    lac [cuPL]
+    dac cuPth
+    dio cuI
+    lac lnLen
+    dac cuN
+cslX, jmp .
+endloc
+
+// cuSetS -- read from the stored line at the address in IO, from its first
+// character.
+// AC and IO are clobbered.
+// Called via jsp.
+local cssX, cssT
+cuSetS, dap cssX
+    dio cssT
+    lac [cuPS]
+    dac cuPth
+    law 1
+    dac cuSrc
+    dzm cuI
+    idx cssT
+    lac i cssT
+    dac cuN
+    idx cssT
+    dac cuA
+cssX, jmp .
+cssT, 0
+endloc
+
+// cuPeek -- the source's next character, not taken, or CR at the end.
+// The path cuPth, cuPL for the line buffer or cuPS for a stored line, is set
+// by cuSetL, cuSetS and curSet; cuPS unpacks the half word as chGet does.
+// IO is the character; AC is clobbered.
+// Called via jsp.
+local cpkX, cpkH, cpkO, cpkEnd, cpkP
+cuPeek, dap cpkX
+    lac cuI
+    SKIP_NEXT_IF_DIFFERENT cuN
+    jmp cpkEnd
+    jmp i cuPth             // AC is cuI
+cuPL, add [lnBuf:1]
+    dac cpkP
+    lio i cpkP
+    jmp cpkX
+cuPS, rar 1s
+    and [0377777]
+    add cuA
+    dac cpkP
+    lac cuI
+    and [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cpkH
+    lac i cpkP
+    and [0377]
+    jmp cpkO
+cpkH, lac i cpkP
+    rar 9s
+    and [0377]
+cpkO, lia
+    jmp cpkX
+cpkEnd, lio [CH_CR]
+cpkX, jmp .
+cpkP, 0
+endloc
+
+// cuGet -- the source's next character, taken, or CR at the end, which is
+// not passed.
+// A character taken goes to the hook cuHook, when one is set, which
+// preserves IO (the interpreter's trace).
+// IO is the character; AC is clobbered.
+// Called via jsp.
+local cgtX
+cuGet, dap cgtX
+    jsp cuPeek
+    lac cuI
+    SKIP_NEXT_IF_DIFFERENT cuN
+    jmp cgtX                // the end
+    idx cuI
+    lac cuHook
+    SKIP_NEXT_IF_AC_ZERO
+    jsp i cuHook
+cgtX, jmp .
+endloc
+
+// cuSkip -- take the character the last peek returned, in IO, which is not
+// the end.
+// The place moves on, and the character goes to the hook cuHook, when one
+// is set.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local cskX
+cuSkip, dap cskX
+    idx cuI
+    lac cuHook
+    SKIP_NEXT_IF_AC_ZERO
+    jsp i cuHook
+cskX, jmp .
+endloc
+
+// cuBlank -- pass the blanks at the source's place.
+// AC and IO are clobbered.
+// Called via jsp.
+local cbX, cbLoop
+cuBlank, dap cbX
+cbLoop, jsp cuPeek
+    lai
+    SKIP_NEXT_IF_SAME [040]
+    jmp cbX
+    jsp cuSkip
+    jmp cbLoop
+cbX, jmp .
+endloc
+
+// lnGet -- read a line number from the source, after any blanks, up to the
+// first character that cannot be part of one, which is not taken.
+// Entry: IO is 0 for digits only (a typed line's number, MODIFY's), 1 for
+// letters too, as FOCAL,1969 reads WRITE's and ERASE's argument.
+// In the group, a letter other than E is a digit, A to Z being 1 to 26, with
+// carries; E, or any letter after the point, ends the number.
+// No number reads as 0.
+// Errors: ?01.:5 a fourth step digit, ?01.96 a second point, ?01.78 a group
+// over 255, ?01.;4 group 0 with a step.
+// AC is the line word; IO is clobbered.
+// Called via jsp.
+local lgX, lgMode, lgG, lgS, lgK, lgDot, lgC, lgD, lgLoop, lgLet, lgDig, \
+    lgStep, lgPoint, lgEnd, lgMake, lgWord, lgBig, lgDots, lgGBig, \
+    lgG0, lgTen, ltX, lgV
+lnGet, dap lgX
+    dio lgMode
+    dzm lgG
+    dzm lgS
+    dzm lgK
+    dzm lgDot
+    jsp cuBlank
+lgLoop, jsp cuPeek
+    dio lgC
+    lac lgC
+    SKIP_NEXT_IF_DIFFERENT [056]
+    jmp lgPoint
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lgEnd
+    dac lgD
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lgLet
+    jmp lgDig
+// a letter is a digit only in letter mode, in the group, and not E
+lgLet, lac lgMode
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lgEnd
+    lac lgDot
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lgEnd
+    lac lgC
+    SKIP_NEXT_IF_DIFFERENT [0105]
+    jmp lgEnd
+    sub [0101]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lgEnd
+    add [1]
+    dac lgD
+    sub [0d27]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lgEnd
+lgDig, jsp cuGet
+    lac lgDot
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lgStep
+    // the group, held at 1000 once past it, which is an error either way
+    lac lgG
+    sub [0d1000]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lgLoop
+    lio lgG
+    jsp lgTen
+    dac lgG
+    jmp lgLoop
+// a step digit; a fourth is an error
+lgStep, idx lgK
+    sub [4]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lgBig
+    lio lgS
+    jsp lgTen
+    dac lgS
+    jmp lgLoop
+lgPoint, lac lgDot
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lgDots
+    law 1
+    dac lgDot
+    jsp cuGet
+    jmp lgLoop
+// the step to three digits
+lgEnd, dzm lgD                  // the padding digits are zeros
+    lac lgK
+    sub [3]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lgMake
+    idx lgK
+    lio lgS
+    jsp lgTen
+    dac lgS
+    jmp lgEnd
+lgMake, lac lgG
+    sub [0d256]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lgGBig
+    lac lgG
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lgWord
+    lac lgS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lgG0
+lgWord, lac lgG
+    ral 9s
+    ral 1s
+    ior lgS
+    jmp lgX
+lgBig, lac [ERR_LNBIG]
+    jmp i tmErr
+lgDots, lac [ERR_DOTS]
+    jmp i tmErr
+lgGBig, lac [ERR_GRPBIG]
+    jmp i tmErr
+lgG0, lac [ERR_GRP0]
+    jmp i tmErr
+
+// lgTen -- IO times ten, plus lgD (a value below 10,000).
+// AC is the result, IO is preserved.
+// Called via jsp.
+lgTen, dap ltX
+    dio lgV
+    lac lgV
+    ral 2s
+    add lgV
+    ral 1s
+    add lgD
+ltX, jmp .
+lgX, jmp .
+lgMode, 0
+lgG, 0
+lgS, 0
+lgK, 0
+lgDot, 0
+lgC, 0
+lgD, 0
+lgV, 0
+endloc
+
+// lnPut -- print the line word in IO as WRITE lists it, a group of at least
+// two digits, a step of two, and a third step digit when it is not 0.
+// AC and IO are clobbered.
+// Called via jsp.
+local lpX, lpW, lpTwo
+lnPut, dap lpX
+    dio lpW
+    lac lpW
+    rar 9s
+    rar 1s
+    and [0377]
+    lia
+    jsp dec3
+    lac dgH
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lpTwo
+    lio dgH
+    jsp putDig
+lpTwo, lio dgT
+    jsp putDig
+    lio dgU
+    jsp putDig
+    lio [056]
+    jsp putc
+    lac lpW
+    and [01777]
+    lia
+    jsp dec3
+    lio dgH
+    jsp putDig
+    lio dgT
+    jsp putDig
+    lac dgU
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lpX
+    lio dgU
+    jsp putDig
+lpX, jmp .
+lpW, 0
+endloc
+
+// dec3 -- the decimal digits of IO, 0 to 999, into dgH, dgT and dgU.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local d3X, d3H, d3T
+dec3, dap d3X
+    dio dgU
+    dzm dgH
+    dzm dgT
+d3H, lac dgU
+    sub [0d100]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp d3T
+    dac dgU
+    idx dgH
+    jmp d3H
+d3T, lac dgU
+    sub [0d10]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp d3X
+    dac dgU
+    idx dgT
+    jmp d3T
+d3X, jmp .
+endloc
+
+// putDig -- print the digit in IO.
+// AC and IO are clobbered.
+// Called via jsp.
+local pgX
+putDig, dap pgX
+    lai
+    add [060]
+    lia
+    jsp putc
+pgX, jmp .
+endloc
+
+// stEnter -- store the line in the line buffer, which starts with a line
+// number.
+// The number is read digits only, the blanks after it are dropped, and the
+// rest (possibly nothing) is the text; it replaces a line with the same
+// number.
+// Calls the variables' clear (stVarClr).
+// Errors: lnGet's; ?01.;4 group 0, ?01.40 step 0, ?10.:5 no room.
+// AC and IO are clobbered.
+// Called via jsp.
+local seX, seW, seN, seSz, seOld, seK, seLoop, seP, seRoom, seG0, seS0, seFull
+stEnter, dap seX
+    cli
+    jsp cuSetL
+    cli
+    jsp lnGet
+    dac seW
+    and [0776000]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp seG0
+    lac seW
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp seS0
+    jsp cuBlank
+    lac cuN
+    sub cuI
+    dac seN
+    add [1]
+    rar 1s
+    and [0377777]
+    add [2]
+    dac seSz
+    // the line it replaces, if any
+    dzm seOld
+    lio seW
+    jsp stFind
+    SKIP_NEXT_IF_AC_ZERO
+    jmp seRoom
+    jsp stSize
+    dac seOld
+// the zero word must stay inside the area
+seRoom, lac txTop
+    add seSz
+    sub seOld
+    sub [TX_END]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp seFull
+    jsp i stVarClr
+    // the lines above move by the difference
+    lac stP
+    add seOld
+    dac mvS
+    lac stP
+    add seSz
+    dac mvD
+    lac txTop
+    add [1]
+    sub mvS
+    dac mvN
+    jsp txMove
+    lac txTop
+    add seSz
+    sub seOld
+    dac txTop
+    // the line itself
+    lio seW
+    dio i stP
+    lac stP
+    add [1]
+    dac seP
+    lio seN
+    dio i seP
+    idx seP
+    dac chA
+    dzm seK
+seLoop, lac seK
+    SKIP_NEXT_IF_DIFFERENT seN
+    jmp seX
+    dac chK
+    jsp cuGet
+    jsp chPut
+    idx seK
+    jmp seLoop
+seG0, lac [ERR_GRP0]
+    jmp i tmErr
+seS0, lac [ERR_STEP0]
+    jmp i tmErr
+seFull, lac [ERR_TEXT]
+    jmp i tmErr
+seX, jmp .
+seW, 0
+seN, 0
+seSz, 0
+seOld, 0
+seK, 0
+seP, 0
+endloc
+
+// stLong -- store a line read from the tape that is too long for the line
+// buffer.
+// getLine left its lnLen characters packed from txTop+3 (lnPack).
+// It must start with a line number, read as stEnter reads one, the blanks
+// after it dropped.
+// The stored line is made where it lies, above the zero word, then rotated
+// into its place as MODIFY's new line is, replacing a line with the same
+// number; getLine made sure it fits.
+// Calls the variables' clear (stVarClr).
+// Errors: ?10.:5 no line number first; lnGet's; ?01.;4 group 0, ?01.40
+// step 0.
+// AC and IO are clobbered.
+// Called via jsp.
+local slX, slR, slW, slN, slK, slSN, slSO, slO, slLA, slCp, slMade, slRot, \
+    slNoNum, slG0, slS0
+stLong, dap slX
+    lac txTop
+    add [1]
+    dac slR
+    add [1]
+    dac slK
+    lac lnLen
+    dac i slK               // the count, for the cursor
+    lio slR
+    jsp cuSetS
+    jsp cuBlank
+    jsp cuPeek
+    lai
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp slNoNum
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp slNoNum
+    cli
+    jsp lnGet
+    dac slW
+    and [0776000]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp slG0
+    lac slW
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp slS0
+    jsp cuBlank
+    // the text, from the cursor on, moved down to the line's start; the
+    // cursor is at least one character (the number's digit) ahead, so each
+    // character is read before chPut writes its place or clears the half
+    // after it
+    lac cuN
+    sub cuI
+    dac slN
+    lac slR
+    add [2]
+    dac chA
+    dzm slK
+slCp, lac slK
+    SKIP_NEXT_IF_DIFFERENT slN
+    jmp slMade
+    add cuI
+    lia
+    jsp chGet
+    lac slK
+    dac chK
+    jsp chPut
+    idx slK
+    jmp slCp
+slMade, lio slW
+    dio i slR
+    lac slR
+    add [1]
+    dac slK
+    lio slN
+    dio i slK
+    lac slN
+    add [1]
+    rar 1s
+    and [0377777]
+    add [2]
+    dac slSN
+    // the line it replaces, if any
+    dzm slSO
+    lio slW
+    jsp stFind
+    SKIP_NEXT_IF_AC_ZERO
+    jmp slRot
+    jsp stSize
+    dac slSO
+// From stP to the new line's end lie the old line, the lines above it and
+// the zero word (slLA words), then the new line (slSN).
+// Reversing each part and then the whole puts the new line first, and the
+// old one, after it, is cut out.
+slRot, jsp i stVarClr
+    lac stP
+    dac slO
+    lac slR
+    sub slO
+    dac slLA
+    lac slO
+    dac rvA
+    lac slLA
+    dac rvN
+    jsp txRev
+    lac slR
+    dac rvA
+    lac slSN
+    dac rvN
+    jsp txRev
+    lac slO
+    dac rvA
+    lac slLA
+    add slSN
+    dac rvN
+    jsp txRev
+    lac slO
+    add slSN
+    dac mvD
+    add slSO
+    dac mvS
+    lac slLA
+    sub slSO
+    dac mvN
+    jsp txMove
+    lac txTop
+    add slSN
+    sub slSO
+    dac txTop
+    jmp slX
+slNoNum, lac [ERR_TEXT]
+    jmp i tmErr
+slG0, lac [ERR_GRP0]
+    jmp i tmErr
+slS0, lac [ERR_STEP0]
+    jmp i tmErr
+slX, jmp .
+slR, 0
+slW, 0
+slN, 0
+slK, 0
+slSN, 0
+slSO, 0
+slO, 0
+slLA, 0
+endloc
+
+// stDelete -- delete the line whose number is in IO, or its whole group
+// when its step is 0; nothing when there is none.
+// AC and IO are clobbered.
+// Called via jsp.
+local sdX, sdW, sdA, sdT, sdGrp, sdLoop, sdCut
+stDelete, dap sdX
+    dio sdW
+    jsp stFind
+    lac stP
+    dac sdA
+    lac sdW
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sdGrp
+    lio i stP
+#ifndef FOCAL_1C
+    lac sdW
+#endif
+    SKIP_NEXT_IF_IO_NOT_ZERO
+    jmp sdX                 // the end, so no such line
+#ifdef FOCAL_1C
+    lac sdW                 // FOCAL-1C's IO skip goes through AC
+#endif
+    dio sdT
+    SKIP_NEXT_IF_SAME sdT
+    jmp sdX
+    jsp stSkip
+    jmp sdCut
+// a group, every line of it up to step 999
+sdGrp, lac sdW
+    ior [0d999]
+    dac lcB
+sdLoop, lio i stP
+    SKIP_NEXT_IF_IO_NOT_ZERO
+    jmp sdCut
+    jsp lnCmp
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp sdCut
+    jsp stSkip
+    jmp sdLoop
+// the lines from sdA to stP go; those above move down
+sdCut, lac stP
+    dac mvS
+    lac sdA
+    dac mvD
+    lac txTop
+    add [1]
+    sub stP
+    dac mvN
+    lac txTop
+    sub stP
+    add sdA
+    dac txTop
+    jsp txMove
+sdX, jmp .
+sdW, 0
+sdA, 0
+sdT, 0
+endloc
+
+stP, 0                      // a line's address, set by stFind and stSkip
+txTop, 0                    // the address of the zero word after the last line
+stVarClr, 0                 // the variables' clear, called via jsp,
+                            // a full address
+lcB, 0                      // lnCmp's second number
+mvS, 0                      // txMove's source
+mvD, 0                      // txMove's destination
+mvN, 0                      // txMove's count
+rvA, 0                      // txRev's first word
+rvN, 0                      // txRev's count
+chA, 0                      // packed text's first word, for chGet and chPut
+chK, 0                      // chPut's character number
+cuSrc, 0                    // the source: 0 the line buffer, 1 a stored line
+cuPth, cuPL                 // cuPeek's path for the source: cuPL or cuPS
+cuI, 0                      // characters taken from the source
+cuN, 0                      // characters in the source
+cuA, 0                      // a stored source's first text word
+cuHook, 0                   // cuGet's and cuSkip's hook, called via jsp,
+                            // a full address, 0 for none
+dgH, 0                      // dec3's digits: hundreds
+dgT, 0                      //   tens
+dgU, 0                      //   units

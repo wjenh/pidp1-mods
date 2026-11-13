@@ -1,0 +1,203 @@
+// fncoef.ac -- the constants and series of fpfunc.ac, PDP-1 FOCAL's
+// extended functions.
+// Each number is three words, as fparith.ac keeps them: the exponent, the
+// sign and the top 17 bits, the low 18 bits.
+// Each series is a count, then its coefficients from the highest degree
+// down, for Horner's rule.
+// FRAN's values are 36-bit integers as three 17-bit limbs, the top one
+// first.
+// Include it in bank 1, where it is not executed.
+//
+// Each constant is the exact value, computed to 70 decimal digits, rounded
+// half away from zero to 35 bits, or to the bits its comment names.
+// Each series is its function's Taylor series in exact rational arithmetic,
+// economized by Chebyshev polynomials over its reduced range, widened by
+// 1%, to the fewest terms whose relative error stays under 2^-38; each
+// coefficient is then rounded to 35 bits, half away from zero.
+// The error above each series is the greatest relative error of the
+// rounded coefficients over that range, evaluated exactly at 2,001 points.
+// FRAN's A is 1 more than a multiple of 4 and C is odd, so by the
+// Hull-Dobell theorem the period is the full 2^36.
+
+fcPio2a, 0000001            // pi/2, its top 18 bits
+    0311037                 // 1.5707931518554688
+    0400000
+fcPio2b, 0777755            // pi/2, the next 18
+    0325042                 // 3.1749368645250797e-06
+    0000000
+fcPio2c, 0777731            // pi/2, the rest
+    0264302                 // 2.5633441515839558e-12
+    0151423
+fcLn2a, 0000000             // ln 2, its top 23 bits
+    0261344                 // 0.6931471824645996
+    0140000
+fcLn2b, 0777743             // ln 2, the rest
+    0602706                 // -1.9046542999463095e-09
+    0041452
+fcInvLn2, 0000001           // 1/ln 2
+    0270524                 // 1.4426950408960693
+    0354513
+fcTwoOPi, 0000000           // 2/pi
+    0242763                 // 0.6366197723546065
+    0015562
+fcPio2, 0000001             // pi/2
+    0311037                 // 1.5707963267923333
+    0552421
+fcPio6, 0000000             // pi/6
+    0206025                 // 0.5235987755877431
+    0107013
+fcSqrt3, 0000001            // sqrt 3
+    0335547                 // 1.7320508075645193
+    0535026
+fcTanP12, 0777776           // tan(pi/12), FATN's last reduction above it
+    0211141                 // 0.26794919243548065
+    0213650
+fcRSqrt2, 0000000           // 1/sqrt 2, FLOG's split
+    0265011                 // 0.7071067811921239
+    0714640
+fcHalf, 0000000             // 1/2
+    0200000                 // 0.5
+    0000000
+fcOne, 0000001              // 1
+    0200000                 // 1.0
+    0000000
+fcExpLim, 0000013           // 1500, past which FEXP is out of range
+    0273400                 // 1500.0
+    0000000
+fcTrigLim, 0000040          // 2^31, from which FSIN and FCOS are 0
+    0200000                 // 2147483648.0
+    0000000
+fcSqB, 0000000              // FSQT's first guess, its slope
+    0257541                 // 0.6862915010133293
+    0463003
+fcSqA, 0777776              // and its constant
+    0257541                 // 0.3431457505066646
+    0463003
+
+// e^r in r, 9 terms, error under 2^-37
+fcExp, 0d9
+    0777760                 // degree 8
+    0320605                 // 2.4886129964762915e-05
+    0072421
+    0777763                 // degree 7
+    0320662                 // 0.0001991737119126924
+    0445031
+    0777766                 // degree 6
+    0266026                 // 0.0013888798202970065
+    0113200
+    0777771                 // degree 5
+    0210420                 // 0.008333263359872944
+    0365463
+    0777773                 // degree 4
+    0252525                 // 0.041666667064419016
+    0253060
+    0777775                 // degree 3
+    0252525                 // 0.16666666905075544
+    0253235
+    0000000                 // degree 2
+    0200000                 // 0.5
+    0000000
+    0000000                 // degree 1
+    0377777                 // 0.9999999999708962
+    0777777
+    0000001                 // degree 0
+    0200000                 // 1.0
+    0000000
+
+// sin r / r in u = r^2, 6 terms, error under 2^-39
+fcSin, 0d6
+    0777746                 // degree 5
+    0724466                 // -2.475067030320577e-08
+    0462616
+    0777755                 // degree 4
+    0270726                 // 2.755518937025414e-06
+    0721624
+    0777763                 // degree 3
+    0720031                 // -0.00019841262898978584
+    0760126
+    0777771                 // degree 2
+    0210421                 // 0.008333333323207626
+    0042056
+    0777775                 // degree 1
+    0652525                 // -0.16666666666424135
+    0252525
+    0000001                 // degree 0
+    0200000                 // 1.0
+    0000000
+
+// cos r in u = r^2, 6 terms, error under 2^-37
+fcCos, 0d6
+    0777752                 // degree 5
+    0621660                 // -2.716579170225497e-07
+    0604736
+    0777760                 // degree 4
+    0320016                 // 2.4798821717020303e-05
+    0101525
+    0777766                 // degree 3
+    0666026                 // -0.001388887987502585
+    0543677
+    0777773                 // degree 2
+    0252525                 // 0.04166666653327411
+    0252414
+    0000000                 // degree 1
+    0600000                 // -0.5
+    0000000
+    0000001                 // degree 0
+    0200000                 // 1.0
+    0000000
+
+// log m / 2s in u = s^2, 6 terms, error under 2^-42
+fcLog, 0d6
+    0777774                 // degree 5
+    0311065                 // 0.09819522213729215
+    0116355
+    0777774                 // degree 4
+    0343026                 // 0.110860870579927
+    0030543
+    0777775                 // degree 3
+    0222224                 // 0.14286107153020566
+    0260703
+    0777775                 // degree 2
+    0314631                 // 0.1999999722102075
+    0453573
+    0777776                 // degree 1
+    0252525                 // 0.33333333340124227
+    0252532
+    0000001                 // degree 0
+    0200000                 // 1.0
+    0000000
+
+// atan t / t in u = t^2, 7 terms, error under 2^-41
+fcAtn, 0d7
+    0777773                 // degree 6
+    0375624                 // 0.06196040619761334
+    0307442
+    0777774                 // degree 5
+    0667167                 // -0.08946986458977335
+    0747631
+    0777774                 // degree 4
+    0343322                 // 0.11104087424610043
+    0627332
+    0777775                 // degree 3
+    0622221                 // -0.14285536697570933
+    0265447
+    0777775                 // degree 2
+    0314631                 // 0.19999997851846274
+    0455336
+    0777776                 // degree 1
+    0652525                 // -0.3333333332411712
+    0252517
+    0000001                 // degree 0
+    0200000                 // 1.0
+    0000000
+
+// FRAN: s = A s + C modulo 2^36, each as three limbs
+fcRanA, 0000001             // A = 5^15
+    0306576
+    0244615
+fcRanC, 0000000             // C, odd
+    0330643
+    0056707
+fcSeed, 0000000             // the seed at the start
+    0000000
+    0000000

@@ -1,0 +1,414 @@
+// ptape.ac -- PDP-1 FOCAL's paper tape: the punch, for LIBRARY PUNCH, and
+// the reader as an input source for *, which hands the line editor the
+// tape's lines as if they were typed.
+//
+// The punch writes 8-bit ASCII with the eighth bit set, as an ASR-33
+// punches it, LF going out as CR LF; leader and trailer are 60 blank lines
+// each.
+//
+// The reader:
+// - drops the eighth bit, and passes over NUL, 0200 and @;
+// - ends a line at CR or LF, and passes over an LF just after a CR;
+// - ends the reading at the end of a line whose first character is *, the
+//   rest of that line passed over; ended by CR or LF, the line reads as an
+//   empty line, and ended by the tape's end, as below;
+// - takes 2 s with no character as the end of the tape; a line it cuts off
+//   is taken as ended, and at a line's start the reading ends at once,
+//   handing over ALT MODE, so an ASK waiting keeps its value and the line
+//   editor goes on from the keyboard;
+// - ends the reading at an error or Ctrl-C (rdStop), and the next * reads
+//   on from the start of the tape's next line.
+// While a reading lasts, nothing read is echoed.
+// useTty is set, as on the typewriter, which prints what is typed.
+//
+// LIBRARY CALL's file (fslib.ac) is read the same way, with rdOn RD_FILE.
+// Each character comes from rfGet instead of the reader, under the same
+// rules, and the reading ends at the file's end, a line it cuts off taken as
+// ended, or at a * line's end.
+// Then GO and RETURN are handed over (flGoTx), and rdOn is 1, a tape's,
+// until the line editor next looks, so the program runs and * follows it.
+// The tape's place is kept meanwhile and put back by rfRest, at rpEnd.
+// LIBRARY SAVE's listing goes to the file through ptPut while ptOn is
+// PT_FILE (sfPut).
+//
+// The reader is polled with a time limit, a read that does not wait, since
+// at the end of a tape no character comes and the flag never sets.
+// The time is the BBN clock's, which rdInit enables.
+//
+// FOCAL-1C (FOCAL_1C defined) has no clock.
+// Its time limit is RD_LOOKS looks at the reader that find nothing, counted
+// in rdT0.
+// It has no line printer either.
+//
+// Goes in bank PTBANK (focal.ah).
+// Every entry is called via jsp i to its full address, from bank 0, with the
+// extend window open, and returns by jmp i with it open; no entry calls
+// bank 0, but rfGet may leave through tmErr.
+// Bank 0's words are reached through full addresses.
+// Needs focal.ah, <AIDS/skipmacros.ah>, <CLOCK/clockdefs.ah> and, except in
+// FOCAL-1C, lpt.ac (lpInit, lpPut) and fslib.ac (sfPut, rfGet, rfRest).
+
+#ifndef FOCAL_1C
+// A difference of two clock readings, in AC, brought into 0 to 59,999, where
+// the clock wraps.
+#define PT_MSWRAP    SKIP_NEXT_IF_AC_NOT_NEGATIVE; add [0d60000]
+#endif
+
+local ppX, ppNl, ppLp, plX, plLoop, plN, riX, rbX, rbNew, rbGo, \
+    rpX, rpAsk, rpWait, rpChar, rpCr, rpPlain, rpSkip, rpSkEnd, rpNone, \
+    rpOut, rpTime, rpCut, rpDone, rpEnd, rpOff, rpTty, rpC, \
+    rsX, rsBol, rsOff
+
+// rdInit -- set the reader as at a cold start: no reading, the tape at a
+// line's start, no request made, and the clock enabled.
+// It also readies the line printer (lpInit) and clears the library's file
+// reading, GO and SAVE, since this is the bank's one call at the start.
+// AC and IO are clobbered.
+// Called via jsp i.
+rdInit, dac riX
+#ifndef FOCAL_1C
+    lac [clsena]
+    cls
+#endif
+    dzm rdReq
+    dzm rdCr
+    dzm rdSkip
+    dzm rdStar
+    dzm rdEnd
+    law 1
+    dac rdBol
+#ifndef FOCAL_1C
+    dzm rfOn
+    dzm rfInj
+    dzm sfOpen
+    jsp lpInit
+#endif
+    jmp i riX
+
+// ptPut -- punch the ASCII character in IO with its eighth bit set; LF is
+// punched as CR LF.
+// Waits for the punch.
+// While ptOn is PT_LPT, the character goes to the line printer's line
+// instead (lpPut, lpt.ac); while it is PT_FILE, to LIBRARY SAVE's file
+// (sfPut, fslib.ac).
+// AC and IO are clobbered.
+// Called via jsp i.
+ptPut, dac ppX
+#ifndef FOCAL_1C
+    lac i [ptOn:0]
+    SKIP_NEXT_IF_DIFFERENT [PT_LPT]
+    jmp ppLp
+    SKIP_NEXT_IF_DIFFERENT [PT_FILE]
+    jmp ppFl
+#endif
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    jmp ppNl
+    ior [0200]
+    lia
+    ppa
+    jmp i ppX
+ppNl, lio [0215]            // CR with the eighth bit
+    ppa
+    lio [0212]              // LF with the eighth bit
+    ppa
+    jmp i ppX
+#ifndef FOCAL_1C
+ppLp, lac ppX
+    jmp lpPut
+ppFl, lac ppX
+    jmp sfPut
+#endif
+
+// ptLead -- punch the leader or the trailer, PT_LEADER blank lines.
+// AC and IO are clobbered.
+// Called via jsp i.
+ptLead, dac plX
+    law i PT_LEADER
+    dac plN
+plLoop, cli
+    ppa
+    isp plN
+    jmp plLoop
+    jmp i plX
+
+// rdBegin -- for *, make the reader the input source, from where the tape
+// stands.
+// A character a request has already brought in is kept; otherwise a new
+// request is made, so a tape mounted since the last one timed out is read.
+// Nothing read is echoed until the reading ends.
+// AC and IO are clobbered.
+// Called via jsp i.
+rdBegin, dac rbX
+    law 1
+    dac i [rdOn:0]
+    dac i [useTty:0]
+    dzm rdEnd
+    dzm rdStar
+    lac rdReq
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rbNew
+    cks
+    ril 1s
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp rbNew
+    jmp rbGo                // the character is in, so keep it
+rbNew, rpa-i
+    law 1
+    dac rdReq
+#ifndef FOCAL_1C
+rbGo, rck
+    dio rdT0
+#else
+rbGo, lac [0777777-RD_LOOKS]
+    dac rdT0
+#endif
+    jmp i rbX
+
+// rdPoll -- one look at the reader, for getc while a reading lasts.
+// IO is the character for the line editor, or 0 for none yet, when getc
+// looks again; at the end of the reading it is ALT MODE or LF (the file
+// header has the rule), and rdOn is cleared once the line editor has the
+// last line.
+// A CALL's file, rdOn RD_FILE, is read from rfGet, then GO handed over (the
+// file header has the rule).
+// AC is clobbered.
+// Called via jsp i.
+rdPoll, dac rpX
+    lac rdEnd
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpOff               // a cut-off line was handed over, so the end
+#ifndef FOCAL_1C
+    lac rfInj
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpInj               // GO being handed over
+    lac i [rdOn:0]
+    SKIP_NEXT_IF_DIFFERENT [RD_FILE]
+    jmp rpFile
+#endif
+    lac rdReq
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpWait
+rpAsk, rpa-i
+    law 1
+    dac rdReq
+#ifndef FOCAL_1C
+    rck
+    dio rdT0
+#else
+    lac [0777777-RD_LOOKS]
+    dac rdT0
+#endif
+rpWait, cks
+    ril 1s
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp rpTime
+    rrb
+    dzm rdReq
+    lai
+    and [0177]
+    dac rpC
+
+// the character is passed over, part of a line, or a line's end
+rpChar, SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpNone              // NUL, and 0200
+    SKIP_NEXT_IF_DIFFERENT [0100]
+    jmp rpNone              // @
+    lac rdCr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpCr
+    dzm rdCr
+    lac rpC
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    jmp rpNone              // the LF of a CR LF
+rpCr, lac rpC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    idx rdCr
+    lac rdSkip
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpSkip
+    lac rdBol
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpPlain
+    lac rpC
+    SKIP_NEXT_IF_SAME [052]
+    jmp rpPlain
+    // * first on a line, so the rest of the line is passed over, then the end
+    law 1
+    dac rdSkip
+    dac rdStar
+    dzm rdBol
+    jmp rpNone
+rpPlain, dzm rdBol
+    lac rpC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    idx rdBol
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    idx rdBol
+    lio rpC
+    jmp i rpX
+
+// passing over the rest of a line, until its end; after a * line, the end is
+// handed over as an empty line, and the reading ends at the next look
+rpSkip, lac rpC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp rpSkEnd
+    SKIP_NEXT_IF_SAME [CH_LF]
+    jmp rpNone
+rpSkEnd, dzm rdSkip
+    law 1
+    dac rdBol
+    lac rdStar
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rpNone
+    dzm rdStar
+#ifndef FOCAL_1C
+    lac i [rdOn:0]
+    SKIP_NEXT_IF_DIFFERENT [RD_FILE]
+    jmp rpFStar
+#endif
+    law 1
+    dac rdEnd
+    lio rpC
+    jmp i rpX
+rpNone, cli
+    jmp i rpX
+
+#ifndef FOCAL_1C
+// a CALL's file gives its next character, taken as the reader's; at its end
+// a line cut off is ended by an LF, then the reading ends with GO
+rpFile, jsp rfGet
+    jmp rpFEnd
+    lai
+    and [0177]
+    dac rpC
+    jmp rpChar
+rpFEnd, lac rdBol
+    ior rdSkip
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpFGo
+    law 1
+    dac rdBol
+    lio [CH_LF]
+    jmp i rpX
+// the file's reading ends, rdOn set to a tape's, and GO and RETURN are
+// handed over, the RETURN with rdEnd set, so the next look ends the reading
+rpFGo, dzm rdSkip
+    dzm rdStar
+    law 1
+    dac rdBol
+    dac i [rdOn:0]
+    lac [flGoTx:7]
+    dac rfInj
+rpInj, lio i rfInj
+    idx rfInj
+    lai
+    SKIP_NEXT_IF_SAME [CH_CR]
+    jmp i rpX
+    dzm rfInj
+    law 1
+    dac rdEnd
+    jmp i rpX
+// a * line's end in the file is handed over, then GO
+rpFStar, law 1
+    dac i [rdOn:0]
+    lac [flGoTx:7]
+    dac rfInj
+    lio rpC
+    jmp i rpX
+#endif
+
+// nothing in yet; within the time limit, none, and past it, the end of the
+// tape
+#ifndef FOCAL_1C
+rpTime, rck
+    lai
+    sub rdT0
+    PT_MSWRAP
+    sub [RD_MS]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp rpNone
+#else
+rpTime, isp rdT0
+    jmp rpNone
+#endif
+    lac rdBol
+    ior rdSkip
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rpDone
+// a line cut off is ended by an LF, and the reading ends at the next look
+rpCut, law 1
+    dac rdBol
+    dac rdEnd
+    lio [CH_LF]
+    jmp i rpX
+// at a line's start the reading ends now, ALT MODE handed over
+rpDone, dzm rdSkip
+    dzm rdStar
+    law 1
+    dac rdBol
+    jsp rpEnd
+    lio [CH_ALT]
+    jmp i rpX
+rpOff, jsp rpEnd
+    cli
+    jmp i rpX
+
+// rpEnd -- end the reading, clearing rdOn and setting useTty as the device
+// has it; after a CALL's file, put the tape's place back (rfRest).
+// AC is clobbered, IO is preserved.
+// Called via jsp, within this bank.
+rpEnd, dap rpOut
+    dzm rdEnd
+    dzm i [rdOn:0]
+#ifndef FOCAL_1C
+    lac rfOn
+    SKIP_NEXT_IF_AC_ZERO
+    jsp rfRest
+#endif
+    lac i [tmDev:0]
+    SKIP_NEXT_IF_DIFFERENT [DEV_TTY]
+    jmp rpTty
+    dzm i [useTty:0]
+    jmp rpOut
+rpTty, law 1
+    dac i [useTty:0]
+rpOut, jmp .
+
+// rdStop -- end a reading in progress, at an error, Ctrl-C, a lost
+// connection or a new device.
+// Stopped within a line, the next * passes over the rest of it.
+// With no reading, it does nothing.
+// AC and IO are clobbered.
+// Called via jsp i.
+rdStop, dac rsX
+    lac i [rdOn:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i rsX
+    dzm rdStar
+    lac rdBol
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rsOff
+    law 1
+    dac rdSkip
+rsOff, jsp rpEnd
+    jmp i rsX
+
+riX, 0
+ppX, 0
+plX, 0
+plN, 0
+rbX, 0
+rpX, 0
+rpC, 0
+rsX, 0
+endloc
+
+rdReq, 0                    // a read has been asked for and not yet taken
+rdT0, 0                     // the clock when it was asked for, in ms; in
+                            // FOCAL-1C the looks left, as a negative count
+rdCr, 0                     // the last character taken was CR
+rdBol, 0                    // the tape stands at a line's start
+rdSkip, 0                   // passing over the rest of a line
+rdStar, 0                   // ... a * line, whose end ends the reading
+rdEnd, 0                    // cut-off line handed over, end at the next look

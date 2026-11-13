@@ -1,0 +1,285 @@
+// vars.ac -- PDP-1 FOCAL's variables, in bank 4: their names read from the
+// source, lookup and creation, the clear every edit makes, and TYPE $.
+//
+// A variable is a name and a subscript.
+// The name is a letter other than F, then an optional letter or digit.
+// It is one word, the first character in the high nine bits, the second (0
+// for none) in the low nine.
+// The subscript is -2048 to 2047.
+// Each entry (focal.ah, VR_ENT words) is on one of VR_HEADS hash chains, and
+// the entries lie in creation order, which TYPE $ keeps.
+// A reference creates the entry with the value 0, as FOCAL,1969 does.
+//
+// FOCAL-1C keeps them at the top of its pool (focal.ah), the entries taken
+// downward, so creation order runs down from the heads.
+// A new entry must stay above the push-down list.
+//
+// Every routine is called via jsp, from bank 0, with the extend window open,
+// and leaves it open.
+// Errors leave by jmp i tmErr with the code in AC (termio.ac).
+// Include the file where it is not executed, since its data words follow its
+// code.
+// Needs focal.ah, <AIDS/skipmacros.ah>, termio.ac, store.ac and interp.ac.
+
+// vrClear -- remove every variable: empty the hash chains and free every
+// entry.
+// AC is clobbered, IO is preserved.
+// Called via jsp, by the store at each edit through jsp i stVarClr.
+local vcX, vcLoop, vcK
+vrClear, dap vcX
+    lac [VR_BASE]
+    dac vrP
+    law i VR_HEADS
+    dac vcK
+vcLoop, dzm i vrP
+    idx vrP
+    isp vcK
+    jmp vcLoop
+#ifndef FOCAL_1C
+    lac [VR_FIRST]
+#else
+    lac [VR_BASE]           // the entries are taken downward from the heads
+#endif
+    dac vrTop
+vcX, jmp .
+vcK, 0
+endloc
+
+// vrName -- read a variable's name from the source.
+// Entry: the first character, peeked and not yet taken, is in IO and is a
+// letter other than F (the caller has checked).
+// Letters and digits after the second are taken and dropped.
+// AC is the name word, IO is clobbered.
+// Called via jsp.
+local vnX, vnN, vnT, vnMore, vnEnd
+vrName, dap vnX
+    jsp cuSkip
+    dio vnN
+    lac vnN
+    ral 9s
+    dac vnN
+    jsp nxPeek
+    jsp isAlnum
+    jmp vnEnd
+    jsp cuSkip
+    dio vnT
+    lac vnN
+    ior vnT
+    dac vnN
+vnMore, jsp nxPeek
+    jsp isAlnum
+    jmp vnEnd
+    jsp cuSkip
+    jmp vnMore
+vnEnd, lac vnN
+vnX, jmp .
+vnN, 0
+vnT, 0
+endloc
+
+// vrFind -- find the variable named vrNm with subscript vrSub, created with
+// the value 0 when it is new.
+// Errors: ?06.54 the bank is full (in FOCAL-1C, the pool).
+// AC is the full address of its value, IO is clobbered.
+// Called via jsp.
+local vfX, vfH, vfP, vfT, vfLoop, vfNext, vfNew
+vrFind, dap vfX
+    lac vrNm
+    rar 9s
+    xor vrNm
+    xor vrSub
+    and [077]
+    add [VR_BASE]
+    dac vfH
+    lac i vfH
+vfLoop, SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vfNew
+    dac vfP
+    add [1]
+    dac vfT
+    lac i vfT
+    SKIP_NEXT_IF_SAME vrNm
+    jmp vfNext
+    idx vfT
+    lac i vfT
+    SKIP_NEXT_IF_SAME vrSub
+    jmp vfNext
+    idx vfT                 // the value's address, left in AC
+    jmp vfX
+vfNext, lac i vfP
+    jmp vfLoop
+// a new entry, at the head of its chain
+#ifndef FOCAL_1C
+vfNew, lac vrTop
+    SKIP_NEXT_IF_DIFFERENT [VR_END]
+    jmp vrFull
+    dac vfP
+#else
+// below the lowest, and not below the push-down list's next free word
+vfNew, lac vrTop
+    sub [VR_ENT]
+    dac vfP
+    sub pdP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp vrFull
+    lac vfP
+    dac vrTop
+#endif
+    lac i vfH
+    dac i vfP
+    lac vfP
+    dac i vfH
+    idx vfP
+    lio vrNm
+    dio i vfP
+    idx vfP
+    lio vrSub
+    dio i vfP
+    idx vfP
+    dac vfT
+    dzm i vfP
+    idx vfP
+    dzm i vfP
+    idx vfP
+    dzm i vfP
+#ifndef FOCAL_1C
+    idx vfP
+    dac vrTop
+#endif
+    lac vfT
+vfX, jmp .
+vfH, 0
+vfP, 0
+vfT, 0
+endloc
+
+// vrFull -- give ?06.54, the variables' bank is full.
+// Reached by jmp; does not return, leaving by jmp i tmErr with the code in AC.
+vrFull, lac [ERR_VARFULL]
+    jmp i tmErr
+
+// vrList -- TYPE $.
+// Every variable in creation order, one a line: the name, @ for a missing
+// second character, the subscript in parentheses, then the value as TYPE
+// prints it.
+// AC and IO are clobbered.
+// Called via jsp.
+local vlX, vlP, vlLoop, vlOne, vlT
+vrList, dap vlX
+#ifndef FOCAL_1C
+    lac [VR_FIRST]
+#else
+    lac [VR_BASE]           // the first entry is the one just below the heads
+#endif
+    dac vlP
+vlLoop, lac vlP
+    SKIP_NEXT_IF_DIFFERENT vrTop
+    jmp vlX
+#ifndef FOCAL_1C
+    add [1]
+#else
+    sub [VR_ENT-1]          // the name of the entry below
+#endif
+    dac vlP
+    lac i vlP
+    dac vlT
+    rar 9s
+    and [0777]
+    lia
+    jsp putc
+    lac vlT
+    and [0777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    law 0100                // @
+    lia
+    jsp putc
+    lio [050]
+    jsp putc
+    idx vlP
+    lio i vlP
+    jsp vrSubOut
+    lio [051]
+    jsp putc
+    idx vlP
+    FPCALLA(fpLdA)
+    FPCALL(fpOut)
+    jsp newline
+    lac vlP
+#ifndef FOCAL_1C
+    add [3]
+#else
+    sub [3]                 // the entry's address, the next one's top
+#endif
+    dac vlP
+    jmp vlLoop
+vlX, jmp .
+vlP, 0
+vlT, 0
+endloc
+
+// vrSubOut -- print the subscript in IO.
+// 0 to 99 print as two digits, as FOCAL,1969 prints them.
+// Any other prints in decimal, a minus first when it is negative.
+// AC and IO are clobbered.
+// Called via jsp.
+local soX, soV, soK, soNeg, soDec, soTh, soRest, soH, soHp, soTn, soTp, soU
+vrSubOut, dap soX
+    dio soV
+    lac soV
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp soNeg
+    sub [0d100]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp soDec
+    lio soV
+    jsp dec3
+    lio dgT
+    jsp putDig
+    lio dgU
+    jsp putDig
+    jmp soX
+soNeg, lio [055]
+    jsp putc
+    lac soV
+    cma
+    dac soV
+// 1 to 2048, the thousands, then three digits, or fewer with no thousands
+soDec, dzm soK
+soTh, lac soV
+    sub [0d1000]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp soRest
+    dac soV
+    idx soK
+    jmp soTh
+// leading zeros dropped, a digit printing once one before it has
+soRest, lio soV
+    jsp dec3
+    lac soK
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp soH
+    lio soK
+    jsp putDig
+    jmp soHp
+soH, lac dgH
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp soTn
+soHp, lio dgH
+    jsp putDig
+    jmp soTp
+soTn, lac dgT
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp soU
+soTp, lio dgT
+    jsp putDig
+soU, lio dgU
+    jsp putDig
+soX, jmp .
+soV, 0
+soK, 0
+endloc
+
+vrTop, 0                    // the address after the last entry; FOCAL-1C's lowest entry
+vrNm, 0                     // vrFind's name
+vrSub, 0                    // vrFind's subscript
+vrP, 0

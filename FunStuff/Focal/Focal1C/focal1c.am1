@@ -1,0 +1,125 @@
+PDP-1 FOCAL-1C
+
+// focal1c.am1 -- FOCAL-1C: PDP-1 FOCAL for a PDP-1C with two banks of
+// memory, the typewriter and the paper tape, as the Computer History
+// Museum's PDP-1C has.
+// One user via the typewriter.
+// LIBRARY PUNCH and * save and load a program via paper tape.
+//
+// Requires mul and div (muldiv=on) and the extended-memory control.
+// Uses no PDP-1D instructions, no clock, and no memory outside banks 0 and 1.
+// The banks:
+//   bank 0  from 0100, the interpreter, the typewriter, the program store
+//   bank 1  at its top, the number package, the extended functions when
+//           built, the typewriter's tables and buffers, the paper tape
+//   between them, the pool: the program text, the push-down list and the
+//           variables, one run of words from plBase in bank 0 across the
+//           bank boundary to plEnd, bank 1's first word of code (focal.ah)
+// The extended functions, FSQT to FRAN, are left out unless F1C_FUNCS is
+// defined (am1 -DF1C_FUNCS).
+// Extend mode is on always.
+//
+// The sources are PDP-1 FOCAL's with FOCAL_1C defined.
+//
+// Build with this directory on the include path.
+//
+// 12-Nov-2026 Claude/wje initial version
+// 12-Nov-2026 Claude/wje the pool in banks 0 and 1, bank 1's code at its top
+// 13-Nov-2026 Claude/wje source cleaned for release
+
+#define FOCAL_1C
+
+// lai and lia are PDP-1D instructions.
+// Each is simulated by two PDP-1C instructions through a scratch word, liSc,
+// which each bank holding code defines for itself.
+// No skip is ever placed before one of these, obviously.
+#define lai          dio liSc; lac liSc
+#define lia          dac liSc; lio liSc
+
+#include <AIDS/skipmacros.ah>
+#include "focal.ah"
+
+// So are the skips on IO, sni and szi. Each is made of a copy of IO into AC
+// and the skip on AC, so AC is clobbered. Every use is followed by a jmp,
+// and nothing skips over one.
+#undef SKIP_NEXT_IF_IO_NOT_ZERO
+#undef SKIP_NEXT_IF_IO_IS_ZERO
+#define SKIP_NEXT_IF_IO_NOT_ZERO dio liSc; lac liSc; sza i
+#define SKIP_NEXT_IF_IO_IS_ZERO dio liSc; lac liSc; sza
+
+100/
+// go -- the start. Sets up the terminal and its hooks, clears the program
+// and the variables, and sets the format %8.04 and, when FRAN is built,
+// FRAN's seed. Then prints the name on the typewriter (tmReady) and *.
+// Entered at 0100 by start; does not return.
+go, lem
+    eem
+    jsp tmInit
+    lac [errH]
+    dac tmErr
+    lac [vrClear]
+    dac stVarClr
+    lac [errH]
+    dac i [fpErr:1]
+    lac [fpSrc]
+    dac i [fpGetc:1]
+    lac [fpPc]
+    dac i [fpPutc:1]
+    law 0d8
+    dac i [fpFmX:1]
+    law 4
+    dac i [fpFmY:1]
+    dzm exPd
+#ifdef FN_EXT
+    FPCALL(fnRanI)
+#endif
+    jsp stInit
+    jsp vrClear
+    jmp ready
+
+liSc, 0                     // lai's and lia's scratch word in bank 0
+
+#include "interp.ac"
+#include "expr.ac"
+#include "iocmd.ac"
+#include "vars.ac"
+#include "termio.ac"
+#include "lineed.ac"
+#include "store.ac"
+#include "editcmd.ac"
+
+constants
+
+// plBase -- the pool's first word. Bank 0's code must end below the read-in
+// loader, 07751 to 07774, which the pool may take once the tape is loaded.
+plBase,
+    assert plBase <= 07751, "bank 0's code runs into the read-in loader"
+
+// Bank 1's code is assembled at the top of bank 1, from B1ORG, so the pool is
+// one run; am1 refuses code past 07777. B1ORG is bank 1's words taken from
+// 010000. Set it again whenever bank 1's code changes size, until the
+// assert after bank 1's constants holds.
+#ifdef F1C_FUNCS
+#define B1ORG        0367
+#else
+#define B1ORG        02175
+#endif
+
+bank 1
+B1ORG/
+plEnd,
+#include "fparith.ac"
+#include "fpconv.ac"
+#ifdef FN_EXT
+#include "fpfunc.ac"
+#include "fncoef.ac"
+#endif
+#include "ttytab.ac"
+#include "termdata.ac"
+#include "ptape.ac"
+
+liSc, 0                     // lai's and lia's scratch word in bank 1
+constants
+    assert . == 010000, "bank 1's code does not end at 07777: set B1ORG again"
+
+start go

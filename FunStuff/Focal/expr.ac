@@ -1,0 +1,829 @@
+// expr.ac -- PDP-1 FOCAL's expressions: numbers, variables, the three
+// enclosures, the operators, and the functions: FABS, FSGN and FITR here,
+// seven in fpfunc.ac, and FMOV and FDRW in plotter.ac.
+//
+// FOCAL,1969's rules: ^ binds tightest, then *, then /, then + and - together,
+// each level left to right; a sign only at the start or just after an opening
+// enclosure; blanks passed between operands and operators; each enclosure
+// closed by its partner.
+// The evaluator is not recursive.
+// Pending operands, operators and open enclosures go on the push-down list
+// (interp.ac), so the depth is limited only by the list.
+//
+// The parse takes its characters from the source cursor (store.ac) and acts on
+// the number package (fparith.ac, fpconv.ac) through FPCALL, so a compiler can
+// drive the same parse with other actions.
+//
+// FOCAL-1C (FOCAL_1C defined) has no plotter, so no FMOV and FDRW and no
+// argument list.
+// A comma ends the expression, as in FOCAL,1969.
+// Its extended functions are built only under FN_EXT (focal.ah).
+//
+// Every routine is called via jsp, from bank 0, with the extend window open,
+// and leaves it open.
+// Errors leave by jmp i tmErr with the code in AC (termio.ac).
+// Include the file where it is not executed, since its data words follow its
+// code.
+// Needs focal.ah, <AIDS/skipmacros.ah>, termio.ac, store.ac, vars.ac and
+// interp.ac.
+
+// evalX -- evaluate the expression at the source.
+// IO is the character that must close it, which is taken (an empty one is
+// then 0); or 0 for one that ends at the first character that cannot
+// continue it, which is not taken.
+// With evIf set, an operand after an operand at the top level ends the
+// expression (IF's targets, IF reading any expression, enclosed or not)
+// instead of being an error; inside any enclosure it is ?07.22, as
+// FOCAL,1969 gives it.
+// Errors: ?07.;6 no operand, ?07.22 an operand after an operand, ?07.38 an
+// enclosure after one, ?08.47 an enclosure not closed by its partner, ?07.:9,
+// ?07.:8 and ?31.<7 for functions, and the number package's, its functions',
+// the plotter's and vrFind's.
+// FA is the value; AC and IO are clobbered.
+// Called via jsp.
+local exX, exCl, exC, exSg, exEm, exK, exNm, exA, exW, exO, exFc, exFk, \
+    exFi, exFn2, exOp, exNs, exNe, exOth, exBad, exOpen, exPlus, exMinus, \
+    exNum, exVar, exV0, exFn, exFl, exFe, exFt, exFf, exHv, exOAdd, exOSub, \
+    exOMul, exODiv, exOPow, exOper, exNoOp, exEnd, exClose, exFun, exAbs, \
+    exSgn, exSgM, exSgF, exPar, exEncl, exTwo, exUnk, exNoP, exNa, exP, \
+    exNc, exNd, exIfm, exIw, exIk, exItr, exFx
+evalX, dap exX
+    dio exCl
+    cli
+    jsp pdPush
+    lac exCl
+    ior [MK_BOT]
+    lia
+    jsp pdPush
+    lac exCl
+    dac exEm
+    law 1
+    dac exSg
+
+// an operand, a sign first only where exSg allows one
+exOp, jsp nxBlank
+    dio exC
+    lac exSg
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exNs
+    dzm exSg
+    lac exC
+    SKIP_NEXT_IF_DIFFERENT [053]
+    jmp exPlus
+    SKIP_NEXT_IF_DIFFERENT [055]
+    jmp exMinus
+// just after an opening enclosure its partner closes it empty, as 0
+exNs, lac exEm
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exNe
+    jsp pdTop
+    lai
+    and [0177]
+    SKIP_NEXT_IF_SAME exC
+    jmp exNe
+    cla
+    FPCALLA(fpFlt)
+    jmp exHv
+exNe, lac exC
+    SKIP_NEXT_IF_DIFFERENT [056]
+    jmp exNum
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp exOth
+    sub [0d10]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp exNum
+    lio exC
+    jsp isLetter
+    jmp exOth
+    lac exC
+    SKIP_NEXT_IF_DIFFERENT [0106]
+    jmp exFn
+    jmp exVar
+// an opening enclosure, or no operand at all
+exOth, lio exC
+    jsp opener
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exBad
+    dac exK
+    jsp cuSkip
+    cli
+    jsp pdPush
+    lac exK
+    ior [MK_PAR]
+    lia
+    jsp pdPush
+exOpen, law 1
+    dac exSg
+    dac exEm
+    jmp exOp
+// just after an opening enclosure the enclosure is unclosed, else there is
+// no operand
+exBad, lac exEm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp exPar
+    lac [ERR_OPND]
+    jmp i tmErr
+exPlus, jsp cuSkip
+    dzm exEm
+    jmp exOp
+// a leading minus, taken as 0 minus what follows
+exMinus, jsp cuSkip
+    cla
+    FPCALLA(fpFlt)
+    jsp pushFA
+    lio [OP_SUB]
+    jsp pdPush
+    dzm exEm
+    jmp exOp
+
+// a literal.
+// Its first character is taken, the rest read by fpIn through fpSrc.
+exNum, lio exC
+    jsp cuSkip
+    dzm exPd
+    lai
+    FPCALLA(fpIn)
+    jmp exHv
+
+// a variable; an opening enclosure right after its name is its subscript
+exVar, jsp vrName
+    dac exNm
+    jsp nxPeek
+    jsp opener
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exV0
+    dac exK
+    jsp cuSkip
+    lio exNm
+    jsp pdPush
+    lac exK
+    ior [MK_SUB]
+    lia
+    jsp pdPush
+    jmp exOpen
+exV0, lac exNm
+    dac vrNm
+    dzm vrSub
+    jsp vrFind
+    FPCALLA(fpLdA)
+    jmp exHv
+
+// a function is F, then exactly three letters that name one, then an opening
+// enclosure
+exFn, jsp cuSkip
+    dzm exFc
+    dzm exFk
+exFl, jsp nxPeek
+    jsp isLetter
+    jmp exFe
+    jsp cuSkip
+    lac exFc
+    ral 6s
+    dac exFc
+    lai
+    sub [0100]
+    add exFc
+    dac exFc
+    idx exFk
+    jmp exFl
+exFe, lac exFk
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp exFx
+    SKIP_NEXT_IF_SAME [3]
+    jmp exUnk
+    lac [fnTab]
+    dac exP
+    law i FN_COUNT
+    dac exFn2
+exFt, lac i exP
+    SKIP_NEXT_IF_DIFFERENT exFc
+    jmp exFf
+    idx exP
+    isp exFn2
+    jmp exFt
+exUnk, lac [ERR_OPND]
+    jmp i tmErr
+exFf, lac exP
+    sub [fnTab]
+    dac exFi
+    jsp nxPeek
+    jsp opener
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exNoP
+    dac exK
+    lac exFi
+    sub [FN_BUILT]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp exNa
+    jsp cuSkip
+    lio exFi
+    jsp pdPush
+    lac exK
+    ior [MK_FN]
+    lia
+    jsp pdPush
+    jmp exOpen
+exNoP, lac [ERR_FNPAREN]
+    jmp i tmErr
+// FX, FOCAL,1969's display function, is unavailable before its argument is
+// read; any other one-letter name is no function at all
+exFx, lac exFc
+    SKIP_NEXT_IF_SAME [030]
+    jmp exUnk
+exNa, lac [ERR_NOFUNC]
+    jmp i tmErr
+
+// an operand's value is in FA.
+// Next comes an operator, a closing enclosure, or the end.
+exHv, jsp nxBlank
+    dio exC
+    jsp opener
+    SKIP_NEXT_IF_AC_ZERO
+    jmp exEncl
+    lac exC
+    SKIP_NEXT_IF_DIFFERENT [053]
+    jmp exOAdd
+    SKIP_NEXT_IF_DIFFERENT [055]
+    jmp exOSub
+    SKIP_NEXT_IF_DIFFERENT [052]
+    jmp exOMul
+    SKIP_NEXT_IF_DIFFERENT [057]
+    jmp exODiv
+    SKIP_NEXT_IF_DIFFERENT [0136]
+    jmp exOPow
+    jmp exNoOp
+exOAdd, law OP_ADD
+    jmp exOper
+exOSub, law OP_SUB
+    jmp exOper
+exOMul, law OP_MUL
+    jmp exOper
+exODiv, law OP_DIV
+    jmp exOper
+exOPow, law OP_POW
+// the operators on top that bind at least as tightly are done first
+exOper, dac exO
+    rar 3s
+    and [07]
+    dac exPr
+    jsp exRed
+    jsp pushFA
+    lio exO
+    jsp pdPush
+    lio exC
+    jsp cuSkip
+    dzm exSg
+    dzm exEm
+    jmp exOp
+
+// an operand after an operand ends IF's expression at the top level, else
+// is an error; a comma is exCma's
+exNoOp, lac exC
+#ifndef FOCAL_1C
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp exCma
+#endif
+    lio exC
+    jsp isCloser
+    jmp exNc
+    jmp exClose
+exNc, jsp isAlnum
+    jmp exNd
+    jmp exIfm
+exNd, lac exC
+    SKIP_NEXT_IF_SAME [056]
+    jmp exEnd
+exIfm, lac evIf
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exTwo
+// The nearest marker below the pending operators says where it is.
+// They are stepped over, not done, since FOCAL,1969 gives ?07.22 before a
+// pending operator's error (IF ((1/0 2))).
+// Each is four words, its left operand and then its operator word, which has
+// no marker bits.
+    lac pdP
+exIw, sub [1]
+    dac exA
+    lac i exA
+    and [MK_MASK]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp exIk
+    lac exA
+    sub [3]
+    jmp exIw
+exIk, SKIP_NEXT_IF_SAME [MK_BOT]
+    jmp exTwo
+    jmp exEnd
+#ifndef FOCAL_1C
+// a comma.
+// In a function's enclosure it ends one argument, kept on the list under the
+// marker and counted in its argument word, 0100 a comma; anywhere else it
+// ends the expression.
+exCma, dzm exPr
+    jsp exRed
+    jsp pdTop
+    lai
+    and [MK_MASK]
+    SKIP_NEXT_IF_SAME [MK_FN]
+    jmp exEnd
+    lio exC
+    jsp cuSkip
+    jsp pdPop
+    dio exW
+    jsp pdPop
+    dio exA
+    jsp pushFA
+    lac exA
+    add [0100]
+    lia
+    jsp pdPush
+    lio exW
+    jsp pdPush
+    law 1
+    dac exSg
+    dzm exEm
+    jmp exOp
+#endif
+// the end, every operator done; the bottom marker must have no closer
+exEnd, dzm exPr
+    jsp exRed
+    jsp pdPop
+    dio exW
+    lac exW
+    and [MK_MASK]
+    SKIP_NEXT_IF_SAME [MK_BOT]
+    jmp exPar
+    lac exW
+    and [0177]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp exPar
+    jsp pdPop
+    jmp exX
+
+// a closing enclosure.
+// At the top level it is the end, not taken (the caller's excess
+// enclosure); else it must be the open one's partner.
+exClose, dzm exPr
+    jsp exRed
+    jsp pdTop
+    lai
+    and [0177]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exEnd
+    SKIP_NEXT_IF_SAME exC
+    jmp exPar
+    lio exC
+    jsp cuSkip
+    jsp pdPop
+    dio exW
+    jsp pdPop
+    dio exA
+    lac exW
+    and [MK_MASK]
+    SKIP_NEXT_IF_DIFFERENT [MK_BOT]
+    jmp exX
+    SKIP_NEXT_IF_DIFFERENT [MK_PAR]
+    jmp exHv
+    SKIP_NEXT_IF_DIFFERENT [MK_FN]
+    jmp exFun
+    // a subscript, which gives the variable's value
+    FPCALL(fpSubs)
+    dac vrSub
+    lac exA
+    dac vrNm
+    jsp vrFind
+    FPCALLA(fpLdA)
+    jmp exHv
+
+// the functions: 0 FABS, 1 FSGN (1 for zero), 2 FITR, and from 3 on
+// fpfunc.ac's and plotter.ac's, each through its full address in fnEnt.
+// exA is the function's number plus 0100 for each comma.
+// Those below FN_TWO take one argument, the others two, the first left on
+// the list for the function to take (plotter.ac).
+exFun, lac exA
+#ifndef FOCAL_1C
+    sub [FN_TWO]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp exFm
+    lac exA
+#endif
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp exAbs
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp exSgn
+    SKIP_NEXT_IF_DIFFERENT [2]
+    jmp exItr
+#ifdef FN_EXT
+exFd, add [fnEnt-3]
+    dac exP
+    lac i exP
+    dac exP
+    jsp i exP
+    jmp exHv
+#endif
+#ifndef FOCAL_1C
+// a comma given, or a two-argument function.
+// It takes exactly one comma, to one of the two-argument functions.
+exFm, sub [0100]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp exArg
+    sub [FN_BUILT-FN_TWO]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp exArg
+    lac exA
+    sub [0100]
+    jmp exFd
+exArg, lac [ERR_FNARGS]
+    jmp i tmErr
+#endif
+exItr, FPCALL(fpFitr)
+    jmp exHv
+exAbs, lac i [faS:1]
+    SKIP_NEXT_IF_AC_ZERO
+    FPCALL(fpNeg)
+    jmp exHv
+exSgn, lac i [faS:1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp exSgM
+    law 1
+    jmp exSgF
+exSgM, law i 1
+exSgF, FPCALLA(fpFlt)
+    jmp exHv
+
+exPar, lac [ERR_PAREN]
+    jmp i tmErr
+exEncl, lac [ERR_ENCL]
+    jmp i tmErr
+exTwo, lac [ERR_TWOOPND]
+    jmp i tmErr
+exX, jmp .
+exCl, 0
+exC, 0
+exSg, 0                     // a sign may come next
+exEm, 0                     // an enclosure was just opened
+exK, 0
+exNm, 0
+exA, 0
+exW, 0
+exO, 0
+exFc, 0                     // a function's letters, six bits each
+exFk, 0                     // and how many
+exFi, 0
+exFn2, 0
+exP, 0
+endloc
+
+// exRed -- do the operators on top of the list, down to the first marker,
+// while each binds at least as tightly as precedence exPr (0 for all of
+// them).
+// FA is the result.
+// AC and IO are clobbered.
+// Called via jsp.
+local erX, erLoop, erW
+exRed, dap erX
+erLoop, jsp pdTop
+    dio erW
+    lac erW
+    and [MK_MASK]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp erX
+    lac erW
+    rar 3s
+    and [07]
+    sub exPr
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp erX
+    jsp exApply
+    jmp erLoop
+erX, jmp .
+erW, 0
+endloc
+
+// exApply -- pop an operator and the operand under it.
+// FA = that operand, the operator, FA.
+// AC and IO are clobbered.
+// Called via jsp.
+local eaX, eaO, eaAdd, eaSub, eaMul, eaPow
+exApply, dap eaX
+    jsp pdPop
+    dio eaO
+    lac [exR]
+    FPCALLA(fpStA)
+    lac pdP
+    sub [3]
+    dac pdP
+    FPCALLA(fpLdA)
+    lac eaO
+    SKIP_NEXT_IF_DIFFERENT [OP_POW]
+    jmp eaPow
+    lac [exR]
+    FPCALLA(fpLdB)
+    lac eaO
+    SKIP_NEXT_IF_DIFFERENT [OP_ADD]
+    jmp eaAdd
+    SKIP_NEXT_IF_DIFFERENT [OP_SUB]
+    jmp eaSub
+    SKIP_NEXT_IF_DIFFERENT [OP_MUL]
+    jmp eaMul
+    FPCALL(fpDiv)
+    jmp eaX
+eaAdd, FPCALL(fpAdd)
+    jmp eaX
+eaSub, FPCALL(fpSub)
+    jmp eaX
+eaMul, FPCALL(fpMul)
+    jmp eaX
+eaPow, jsp power
+eaX, jmp .
+eaO, 0
+endloc
+
+// pushFA -- push FA's three words.
+// Errors: ?02.79 the list is full.
+// AC and IO are clobbered.
+// Called via jsp.
+local pfX
+pushFA, dap pfX
+    lac pdP
+    add [3]
+#ifndef FOCAL_1C
+    sub [PD_END]
+#else
+    sub vrTop               // FOCAL-1C's list ends at the variables (pdPush)
+#endif
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp pdFull
+    lac pdP
+    FPCALLA(fpStA)
+    lac pdP
+    add [3]
+    dac pdP
+pfX, jmp .
+endloc
+
+// power -- FA = FA to the power exR, truncated to an integer, by repeated
+// squaring over the power's bits, low first.
+// 0 to any power is 0, as FOCAL,1969 gives 0^0 and 0^(-1); else a negative
+// power is ?26.99.
+// The power's bit j is bit j + 35 - e of its 35-bit magnitude M (e its
+// exponent), so past 35 bits it has e - 35 zero bits first.
+// The squaring stops early once the base is 0 or exactly 1, since then the
+// result is known.
+// It is 0 for a base of 0, the top bit being still to come, and the product
+// so far for a base of 1.
+// AC and IO are clobbered.
+// Called via jsp.
+local pwX, pwZ, pwOne, pwNeg, pwSh, pwBig, pwZl, pwB35, pwBits, pwDone, \
+    pwK, pwN, pwE, pwSq, psX, pwShr, prX, pwMulR, pwsX, pws1, pws2
+power, dap pwX
+    lac [pwB]
+    FPCALLA(fpStA)
+    lac pwB+1
+    and [0377777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pwZ
+    lac [exR]
+    FPCALLA(fpLdA)
+    FPCALL(fpFitr)
+    lac i [fa2:1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pwOne
+    lac i [faS:1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pwNeg
+    lac i [fa0:1]
+    dac pwM0
+    lac i [fa1:1]
+    dac pwM1
+    lac i [fa2:1]
+    dac pwM2
+    lac i [faE:1]
+    dac pwE
+    law 1
+    dac pwR
+    lac [0200000]
+    dac pwR+1
+    dzm pwR+2
+    lac pwE
+    sub [0d35]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pwBig
+// for e below 35, M shifted right 35 - e places holds the power, e bits
+    dac pwK
+pwSh, jsp pwShr
+    isp pwK
+    jmp pwSh
+    lac pwE
+    dac pwN
+    jmp pwBits
+// for e of 35 or more, e - 35 zero bits, then M's 35
+pwBig, SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pwB35
+    cma
+    dac pwK
+pwZl, jsp pwSq
+    isp pwK
+    jmp pwZl
+pwB35, law 0d35
+    dac pwN
+pwBits, lac pwM0
+    and [1]
+    SKIP_NEXT_IF_AC_ZERO
+    jsp pwMulR
+    jsp pwShr
+    lac pwN
+    sub [1]
+    dac pwN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pwDone
+    jsp pwSq
+    jmp pwBits
+pwDone, lac [pwR]
+    FPCALLA(fpLdA)
+    jmp pwX
+pwZ, cla
+    FPCALLA(fpFlt)
+    jmp pwX
+pwOne, law 1
+    FPCALLA(fpFlt)
+    jmp pwX
+pwNeg, lac [ERR_NEGPOW]
+    jmp i tmErr
+
+// pwSq -- the base squared; a base of 0 ends the power as 0, one of exactly
+// 1 ends it as the product so far.
+// AC and IO are clobbered.
+// Called via jsp.
+pwSq, dap psX
+    lac [pwB]
+    FPCALLA(fpLdA)
+    lac [pwB]
+    FPCALLA(fpLdB)
+    FPCALL(fpMul)
+    lac [pwB]
+    FPCALLA(fpStA)
+    lac pwB+1
+    and [0377777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pwZ
+    lac pwB
+    SKIP_NEXT_IF_SAME [1]
+    jmp psX
+    lac pwB+1
+    SKIP_NEXT_IF_SAME [0200000]
+    jmp psX
+    lac pwB+2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pwDone
+psX, jmp .
+
+// pwMulR -- the product so far times the base.
+// AC and IO are clobbered.
+// Called via jsp.
+pwMulR, dap prX
+    lac [pwR]
+    FPCALLA(fpLdA)
+    lac [pwB]
+    FPCALLA(fpLdB)
+    FPCALL(fpMul)
+    lac [pwR]
+    FPCALLA(fpStA)
+prX, jmp .
+
+// pwShr -- M, three 17-bit limbs, shifted right one place.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+pwShr, dap pwsX
+    lac pwM0
+    rar 1s
+    and [0177777]
+    dac pwM0
+    lac pwM1
+    and [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pws1
+    lac pwM0
+    ior [0200000]
+    dac pwM0
+pws1, lac pwM1
+    rar 1s
+    and [0177777]
+    dac pwM1
+    lac pwM2
+    and [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pws2
+    lac pwM1
+    ior [0200000]
+    dac pwM1
+pws2, lac pwM2
+    rar 1s
+    and [0177777]
+    dac pwM2
+pwsX, jmp .
+pwX, jmp .
+pwK, 0
+pwN, 0
+pwE, 0
+endloc
+
+// fpSrc -- fpIn's source (fpGetc).
+// AC = the next character.
+// It comes from the source cursor (exPd 0 before a literal's second
+// character).
+// The character looked at last is taken only when the next is asked for, so
+// the one that ends the literal is left for the parse.
+// In ASK (akMode), it comes from ASK's value, CR past its end.
+// IO is preserved.
+// Called from bank 1 via jsp i fpGetc.
+local fsR, fsI, fsC, fsPk, fsAsk, fsEnd, fsP
+fpSrc, dac fsR
+    dio fsI
+    lac akMode
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fsAsk
+    lac exPd
+    SKIP_NEXT_IF_AC_ZERO
+    lio fsC                 // the character peeked at the last call
+    SKIP_NEXT_IF_AC_ZERO
+    jsp cuSkip
+fsPk, jsp cuPeek
+    dio fsC
+    law 1
+    dac exPd
+    lai
+    lio fsI
+    jmp i fsR
+fsAsk, lac akI
+    SKIP_NEXT_IF_DIFFERENT akN
+    jmp fsEnd
+    add [akBuf]
+    dac fsP
+    idx akI
+    lac i fsP
+    lio fsI
+    jmp i fsR
+fsEnd, law CH_CR
+    lio fsI
+    jmp i fsR
+fsR, 0
+fsI, 0
+fsC, 0
+fsP, 0
+endloc
+
+// fpPc -- fpOut's sink (fpPutc).
+// It types the character in IO through putc.
+// AC and IO are clobbered.
+// Called from bank 1 via jsp i fpPutc.
+fpPc, dac fpcR
+    jsp putc
+    jmp i fpcR
+fpcR, 0
+
+// The functions' names, F's three letters, six bits each.
+// Those built come first (FN_BUILT of them), in exFun's order.
+fnTab, FN3('A','B','S')
+    FN3('S','G','N')
+    FN3('I','T','R')
+    FN3('S','Q','T')
+    FN3('E','X','P')
+    FN3('L','O','G')
+    FN3('S','I','N')
+    FN3('C','O','S')
+    FN3('A','T','N')
+    FN3('R','A','N')
+#ifndef FOCAL_1C
+    FN3('M','O','V')
+    FN3('D','R','W')
+#endif
+
+// fpfunc.ac's and plotter.ac's entries, in fnTab's order from FSQT on.
+// Each is called with the (last) argument in FA, the window open.
+#ifdef FN_EXT
+fnEnt, fnSqt:1
+    fnExp:1
+    fnLog:1
+    fnSin:1
+    fnCos:1
+    fnAtn:1
+    fnRan:1
+#endif
+#ifndef FOCAL_1C
+    fnMov:7
+    fnDrw:7
+#endif
+
+exPd, 0                     // fpSrc has a character looked at and not taken
+exPr, 0                     // exRed's precedence
+exR,                        // exApply's right operand, power's power
+    table 3
+pwB,                        // power's base, squared as it goes
+    table 3
+pwR,                        // power's product so far
+    table 3
+pwM0, 0                     // power's bits, three 17-bit limbs, low first
+pwM1, 0
+pwM2, 0

@@ -1,0 +1,737 @@
+// fslib.ac -- PDP-1 FOCAL's library on the shared file system, library 2.1
+// (Am1Includes/FILESYSTEM/).
+// It does LIBRARY FORMAT, SAVE, CALL, DELETE and LIST on a Type 550
+// Microtape, on the drive LIBRARY UNIT chose, or on the Type 23 drum, unit 0,
+// tracks DR_LIB0 to DR_LIB0+DR_LIBN-1 (focal.ah).
+//
+// The volume is the file system's.
+// It holds 31 files, each a run of blocks, named 1 to 9 characters.
+// Every command mounts the unit afresh (mtMount, or drMount for the drum),
+// so nothing is kept between commands and the user may change tapes freely;
+// a volume without the file system is ?31.49, and FORMAT formats whatever
+// the volume holds (mtFormat or drFormat, forced).
+//
+// A saved program is WRITE ALL's listing as text in fstool's form.
+// It holds two 8-bit characters a word, the first in the high half, each
+// line ended by CR alone, an odd last character leaving the low half 0.
+// A program moves between the host and a volume with fstool -a -f text and
+// -x -f text, with -D 030,010 for the drum's.
+//
+// SAVE lists the program twice through putc's file sink (ptOn PT_FILE,
+// sfPut).
+// The first pass counts its characters, so fsCreate allocates exactly; the
+// second goes into flBuf, FL_BUFW words, written by fsWrite each time it
+// fills and at the end.
+// A SAVE cut short by Ctrl-C, a lost connection or an error deletes its file
+// (fsStop, sfKill), so the directory is as it was; only a halt leaves a
+// partial file.
+//
+// CALL opens the file and makes it the reader's input (rdOn RD_FILE,
+// ptape.ac); interp.ac then erases the program and goes to *, and the
+// lines come in as * reads a tape.
+// rdPoll takes each character from rfGet, which reads flBuf a buffer at a
+// time.
+// At the file's end the reading hands the line editor GO, so the program
+// runs; a CALL ended by an error or Ctrl-C keeps the lines read so far.
+//
+// LIST types every file on the volume, FOCAL's or not, its name in nine
+// columns and its blocks in six, then FREE BLOCKS and the free blocks.
+//
+// A library call cannot be interrupted, so Ctrl-C is looked for between
+// calls.
+// putc looks before each character, getc before each look at the reader.
+// On a tape one call may search for up to about 30 s.
+//
+// The library's calls, the handle flHnd and the descriptor flFd are in bank
+// 6 (focal.am1).
+// Goes in bank 7 with ptape.ac, whose reader and punch it shares.
+// Its entries are called via jsp i to their full addresses, from bank 0,
+// with the extend window open, and return by jmp i with it open; sfPut is
+// reached from ptPut, and rfGet and rfRest are called from ptape.ac.
+// Bank 0's routines are called only through lbCall.
+// Needs focal.ah, <AIDS/skipmacros.ah>, <MICROTAPE/microtape.ah>,
+// <DRUM/drum.ah> and ptape.ac.
+
+// FL_OK -- go on when the library's status in AC is FS_OK, else end the
+// operation with the status's code (flFail).
+#define FL_OK        SKIP_NEXT_IF_AC_ZERO; jmp flFail
+
+// fsLib -- the LIBRARY operation in IO (LB_FORMAT, LB_SAVE, LB_CALL,
+// LB_DELETE or LB_LIST) on drive lbDrive, with the name in lbNm where it
+// takes one.
+// A CALL done leaves the file open as the reader's input; its caller erases
+// the program and goes to *.
+// AC is 0 when it is done, else the error's code (focal.ah); IO is clobbered.
+// Called via jsp i.
+local flX, flOp
+fsLib, dac flX
+    dio flOp
+    // the name as an ascii string, lbNm's three words and a zero word
+    lac i [lbNm:0]
+    dac flNm
+    lac i [lbNm:0+1]
+    dac flNm+1
+    lac i [lbNm:0+2]
+    dac flNm+2
+    dzm flNm+3
+    lac flOp
+    SKIP_NEXT_IF_DIFFERENT [LB_FORMAT]
+    jmp flFmt
+    jsp flMount
+    FL_OK
+    lac flOp
+    SKIP_NEXT_IF_DIFFERENT [LB_SAVE]
+    jmp flSave
+    SKIP_NEXT_IF_DIFFERENT [LB_CALL]
+    jmp flCall
+    SKIP_NEXT_IF_DIFFERENT [LB_DELETE]
+    jmp flDel
+    jmp flList
+
+// flFail, flRet -- the end of every operation.
+// flFail takes the library's status in AC, flRet the result in AC.
+// Reached by jmp.
+flFail, lia
+    jsp flCode
+flRet, jmp i flX
+flX, 0
+flOp, 0
+endloc
+
+// fsStop -- tmErr's helper while an operation runs (lbBrk, interp.ac).
+// A SAVE's file is deleted, since Ctrl-C or a lost connection leaves the
+// SAVE where it stands.
+// AC and IO are clobbered.
+// Called via jsp i.
+local fpX
+fsStop, dac fpX
+    jsp sfKill
+    jmp i fpX
+fpX, 0
+endloc
+
+// flFmt -- LIBRARY FORMAT.
+// It writes an empty directory, whatever the volume holds, on the drive
+// lbDrive or, for 0, on the drum's tracks.
+// Reached by jmp; leaves by flFail or flRet.
+local fmDr, fmEnd
+flFmt, lac [flHnd:6]
+    dac flPb
+    lac i [lbDrive:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp fmDr
+    dac flPb+MT_PDRIVE
+    law 1
+    dac flPb+MT_PFORCE
+    lac [flPb:7]
+    farjda(mtFormat:*)
+    jmp fmEnd
+fmDr, law DR_LIB0
+    dac flPb+DR_PFIRST
+    law DR_LIBN
+    dac flPb+DR_PTRACKS
+    law 1
+    dac flPb+DR_PFORCE
+    lac [flPb:7]
+    farjda(drFormat:*)
+fmEnd, FL_OK
+    jmp flRet
+endloc
+
+// flDel -- LIBRARY DELETE.
+// It opens the file by name and deletes it.
+// Reached by jmp; leaves by flFail or flRet.
+flDel, jsp flOpen
+    FL_OK
+    lac [flFd:6]
+    farjda(fsDelete:*)
+    FL_OK
+    jmp flRet
+
+// flCall -- LIBRARY CALL.
+// It opens the file by name and makes it the reader's input.
+// The tape reader's state is kept in rfSave, the file reading starting at a
+// line's start, and rfRest puts it back when the reading ends.
+// Reached by jmp; leaves by flFail or flRet.
+flCall, jsp flOpen
+    FL_OK
+    lac rdBol
+    dac rfSave
+    lac rdCr
+    dac rfSave+1
+    lac rdSkip
+    dac rfSave+2
+    law 1
+    dac rdBol
+    dzm rdCr
+    dzm rdSkip
+    dzm rdStar
+    dzm rdEnd
+    dzm rfInj
+    dzm rfEof
+    dzm rfHalf
+    dzm rfK
+    law 1
+    dac rfOn
+    dac i [useTty:0]
+    law RD_FILE
+    dac i [rdOn:0]
+    cla
+    jmp flRet
+
+// flSave -- LIBRARY SAVE.
+// WRITE ALL is counted, the file created with the blocks it needs, WRITE
+// ALL listed into it, and the file closed.
+// An error after the create deletes the file.
+// Reached by jmp; leaves by flFail or flRet.
+local svS, svBad
+flSave, dzm sfN
+    law 1
+    dac sfCnt
+    dzm sfErr
+    jsp sfList
+    // the blocks for (characters+1)/2 words, at least one block
+    lac sfN
+    add [1]
+    sar 1s
+    add [FS_BLKW-1]
+    sar 8s
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    law 1
+    dac flPb+FS_PBLOCKS
+    lac [flHnd:6]
+    dac flPb
+    lac [flNm:7]
+    dac flPb+FS_PNAME
+    dzm flPb+FS_PINFO
+    lac [flFd:6]
+    dac flPb+FS_PCFD
+    lac [flPb:7]
+    farjda(fsCreate:*)
+    FL_OK
+    law 1
+    dac sfOpen
+    // the listing into the file
+    dzm sfCnt
+    dzm sfHalf
+    jsp sfReset
+    jsp sfList
+    lac sfHalf
+    SKIP_NEXT_IF_AC_ZERO
+    jsp sfLast
+    jsp sfFlush
+    lac sfErr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp svBad
+    lac [flFd:6]
+    farjda(fsClose:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp svBad
+    dzm sfOpen
+    jmp flRet
+svBad, dac svS
+    jsp sfKill
+    lac svS
+    jmp flFail
+svS, 0
+endloc
+
+// flList -- LIBRARY LIST.
+// It types every used slot's name and blocks, then the free blocks.
+// Reached by jmp; leaves by flFail or flRet.
+local lsI, lsL, lsNx
+flList, dzm lsI
+lsL, lac [flHnd:6]
+    dac flPb
+    lac lsI
+    dac flPb+FS_PINDEX
+    lac [flEnt:7]
+    dac flPb+FS_PDEST
+    lac [flPb:7]
+    farjda(fsEntry:*)
+    FL_OK
+    lac flEnt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lsNx                // a free slot
+    jsp flName
+    law 1
+    dac flPad
+    lio flEnt+FS_DEALLOC
+    jsp flDec
+    jsp flNl
+lsNx, idx lsI
+    SKIP_NEXT_IF_SAME [FS_NENT]
+    jmp lsL
+    lac [flHnd:6]
+    dac flPb
+    dzm flPb+FS_PNEED
+    lac [flPb:7]
+    farjda(fsFree:*)
+    FL_OK
+    lio [flFreeTx:7]
+    lac [putAsc:0]
+    dac i [lbFn:0]
+    jsp i [lbCall:0]
+    dzm flPad
+    lio flPb+FS_PTOTAL
+    jsp flDec
+    jsp flNl
+    cla
+    jmp flRet
+lsI, 0
+endloc
+
+// flMount -- mount drive lbDrive on flHnd, or for 0 the drum's tracks.
+// AC is the library's status; IO is clobbered.
+// Called via jsp.
+local mnX, mnDr
+flMount, dap mnX
+    lac [flHnd:6]
+    dac flPb
+    lac i [lbDrive:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mnDr
+    dac flPb+MT_PDRIVE
+    lac [flPb:7]
+    farjda(mtMount:*)
+    jmp mnX
+mnDr, law DR_LIB0
+    dac flPb+DR_PFIRST
+    law DR_LIBN
+    dac flPb+DR_PTRACKS
+    lac [flPb:7]
+    farjda(drMount:*)
+mnX, jmp .
+endloc
+
+// flOpen -- open the file named flNm on flHnd, as flFd.
+// AC is the library's status; IO is clobbered.
+// Called via jsp.
+local opX
+flOpen, dap opX
+    lac [flHnd:6]
+    dac flPb
+    lac [flNm:7]
+    dac flPb+FS_PNAME
+    lac [flFd:6]
+    dac flPb+FS_PFD
+    lac [flPb:7]
+    farjda(fsOpenName:*)
+opX, jmp .
+endloc
+
+// flCode -- the FOCAL error code (focal.ah) for the library's status in IO,
+// ERR_LBBAD for a status past the table.
+// AC is the code; IO is clobbered.
+// Called via jsp.
+local fcX, fcS, fcBad
+flCode, dap fcX
+    dio fcS
+    lac fcS
+    sub [FS_EXFER+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fcBad
+    lac fcS
+    add [flCodes:7]
+    dac fcS
+    lac i fcS
+    jmp fcX
+fcBad, lac [ERR_LBBAD]
+fcX, jmp .
+fcS, 0
+endloc
+
+// sfList -- WRITE ALL (cmWrite, bank 0) through the file sink.
+// The listing is counted into sfN while sfCnt is set, else written into the
+// file.
+// cmWrite reads its argument from the source, which stands at the ; or the
+// end of the line after the name, so it lists everything.
+// AC and IO are clobbered.
+// Called via jsp.
+local slX
+sfList, dap slX
+    law PT_FILE
+    dac i [ptOn:0]
+    lac [cmWrite:0]
+    dac i [lbFn:0]
+    jsp i [lbCall:0]
+    dzm i [ptOn:0]
+slX, jmp .
+endloc
+
+// sfPut -- the file sink, for ptPut while ptOn is PT_FILE.
+// The ASCII character in IO, LF as CR, is counted into sfN while sfCnt is
+// set, else packed into flBuf, two a word, the first in the high half; a
+// full buffer is written (sfFlush).
+// After an error (sfErr) characters are dropped.
+// AC and IO are clobbered.
+// Reached by jmp from ptPut, AC its return address, as jsp i leaves it.
+local spX, spC, spLow, spCnt
+sfPut, dac spX
+    lac sfErr
+    SKIP_NEXT_IF_AC_ZERO
+    jmp i spX               // after an error, dropped
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    law CH_CR
+    dac spC
+    lac sfCnt
+    SKIP_NEXT_IF_AC_ZERO
+    jmp spCnt
+    // the high half, or the low half and the word stored
+    lac sfHalf
+    SKIP_NEXT_IF_AC_ZERO
+    jmp spLow
+    lac spC
+    ral 9s
+    dac sfW
+    idx sfHalf
+    jmp i spX
+spLow, lac sfW
+    ior spC
+    dac i sfP
+    dzm sfHalf
+    idx sfP
+    isp sfK
+    jmp i spX
+    jsp sfFlush
+    jmp i spX
+spCnt, idx sfN
+    jmp i spX
+spX, 0
+spC, 0
+endloc
+
+// sfLast -- store the last word, its low half 0, after an odd number of
+// characters. A full buffer is written (sfFlush).
+// AC and IO are clobbered.
+// Called via jsp.
+local lwX
+sfLast, dap lwX
+    lac sfW
+    dac i sfP
+    dzm sfHalf
+    idx sfP
+    isp sfK
+    jmp lwX
+    jsp sfFlush
+lwX, jmp .
+endloc
+
+// sfFlush -- write flBuf's words up to sfP to flFd (fsWrite), then empty
+// it (sfReset).
+// A refused write sets sfErr, unless an error was already set; one written
+// short sets it too.
+// AC and IO are clobbered.
+// Called via jsp.
+local sfX, sfQ, sfE, sfDone
+sfFlush, dap sfX
+    lac sfP
+    sub [flBuf:7]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sfX
+    dac sfQ
+    lac [flFd:6]
+    dac flPb+FS_PFDESC
+    lac [flBuf:7]
+    dac flPb+FS_PBUF
+    lac sfQ
+    dac flPb+FS_PCOUNT
+    lac [flPb:7]
+    farjda(fsWrite:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sfE
+    dio sfQ+1
+    lac sfQ+1
+    SKIP_NEXT_IF_DIFFERENT sfQ
+    jmp sfDone
+    law FS_ERANGE
+sfE, dac sfQ
+    lac sfErr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    lac sfQ
+    dac sfErr
+sfDone, jsp sfReset
+sfX, jmp .
+sfQ, 0
+    0
+endloc
+
+// sfReset -- empty flBuf, setting sfP to its start and sfK to -FL_BUFW.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local srX
+sfReset, dap srX
+    lac [flBuf:7]
+    dac sfP
+    law i FL_BUFW
+    dac sfK
+srX, jmp .
+endloc
+
+// sfKill -- a SAVE's file, while one is open, deleted (fsDelete), which
+// closes it; a failed delete is not reported.
+// AC and IO are clobbered.
+// Called via jsp.
+local skX
+sfKill, dap skX
+    lac sfOpen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp skX
+    dzm sfOpen
+    lac [flFd:6]
+    farjda(fsDelete:*)
+skX, jmp .
+endloc
+
+// rfGet -- the file's next character, for rdPoll while rdOn is RD_FILE.
+// It takes the high half of the word, then the low, the next buffer read
+// (fsRead) when flBuf is used up.
+// A refused read leaves through tmErr with its code (flCode), which ends the
+// reading (rdStop).
+// Skips with the character in IO, 0 to 0377.
+// Does not skip at the file's end, every time after it.
+// The end is known by a read shorter than flBuf, or one of no words.
+// AC is clobbered; IO is the character on a skip, else clobbered.
+// Called via jsp.
+local rgX, rgLow, rgWord, rgOk, rgEof, rgErr, rgE, rgJ
+rfGet, dap rgX
+    lac rfHalf
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rgLow
+    lac rfK
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rgWord
+    lac rfEof
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rgX
+    lac [flFd:6]
+    dac flPb+FS_PFDESC
+    lac [flBuf:7]
+    dac flPb+FS_PBUF
+    dac rfP
+    lac [FL_BUFW]
+    dac flPb+FS_PCOUNT
+    lac [flPb:7]
+    farjda(fsRead:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rgErr
+    dio rfK
+    lac rfK
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rgEof
+    SKIP_NEXT_IF_SAME [FL_BUFW]
+    idx rfEof               // a short read, so the file ends with this buffer
+rgWord, lac rfK
+    sub [1]
+    dac rfK
+    lac i rfP
+    dac rfW
+    idx rfP
+    lac rfW
+    rar 9s
+    and [0377]
+    lia
+    law 1
+    dac rfHalf
+    jmp rgOk
+rgLow, dzm rfHalf
+    lac rfW
+    and [0377]
+    lia
+rgOk, idx rgX
+rgX, jmp .
+rgEof, law 1
+    dac rfEof
+    jmp rgX
+rgErr, lia
+    jsp flCode
+    dac rgE
+    lac i [tmErr:0]
+    dac rgJ
+    lac rgE
+    jmp i rgJ
+rgE, 0
+rgJ, 0
+endloc
+
+// rfRest -- the file reading has ended (rpEnd).
+// It puts the tape reader's state back as flCall found it, with no file
+// reading or GO pending.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local rrX
+rfRest, dap rrX
+    lac rfSave
+    dac rdBol
+    lac rfSave+1
+    dac rdCr
+    lac rfSave+2
+    dac rdSkip
+    dzm rfOn
+    dzm rfInj
+rrX, jmp .
+endloc
+
+// flNl -- end the line (putc, LF).
+// flPc -- type the ASCII character in IO (putc).
+// AC and IO are clobbered.
+// Called via jsp.
+local nlX, pcX
+flNl, dap nlX
+    lio [CH_LF]
+    jsp flPc
+nlX, jmp .
+
+flPc, dap pcX
+    lac [putc:0]
+    dac i [lbFn:0]
+    jsp i [lbCall:0]
+pcX, jmp .
+endloc
+
+// flName -- type the name of the entry in flEnt, nine sixbit characters,
+// blank-padded, each the ASCII character 040 above it.
+// AC and IO are clobbered.
+// Called via jsp.
+local fnX, fnP, fnK, fnJ, fnW, fnL, fnC
+flName, dap fnX
+    lac [flEnt:7]
+    dac fnP
+    law i 3
+    dac fnK
+fnL, lac i fnP
+    dac fnW
+    law i 3
+    dac fnJ
+fnC, lac fnW
+    ral 6s
+    dac fnW
+    and [077]
+    add [040]
+    lia
+    jsp flPc
+    isp fnJ
+    jmp fnC
+    idx fnP
+    isp fnK
+    jmp fnL
+fnX, jmp .
+fnP, 0
+fnK, 0
+fnJ, 0
+fnW, 0
+endloc
+
+// flDec -- type the number in IO, 0 to 999,999, in decimal; with flPad set,
+// right-justified in six columns, blanks before it.
+// AC and IO are clobbered.
+// Called via jsp.
+local pdX, pdV, pdD, pdS, pdT, pdK, pdL, pdSub, pdOut, pdDig, pdNx
+flDec, dap pdX
+    dio pdV
+    dzm pdS                 // a digit typed, so the zeros after it are digits
+    lac [flPow:7]
+    dac pdT
+    law i 5
+    dac pdK
+pdL, dzm pdD
+pdSub, lac pdV
+    sub i pdT
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pdOut
+    dac pdV
+    idx pdD
+    jmp pdSub
+pdOut, lac pdD
+    ior pdS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pdDig
+    lac flPad
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pdNx
+    lio [040]
+    jsp flPc
+    jmp pdNx
+pdDig, law 1
+    dac pdS
+    lac pdD
+    add [060]
+    lia
+    jsp flPc
+pdNx, idx pdT
+    isp pdK
+    jmp pdL
+    // the units, always typed
+    lac pdV
+    add [060]
+    lia
+    jsp flPc
+pdX, jmp .
+pdV, 0
+pdD, 0
+pdS, 0
+pdT, 0
+pdK, 0
+endloc
+
+// The library's status, 0 to FS_EXFER, as FOCAL's error code.
+flCodes, 0                  // FS_OK
+    ERR_LBBAD               // FS_ENOUNIT, never, since the drive is 1 to 8
+                            // and the drum's tracks are fixed
+    ERR_LBNOTP              // FS_ENOMEDIUM
+    ERR_LBLOCK              // FS_ELOCKED
+    ERR_LBBAD               // FS_EHALTED
+    ERR_LBBAD               // FS_EBADBLOCK
+    ERR_LBBAD               // FS_EENDZONE
+    ERR_LBNOLIB             // FS_ENOFS
+    ERR_LBNOLIB             // FS_EFOREIGN, never, since FORMAT forces
+    ERR_LBARG               // FS_ENAME, never, since lbName refuses first
+    ERR_LBDUP               // FS_EEXISTS
+    ERR_LBNONE              // FS_ENOTFOUND
+    ERR_LBDIR               // FS_EDIRFULL
+    ERR_LBFULL              // FS_ENOSPACE
+    ERR_LBBAD               // FS_ERANGE
+    ERR_LBRO                // FS_EREADONLY
+    ERR_LBBAD               // FS_EBADFD
+    ERR_LBBAD               // FS_ESMALLBUF
+    ERR_LBBAD               // FS_ETIMEOUT
+    ERR_LBBAD               // FS_EXFER
+assert . - flCodes == FS_EXFER + 1
+
+flPow, 0d100000             // flDec's powers of ten above the units
+    0d10000
+    0d1000
+    0d100
+    0d10
+flFreeTx, ascii "FREE BLOCKS "
+flGoTx, 0107                // GO and RETURN, handed to the line editor at
+    0117                    // the end of a CALL's file
+    CH_CR
+
+flPb,                       // the library's parameter block
+    table 5
+flNm,                       // the name, an ascii string, from lbNm
+    table 4
+flEnt,                      // LIST's directory entry
+    table FS_ENTW
+flPad, 0                    // flDec pads to six columns
+sfCnt, 0                    // SAVE's first listing, counting only
+sfN, 0                      // its characters
+sfErr, 0                    // the file's first refused write's status
+sfOpen, 0                   // a SAVE's file is open, to delete if cut short
+sfHalf, 0                   // sfW holds a character in its high half
+sfW, 0                      // the word being packed
+sfP, 0                      // the next word of flBuf, a full address
+sfK, 0                      // flBuf's words left, as a negative count
+rfOn, 0                     // a file reading lasts, until rfRest
+rfSave,                     // the tape reader's rdBol, rdCr and rdSkip
+    table 3
+rfEof, 0                    // the file's end is reached
+rfHalf, 0                   // rfW's low half is next
+rfW, 0                      // the word being unpacked
+rfP, 0                      // the next word of flBuf, a full address
+rfK, 0                      // flBuf's words not yet taken
+rfInj, 0                    // the next character of flGoTx, or 0
+flBuf,                      // the file's buffer
+    table FL_BUFW

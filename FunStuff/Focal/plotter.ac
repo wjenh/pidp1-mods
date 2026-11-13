@@ -1,0 +1,374 @@
+// plotter.ac -- PDP-1 FOCAL's plotter functions, FMOV(X,Y) and FDRW(X,Y),
+// on the CalComp plotter, device 73 (Docs/UsingThePlotter.md).
+//
+// FMOV lifts the pen and moves it to (X,Y); FDRW lowers it and draws a
+// straight line there; each returns 0.
+// X and Y are in steps of 0.01 inch, rounded to the nearest step, half away
+// from zero.
+// X runs across the paper from where the pen started, 0 to PLT_WIDTH-1.
+// Y runs up the sheet as it is read (drum down, pldd), -PLT_YMAX to
+// PLT_YMAX.
+// Both are checked before the pen moves.
+//
+// A line is a staircase of straight and diagonal steps.
+// Of the major axis's steps, a diagonal one is taken each time the minor
+// axis's error passes half a step (err from the major count halved, less the
+// minor count each step, the major count added back when it goes negative).
+// Up and to the left is the one diagonal the plotter has no single command
+// for (the Type 350's groups); it is plpl then pldd, a corner.
+//
+// Each command waits for the plotter to be free (pltcks), so none is lost,
+// and Ctrl-C is looked for (brkChk) before each step.
+// Meanwhile tmErr is pgBrk, which lifts the pen before the error goes on, so
+// the drawing stays as far as it got.
+// FOCAL's count of the pen's place moves with each command given, so it is
+// where the pen stops.
+//
+// The pen's place, whether it is down, and whether the plotter has had its
+// first command are kept from the load, not set at the start at 0100.
+// A restart keeps drawing on the same sheet, the pen where it was.
+//
+// Goes in bank 7.
+// fnMov and fnDrw are called via jsp i to their full addresses from
+// expr.ac's exFun, with the extend window open, and return by jmp i with it
+// open.
+// Bank 0's routines are called only through lbCall; bank 0's and bank 1's
+// words are reached through full addresses.
+// Needs focal.ah, <AIDS/skipmacros.ah> and <PLOTTER/plotterdefs.ah>.
+
+local pfX, pfGo, pfLine, pfXp, pfYp, pfMaj, pfDia, pfD2, pfNx, pfLp, pfMs, \
+    pfEnd, pfPen, pfTx, pfTy, pfNa, pfNi, pfErr, pfN, pfSx, pfSy, pfMx, \
+    pfMy, pfMc, pfCx, pfCy, pfC1, pfC2, pfEx, pfEy, pfEr, pfT, \
+    pfUp, pfXg, pfDd, pfYc
+
+// fnMov, fnDrw -- FMOV(X,Y) and FDRW(X,Y).
+// Entry: Y in FA, X the top three words of the push-down list, which are
+// taken off it.
+// Exit: FA is 0.
+// Errors: ?31.60 an X off the paper, ?31.61 a Y past PLT_YMAX; Ctrl-C and a
+// lost connection through tmErr, the pen lifted.
+// AC and IO are clobbered.
+// Called via jsp i.
+fnMov, dac pfX
+    dzm pfPen
+    jmp pfGo
+fnDrw, dac pfX
+    law 1
+    dac pfPen
+// X off the list, then Y, each rounded and checked
+pfGo, lac [pgYb:7]
+    FPCALLA(fpStA)
+    lac i [pdP:0]
+    sub [3]
+    dac i [pdP:0]
+    FPCALLA(fpLdA)
+    jsp pgRnd
+    dac pfTx
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pfEx
+    sub [PLT_WIDTH]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pfEx
+    lac [pgYb:7]
+    FPCALLA(fpLdA)
+    jsp pgRnd
+    dac pfTy
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    cma
+    sub [PLT_YMAX+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pfEy
+// the plotter's first command loads its plugin, so pltcks means something
+    lac pgOn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    plnop
+    law 1
+    dac pgOn
+// errors from here on lift the pen first
+    lac i [tmErr:0]
+    dac pgErr
+    lac [pgBrk:7]
+    dac i [tmErr:0]
+// the pen up for FMOV, down for FDRW; lowering it leaves a dot
+    lac pfPen
+    SKIP_NEXT_IF_DIFFERENT pgDn
+    jmp pfLine
+    dac pgDn
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pfDd
+    lio [plpu]
+    jmp pfUp
+pfDd, lio [plpd]
+pfUp, jsp pgDo
+
+// the direction on each axis, as its step command and +1 or -1 to the count
+pfLine, lac pfTx
+    sub pgPx
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pfXp
+    cma
+    dac pfNa
+    lac [plpl]
+    dac pfCx
+    law i 1
+    dac pfSx
+    jmp pfXg
+pfXp, dac pfNa
+    lac [plpr]
+    dac pfCx
+    law 1
+    dac pfSx
+pfXg, lac pfTy
+    sub pgPy
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pfYp
+    cma
+    dac pfNi
+    lac [pldu]
+    dac pfCy
+    law i 1
+    dac pfSy
+    jmp pfYc
+pfYp, dac pfNi
+    lac [pldd]
+    dac pfCy
+    law 1
+    dac pfSy
+// the diagonal is one command, or for up and to the left, two;
+// pgDiag's case is (pfSx + 1) + (pfSy + 1)/2, -1 + 1 being +0
+pfYc, lac pfSy
+    add [1]
+    rar 1s
+    and [1]
+    dac pfT
+    lac pfSx
+    add [1]
+    add pfT
+    ral 1s
+    add [pgDiag:7]
+    dac pfT
+    lac i pfT
+    dac pfC1
+    idx pfT
+    lac i pfT
+    dac pfC2
+// the major axis is X's when its count is at least Y's; pfNa major, pfNi
+// minor
+    dzm pfMx
+    dzm pfMy
+    lac pfNa
+    sub pfNi
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pfMaj
+    lac pfNa
+    lio pfNi
+    dac pfNi
+    dio pfNa
+    lac pfSy
+    dac pfMy
+    lac pfCy
+    jmp pfDia
+pfMaj, lac pfSx
+    dac pfMx
+    lac pfCx
+pfDia, dac pfMc
+// pfNa steps, the error starting at half the major count
+    lac pfNa
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pfEnd
+    cma
+    dac pfN
+    lac pfNa
+    rar 1s
+    and [0377777]
+    dac pfErr
+pfLp, lac [brkChk:0]        // through lbCall, since jsp would load AC
+    dac i [lbFn:0]
+    jsp i [lbCall:0]
+    lac pfErr
+    sub pfNi
+    dac pfErr
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pfMs
+// a diagonal step
+    add pfNa
+    dac pfErr
+    lio pfC1
+    jsp pgDo
+    lac pfC2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pfD2
+    lio pfC2
+    jsp pgDo
+pfD2, lac pgPx
+    add pfSx
+    dac pgPx
+    lac pgPy
+    add pfSy
+    dac pgPy
+    jmp pfNx
+// a step on the major axis
+pfMs, lio pfMc
+    jsp pgDo
+    lac pgPx
+    add pfMx
+    dac pgPx
+    lac pgPy
+    add pfMy
+    dac pgPy
+pfNx, isp pfN
+    jmp pfLp
+
+// done; tmErr put back, FA 0
+pfEnd, lac pgErr
+    dac i [tmErr:0]
+    cla
+    FPCALLA(fpFlt)
+    jmp i pfX
+
+pfEx, lio [ERR_PLTX]
+    jmp pfEr
+pfEy, lio [ERR_PLTY]
+pfEr, lac i [tmErr:0]
+    dac pfT
+    lai
+    jmp i pfT
+
+pfX, 0
+pfPen, 0                    // 1 for FDRW, the pen down
+pfTx, 0                     // where the pen goes, in steps
+pfTy, 0
+pfNa, 0                     // the major axis's count of steps, then the minor's
+pfNi, 0
+pfErr, 0
+pfN, 0                      // the steps to go, negative
+pfSx, 0                     // +1 or -1, the count's change on each axis
+pfSy, 0
+pfMx, 0                     // the count's change on a major step
+pfMy, 0
+pfMc, 0                     // a major step's command
+pfCx, 0                     // each axis's step command
+pfCy, 0
+pfC1, 0                     // a diagonal step's command, and a second or 0
+pfC2, 0
+pfT, 0
+endloc
+
+// pgBrk -- tmErr while a line is drawn.
+// It puts tmErr back, lifts the pen if it is down, then goes on to the error
+// as any other, its code in AC.
+// Entry: AC is the error code.
+// AC is preserved, IO is clobbered.
+// Reached by jmp i tmErr; it does not return.
+local bkX, bkC, bkE
+pgBrk, dac bkC
+    lac pgErr
+    dac bkE
+    dac i [tmErr:0]
+    lac pgDn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bkX
+    lio [plpu]
+    jsp pgDo
+    dzm pgDn
+bkX, lac bkC
+    jmp i bkE
+bkC, 0
+bkE, 0
+endloc
+
+// pgDo -- give the plotter the command in IO once it is free.
+// AC and IO are clobbered.
+// Called via jsp.
+local doX, doC
+pgDo, dap doX
+    dio doC
+    PLT_WAIT_READY
+    xct doC
+doX, jmp .
+doC, 0
+endloc
+
+// pgRnd -- round FA to the nearest integer, half away from zero.
+// Exit: AC is the result, never -0; a magnitude of 65,536 or more gives
+// 131,071 with FA's sign, so that every range check refuses it.
+// FA's value v = M 2^(e-35), M's top 18 bits being 2^17 + fa1.
+// For e from 0 to 16, 2v's integer part N is those bits shifted right
+// 17 - e, 1 to 17 places; fa0 lies below it.
+// The rounded value is N/2 plus N's low bit.
+// AC is the result, IO is clobbered.
+// Called via jsp.
+local rnX, rnL, rnD, rnBig, rnS, rnNg, rnZ, rnK, rnN, rnP
+pgRnd, dap rnX
+    lac i [fa2:1]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rnX
+    lac i [faE:1]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp rnZ
+    sub [0d17]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp rnBig
+// N = (2^17 + fa1) >> s, s = 17 - e.
+// The first place is shifted with 2^16 set, the other s - 1 in memory, since
+// isp loads AC.
+    dac rnK
+    lac i [fa1:1]
+    rar 1s
+    and [0177777]
+    ior [0200000]
+    dac rnN
+    isp rnK
+    jmp rnL
+    jmp rnD
+rnL, lac rnN
+    rar 1s
+    and [0377777]
+    dac rnN
+    isp rnK
+    jmp rnL
+rnD, lac rnN
+    and [1]
+    dac rnP
+    lac rnN
+    rar 1s
+    and [0377777]
+    add rnP
+    jmp rnS
+rnBig, lac [0377777]
+rnS, dac rnN
+    lac i [faS:1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rnNg
+    lac rnN
+    jmp rnX
+rnNg, lac rnN
+    cma
+    jmp rnX
+rnZ, cla
+rnX, jmp .
+rnK, 0
+rnN, 0
+rnP, 0
+endloc
+
+// The diagonal step's commands, two words a case, the second 0 for none:
+// left down, left up, right down, right up (pfYc's index, X's direction
+// times 2 plus Y's).
+pgDiag, plpl plud
+    0
+    plpl
+    pldd
+    plpr pldu
+    0
+    plpr pldd
+    0
+
+// The plotter's state, kept from the load (the file's header says why).
+pgPx, 0                     // the pen's place, in steps
+pgPy, 0
+pgDn, 0                     // 1 while the pen is down
+pgOn, 0                     // 1 once the plotter has had a command
+pgErr, 0                    // tmErr as it was before the line
+pgYb,                       // Y, while X is taken off the list
+    table 3

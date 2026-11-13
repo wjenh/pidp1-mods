@@ -1,0 +1,506 @@
+// editcmd.ac -- PDP-1 FOCAL's WRITE, ERASE and MODIFY, each reading its
+// argument from the source (store.ac) at the place after the command word.
+// Each returns to its caller; what ends the line is the caller's.
+//
+// Every routine is called via jsp, from bank 0, with the extend window open,
+// and leaves it open.
+// Errors leave by jmp i tmErr with the code in AC (termio.ac).
+// Include the file where it is not executed, since its data words follow its
+// code.
+// Needs focal.ah, <AIDS/skipmacros.ah>, termio.ac, lineed.ac and store.ac.
+
+// wrLine -- print the stored line at stP: its number, a blank, its text,
+// then CR LF.
+// stP is preserved; AC and IO are clobbered.
+// Called via jsp.
+local wlX, wlT, wlN, wlA, wlI, wlLoop, wlEnd
+wrLine, dap wlX
+    lio i stP
+    jsp lnPut
+    lio [040]
+    jsp putc
+    lac stP
+    add [1]
+    dac wlT
+    lac i wlT
+    dac wlN
+    idx wlT
+    dac wlA
+    dzm wlI
+wlLoop, lac wlI
+    SKIP_NEXT_IF_DIFFERENT wlN
+    jmp wlEnd
+    lac wlA
+    dac chA
+    lio wlI
+    jsp chGet
+    jsp putc
+    idx wlI
+    jmp wlLoop
+wlEnd, jsp newline
+wlX, jmp .
+wlT, 0
+wlN, 0
+wlA, 0
+wlI, 0
+endloc
+
+// cmWrite -- WRITE.
+// With no argument, 0 or a word starting with A, it prints the header and
+// every line, a blank line before each group's first; with a group, its
+// lines; with a line, that line.
+// A missing one prints nothing.
+// Anything after the argument is not read.
+// AC and IO are clobbered.
+// Called via jsp.
+local cwX, cwW, cwEnd, cwPrev, cwT, cwGrp, cwGLoop, cwAll, cwALoop, cwOne
+cmWrite, dap cwX
+    jsp cuBlank
+    jsp cuPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [0101]
+    jmp cwAll
+    lio [1]
+    jsp lnGet
+    dac cwW
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cwAll
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cwGrp
+    lio cwW
+    jsp stFind
+    SKIP_NEXT_IF_AC_ZERO
+    jmp cwX
+    jsp wrLine
+    jmp cwX
+// a group, its lines up to step 999
+cwGrp, lio cwW
+    jsp stFind
+    lac cwW
+    ior [0d999]
+    dac cwEnd
+cwGLoop, lio i stP
+    SKIP_NEXT_IF_IO_NOT_ZERO
+    jmp cwX
+    lac cwEnd
+    dac lcB
+    jsp lnCmp
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp cwX
+    jsp wrLine
+    jsp stSkip
+    jmp cwGLoop
+// everything
+cwAll, lio [wrHead]
+    jsp putAsc
+    jsp newline
+    dzm cwPrev
+    lac [TX_BASE]
+    dac stP
+cwALoop, lio i stP
+    SKIP_NEXT_IF_IO_NOT_ZERO
+    jmp cwX
+    dio cwT
+    lac cwT
+    rar 9s
+    rar 1s
+    and [0377]
+    SKIP_NEXT_IF_DIFFERENT cwPrev
+    jmp cwOne
+    dac cwPrev
+    jsp newline
+cwOne, jsp wrLine
+    jsp stSkip
+    jmp cwALoop
+cwX, jmp .
+cwW, 0
+cwEnd, 0
+cwPrev, 0
+cwT, 0
+endloc
+
+// cmErase -- ERASE.
+// With no argument it clears the variables; with a word starting with A,
+// everything; with a group or a line, it deletes it, if it is there, and
+// clears the variables either way.
+// Another letter is ?09.11; an argument that reads as 0 (0, a point,
+// another character) is no argument.
+// AC and IO are clobbered.
+// Called via jsp.
+local ceX, ceW, ceVar, ceAll, ceNum
+cmErase, dap ceX
+    jsp cuBlank
+    jsp cuPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp ceVar
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp ceVar
+    // a letter, A for ALL, any other an error
+    sub [0101]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ceNum
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ceAll
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ceNum
+    lac [ERR_ERASE]
+    jmp i tmErr
+ceNum, lio [1]
+    jsp lnGet
+    dac ceW
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ceVar
+    lio ceW
+    jsp stDelete
+ceVar, jsp i stVarClr
+    jmp ceX
+ceAll, jsp stInit
+    jsp i stVarClr
+ceX, jmp .
+ceW, 0
+endloc
+
+// cmModify -- MODIFY n, edit line n.
+// The search character is read unechoed and the line typed up to it.
+// Then a character typed is inserted, FF goes on to the next occurrence,
+// BELL takes a new search character, RUBOUT deletes left, left arrow empties
+// the new text, RETURN (CR or LF) ends the line there, ALT MODE (} or ESC)
+// types the rest and keeps it.
+// A search that finds nothing types the rest and ends.
+// On the typewriter \ is FF and @ is BELL, and nothing typed is echoed.
+// The new line is built in the free space above the last line, then
+// rotated into the old one's place, so a Ctrl-C or a full area leaves the
+// line as it was.
+// The variables are cleared once the search character is read.
+// Errors: ?05.48 no argument, a group or no such line; ?10.:5 no room.
+// AC and IO are clobbered.
+// Called via jsp.
+local cmX, mdLoop, mdIns, mdFold, mdEcho, mdRub, mdRubE, mdLarr, mdBell, \
+    mdBell2, mdFf, mdRest, mdRet, mdDone, mdStore, mdBad
+cmModify, dap cmX
+    cli
+    jsp lnGet
+    dac mdW
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mdBad
+    lio mdW
+    jsp stFind
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mdBad
+    // the new line's two words must fit above the zero word
+    lac txTop
+    add [3]
+    sub [TX_END]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mdFull
+    lac stP
+    dac mdO
+    add [1]
+    dac mdT
+    lac i mdT
+    dac mdON
+    idx mdT
+    dac mdOA
+    lac txTop
+    add [1]
+    dac mdR
+    add [2]
+    dac mdNA
+    dzm mdN
+    dzm mdI
+    dzm mdQ
+    jsp mdKey
+    dio mdS
+    jsp i stVarClr
+    jsp mdFind
+    jmp mdDone
+
+mdLoop, jsp mdKey
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp mdRet
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    jmp mdRet
+    SKIP_NEXT_IF_DIFFERENT [CH_ALT]
+    jmp mdRest
+    SKIP_NEXT_IF_DIFFERENT [CH_ESC]
+    jmp mdRest
+    SKIP_NEXT_IF_DIFFERENT [CH_FF]
+    jmp mdFf
+    SKIP_NEXT_IF_DIFFERENT [CH_BELL]
+    jmp mdBell
+    SKIP_NEXT_IF_DIFFERENT [CH_DEL]
+    jmp mdRub
+    SKIP_NEXT_IF_DIFFERENT [CH_BS]
+    jmp mdRub
+    SKIP_NEXT_IF_DIFFERENT [CH_LARROW]
+    jmp mdLarr
+
+// a character inserted, lower case folded outside a quoted string
+mdIns, dio mdT
+    lac mdQ
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mdFold
+    lac mdT
+    sub [0141]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp mdFold
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mdFold
+    lac mdT
+    sub [040]
+    dac mdT
+mdFold, lio mdT
+    jsp mdApp
+    lio mdT
+// echo the character in IO, except on the typewriter, which printed the key
+mdEcho, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mdLoop
+    jsp putc
+    jmp mdLoop
+
+// RUBOUT: removing a quote restores the quoting before it
+mdRub, lac mdN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mdLoop
+    sub [1]
+    dac mdN
+    lac mdNA
+    dac chA
+    lio mdN
+    jsp chGet
+    lai
+    SKIP_NEXT_IF_SAME [CH_QUOTE]
+    jmp mdRubE
+    lac mdQ
+    xor [1]
+    dac mdQ
+mdRubE, lio [0134]          // the backslash
+    jmp mdEcho
+
+mdLarr, dzm mdN
+    dzm mdQ
+    lio [CH_LARROW]
+    jmp mdEcho
+
+// FF: on to the next occurrence of the search character
+mdFf, jsp mdFind
+    jmp mdDone
+    jmp mdLoop
+
+// BELL: echoed, then a new search character
+mdBell, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mdBell2
+    lio [CH_BELL]
+    jsp putc
+mdBell2, jsp mdKey
+    dio mdS
+    jsp mdFind
+    jmp mdDone
+    jmp mdLoop
+
+// ALT MODE: the rest of the line, kept; no search character matches -1
+mdRest, law i 1
+    dac mdS
+    jsp mdFind
+    jmp mdDone
+
+// RETURN: the rest dropped; the typewriter's key ended the printed line
+mdRet, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mdStore
+mdDone, jsp newline
+
+// The new line replaces the old.
+// The block from the old line to the end of the new is the old line, the
+// lines above it, the zero word (mdLA words), then the new line (mdSN).
+// Reversing each part and then the whole puts the new line first, and the
+// old one, after it, is cut out.
+mdStore, lio mdW
+    dio i mdR
+    lac mdR
+    add [1]
+    dac mdT
+    lio mdN
+    dio i mdT
+    lac mdN
+    add [1]
+    rar 1s
+    and [0377777]
+    add [2]
+    dac mdSN
+    lac mdO
+    dac stP
+    jsp stSize
+    dac mdSO
+    lac mdR
+    sub mdO
+    dac mdLA
+    lac mdO
+    dac rvA
+    lac mdLA
+    dac rvN
+    jsp txRev
+    lac mdR
+    dac rvA
+    lac mdSN
+    dac rvN
+    jsp txRev
+    lac mdO
+    dac rvA
+    lac mdLA
+    add mdSN
+    dac rvN
+    jsp txRev
+    lac mdO
+    add mdSN
+    dac mvD
+    add mdSO
+    dac mvS
+    lac mdLA
+    sub mdSO
+    dac mvN
+    jsp txMove
+    lac txTop
+    add mdSN
+    sub mdSO
+    dac txTop
+    jmp cmX
+
+mdBad, lac [ERR_MODARG]
+    jmp i tmErr
+cmX, jmp .
+endloc
+
+// mdFull -- the text area is full, error ?10.:5.
+// Reached by jmp; leaves by jmp i tmErr with the code in AC.
+mdFull, lac [ERR_TEXT]
+    jmp i tmErr
+
+// mdFind -- copy the old line's characters to the new, typing each, up to
+// and including the next that is the search character mdS.
+// Skips when it found one; returns without a skip at the old line's end.
+// AC and IO are clobbered.
+// Called via jsp.
+local mfX, mfC, mfLoop
+mdFind, dap mfX
+mfLoop, lac mdI
+    SKIP_NEXT_IF_DIFFERENT mdON
+    jmp mfX
+    lac mdOA
+    dac chA
+    lio mdI
+    jsp chGet
+    dio mfC
+    idx mdI
+    lio mfC
+    jsp mdApp
+    lio mfC
+    jsp putc
+    lac mfC
+    SKIP_NEXT_IF_SAME mdS
+    jmp mfLoop
+    idx mfX
+mfX, jmp .
+mfC, 0
+endloc
+
+// mdApp -- append the character in IO to the new line; a quote opens or
+// closes a string.
+// ?10.:5 when it would pass the text area's end.
+// AC and IO are clobbered.
+// Called via jsp.
+local maX, maC
+mdApp, dap maX
+    dio maC
+    lac mdN
+    rar 1s
+    and [0377777]
+    add mdNA
+    sub [TX_END]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mdFull
+    lac mdNA
+    dac chA
+    lac mdN
+    dac chK
+    lio maC
+    jsp chPut
+    idx mdN
+    lac maC
+    SKIP_NEXT_IF_SAME [CH_QUOTE]
+    jmp maX
+    lac mdQ
+    xor [1]
+    dac mdQ
+maX, jmp .
+maC, 0
+endloc
+
+mdW, 0                      // the line's number
+mdO, 0                      // the old line's address
+mdON, 0                     // its characters
+mdOA, 0                     // its first text word
+mdR, 0                      // the new line's address, above the zero word
+mdNA, 0                     // its first text word
+mdN, 0                      // its characters so far
+mdI, 0                      // the old line's characters copied
+mdQ, 0                      // 1 inside a quoted string in the new line
+mdS, 0                      // the search character
+mdT, 0
+mdLA, 0
+mdSN, 0
+mdSO, 0
+
+// mdKey -- the next key for MODIFY, unechoed: NUL is dropped, an LF just
+// after a CR is the rest of the same RETURN, and on the typewriter \ reads
+// as FF and @ as BELL.
+// IO is the character; AC is clobbered.
+// Called via jsp.
+local mkX, mkC, mkGet, mkCr, mkTty, mkAt, mkOut
+mdKey, dap mkX
+mkGet, jsp getc
+    lai
+    and [0177]
+    dac mkC
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mkGet
+    SKIP_NEXT_IF_SAME [CH_LF]
+    jmp mkCr
+    lac lnCr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mkCr
+    dzm lnCr
+    jmp mkGet
+mkCr, dzm lnCr
+    lac mkC
+    SKIP_NEXT_IF_SAME [CH_CR]
+    jmp mkTty
+    law 1
+    dac lnCr
+mkTty, lac useTty
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mkOut
+    lac mkC
+    SKIP_NEXT_IF_SAME [0134]
+    jmp mkAt
+    law CH_FF
+    dac mkC
+    jmp mkOut
+mkAt, SKIP_NEXT_IF_SAME [0100]
+    jmp mkOut
+    law CH_BELL
+    dac mkC
+mkOut, lio mkC
+mkX, jmp .
+mkC, 0
+endloc
+
+wrHead, ascii "C-PDP-1 FOCAL, 1969/2026"

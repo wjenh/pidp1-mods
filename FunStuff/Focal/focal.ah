@@ -1,0 +1,297 @@
+// focal.ah -- the constants and macros shared by every source file of PDP-1
+// FOCAL and FOCAL-1C: error codes, limits, memory layout and device settings.
+
+#ifndef FOCAL_AH
+#define FOCAL_AH
+
+// An error code is FOCAL-69's 12-bit line number, the group times 128 plus the
+// step, as its error table has them.
+// ?07.;6 is group 7, step 116.
+#define ERR_TWOE     (0d7*0d128+0d22)     // ?07.22 a second E or a second point
+#define ERR_SUBSC    (0d6*0d128+0d55)     // ?06.55 a subscript outside -2048..2047
+#define ERR_LITBIG   (0d23*0d128+0d36)    // ?23.36 a literal above the range
+#define ERR_NUMBIG   (0d27*0d128+0d10)    // ?27.10 a result above the range
+#define ERR_DIVZERO  (0d28*0d128+0d73)    // ?28.73 division by zero
+
+// A number's binary exponent e is in range when -FP_EMIN <= e <= FP_EMAX.
+#define FP_EMAX      0d2047
+#define FP_EMIN      0d2048
+
+// The multiword integers of decimal conversion hold at most BN_MAX 17-bit
+// limbs.
+// A literal's digits stop growing the integer at BN_DMAX limbs, and its E
+// part saturates at BN_XCAP, both far past what the range allows.
+#define BN_MAX       0d128
+#define BN_DMAX      0d20
+#define BN_XCAP      0d4000
+
+// Digits of one rounded value, at most 9, with room to spare.
+#define DG_MAX       0d12
+
+// The terminal's errors: Ctrl-C, and a line over the limit.
+#define ERR_BREAK    (0d1*0d128+0d0)      // ?01.00 Ctrl-C
+#define ERR_TEXT     (0d10*0d128+0d105)   // ?10.:5 the line is too long
+
+// The program store's errors: a line number's, MODIFY's and ERASE's.
+#define ERR_STEP0    (0d1*0d128+0d40)     // ?01.40 step 0 for a stored line
+#define ERR_GRPBIG   (0d1*0d128+0d78)     // ?01.78 a group over 255
+#define ERR_DOTS     (0d1*0d128+0d96)     // ?01.96 a second point
+#define ERR_LNBIG    (0d1*0d128+0d105)    // ?01.:5 a fourth step digit
+#define ERR_GRP0     (0d1*0d128+0d114)    // ?01.;4 group 0
+#define ERR_MODARG   (0d5*0d128+0d48)     // ?05.48 MODIFY's argument
+#define ERR_ERASE    (0d9*0d128+0d11)     // ?09.11 ERASE's argument
+
+// The interpreter's errors: commands, line-number arguments, the push-down
+// list, SET, variables, expressions and functions.
+#define ERR_DOGRP    (0d2*0d128+0d32)     // ?02.32 DO of a missing group
+#define ERR_DOLINE   (0d2*0d128+0d52)     // ?02.52 DO of a missing line
+#define ERR_PDL      (0d2*0d128+0d79)     // ?02.79 the push-down list is full
+#define ERR_GOTO     (0d3*0d128+0d5)      // ?03.05 GOTO or IF to a group or a missing line
+#define ERR_NOCMD    (0d3*0d128+0d28)     // ?03.28 no such command
+#define ERR_NOEQ     (0d4*0d128+0d39)     // ?04.39 SET or FOR with no =
+#define ERR_EXCESS   (0d4*0d128+0d52)     // ?04.52 an excess right enclosure or =
+#define ERR_SETCOM   (0d4*0d128+0d60)     // ?04.60 a comma after SET's value
+#define ERR_VARNAME  (0d6*0d128+0d6)      // ?06.06 no variable where one must be
+#define ERR_VARFULL  (0d6*0d128+0d54)     // ?06.54 the variables' bank is full
+#define ERR_TWOOPND  (0d7*0d128+0d22)     // ?07.22 an operand after an operand
+#define ERR_ENCL     (0d7*0d128+0d38)     // ?07.38 an enclosure after an operand
+#define ERR_FNPAREN  (0d7*0d128+0d109)    // ?07.:9 a function with no ( after it
+#define ERR_FNARGS   (0d7*0d128+0d108)    // ?07.:8 a function given the wrong number of arguments
+#define ERR_OPND     (0d7*0d128+0d116)    // ?07.;6 no operand where one must be
+#define ERR_PAREN    (0d8*0d128+0d47)     // ?08.47 an enclosure not closed by its partner
+#define ERR_NEGPOW   (0d26*0d128+0d99)    // ?26.99 a negative power
+#define ERR_NOFUNC   (0d31*0d128+0d127)   // ?31.<7 a function not built; FOR with no ;
+
+// The extended functions' errors (fpfunc.ac).
+#define ERR_SQTNEG   (0d30*0d128+0d5)     // ?30.05 FSQT of a negative number
+#define ERR_LOG0     (0d20*0d128+0d34)    // ?20.34 FLOG of 0
+#define ERR_LOGNEG   (0d20*0d128+0d36)    // ?20.36 FLOG of a negative number
+
+// LIBRARY's errors.
+// They are LIBRA's codes where LIBRA has the error, and the others are beside
+// them in group 31.
+#define ERR_LBWORD   (0d30*0d128+0d71)    // ?30.71 an unknown LIBRARY word
+#define ERR_LBARG    (0d30*0d128+0d120)   // ?30.<0 a bad or missing argument
+#define ERR_LBNONE   (0d31*0d128+0d42)    // ?31.42 the name is not saved
+#define ERR_LBDUP    (0d31*0d128+0d43)    // ?31.43 the name is already saved
+#define ERR_LBDIR    (0d31*0d128+0d44)    // ?31.44 the directory is full
+#define ERR_LBFULL   (0d31*0d128+0d45)    // ?31.45 the volume is full
+#define ERR_LBNOTP   (0d31*0d128+0d46)    // ?31.46 no tape on the drive
+#define ERR_LBLOCK   (0d31*0d128+0d47)    // ?31.47 the drive is write-locked
+#define ERR_LBBAD    (0d31*0d128+0d48)    // ?31.48 a bad block or a device error
+#define ERR_LBNOLIB  (0d31*0d128+0d49)    // ?31.49 no file system on the volume
+#define ERR_LBRO     (0d31*0d128+0d50)    // ?31.50 the file is read-only
+
+// LIBRARY's operations on the file system, as interp.ac passes them to fsLib
+// (fslib.ac).
+#define LB_FORMAT    1
+#define LB_SAVE      2
+#define LB_CALL      3
+#define LB_DELETE    4
+#define LB_LIST      5
+
+// The size in words of the library's buffer (fslib.ac), eight blocks.
+// A SAVE writes it and a CALL reads it, one library call each time it fills.
+#define FL_BUFW      0d2048
+
+// The drum's library (LIBRARY UNIT 0).
+// Its volume is tracks DR_LIB0 to DR_LIB0+DR_LIBN-1, the drum's top eight,
+// 128 blocks.
+// FOCAL uses no other track.
+// Keeping other programs off these tracks is the user's responsibility.
+#define DR_LIB0      030
+#define DR_LIBN      010
+
+// The paper tape (ptape.ac).
+// PT_LEADER is the number of blank lines of leader, and of trailer.
+// The tape has ended when the reader finds nothing for RD_MS milliseconds on
+// the BBN clock, or, in FOCAL-1C, which has no clock, for RD_LOOKS looks at
+// the reader, each about 240 microseconds of getc's loop on the PDP-1C's 5
+// microsecond cycle.
+#define PT_LEADER    0d60
+#define RD_MS        0d2000
+#define RD_LOOKS     0d8000
+
+// The variables.
+// The heads of VR_HEADS hash chains start at VR_BASE.
+// Each entry is VR_ENT words: the next entry in its chain (0 for none), the
+// name, the subscript, the value (three words).
+#define VR_HEADS     0d64
+#define VR_ENT       6
+#ifndef FOCAL_1C
+// In bank 4, the heads, then the entries upward from VR_FIRST.
+// VR_END is one past the last entry's last word.
+#define VR_BASE      040000
+#define VR_FIRST     (VR_BASE+VR_HEADS)
+#define VR_END       050000
+
+// The push-down list is in bank 5, growing up from PD_BASE.
+#define PD_BASE      050000
+#define PD_END       060000
+#else
+// FOCAL-1C has one pool for the program text, the push-down list and the
+// variables.
+// The pool is the words from plBase, above bank 0's code, across the bank
+// boundary to plEnd, bank 1's first word of code (focal1c.am1).
+// The text runs up from plBase (TX_BASE, below).
+// The push-down list grows up from the word above the text's zero word,
+// pdBase, set at *.
+// The text never grows while the list holds anything, since every edit ends
+// the line.
+// The heads are the pool's top VR_HEADS words, and the entries are taken
+// downward below them, vrTop the lowest.
+// The boundary between the list and the variables is not fixed.
+// A push checks vrTop, and a new entry checks pdP.
+#define VR_BASE      (plEnd:1-VR_HEADS)
+#endif
+
+// The push-down list's frames, each with its kind on top.
+// A DO frame, FR_DO words: the caller's source (its text address, 0 for the
+// line buffer), the characters taken from it, its line register, the range
+// (the line, the group's word, or 0), the kind.
+// A FOR frame, FR_FOR words: the index's value address, the step and the
+// limit (three words each), the body's source and characters taken, the kind.
+#define FK_FOR       0100
+#define FK_DO1       0101                 // DO of one line
+#define FK_DOG       0102                 // DO of a group
+#define FK_DOA       0103                 // DO of everything
+#define FR_DO        5
+#define FR_FOR       0d10
+
+// The expression evaluator's entries on the push-down list are of two kinds.
+// An operator is a word below 0100 whose value over 8 is its precedence.
+// A marker is two words, an argument (a function's number or a variable's
+// name) under the marker's kind ORed with the character that closes it.
+#define OP_ADD       010
+#define OP_SUB       011
+#define OP_DIV       020
+#define OP_MUL       030
+#define OP_POW       040
+#define MK_MASK      07000
+#define MK_BOT       01000                // the expression's bottom
+#define MK_PAR       02000                // an enclosure
+#define MK_FN        03000                // a function's argument
+#define MK_SUB       04000                // a variable's subscript
+
+// A function's name is the three letters after its F, A to Z as 1 to 26, six
+// bits each.
+// FN_COUNT names are known, and the first FN_BUILT are built.
+// In PDP-1 FOCAL all of them are built, and those from FN_TWO on, the
+// plotter's, take two arguments, the others one.
+// FOCAL-1C has no plotter, and builds the extended functions (FN_EXT) only
+// when F1C_FUNCS is defined, as FOCAL,1969 keeps them or not at its start.
+// A name known and not built is ?31.<7.
+#define FN3(a,b,c)   ((((a)-0100)<<0d12)|(((b)-0100)<<6)|((c)-0100))
+#ifndef FOCAL_1C
+#define FN_EXT
+#define FN_COUNT     0d12
+#define FN_BUILT     0d12
+#define FN_TWO       0d10
+#else
+#ifdef F1C_FUNCS
+#define FN_EXT
+#define FN_BUILT     0d10
+#else
+#define FN_BUILT     3
+#endif
+#define FN_COUNT     0d10
+#endif
+
+// The bank holding the paper tape's code (ptape.ac): bank 7 in PDP-1 FOCAL,
+// bank 1 in FOCAL-1C.
+#ifndef FOCAL_1C
+#define PTBANK       7
+#else
+#define PTBANK       1
+#endif
+
+// The plotter (plotter.ac).
+// X runs from 0, where the pen starts, to PLT_WIDTH-1.
+// PLT_WIDTH is the paper's 1,100 steps on a CalComp 560 or 565 with the pen
+// starting at the left edge.
+// Set PLT_WIDTH to 2950 for a 563, and take plotterorigin off it when the pen
+// starts farther right.
+// Y runs from -PLT_YMAX to PLT_YMAX, so that every move is counted in one
+// word.
+#define PLT_WIDTH    0d1100
+#define PLT_YMAX     0d65535
+#define ERR_PLTX     (0d31*0d128+0d60)    // ?31.60 an X off the paper
+#define ERR_PLTY     (0d31*0d128+0d61)    // ?31.61 a Y past PLT_YMAX either way
+
+// The line printer (lpt.ac), the Type 62, LP_COLS columns wide.
+// ptOn is PT_LPT while TYPE or WRITE prints on it, 1 while LIBRARY PUNCH
+// punches, PT_FILE while LIBRARY SAVE lists into its file (fslib.ac).
+// rdOn is 1 while * reads the tape, RD_FILE while LIBRARY CALL reads its file.
+#define LP_COLS      0d120
+#define PT_LPT       2
+#define PT_FILE      3
+#define RD_FILE      2
+#define ERR_OUTWORD  (0d31*0d128+0d70)    // ?31.70 OUTPUT with no word, or not P or T
+
+// ASK's value: at most AK_MAX characters are kept.
+#define AK_MAX       0d40
+
+// The number package's entries, called from bank 0 with the extend window
+// open, as it is throughout PDP-1 FOCAL.
+// FPCALLA passes AC.
+#define FPCALL(x)    jsp i [x:1]
+#define FPCALLA(x)   dac i [x:1]; jsp i [x:1+1]
+
+// The text area is TX_WORDS words from TX_BASE, banks 2 and 3.
+// TX_WORDS may be defined smaller before focal.ah is included.
+// In FOCAL-1C it is the pool from its bottom up to the variables' heads,
+// which every edit clears.
+#ifndef FOCAL_1C
+#define TX_BASE      020000
+#ifndef TX_WORDS
+#define TX_WORDS     0d8192
+#endif
+#define TX_END       (TX_BASE+TX_WORDS)
+#else
+#define TX_BASE      plBase
+#define TX_END       VR_BASE
+#endif
+
+// DCS2 channel 0 is on this port.
+#define PORTNO       0d2030
+
+// FOCAL,1969's input buffer holds LN_MAX characters, RETURN included.
+// A line longer than LN_OK characters is refused.
+#define LN_MAX       0d74
+#define LN_OK        0d69
+
+// Characters typed ahead and not yet read.
+#define TA_SIZE      0d128
+
+// The device in use: none, a DCS2 connection, or the typewriter.
+#define DEV_NONE     0
+#define DEV_DCS      1
+#define DEV_TTY      2
+
+// The typewriter.
+// ttyOut's entries give the concise code with the case it needs, TTLOWER or
+// TTUPPER, neither for no case, or TTNONE for no code.
+// ttShift is 0 for lower case, 1 for upper, TTUNKNOWN until one is known.
+#define TTLOWER      0100
+#define TTUPPER      0200
+#define TTNONE       0400
+#define TTUNKNOWN    2
+#define TTLC         072                  // the lower case shift code
+#define TTUC         074                  // the upper case shift code
+#define TTCR         077                  // the carriage return, which feeds the line
+
+// Characters the terminal acts on.
+#define CH_BREAK     003                  // Ctrl-C
+#define CH_BELL      007
+#define CH_BS        010
+#define CH_TAB       011                  // the typewriter's Ctrl-C
+#define CH_LF        012
+#define CH_FF        014
+#define CH_CR        015
+#define CH_ESC       033
+#define CH_QUOTE     042
+#define CH_LARROW    0137                 // left arrow, cancels the whole line
+#define CH_ALT       0175                 // ALT MODE, the 1969 Teletype's code
+#define CH_DEL       0177
+
+#endif

@@ -1,0 +1,711 @@
+// fpfunc.ac -- PDP-1 FOCAL's extended functions: FSQT, FEXP, FLOG, FSIN,
+// FCOS, FATN and FRAN.
+//
+// Each function is a fixed sequence of the number package's operations
+// (fparith.ac), each rounded once, and three exact ones of this file: a
+// scaling by a power of two (fnScl), a small integer from a number (fnInt)
+// and an integer's value modulo 4 (fnLow2).
+// The sequence is the specification, so every result is determined to the
+// bit.
+// Each result is within 2^-31 of the exact value, 9 significant digits, not
+// correctly rounded.
+// The constants and series are in fncoef.ac.
+//
+// Goes in bank 1, with fparith.ac and fncoef.ac, and keeps the package's
+// calling rules.
+// Each entry is called via farjsp with the argument in FA, and leaves its
+// result in FA.
+// It enters and leaves with the extend window open, so every indirect
+// inside is through a full address.
+// An error leaves by jmp i fpErr with its code (focal.ah) in AC, and does
+// not return.
+// Inside, every routine is called via jsp from bank 1.
+// Needs focal.ah, <AIDS/skipmacros.ah> and fparith.ac's MULP.
+
+// FA or FB from the number at x, and the number at x from FA.
+// Each is two words, so none may follow a skip.
+#define FNLD(x)      lac [x:1]; jda fpLdA
+#define FNLDB(x)     lac [x:1]; jda fpLdB
+#define FNST(x)      lac [x:1]; jda fpStA
+// FA = series s at the number x.
+#define FNHOR(s, x)  lac [s:1]; dac hnP; lac [x:1]; dac hnX; jsp fnHor
+
+// FSQT: FA = the square root of FA; 0 is 0, a negative number ?30.05.
+// x = f 2^k with k even and f in [1/4, 1); a straight line's guess at
+// sqrt f, three Newton steps y = (y + f/y)/2, then times 2^(k/2).
+// AC and IO are clobbered.
+// Called via farjsp.
+fnSqt, dac fxRtn
+    local neg, step
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i fxRtn
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp neg
+    // k = e, or e + 1 when e is odd; a negative e's parity is its magnitude's
+    lac faE
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    cma
+    and [1]
+    add faE
+    dac fxK
+    cma                     // -0 for k = 0, which fnScl's add makes +0
+    dac scK
+    jsp fnScl
+    FNST(fxX)
+    FNLDB(fcSqB)
+    jsp fpMul
+    FNLDB(fcSqA)
+    jsp fpAdd
+    law i 3
+    dac fxQ
+step,
+    FNST(fxY)
+    FNLD(fxX)
+    FNLDB(fxY)
+    jsp fpDiv
+    FNLDB(fxY)
+    jsp fpAdd
+    law i 1
+    dac scK
+    jsp fnScl
+    isp fxQ
+    jmp step
+    // k is even, so a shift halves it in ones' complement as well
+    lac fxK
+    sar 1s
+    dac scK
+    jsp fnScl
+    jmp i fxRtn
+neg,
+    lac [ERR_SQTNEG]
+    jmp i fpErr
+    endloc
+
+// FEXP: FA = e to the power FA.
+// Above 1500 ?27.10 and below -1500 zero, at once.
+// Else n = x/ln 2 rounded, as FITR of x (1/ln 2) plus a half of x's sign;
+// r = x - n ln 2, ln 2 in two parts, the first's product exact while
+// |n| < 2^12, so |r| <= (ln 2)/2 keeps its digits; e^r by its series; then
+// times 2^n, which gives ?27.10 or zero at the range's edges.
+// AC and IO are clobbered.
+// Called via farjsp.
+fnExp, dac fxRtn
+    local one, zero, big, minus, half
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp one
+    lac faS
+    dac fxSg
+    FNST(fxX)
+    FNLDB(fcExpLim)
+    jsp fpCmp
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp big
+    FNLDB(fcExpLim)
+    law 1
+    dac fbS
+    jsp fpCmp
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp zero
+    FNLDB(fcInvLn2)
+    jsp fpMul
+    FNLDB(fcHalf)
+    lac fxSg
+    SKIP_NEXT_IF_AC_ZERO
+    jmp minus
+    jsp fpAdd
+    jmp half
+minus,
+    jsp fpSub
+half,
+    jsp fpFitr
+    FNST(fxN)
+    jsp fnInt
+    dac fxK
+    FNLDB(fcLn2a)
+    jsp fpMul
+    FNST(fxT)
+    FNLD(fxX)
+    FNLDB(fxT)
+    jsp fpSub
+    FNST(fxR)
+    FNLD(fxN)
+    FNLDB(fcLn2b)
+    jsp fpMul
+    FNST(fxT)
+    FNLD(fxR)
+    FNLDB(fxT)
+    jsp fpSub
+    FNST(fxR)
+    FNHOR(fcExp, fxR)
+    lac fxK
+    dac scK
+    jsp fnScl
+    jmp i fxRtn
+one,
+    FNLD(fcOne)
+    jmp i fxRtn
+zero,
+    jsp faZero
+    jmp i fxRtn
+big,
+    lac [ERR_NUMBIG]
+    jmp i fpErr
+    endloc
+
+// FLOG: FA = the natural logarithm of FA; 0 is ?20.34, a negative number
+// ?20.36.
+// x = m 2^e with m in [1/sqrt 2, sqrt 2); s = (m - 1)/(m + 1);
+// log m = 2 s P(s^2) by its series; then e ln 2 added, ln 2 in two parts,
+// the small part's product first.
+// AC and IO are clobbered.
+// Called via farjsp.
+fnLog, dac fxRtn
+    local zero, neg, keep
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp neg
+    // m = x 2^-e, in [1/2, 1); below 1/sqrt 2, twice that and e one less
+    lac faE
+    dac fxE
+    dzm faE
+    FNLDB(fcRSqrt2)
+    jsp fpCmp
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp keep
+    idx faE
+    lac fxE
+    sub [1]
+    dac fxE
+keep,
+    FNST(fxT)
+    FNLDB(fcOne)
+    jsp fpSub
+    FNST(fxR)
+    FNLD(fxT)
+    FNLDB(fcOne)
+    jsp fpAdd
+    FNST(fxT)
+    FNLD(fxR)
+    FNLDB(fxT)
+    jsp fpDiv
+    FNST(fxR)
+    FNLDB(fxR)
+    jsp fpMul
+    FNST(fxU)
+    FNHOR(fcLog, fxU)
+    FNLDB(fxR)
+    jsp fpMul
+    law 1
+    dac scK
+    jsp fnScl
+    lac fxE
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i fxRtn
+    FNST(fxY)
+    lac fxE
+    jda fpFlt
+    FNST(fxN)
+    FNLDB(fcLn2b)
+    jsp fpMul
+    FNLDB(fxY)
+    jsp fpAdd
+    FNST(fxY)
+    FNLD(fxN)
+    FNLDB(fcLn2a)
+    jsp fpMul
+    FNLDB(fxY)
+    jsp fpAdd
+    jmp i fxRtn
+zero,
+    lac [ERR_LOG0]
+    jmp i fpErr
+neg,
+    lac [ERR_LOGNEG]
+    jmp i fpErr
+    endloc
+
+// FSIN and FCOS: FA = the sine or the cosine of FA, in radians.
+// a = |x|; from 2^31 on, zero.
+// Else n = FITR(a (2/pi) + 1/2) and r = a - n pi/2, pi/2 in three parts,
+// so |r| <= pi/4 keeps 9 digits while n fits 17 bits; then by n mod 4,
+// plus 1 for the cosine, sin r or cos r by its series, negated in quadrants
+// 2 and 3; FSIN takes x's sign at the end.
+// AC and IO are clobbered.
+// Called via farjsp.
+fnSin, dac fxRtn
+    dzm fxCo
+    jmp fnSc
+fnCos, dac fxRtn
+    law 1
+    dac fxCo
+fnSc,
+    local zero, big, cos1, quad
+    lac faS
+    dac fxSg
+    lac fxCo
+    SKIP_NEXT_IF_AC_ZERO
+    dzm fxSg                // the cosine is even
+    dzm faS
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    FNLDB(fcTrigLim)
+    jsp fpCmp
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp big
+    FNST(fxX)
+    FNLDB(fcTwoOPi)
+    jsp fpMul
+    FNLDB(fcHalf)
+    jsp fpAdd
+    jsp fpFitr
+    FNST(fxN)
+    jsp fnLow2
+    add fxCo
+    and [3]
+    dac fxQ
+    FNLDB(fcPio2a)
+    jsp fpMul
+    FNST(fxT)
+    FNLD(fxX)
+    FNLDB(fxT)
+    jsp fpSub
+    FNST(fxR)
+    FNLD(fxN)
+    FNLDB(fcPio2b)
+    jsp fpMul
+    FNST(fxT)
+    FNLD(fxR)
+    FNLDB(fxT)
+    jsp fpSub
+    FNST(fxR)
+    FNLD(fxN)
+    FNLDB(fcPio2c)
+    jsp fpMul
+    FNST(fxT)
+    FNLD(fxR)
+    FNLDB(fxT)
+    jsp fpSub
+    FNST(fxR)
+    FNLDB(fxR)
+    jsp fpMul
+    FNST(fxU)
+    lac fxQ
+    and [1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp cos1
+    FNHOR(fcSin, fxU)
+    FNLDB(fxR)
+    jsp fpMul
+    jmp quad
+cos1,
+    FNHOR(fcCos, fxU)
+quad,
+    lac fxQ
+    and [2]
+    SKIP_NEXT_IF_AC_ZERO
+    jsp fpNeg
+    lac fxSg
+    SKIP_NEXT_IF_AC_ZERO
+    jsp fpNeg
+    jmp i fxRtn
+zero,
+    // FA is 0, which is FSIN's result; FCOS's is 1
+    lac fxCo
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i fxRtn
+    FNLD(fcOne)
+    jmp i fxRtn
+big,
+    jsp faZero
+    jmp i fxRtn
+    endloc
+
+// FATN: FA = the arctangent of FA, in radians.
+// It is odd, so t = |x|, and x's sign is applied at the end.
+// Above 1, pi/2 - atan(1/t); then above tan(pi/12),
+// pi/6 + atan((t sqrt 3 - 1)/(t + sqrt 3)); then t P(t^2) by its series.
+// AC and IO are clobbered.
+// Called via farjsp.
+fnAtn, dac fxRtn
+    local inv, red, off, ser, nopi6, nopi2
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i fxRtn
+    lac faS
+    dac fxSg
+    dzm faS
+    dzm fxCo                // set to 1 when t was above 1
+    dzm fxQ                 // set to 1 when t was above tan(pi/12)
+    FNLDB(fcOne)
+    jsp fpCmp
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp inv
+red,
+    FNLDB(fcTanP12)
+    jsp fpCmp
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp off
+ser,
+    FNST(fxR)
+    FNLDB(fxR)
+    jsp fpMul
+    FNST(fxU)
+    FNHOR(fcAtn, fxU)
+    FNLDB(fxR)
+    jsp fpMul
+    lac fxQ
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nopi6
+    FNLDB(fcPio6)
+    jsp fpAdd
+nopi6,
+    lac fxCo
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nopi2
+    FNST(fxT)
+    FNLD(fcPio2)
+    FNLDB(fxT)
+    jsp fpSub
+nopi2,
+    lac fxSg
+    SKIP_NEXT_IF_AC_ZERO
+    jsp fpNeg
+    jmp i fxRtn
+inv,
+    law 1
+    dac fxCo
+    FNST(fxT)
+    FNLD(fcOne)
+    FNLDB(fxT)
+    jsp fpDiv
+    jmp red
+off,
+    law 1
+    dac fxQ
+    FNST(fxT)
+    FNLDB(fcSqrt3)
+    jsp fpMul
+    FNLDB(fcOne)
+    jsp fpSub
+    FNST(fxR)
+    FNLD(fxT)
+    FNLDB(fcSqrt3)
+    jsp fpAdd
+    FNST(fxT)
+    FNLD(fxR)
+    FNLDB(fxT)
+    jsp fpDiv
+    jmp ser
+    endloc
+
+// FRAN: FA = the generator's next value, uniform from 0 to 1, 1 excluded;
+// the argument in FA is not looked at.
+// s = A s + C modulo 2^36, in 17-bit limbs, the top one 2 bits.
+// The value is s's top 35 bits as a fraction, which the package's adds
+// build exactly, every partial sum fitting 35 bits.
+// It is s2 2^-2 + s1 2^-19 + (s0 with its low bit cleared) 2^-36.
+// AC and IO are clobbered.
+// Called via farjsp.
+fnRan, dac fxRtn
+    local h0, l0, h1, l1, h2, l2, h, l, t
+    MULP(fcRanA+2, ranS0, h0, l0)
+    MULP(fcRanA+1, ranS0, h1, l1)
+    MULP(fcRanA+2, ranS1, h2, l2)
+    // the middle limb, from a0 s0's top and the bottoms of a1 s0 and a0 s1
+    lac h0
+    dac ps
+    dzm pc
+    lio l1
+    jsp acc
+    lio l2
+    jsp acc
+    // the top limb, where only each term modulo 4 counts, so none overflows
+    lac pc
+    dac t
+    lac h1
+    and [3]
+    add t
+    dac t
+    lac h2
+    and [3]
+    add t
+    dac t
+    MULP(fcRanA, ranS0, h, l)
+    lac l
+    and [3]
+    add t
+    dac t
+    MULP(fcRanA+1, ranS1, h, l)
+    lac l
+    and [3]
+    add t
+    dac t
+    MULP(fcRanA+2, ranS2, h, l)
+    lac l
+    and [3]
+    add t
+    dac t
+    // s = that plus C
+    dzm adI
+    lac l0
+    dac adA
+    lac fcRanC+2
+    dac adB
+    jsp adL
+    dac ranS0
+    lac ps
+    dac adA
+    lac fcRanC+1
+    dac adB
+    jsp adL
+    dac ranS1
+    lac t
+    add fcRanC
+    add adI
+    and [3]
+    dac ranS2
+    // the value
+    lac ranS2
+    jda fpFlt
+    law i 2
+    dac scK
+    jsp fnScl
+    FNST(fxY)
+    lac ranS1
+    jda fpFlt
+    law i 0d19
+    dac scK
+    jsp fnScl
+    FNLDB(fxY)
+    jsp fpAdd
+    FNST(fxY)
+    lac ranS0
+    and [0377776]
+    jda fpFlt
+    law i 0d36
+    dac scK
+    jsp fnScl
+    FNLDB(fxY)
+    jsp fpAdd
+    jmp i fxRtn
+h0, 0
+l0, 0
+h1, 0
+l1, 0
+h2, 0
+l2, 0
+h, 0
+l, 0
+t, 0
+    endloc
+
+// Sets FRAN's seed; called at PDP-1 FOCAL's start, so the sequence is the
+// same at every start.
+// AC is clobbered; IO is preserved.
+// Called via farjsp.
+fnRanI, dac fxRtn
+    lac fcSeed
+    dac ranS2
+    lac fcSeed+1
+    dac ranS1
+    lac fcSeed+2
+    dac ranS0
+    jmp i fxRtn
+
+// FA = FA times 2^scK, by moving the exponent; ?27.10 above the range, zero
+// below it.
+// AC and IO are clobbered.
+// Called via jsp.
+fnScl, dap scX
+    local big
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp scX
+    lac faE
+    add scK
+    dac faE
+    sub [FP_EMAX]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp big
+    lac faE
+    add [FP_EMIN]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jsp faZero
+    jmp scX
+big,
+    lac [ERR_NUMBIG]
+    jmp i fpErr
+    endloc
+scX, jmp .
+scK, 0
+
+// AC = FA as an integer.
+// FA must be integer-valued, with |FA| < 2^17.
+// FA stands; IO is clobbered.
+// Called via jsp.
+fnInt, dap fiX
+    local pos
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp fiX
+    // (2^17 + fa1) >> (18 - e), with AC:IO 2 (2^17 + fa1) shifted 19 - e
+    lac faE
+    cma
+    add [0d19]
+    dac mkC
+    jsp mkShr
+    law 1
+    lio fa1
+    ril 1s
+    xct mkA
+    xct mkB
+    dio fiT
+    lac faS
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pos
+    lac fiT
+    cma
+    jmp fiX
+pos,
+    lac fiT
+    endloc
+fiX, jmp .
+fiT, 0
+
+// AC = FA modulo 4.
+// FA must be integer-valued, 0 <= FA < 2^35.
+// The value's bits 2^0 and 2^1 are M's bits 35 - e and 36 - e.
+// FA stands; IO is clobbered.
+// Called via jsp.
+fnLow2, dap lwX
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lwX
+    lac faE
+    cma
+    add [0d35]
+    dac fbP
+    jsp fnBit
+    dac lwT
+    idx fbP
+    jsp fnBit
+    ral 1s
+    add lwT
+lwX, jmp .
+lwT, 0
+
+// AC = bit fbP of M, FA's magnitude, for fbP 0 to 35.
+// fa0 holds bits 0 to 16, fa1 17 to 33, fa2 bit 34, and bit 35, above M,
+// is 0.
+// FA and fbP stand; IO is clobbered.
+// Called via jsp.
+fnBit, dap fbX
+    local hi, rot, done, top, zero
+    lac fbP
+    sub [0d17]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp hi
+    lac fa0
+    dac fbW
+    lac fbP
+    jmp rot
+hi,
+    dac fbC
+    sub [0d17]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp top
+    lac fa1
+    dac fbW
+    lac fbC
+rot,
+    // bit c of fbW, c in AC, rotated down c places
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp done
+    sub [1]
+    dac fbC
+    lac fbW
+    rar 1s
+    dac fbW
+    lac fbC
+    jmp rot
+done,
+    lac fbW
+    and [1]
+    jmp fbX
+top,
+    // AC is fbP - 34
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zero
+    law 1
+    jmp fbX
+zero,
+    cla
+    endloc
+fbX, jmp .
+fbP, 0
+fbC, 0
+fbW, 0
+
+// FA = the series at hnP at the number at hnX, by Horner's rule.
+// p = the first coefficient, then p = p x + c for each one after it.
+// A series is a count, then its coefficients, the highest degree first.
+// hnP and hnX are full addresses; hnP is moved on.
+// FB, AC and IO are clobbered.
+// Called via jsp.
+fnHor, dap hrX
+    local loop
+    lac i hnP
+    sub [1]
+    cma
+    dac hnK                 // -(count - 1); every count is above 1
+    idx hnP
+    jda fpLdA
+loop,
+    lac hnX
+    jda fpLdB
+    jsp fpMul
+    lac hnP
+    add [3]
+    dac hnP
+    jda fpLdB
+    jsp fpAdd
+    isp hnK
+    jmp loop
+    endloc
+hrX, jmp .
+hnP, 0
+hnX, 0
+hnK, 0
+
+// The functions' words: the caller's return, x's sign, FCOS rather than
+// FSIN (in FATN, t above 1), the quadrant (in FSQT, the steps left; in
+// FATN, t above tan(pi/12)), x's exponent, an integer (FSQT's k, FEXP's n),
+// FRAN's state, and the numbers kept between steps.
+fxRtn, 0
+fxSg, 0
+fxCo, 0
+fxQ, 0
+fxE, 0
+fxK, 0
+ranS2, 0
+ranS1, 0
+ranS0, 0
+fxX,
+    table 3
+fxN,
+    table 3
+fxR,
+    table 3
+fxT,
+    table 3
+fxU,
+    table 3
+fxY,
+    table 3

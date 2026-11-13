@@ -1,0 +1,170 @@
+// lpt.ac -- PDP-1 FOCAL's line printer, the Type 62 on IOT 45
+// (Docs/UsingTheType62LinePrinter.md).
+// OUTPUT PRINTER (O P, interp.ac) sends TYPE's output and WRITE's listing
+// here until OUTPUT TERMINAL (O T), an error, Ctrl-C, a lost connection or a
+// restart.
+// The *, the echo, ASK, error messages and the trace stay on the terminal.
+//
+// While O P is in effect lpGo is PT_LPT, and TYPE and WRITE copy it into
+// ptOn, so putc hands each character to ptPut, which passes it to lpPut.
+// FOCAL keeps the line's image, one character a word, and prints it at LF.
+// It gives flb for each two characters, prl i, then slp i, format 0, one
+// line.
+// slp empties the printer's buffer, so only the line's characters are sent.
+//
+// CR, TYPE's #, returns to column 0 without printing, and what follows is
+// merged into the image.
+// A blank leaves the character beneath it, any other character replaces it.
+// An overprinted line is printed once, as the printer's file can show it.
+// Past LP_COLS columns the line is printed and goes on at column 0 of the
+// next, since the printer drops what is past its last column without a sign.
+// Other control characters are not printed.
+//
+// The printer has no ready flag.
+// prl i and slp i wait, and a printer held (a FIFO with no reader) holds
+// FOCAL, Ctrl-C unseen until the line is taken, as a printer out of paper
+// would.
+// Ctrl-C is looked for by putc before each character.
+// The printer is run in ASCII mode, set at the start.
+// This is the Type 62's code only.
+// With lptType64 set the IOT is the Type 64's, and O P misprints.
+//
+// Goes in bank 7.
+// Every entry is called via jsp i to its full address, from bank 0, with the
+// extend window open, and returns by jmp i with it open, except lpPut,
+// reached from ptPut, and lpInit, from rdInit.
+// No entry calls bank 0; bank 0's words are reached through full addresses.
+// Needs focal.ah, <AIDS/skipmacros.ah> and <LPT/type62defs.ah>.
+
+local liX, liL, lpX, lpC, lpNl, lpCr, lpBl, lnX, lnL, lnTw, lnLast, lnPr, \
+    lnW, loX, lpN
+
+// lpInit -- set the printer as at a cold start: ASCII mode, O P not in
+// effect, an empty line.
+// AC and IO are clobbered.
+// Called via jsp, by rdInit at the start.
+lpInit, dac liX
+    lio [1]                 // ASCII, the file left open
+    lpm
+    dzm i [lpGo:0]
+    dzm lpCol
+    dzm lpLen
+    lac [lpImg:7]
+    dac lpP
+    law i LP_COLS
+    dac lpN
+liL, law 040
+    dac i lpP
+    idx lpP
+    isp lpN
+    jmp liL
+    jmp i liX
+
+// lpPut -- put the ASCII character in IO into the line.
+// LF prints the line, CR returns to column 0, a blank passes over the
+// character beneath, and any other control character is not printed.
+// A character past the last column prints the line first.
+// AC and IO are clobbered.
+// Reached by jmp from ptPut, AC its return address, as jsp i leaves it.
+lpPut, dac lpX
+    dio lpC
+    lac lpC
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    jmp lpNl
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp lpCr
+    sub [040]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp i lpX               // another control character
+    sub [0137]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp i lpX               // DEL
+    lac lpCol
+    SKIP_NEXT_IF_DIFFERENT [LP_COLS]
+    jsp lpLine              // a full line goes on at the next one's column 0
+    lac lpCol
+    add [lpImg:7]
+    dac lpP
+    lac lpC
+    SKIP_NEXT_IF_DIFFERENT [040]
+    jmp lpBl
+    dac i lpP
+lpBl, idx lpCol
+    sub lpLen
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp i lpX
+    lac lpCol
+    dac lpLen
+    jmp i lpX
+lpNl, jsp lpLine
+    jmp i lpX
+lpCr, dzm lpCol
+    jmp i lpX
+
+// lpLine -- print the line and start an empty one at column 0.
+// The characters go two to a word by flb, the image made blank behind them,
+// then prl i and slp i.
+// An empty line prints as one.
+// AC and IO are clobbered.
+// Called via jsp.
+lpLine, dac lnX
+    lac [lpImg:7]
+    dac lpP
+    lac lpLen
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lnPr
+    cma
+    dac lpN                 // the characters, counted up to 0 by isp
+lnL, lac i lpP
+    ral 9s                  // the first in the high 9 bits
+    dac lnW
+    law 040
+    dac i lpP
+    idx lpP
+    isp lpN
+    jmp lnTw
+    jmp lnLast              // an odd one, a NUL beside it, which flb ignores
+lnTw, lac i lpP
+    ior lnW
+    lia
+    flb
+    law 040
+    dac i lpP
+    idx lpP
+    isp lpN
+    jmp lnL
+    jmp lnPr
+lnLast, lio lnW
+    flb
+lnPr, prl i
+    slp i
+    dzm lpCol
+    dzm lpLen
+    jmp i lnX
+
+// lpOff -- end O P, for O T and every error (errH).
+// A partial line is printed, and output goes back to the terminal.
+// AC and IO are clobbered.
+// Called via jsp i.
+lpOff, dac loX
+    dzm i [ptOn:0]
+    dzm i [lpGo:0]
+    lac lpLen
+    SKIP_NEXT_IF_AC_ZERO
+    jsp lpLine
+    jmp i loX
+
+liX, 0
+lpX, 0
+lpC, 0
+lnX, 0
+lnW, 0
+loX, 0
+lpN, 0
+endloc
+
+lpCol, 0                    // the column the next character goes in
+lpLen, 0                    // the line's length, the image past it blank
+lpP, 0                      // a full address in the image
+lpImg,                      // the line, one character a word
+    table LP_COLS

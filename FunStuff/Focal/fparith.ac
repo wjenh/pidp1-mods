@@ -1,0 +1,1320 @@
+// fparith.ac -- PDP-1 FOCAL's binary arithmetic: loading and storing numbers,
+// add, subtract, multiply, divide, negate, compare, FITR's truncation, a
+// subscript from a number, and a number from an integer.
+//
+// A number in core is three words: e, the binary exponent, signed; h, the sign
+// in bit 0 and the top 17 bits of the 35-bit magnitude M; l, M's low 18 bits.
+// The value is M 2^(e-35), 2^34 <= M < 2^35; zero is three zero words, and
+// no result is ever -0.
+// Every result is the exact one rounded once to 35 bits, half away from
+// zero; then above 2^2047 it is ?27.10 and below 2^-2049 zero.
+//
+// In the registers FA and FB a number is unpacked: its sign (0, or 1 for
+// negative), its exponent, and M as three 17-bit limbs, the top limb 1, or all
+// five words 0 for zero.
+// 17-bit limbs keep every sum of two limbs a valid 18-bit pattern, so add
+// and sub carry and borrow without minus zero.
+//
+// Goes in bank 1, with fpconv.ac.
+// Every entry is called with the extend window open (farjsp, or farjda for
+// the four with an argument in AC) and returns with it open.
+// Inside, every indirect is through a full address.
+// An error leaves by jmp i fpErr with its code (focal.ah) in AC, and does
+// not return.
+// Needs focal.ah and <AIDS/skipmacros.ah>.
+
+// The caller's hooks, each a full address, set before the first call.
+fpErr, 0                // where an error goes, its code in AC
+fpGetc, 0               // fpIn's source, a character in AC from jsp i fpGetc
+fpPutc, 0               // fpOut's sink, jsp i fpPutc typing the character in IO
+fpFmX, 0                // the output format %x.yy, x all digits, 0 for E format
+fpFmY, 0                // yy, the digits after the point
+
+// FA and FB.
+faS, 0
+faE, 0
+fa2, 0
+fa1, 0
+fa0, 0
+fbS, 0
+fbE, 0
+fb2, 0
+fb1, 0
+fb0, 0
+
+// The working number of add, multiply and divide: its sign, its exponent, and
+// five 17-bit limbs, x4 the top, M in x4..x2 once normalized and the bits below
+// it in x1 and x0.
+// xR is a shift count for xShr.
+xS, 0
+xE, 0
+x4, 0
+x3, 0
+x2, 0
+x1, 0
+x0, 0
+xR, 0
+
+// 2^r - 1 for r = 0..17; for r up to 9 it is also a shift instruction's count.
+lmTab, 0
+    1
+    3
+    7
+    017
+    037
+    077
+    0177
+    0377
+    0777
+    01777
+    03777
+    07777
+    017777
+    037777
+    077777
+    0177777
+    0377777
+
+// FA = the number at the full address in AC.
+// AC and IO are clobbered.
+// Called via farjda(fpLdA:1); fpLdA itself is the pointer, moved on as the
+// three words are read.
+fpLdA, 0
+    local rtn, h
+    dac rtn
+    lac i fpLdA             // e
+    dac faE
+    idx fpLdA
+    lac i fpLdA             // h
+    dac h
+    idx fpLdA
+    lio i fpLdA             // l
+    lac h
+    // AC:IO is the sign, the top limb's bit, then M's 34 bits below it; one
+    // place left, AC is the top limb's bit and the middle limb, and IO the
+    // low limb and the sign
+    rcl 1s
+    and [0377777]
+    dac fa1
+    cla
+    rcr 1s                  // AC = the sign in bit 0, IO = the low limb
+    dio fa0
+    ral 1s
+    dac faS
+    lac h                   // the top limb is 1, or 0 for zero
+    SKIP_NEXT_IF_AC_ZERO
+    law 1
+    dac fa2
+    jmp i rtn
+rtn, 0
+h, 0
+    endloc
+
+// FB = the number at the full address in AC.
+// AC and IO are clobbered.
+// Called via farjda(fpLdB:1); fpLdB itself is the pointer, as fpLdA's is.
+fpLdB, 0
+    local rtn, h
+    dac rtn
+    lac i fpLdB             // e
+    dac fbE
+    idx fpLdB
+    lac i fpLdB             // h
+    dac h
+    idx fpLdB
+    lio i fpLdB             // l
+    lac h
+    // as fpLdA
+    rcl 1s
+    and [0377777]
+    dac fb1
+    cla
+    rcr 1s
+    dio fb0
+    ral 1s
+    dac fbS
+    lac h
+    SKIP_NEXT_IF_AC_ZERO
+    law 1
+    dac fb2
+    jmp i rtn
+rtn, 0
+h, 0
+    endloc
+
+// The number at the full address in AC = FA.
+// AC and IO are clobbered.
+// Called via farjda(fpStA:1); fpStA itself is the pointer, moved on as the
+// three words are written.
+fpStA, 0
+    local rtn, t, zero
+    dac rtn
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    lac faE
+    dac i fpStA
+    idx fpStA
+    // AC:IO = fa1, then fa0 one place left with the sign below it; one place
+    // right, AC is the sign, 0 and fa1's top 16 bits, and IO is l.
+    // IO is loaded through t, not by lia, so the package keeps to the
+    // PDP-1C's instructions.
+    lac fa0
+    ral 1s                  // fa0's bit 0 is 0, so bit 17 is 0
+    ior faS
+    dac t
+    lio t
+    lac fa1
+    rcr 1s
+    ior [0200000]           // the top limb's 1
+    dac i fpStA
+    idx fpStA
+    dio i fpStA
+    jmp i rtn
+zero,
+    dzm i fpStA
+    idx fpStA
+    dzm i fpStA
+    idx fpStA
+    dzm i fpStA
+    jmp i rtn
+rtn, 0
+t, 0
+    endloc
+
+// FA = 0.
+// AC and IO are preserved.
+// Called via jsp.
+faZero, dap fzX
+    dzm faS
+    dzm faE
+    dzm fa2
+    dzm fa1
+    dzm fa0
+fzX, jmp .
+
+// FA and FB exchanged.
+// AC and IO are clobbered.
+// Called via jsp.
+abSwap, dap swX
+    lac faS
+    lio fbS
+    dac fbS
+    dio faS
+    lac faE
+    lio fbE
+    dac fbE
+    dio faE
+    lac fa2
+    lio fb2
+    dac fb2
+    dio fa2
+    lac fa1
+    lio fb1
+    dac fb1
+    dio fa1
+    lac fa0
+    lio fb0
+    dac fb0
+    dio fa0
+swX, jmp .
+
+// FA = -FA; zero stays +0.
+// AC and IO are clobbered.
+// Called via farjsp.
+fpNeg, dac ngRtn
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i ngRtn
+    lac faS
+    xor [1]
+    dac faS
+    jmp i ngRtn
+ngRtn, 0
+
+// AC = adA + adB + adI as a 17-bit limb, and adI = the carry out, 0 or 1.
+// adA and adB are limbs, adI 0 or 1.
+// IO is clobbered.
+// Called via jsp.
+adL, dap alX
+    local in, t, one
+    lac adI
+    dac in
+    dzm adI
+    lac adA
+    add adB                 // at most 0777776, a valid pattern
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp one
+    and [0377777]
+    dac t
+    law 1
+    dac adI
+    lac t
+one,
+    add in                  // at most 0400000, which reads negative
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp alX
+    law 1
+    dac adI
+    cla
+    jmp alX
+in, 0
+t, 0
+    endloc
+alX, jmp .
+adA, 0
+adB, 0
+adI, 0
+
+// AC = sbA - sbB - sbI as a 17-bit limb, plus 2^17 if that is negative,
+// and sbI = the borrow out, 0 or 1.
+// sbA and sbB are limbs, sbI 0 or 1.
+// Every intermediate stays within -(2^17 - 1)..2^17 - 1, so none is -0 or
+// 2^17.
+// IO is clobbered.
+// Called via jsp.
+sbL, dap slX
+    local in, t, noneg, nob, zero
+    lac sbI
+    dac in
+    dzm sbI
+    lac sbA
+    sub sbB
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp noneg
+    add [0377777]
+    add [1]                 // + 2^17 in two steps, since 0400000 is not +2^17
+    dac t
+    law 1
+    dac sbI
+    lac t
+noneg,
+    dac t
+    lac in
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nob
+    lac t
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    sub [1]
+    jmp slX
+zero,
+    law 1                   // 0 - 1 gives 2^17 - 1 and a borrow
+    dac sbI
+    lac [0377777]
+    jmp slX
+nob,
+    lac t
+    jmp slX
+in, 0
+t, 0
+    endloc
+slX, jmp .
+sbA, 0
+sbB, 0
+sbI, 0
+
+// ps = ps + IO, and pc counts each carry past 17 bits.
+// ps and IO are limbs.
+// AC and IO are clobbered.
+// Called via jsp.
+acc, dap acX
+    local t, nc
+    dio t
+    lac ps
+    add t                   // at most 0777776
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp nc
+    and [0377777]
+    dac ps
+    idx pc
+    jmp acX
+nc,
+    dac ps
+    jmp acX
+t, 0
+    endloc
+acX, jmp .
+ps, 0
+pc, 0
+
+// mkA and mkB = the shift instructions for a count of 0 to 18 in mkC.
+// Executed mkA then mkB, they shift AC:IO by it, right with scr from mkShr,
+// left with scl from mkShl.
+// AC and IO are clobbered.
+// Called via jsp.
+mkShl, dap mkX
+    lac [scl]
+    jmp mkGo
+mkShr, dap mkX
+    lac [scr]
+mkGo,
+    local t, small
+    dac mkO
+    lac mkC
+    sub [0d9]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp small
+    dac t
+    lac mkO
+    ior [0777]              // a count of 9
+    dac mkB
+    lac t
+    jmp mkA1
+small,
+    lac mkO
+    dac mkB
+    lac mkC
+mkA1,
+    add [lmTab:.]
+    dac t
+    lac i t
+    ior mkO
+    dac mkA
+    jmp mkX
+t, 0
+    endloc
+mkX, jmp .
+mkO, 0
+mkC, 0
+mkA, 0
+mkB, 0
+
+// Shift x4..x0 right by xR, 0 to 16, jamming any bit shifted out of x0 into
+// x0's low bit, which only has to be nonzero below every bit rounding reads.
+// AC and IO are clobbered.
+// Called via jsp.
+xShr, dap xsX
+    local t, p, j
+    lac xR
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp xsX
+    add [lmTab:.]
+    dac p
+    lac i p
+    and x0
+    dac j                   // the bits about to leave x0
+    lac xR
+    dac mkC
+    jsp mkShr
+    // each limb from the pair it straddles, AC the upper, IO the lower in its
+    // top 17 bits; after the shift IO's top 17 bits are the new lower limb
+    lac x1
+    lio x0
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac x0
+    lac x2
+    lio x1
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac x1
+    lac x3
+    lio x2
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac x2
+    lac x4
+    lio x3
+    ril 1s
+    xct mkA
+    xct mkB
+    dac x4
+    dio t
+    lac t
+    rar 1s
+    and [0377777]
+    dac x3
+    lac j
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp xsX
+    lac x0
+    ior [1]
+    dac x0
+    jmp xsX
+t, 0
+p, 0
+j, 0
+    endloc
+xsX, jmp .
+
+// FA = the working number, rounded on x1's top bit, half away from zero,
+// then checked against the range, ?27.10 above it and zero below it.
+// x4 must be 1.
+// AC and IO are clobbered.
+// Called via jsp.
+xFin, dap xfX
+    local down, zero, big
+    lac x1
+    and [0200000]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp down
+    lac x2
+    add [1]
+    dac x2
+    SKIP_NEXT_IF_AC_NEGATIVE    // reached 2^17?
+    jmp down
+    dzm x2
+    lac x3
+    add [1]
+    dac x3
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp down
+    // M was 2^35 - 1 and is now 2^35, which is 2^34 one place up
+    dzm x3
+    idx xE
+down,
+    lac xE
+    sub [FP_EMAX]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp big
+    lac xE
+    add [FP_EMIN]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp zero
+    lac xS
+    dac faS
+    lac xE
+    dac faE
+    lac x4
+    dac fa2
+    lac x3
+    dac fa1
+    lac x2
+    dac fa0
+    jmp xfX
+zero,
+    jsp faZero
+    jmp xfX
+big,
+    lac [ERR_NUMBIG]
+    jmp i fpErr
+    endloc
+xfX, jmp .
+
+// FA = FA + FB (fpAdd) or FA - FB (fpSub), rounded once, half away from
+// zero.
+// ?27.10 past the range.
+// FB, AC and IO are clobbered.
+// Called via farjsp.
+fpSub, dac adRtn
+    lac fbS
+    xor [1]
+    dac fbS                 // a zero FB's sign is never read
+    jmp adGo
+fpAdd, dac adRtn
+adGo,
+    local isB, swap, ord, limb, bits, same, norm, nup, nbit, fin, d, kA, kB
+    lac fb2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i adRtn             // FB is zero, so FA stands
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp isB                 // FA is zero, so the sum is FB
+    // order them so |FA| >= |FB|, by exponent, then by magnitude
+    lac faE
+    sub fbE
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp swap
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ord
+    lac fa1
+    sub fb1
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp swap
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ord
+    lac fa0
+    sub fb0
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp swap
+    jmp ord
+isB,
+    jsp abSwap
+    jmp i adRtn
+swap,
+    jsp abSwap
+ord,
+    // 37 or more places apart, FB changes nothing FA rounds to
+    lac faE
+    sub fbE
+    dac d
+    sub [0d37]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp i adRtn
+    // FB in x4..x2 above two zero guard limbs, then shifted right by d
+    lac fb2
+    dac x4
+    lac fb1
+    dac x3
+    lac fb0
+    dac x2
+    dzm x1
+    dzm x0
+limb,
+    lac d
+    sub [0d17]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp bits
+    dac d
+    // a whole limb down; what leaves x0 is still a zero guard limb
+    lac x1
+    dac x0
+    lac x2
+    dac x1
+    lac x3
+    dac x2
+    lac x4
+    dac x3
+    dzm x4
+    jmp limb
+bits,
+    lac d
+    dac xR
+    jsp xShr
+    lac faS
+    dac xS
+    lac faE
+    dac xE
+    lac faS
+    sub fbS
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp same
+    // the signs differ, so x = FA - x, never negative; FA's guard limbs are 0
+    dzm sbI
+    dzm sbA
+    lac x0
+    dac sbB
+    jsp sbL
+    dac x0
+    dzm sbA
+    lac x1
+    dac sbB
+    jsp sbL
+    dac x1
+    lac fa0
+    dac sbA
+    lac x2
+    dac sbB
+    jsp sbL
+    dac x2
+    lac fa1
+    dac sbA
+    lac x3
+    dac sbB
+    jsp sbL
+    dac x3
+    lac fa2
+    dac sbA
+    lac x4
+    dac sbB
+    jsp sbL
+    dac x4
+norm,
+    // up until x4 is 1, a limb at a time while x4 and x3 are 0, then bits
+    lac x4
+    SKIP_NEXT_IF_AC_ZERO
+    jmp fin
+    lac x3
+    SKIP_NEXT_IF_AC_ZERO
+    jmp nbit
+    lac x2
+    ior x1
+    ior x0
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nup                 // all zero, so they canceled
+    lac x2
+    dac x3
+    lac x1
+    dac x2
+    lac x0
+    dac x1
+    dzm x0
+    lac xE
+    sub [0d17]
+    dac xE
+    jmp norm
+nup,
+    jsp faZero
+    jmp i adRtn
+nbit,
+    // one place up, each limb taking the top bit of the one below; scl keeps
+    // AC's sign, 0, and drops the bit that would move into it
+    lac x4
+    lio x3
+    ril 1s
+    scl 1s
+    dac x4
+    lac x3
+    lio x2
+    ril 1s
+    scl 1s
+    dac x3
+    lac x2
+    lio x1
+    ril 1s
+    scl 1s
+    dac x2
+    lac x1
+    lio x0
+    ril 1s
+    scl 1s
+    dac x1
+    lac x0
+    cli
+    scl 1s
+    dac x0
+    lac xE
+    sub [1]
+    dac xE
+    jmp norm
+same,
+    // the same sign, so x = FA + x, then one place down on a carry past 2^35
+    dzm adI
+    lac fa0
+    dac adA
+    lac x2
+    dac adB
+    jsp adL
+    dac x2
+    lac fa1
+    dac adA
+    lac x3
+    dac adB
+    jsp adL
+    dac x3
+    lac fa2
+    dac adA
+    lac x4
+    dac adB
+    jsp adL
+    dac x4
+    sub [2]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fin
+    law 1
+    dac xR
+    jsp xShr
+    idx xE
+fin,
+    jsp xFin
+    jmp i adRtn
+d, 0
+    endloc
+adRtn, 0
+
+// The product P of limbs a and b as hi, P >> 17, and lo, P's low 17 bits.
+// mul leaves P one place left in AC:IO, so AC is hi and IO is lo shifted
+// left one.
+// AC and IO are clobbered.
+#define MULP(a, b, hi, lo)
+    lac a
+    mul b
+    dac hi
+    dio lo
+    lac lo
+    rar 1s
+    and [0377777]
+    dac lo
+#enddef
+
+// FA = FA times FB, rounded once, half away from zero.
+// ?27.10 past the range.
+// FB stands; AC and IO are clobbered.
+// Called via farjsp.
+// (2^34 + a)(2^34 + b) is 2^68 + 2^34 (a + b) + a b, a and b each two
+// limbs; it is summed a 17-bit column at a time, each column's carries into
+// the next.
+fpMul, dac muRtn
+    local zero, fin, h00, l00, h10, l10, h01, l01, h11, l11
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i muRtn             // 0 times anything is 0
+    lac fb2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    lac faS
+    xor fbS
+    dac xS
+    lac faE
+    add fbE
+    sub [1]
+    dac xE
+    MULP(fa0, fb0, h00, l00)
+    MULP(fa1, fb0, h10, l10)
+    MULP(fa0, fb1, h01, l01)
+    MULP(fa1, fb1, h11, l11)
+    lac l00
+    dac x0
+    lac h00
+    dac ps
+    dzm pc
+    lio l10
+    jsp acc
+    lio l01
+    jsp acc
+    lac ps
+    dac x1
+    lac pc
+    dac ps
+    dzm pc
+    lio h10
+    jsp acc
+    lio h01
+    jsp acc
+    lio l11
+    jsp acc
+    lio fa0
+    jsp acc
+    lio fb0
+    jsp acc
+    lac ps
+    dac x2
+    lac pc
+    dac ps
+    dzm pc
+    lio h11
+    jsp acc
+    lio fa1
+    jsp acc
+    lio fb1
+    jsp acc
+    lac ps
+    dac x3
+    lac pc
+    add [1]
+    dac x4
+    // the product is below 2^70; past 2^69, one place down
+    sub [2]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fin
+    law 1
+    dac xR
+    jsp xShr
+    idx xE
+fin,
+    jsp xFin
+    jmp i muRtn
+zero,
+    jsp faZero
+    jmp i muRtn
+h00, 0
+l00, 0
+h10, 0
+l10, 0
+h01, 0
+l01, 0
+h11, 0
+l11, 0
+    endloc
+muRtn, 0
+
+// FA = FA divided by FB, rounded once, half away from zero.
+// ?28.73 for FB zero, ?27.10 past the range.
+// FB stands; AC and IO are clobbered.
+// Called via farjsp.
+// Long division in base 2^17, Knuth's algorithm D.
+// Q = floor(MA 2^37 / MB), 37 or 38 bits, as three quotient limbs of MA 2^53
+// over MB 2^16, whose top limb is at least 2^16, so each estimate from div
+// is at most 2 too large.
+// A tie cannot occur, so the remainder is not needed to round.
+fpDiv, dac dvRtn
+    local zero, by0, loop, t, p, j, three, fin
+    lac fb2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp by0
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i dvRtn             // 0 over anything is 0
+    lac faS
+    xor fbS
+    dac xS
+    lac faE
+    sub fbE
+    dac xE
+    // v = MB 2^16, in limbs v2 = 2^16 + (b1 >> 1),
+    // v1 = (b1's low bit) 2^16 + (b0 >> 1), v0 = (b0's low bit) 2^16
+    lac fb1
+    rar 1s
+    dac t
+    and [0177777]
+    ior [0200000]
+    dac dv2
+    lac t
+    and [0400000]
+    rar 1s
+    dac t
+    lac fb0
+    rar 1s
+    dac dv0
+    and [0177777]
+    ior t
+    dac dv1
+    lac dv0
+    and [0400000]
+    rar 1s
+    dac dv0
+    // u = MA 2^53, in limbs u5 = 4 + (a1 >> 15), u4 and u3 MA's next 34
+    // bits, the rest 0
+    lac fa1
+    rar 9s
+    rar 6s
+    and [3]
+    ior [4]
+    dac dvU5
+    lac fa1
+    lio fa0
+    ril 1s
+    scl 2s
+    dac dvU4
+    lac fa0
+    cli
+    scl 2s
+    dac dvU3
+    dzm dvU2
+    dzm dvU1
+    dzm dvU0
+    law 2
+    dac j
+loop,
+    // quotient limb j from u[j+3]..u[j]
+    lac j
+    add [dvU0:.]
+    dac p
+    lac i p
+    dac t0
+    idx p
+    lac i p
+    dac t1
+    idx p
+    lac i p
+    dac t2
+    idx p
+    lac i p
+    dac t3
+    jsp dvStep
+    dac t
+    lac j
+    add [dvQ0:.]
+    dac p
+    lac t
+    dac i p
+    lac j
+    add [dvU0:.]
+    dac p
+    lac t0
+    dac i p
+    idx p
+    lac t1
+    dac i p
+    idx p
+    lac t2
+    dac i p
+    idx p
+    lac t3
+    dac i p
+    lac j
+    sub [1]
+    dac j
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp loop
+    // Q is in [2^36, 2^38); its top 35 bits go into x4..x2, the rest below
+    lac dvQ2
+    dac x4
+    lac dvQ1
+    dac x3
+    lac dvQ0
+    dac x2
+    dzm x1
+    dzm x0
+    lac dvQ2
+    sub [0d8]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp three
+    law 2
+    dac xR
+    jsp xShr
+    jmp fin
+three,
+    law 3
+    dac xR
+    jsp xShr
+    idx xE
+fin,
+    jsp xFin
+    jmp i dvRtn
+by0,
+    lac [ERR_DIVZERO]
+    jmp i fpErr
+t, 0
+p, 0
+j, 0
+    endloc
+dvRtn, 0
+dv2, 0
+dv1, 0
+dv0, 0
+dvU0, 0
+dvU1, 0
+dvU2, 0
+dvU3, 0
+dvU4, 0
+dvU5, 0
+dvQ0, 0
+dvQ1, 0
+dvQ2, 0
+t0, 0
+t1, 0
+t2, 0
+t3, 0
+
+// One step of the long division.
+// AC = floor(t / v), t3..t0 over dv2..dv0, and t = its remainder.
+// t3 is at most dv2 on entry.
+// IO is clobbered.
+// Called via jsp.
+dvStep, dap dsX
+    local qh, c, h, l, max, est, back, done
+    // the estimate from the top two limbs over dv2, at most 2^17 - 1
+    lac t3
+    sub dv2
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp max
+    lac t3
+    lio t2
+    ril 1s                  // AC:IO = (t3 2^17 + t2) << 1, as div wants
+    div dv2
+    jmp max                 // no skip means overflow, which t3 < dv2 rules out
+    jmp est
+max,
+    lac [0377777]
+est,
+    dac qh
+    // t = t - qh v, a limb at a time, the product's carry in c, the borrow in
+    // sbI
+    dzm c
+    dzm sbI
+    MULP(qh, dv0, h, l)
+    lac l
+    dac ps
+    dzm pc
+    lio c
+    jsp acc
+    lac h
+    add pc
+    dac c
+    lac t0
+    dac sbA
+    lac ps
+    dac sbB
+    jsp sbL
+    dac t0
+    MULP(qh, dv1, h, l)
+    lac l
+    dac ps
+    dzm pc
+    lio c
+    jsp acc
+    lac h
+    add pc
+    dac c
+    lac t1
+    dac sbA
+    lac ps
+    dac sbB
+    jsp sbL
+    dac t1
+    MULP(qh, dv2, h, l)
+    lac l
+    dac ps
+    dzm pc
+    lio c
+    jsp acc
+    lac h
+    add pc
+    dac c
+    lac t2
+    dac sbA
+    lac ps
+    dac sbB
+    jsp sbL
+    dac t2
+    // the top limb, negative by a little when the estimate was too large
+    lac t3
+    sub c
+    sub sbI
+    dac t3
+back,
+    lac t3
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp done
+    lac qh
+    sub [1]
+    dac qh
+    dzm adI
+    lac t0
+    dac adA
+    lac dv0
+    dac adB
+    jsp adL
+    dac t0
+    lac t1
+    dac adA
+    lac dv1
+    dac adB
+    jsp adL
+    dac t1
+    lac t2
+    dac adA
+    lac dv2
+    dac adB
+    jsp adL
+    dac t2
+    lac t3
+    add adI
+    dac t3
+    jmp back
+done,
+    lac qh
+    jmp dsX
+qh, 0
+c, 0
+h, 0
+l, 0
+    endloc
+dsX, jmp .
+
+// AC = -1, 0 or 1 as FA is less than, equal to or greater than FB.
+// FA and FB stand; IO is clobbered.
+// Called via farjsp.
+fpCmp, dac cmRtn
+    local az, bysign, mag, gt, neg, done
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp az
+    lac fb2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bysign              // FB is 0, so FA's sign decides
+    lac faS
+    sub fbS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp bysign              // the signs differ, so FA's decides
+    lac faE
+    sub fbE
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mag
+    lac fa1
+    sub fb1
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mag
+    lac fa0
+    sub fb0
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mag
+    jmp i cmRtn             // equal, AC is 0
+az,
+    // FA is 0, so the result is 0 or the opposite of FB's sign
+    lac fb2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i cmRtn
+    lac fbS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp gt
+    law i 1
+    jmp i cmRtn
+bysign,
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp neg
+    law 1
+    jmp i cmRtn
+mag,
+    // AC is |FA| - |FB| in its first differing word; its sign decides,
+    // reversed when FA is negative
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp gt
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp done
+    law i 1
+    jmp i cmRtn
+gt,
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp neg
+done,
+    law 1
+    jmp i cmRtn
+neg,
+    law i 1
+    jmp i cmRtn
+    endloc
+cmRtn, 0
+
+// FA = FA truncated toward zero, FITR's rounding.
+// AC and IO are clobbered.
+// Called via farjsp.
+fpFitr, dac ftRtn
+    local whole, low, k, p
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i ftRtn
+    lac faE
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp whole
+    jsp faZero              // below 1 in size, so 0
+    jmp i ftRtn
+whole,
+    sub [0d35]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp i ftRtn             // 2^34 or more, an integer already
+    // clear the k = 35 - e low bits, 1 to 34
+    cma
+    dac k
+    sub [0d17]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp low
+    lac k
+    add [lmTab:.]
+    dac p
+    lac i p
+    cma
+    and fa0
+    dac fa0
+    jmp i ftRtn
+low,
+    dzm fa0
+    add [lmTab:.]
+    dac p
+    lac i p
+    cma
+    and fa1
+    dac fa1
+    jmp i ftRtn
+k, 0
+p, 0
+    endloc
+ftRtn, 0
+
+// AC = FA truncated toward zero as a subscript, -2048 to 2047; else ?06.55.
+// FA stands; IO is clobbered.
+// Called via farjsp.
+fpSubs, dac suRtn
+    local one, bad, neg, t
+    lac fa2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i suRtn             // AC 0
+    lac faE
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp one
+    cla                     // below 1 in size, so 0
+    jmp i suRtn
+one,
+    sub [0d12]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp bad                 // 4096 or more in size
+    // n = (2^17 + fa1) >> (18 - e), with AC:IO 2 (2^17 + fa1) shifted 19 - e
+    lac faE
+    cma
+    add [0d19]
+    dac mkC
+    jsp mkShr
+    law 1
+    lio fa1
+    ril 1s
+    xct mkA
+    xct mkB
+    dio t
+    lac faS
+    SKIP_NEXT_IF_AC_ZERO
+    jmp neg
+    lac t
+    sub [0d2047]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp bad
+    lac t
+    jmp i suRtn
+neg,
+    lac t
+    sub [0d2048]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp bad
+    lac t
+    cma
+    jmp i suRtn
+bad,
+    lac [ERR_SUBSC]
+    jmp i fpErr
+t, 0
+    endloc
+suRtn, 0
+
+// FA = the 18-bit signed integer in AC, exactly; -0 is 0.
+// AC and IO are clobbered.
+// Called via farjda(fpFlt:1).
+fpFlt, 0
+    local zero, pos, up, done, m, e
+    dac flRtn
+    lac fpFlt
+    sad [0777777]
+    jmp zero
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zero
+    dzm faS
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pos
+    cma
+    dac m
+    law 1
+    dac faS
+    lac m
+pos,
+    dac m
+    law 0d17
+    dac e
+up,
+    // up until bit 1, 2^16, is set; the exponent down with it
+    lac m
+    and [0200000]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp done
+    lac m
+    ral 1s
+    dac m
+    lac e
+    sub [1]
+    dac e
+    jmp up
+done,
+    lac e
+    dac faE
+    law 1
+    dac fa2
+    lac m
+    and [0177777]
+    ral 1s
+    dac fa1
+    dzm fa0
+    jmp i flRtn
+zero,
+    jsp faZero
+    jmp i flRtn
+m, 0
+e, 0
+    endloc
+flRtn, 0

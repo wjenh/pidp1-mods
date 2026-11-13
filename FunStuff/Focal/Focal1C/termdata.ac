@@ -1,0 +1,8 @@
+// termdata.ac -- the terminal's buffers, for termio.ac and lineed.ac.
+// Include it in bank 1, where it is not executed.
+// Needs focal.ah.
+
+lnBuf,                      // the line being typed, one ASCII character a word
+    table LN_MAX
+taBuf,                      // the type-ahead ring, one ASCII character a word
+    table TA_SIZE

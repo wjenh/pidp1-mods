@@ -1,0 +1,498 @@
+// iocmd.ac -- PDP-1 FOCAL's TYPE, ASK and SET, and the variable reference
+// that SET, ASK and FOR read.
+//
+// Each command is reached by jmp from the dispatcher (interp.ac) with the
+// source after its word.
+// It leaves by jmp cmdLoop with the source at the character after it (a ;
+// or the end, or any other, which is then the next command), or by jmp eol
+// when it ends the line.
+//
+// Every routine runs in bank 0 with the extend window open and leaves it open.
+// Errors leave by jmp i tmErr with the code in AC (termio.ac).
+// Include the file where it is not executed, since its data words follow its
+// code.
+// Needs focal.ah, <AIDS/skipmacros.ah>, termio.ac, store.ac, vars.ac, expr.ac
+// and interp.ac.
+
+// cType -- TYPE, which prints strings, !, #, formats, $ and expressions.
+// Each expression is followed by a comma, a ; or the end, and is printed by
+// fpOut only then, as FOCAL,1969 types no value before the error (TYPE 1"A").
+// Under O P it prints on the line printer, ptOn being lpGo until cmdLoop or
+// eol.
+// Errors: ?04.52 an excess right enclosure after an expression (where
+// FOCAL,1969 types zeros without end), ?07.22 anything else after one, and
+// evalX's.
+// Reached by jmp.
+local tyLoop, tyCom, tyExp, tyOut, tyC
+cType,
+#ifndef FOCAL_1C
+    lac lpGo
+    dac ptOn
+#endif
+tyLoop, jsp nxBlank
+    dio tyC
+    lac tyC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp tyCom
+    jsp ioItem
+    jmp tyExp
+    jmp tyLoop
+tyCom, jsp cuSkip
+    jmp tyLoop
+tyExp, cli
+    jsp evalX
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp tyOut
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp tyOut
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp tyOut
+    jsp isCloser
+    jmp ioTwo
+    lac [ERR_EXCESS]
+    jmp i tmErr
+tyOut, FPCALL(fpOut)
+    jmp tyLoop
+tyC, 0
+endloc
+
+// ioTwo -- ?07.22, something after an expression.
+// Reached by jmp.
+ioTwo, lac [ERR_TWOOPND]
+    jmp i tmErr
+
+// cAsk -- ASK, which takes TYPE's items, except that each expression is a
+// variable, which prints : and takes a value typed (askVal).
+// Any other character is ?06.06.
+// Reached by jmp.
+local akLoop, akCom, akVar, akBad, akC
+cAsk,
+akLoop, jsp nxBlank
+    dio akC
+    lac akC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp akCom
+    jsp ioItem
+    jmp akVar
+    jmp akLoop
+akCom, jsp cuSkip
+    jmp akLoop
+akVar, lio akC
+    jsp isLetter
+    jmp akBad
+    lai
+    SKIP_NEXT_IF_DIFFERENT [0106]
+    jmp akBad
+    jsp varRef
+    dac akA
+    jsp askVal
+    jmp akLoop
+akBad, lac [ERR_VARNAME]
+    jmp i tmErr
+akC, 0
+endloc
+
+// cSet -- SET var = expression, then a ; or the end.
+// SET var = with nothing after it sets nothing.
+// Errors: ?04.39 no =, ?04.52 a second = or anything after the value but a
+// comma, ?04.60 a comma, and varRef's and evalX's.
+// Reached by jmp.
+local seA, seNoEq, seExc
+cSet, jsp varRef
+    dac seA
+    jsp nxBlank
+    lai
+    SKIP_NEXT_IF_SAME [075]
+    jmp seNoEq
+    jsp cuSkip
+    jsp nxBlank
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [075]
+    jmp seExc
+    cli
+    jsp evalX
+    lac seA
+    FPCALLA(fpStA)
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp cmdLoop
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp cmdLoop
+    SKIP_NEXT_IF_SAME [054]
+    jmp seExc
+    lac [ERR_SETCOM]
+    jmp i tmErr
+seExc, lac [ERR_EXCESS]
+    jmp i tmErr
+seNoEq, lac [ERR_NOEQ]
+    jmp i tmErr
+seA, 0
+endloc
+
+// varRef -- read a variable at the source, after any blanks, as its name and
+// then its subscript in an enclosure right after the name, if it has one.
+// Errors: ?06.06 no variable there, and evalX's, fpSubs' and vrFind's.
+// AC is the full address of its value; IO is clobbered.
+// Called via jsp.
+local vrfX, vrfN, vrfS, vrfK, vrfF, vrfBad
+varRef, dap vrfX
+    jsp nxBlank
+    jsp isLetter
+    jmp vrfBad
+    lai
+    SKIP_NEXT_IF_DIFFERENT [0106]
+    jmp vrfBad
+    jsp vrName
+    dac vrfN
+    dzm vrfS
+    jsp nxPeek
+    jsp opener
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vrfF
+    dac vrfK
+    jsp cuSkip
+    lio vrfK
+    jsp evalX
+    FPCALL(fpSubs)
+    dac vrfS
+vrfF, lac vrfN
+    dac vrNm
+    lac vrfS
+    dac vrSub
+    jsp vrFind
+vrfX, jmp .
+vrfBad, lac [ERR_VARNAME]
+    jmp i tmErr
+vrfN, 0
+vrfS, 0
+vrfK, 0
+endloc
+
+// ioItem -- one of TYPE's and ASK's items other than an expression or a
+// variable, its first character in IO, not yet taken: a string, ! (CR LF),
+// # (CR), a format, or $, which lists the variables and ends the line
+// (jmp eol, not returning).
+// Skips when it was one of these, else returns without a skip, nothing
+// taken.
+// AC and IO are clobbered.
+// Called via jsp.
+local iiX, iiY, iiBang, iiHash, iiDol, iiStr, iiSl, iiSe, iiPct
+ioItem, dap iiX
+    lai
+    SKIP_NEXT_IF_DIFFERENT [042]
+    jmp iiStr
+    SKIP_NEXT_IF_DIFFERENT [041]
+    jmp iiBang
+    SKIP_NEXT_IF_DIFFERENT [043]
+    jmp iiHash
+    SKIP_NEXT_IF_DIFFERENT [045]
+    jmp iiPct
+    SKIP_NEXT_IF_DIFFERENT [044]
+    jmp iiDol
+    jmp iiX
+iiBang, jsp cuSkip
+    jsp newline
+    jmp iiY
+iiHash, jsp cuSkip
+    lio [CH_CR]
+    jsp putc
+    jmp iiY
+iiDol, jsp cuSkip
+    jsp vrList
+    jmp eol
+// a string, to its closing quote or the end of the line, printed by TYPE and
+// not by the trace; a ? in it is text
+iiStr, jsp cuSkip
+    law 1
+    dac trMute
+iiSl, jsp cuPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp iiSe
+    jsp cuSkip
+    lai
+    SKIP_NEXT_IF_DIFFERENT [042]
+    jmp iiSe
+    jsp putc
+    jmp iiSl
+iiSe, dzm trMute
+    jmp iiY
+iiPct, jsp cuSkip
+    jsp ioFmt
+iiY, idx iiX
+iiX, jmp .
+endloc
+
+// ioFmt -- read the format after %, which sets fpFmX and fpFmY.
+// The format is x in digits, then a point and at most two digits yy, read
+// as FOCAL,1969 reads them, as a line number's step (%8.04; %8.4 is %8.40).
+// % or %0 alone is E format.
+// Errors: ?01.78 x over 255, ?01.:5 a third digit after the point.
+// AC and IO are clobbered.
+// Called via jsp.
+local fmX, fmY, fmD, fxL, fxD, fxSet, fxBig, fxX
+ioFmt, dap fxX
+    dzm fmX
+    dzm fmY
+fxL, jsp nxPeek
+    jsp isDigit
+    jmp fxD
+    jsp cuSkip
+    lai
+    sub [060]
+    dac fmD
+    lac fmX
+    sub [0d1000]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fxL                 // held at 1000 or more, an error either way
+    lac fmX
+    ral 2s
+    add fmX
+    ral 1s
+    add fmD
+    dac fmX
+    jmp fxL
+fxD, lac fmX
+    sub [0d256]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fxBig
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_SAME [056]
+    jmp fxSet
+    jsp cuSkip
+    jsp nxPeek
+    jsp isDigit
+    jmp fxSet
+    jsp cuSkip
+    lai
+    sub [060]
+    dac fmD
+    ral 2s
+    add fmD
+    ral 1s
+    dac fmY
+    jsp nxPeek
+    jsp isDigit
+    jmp fxSet
+    jsp cuSkip
+    lai
+    sub [060]
+    add fmY
+    dac fmY
+    jsp nxPeek
+    jsp isDigit
+    jmp fxSet
+    lac [ERR_LNBIG]
+    jmp i tmErr
+fxBig, lac [ERR_GRPBIG]
+    jmp i tmErr
+fxSet, lac fmX
+    dac i [fpFmX:1]
+    lac fmY
+    dac i [fpFmY:1]
+fxX, jmp .
+fmX, 0
+fmY, 0
+fmD, 0
+endloc
+
+// askVal -- read ASK's value for the variable whose value is at akA.
+// It prints :, then reads the keys typed, each echoed on DCS2 (the
+// typewriter prints them itself).
+// Blanks are passed first, then a sign, then a literal, ended by the first
+// key that cannot continue it, which is echoed and taken.
+// RETURN alone is 0.
+// ALT MODE (} or ESC) keeps the variable's value; left arrow echoes itself
+// and starts again; RUBOUT removes the last character and echoes \.
+// The literal is read by fpIn through fpSrc (akMode).
+// Ctrl-C and a lost connection leave by tmErr (getc), the value kept.
+// AC and IO are clobbered.
+// Called via jsp.
+local avX, avNew, avKey, avBody, avNa, avEs, avKeep, avEcho, avSign, avLar, \
+    avRub, avRb1, avBs, avRet, avEnd, avVal, avZero, avSgn, avSt, akC, akP
+askVal, dap avX
+    lio [072]
+    jsp putc
+avNew, dzm akN
+    dzm akSg
+avKey, jsp akKey
+    dio akC
+    lac akC
+    SKIP_NEXT_IF_DIFFERENT [CH_ALT]
+    jmp avX
+    SKIP_NEXT_IF_DIFFERENT [CH_ESC]
+    jmp avX
+    SKIP_NEXT_IF_DIFFERENT [CH_LARROW]
+    jmp avLar
+    SKIP_NEXT_IF_DIFFERENT [CH_DEL]
+    jmp avRub
+    SKIP_NEXT_IF_DIFFERENT [CH_BS]
+    jmp avRub
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp avRet
+    SKIP_NEXT_IF_DIFFERENT [CH_LF]
+    jmp avRet
+    // before the value, blanks are passed, and one sign is taken
+    lac akN
+    ior akSg
+    SKIP_NEXT_IF_AC_ZERO
+    jmp avBody
+    lac akC
+    SKIP_NEXT_IF_DIFFERENT [040]
+    jmp avEcho
+    SKIP_NEXT_IF_DIFFERENT [053]
+    jmp avSign
+    SKIP_NEXT_IF_DIFFERENT [055]
+    jmp avSign
+// a letter, a digit or a point continues the literal, and so does a sign
+// just after its E
+avBody, lio akC
+    jsp isAlnum
+    jmp avNa
+    jmp avKeep
+avNa, lac akC
+    SKIP_NEXT_IF_DIFFERENT [056]
+    jmp avKeep
+    SKIP_NEXT_IF_DIFFERENT [053]
+    jmp avEs
+    SKIP_NEXT_IF_DIFFERENT [055]
+    jmp avEs
+    jmp avEnd
+avEs, lac akN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp avEnd
+    add [akBuf-1]
+    dac akP
+    lac i akP
+    SKIP_NEXT_IF_SAME [0105]
+    jmp avEnd
+avKeep, lac akN
+    SKIP_NEXT_IF_DIFFERENT [AK_MAX]
+    jmp avKey               // the buffer full, the key dropped
+    add [akBuf]
+    dac akP
+    lac akC
+    dac i akP
+    idx akN
+avEcho, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp avKey
+    lio akC
+    jsp putc
+    jmp avKey
+avSign, lac akC
+    dac akSg
+    jmp avEcho
+avLar, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp avNew
+    lio [CH_LARROW]
+    jsp putc
+    jmp avNew
+// RUBOUT; at the value's start only a sign can be removed
+avRub, lac akN
+    SKIP_NEXT_IF_AC_ZERO
+    jmp avRb1
+    lac akSg
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp avKey
+    dzm akSg
+    jmp avBs
+avRb1, sub [1]
+    dac akN
+avBs, law 0134
+    dac akC
+    jmp avEcho
+avRet, lac useTty
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jsp newline
+    jmp avVal
+avEnd, lac useTty
+    SKIP_NEXT_IF_AC_ZERO
+    jmp avVal
+    lio akC
+    jsp putc
+avVal, lac akN
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp avZero
+    law 1
+    dac akI
+    dac akMode
+    lac akBuf
+    FPCALLA(fpIn)
+    dzm akMode
+    jmp avSgn
+avZero, cla
+    FPCALLA(fpFlt)
+avSgn, lac akSg
+    SKIP_NEXT_IF_SAME [055]
+    jmp avSt
+    FPCALL(fpNeg)
+avSt, lac akA
+    FPCALLA(fpStA)
+avX, jmp .
+akC, 0
+akP, 0
+endloc
+
+// akKey -- get the next key for ASK, folded to upper case.
+// An LF just after a CR is the rest of the same RETURN and is passed over.
+// IO is the character; AC is clobbered.
+// Called via jsp.
+local kyX, kyG, kyCr, kyF, kyO, kyK
+akKey, dap kyX
+kyG, jsp getc
+    lai
+    and [0177]
+    dac kyK
+    SKIP_NEXT_IF_SAME [CH_LF]
+    jmp kyCr
+    lac lnCr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp kyCr
+    dzm lnCr
+    jmp kyG
+kyCr, dzm lnCr
+    lac kyK
+    SKIP_NEXT_IF_SAME [CH_CR]
+    jmp kyF
+    law 1
+    dac lnCr
+kyF, lac kyK
+    sub [0141]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp kyO
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp kyO
+    lac kyK
+    sub [040]
+    dac kyK
+kyO, lio kyK
+kyX, jmp .
+kyK, 0
+endloc
+
+akA, 0                      // ASK's variable, its value's full address
+akMode, 0                   // fpIn reads ASK's value, not the source
+akN, 0                      // the value's characters
+akI, 0                      // those fpIn has taken
+akSg, 0                     // its sign, 0 for none
+akBuf,                      // the value, one character a word
+    table AK_MAX

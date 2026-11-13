@@ -1,0 +1,1296 @@
+// interp.ac -- PDP-1 FOCAL's interpreter: the command loop, the dispatcher,
+// the line register and the push-down list, DO, GOTO, IF, FOR, RETURN, QUIT,
+// COMMENT, L, ERASE, MODIFY, WRITE and OUTPUT as commands, the end of a line,
+// the trace, and errors.
+//
+// The control model is FOCAL,1969's.
+// The line register (lnReg) holds the number of the line being run, 0 for a
+// line typed at *, apart from the source cursor (store.ac), the place being
+// read.
+// GOTO sets both; DO of a group or of everything sets both and saves the old
+// ones; DO of one line moves only the cursor; RETURN sets the register to 0
+// and ends the line; FOR runs the rest of its line as a one-line subroutine,
+// restoring the cursor each pass but not the register.
+// At the end of a line (eol), in order: a FOR on top steps; else with the
+// register 0 the DO on top returns, or with none, *; else the next line after
+// the register runs, unless it is past the last, or outside the range of the
+// DO on top, when that DO returns.
+//
+// The push-down list (bank 5, pdP) holds DO and FOR frames (focal.ah) and
+// the expression evaluator's entries.
+// In FOCAL-1C it is in the pool, from pdBase, the word above the text's zero
+// word, up to the variables.
+//
+// A ? toggles the trace wherever the parse reads (nxPeek), except in a
+// string or a comment, where it is text.
+// While the trace is on, each character the source cursor takes is printed
+// (trHook), and the end of a line as CR LF.
+// It goes off at * and at an error.
+//
+// FOCAL-1C (FOCAL_1C defined) has no OUTPUT, and of LIBRARY only PUNCH; L
+// alone ends the line and any program, as on PDP-1 FOCAL's typewriter.
+//
+// Commands are reached by jmp and leave by jmp cmdLoop, eol or ready.
+// Every routine runs in bank 0 with the extend window open and leaves it open.
+// Errors leave by jmp i tmErr, normally errH, with the code in AC.
+// Include the file where it is not executed, since its data words follow its
+// code.
+// Needs focal.ah, <AIDS/skipmacros.ah>, termio.ac, lineed.ac, store.ac,
+// editcmd.ac, vars.ac, expr.ac and iocmd.ac.
+
+// ready -- the * prompt.
+// It sets the state of a fresh line, types *, and reads a line.
+// A line whose first non-blank is a digit is stored; any other runs.
+// A line from the tape too long for the line buffer is stored by stLong.
+// No * is typed while LIBRARY CALL's file is read (rdOn RD_FILE, ptape.ac).
+// Reached by jmp.
+local rdDig, rdLong
+ready, dzm trOn
+    dzm cuHook
+    dzm trMute
+    dzm trText
+    dzm evIf
+    dzm akMode
+#ifndef FOCAL_1C
+    lac [PD_BASE]
+    dac pdP
+#else
+    lac txTop
+    add [1]
+    dac pdP
+    dac pdBase
+#endif
+    dzm lnReg
+    jsp tmReady
+    lio [052]
+#ifndef FOCAL_1C
+    lac rdOn                // no * while a CALL's file is read
+    SKIP_NEXT_IF_SAME [RD_FILE]
+#endif
+    jsp putc
+    jsp getLine
+    lac lnLong
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rdLong
+    cli
+    jsp cuSetL
+    jsp cuBlank
+    jsp cuPeek
+    lai
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp cmdLoop
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp cmdLoop
+rdDig, jsp stEnter
+    jmp ready
+rdLong, jsp stLong
+    jmp ready
+endloc
+
+// errH -- where every error goes (tmErr, fpErr).
+// Entry: AC = the error code, 0 for a lost connection, which prints nothing.
+// A reading of the tape ends, and output goes back to the terminal, a
+// partial line on the printer printed (lpOff).
+// Prints ?gg.ss, then @ gg.ss when the line register is not 0, a blank and
+// CR LF, then goes to *.
+// Reached by jmp.
+local erC, erE
+errH, dac erC
+    jsp i [rdStop:PTBANK]
+#ifndef FOCAL_1C
+    jsp i [lpOff:7]
+#endif
+    lac erC
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ready
+    dzm trOn
+    dzm cuHook
+    dzm trMute
+    dzm trText
+    dzm akMode
+    lio [077]
+    jsp putc
+    lac erC
+    rar 7s
+    and [037]
+    lia
+    jsp p2d
+    lio [056]
+    jsp putc
+    lac erC
+    and [0177]
+    lia
+    jsp p2d
+    lac lnReg
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp erE
+    lio [040]
+    jsp putc
+    lio [0100]
+    jsp putc
+    lio [040]
+    jsp putc
+    lio lnReg
+    jsp lnPut
+erE, lio [040]
+    jsp putc
+    jsp newline
+    jmp ready
+erC, 0
+endloc
+
+// cmdLoop -- run the next command.
+// Blanks and a ; are passed, and the end of the line goes to eol.
+// A * is the command that reads the tape (cStar).
+// A letter is a command, its word running on to a blank, a ;, a comma or
+// the end.
+// A break is looked for first, so Ctrl-C stops any program, even one that
+// prints nothing.
+// Output is the terminal's again, since a TYPE or WRITE under O P has ended.
+// Errors: ?03.28 not a letter, or no such command.
+// Reached by jmp.
+local cmC, cmP, cmWord, cmGo, cmSemi
+cmdLoop,
+#ifndef FOCAL_1C
+    dzm ptOn
+#endif
+    jsp brkChk
+    jsp nxBlank
+    dio cmC
+    lac cmC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp eol
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp cmSemi
+    SKIP_NEXT_IF_DIFFERENT [052]
+    jmp cStar
+    lio cmC
+    jsp isLetter
+    jmp cBad
+    jsp cuSkip
+cmWord, jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [040]
+    jmp cmGo
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp cmGo
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp cmGo
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp cmGo
+    jsp cuSkip
+    jmp cmWord
+cmGo, lac cmC
+    sub [0101]
+    add [cmTab]
+    dac cmP
+    lac i cmP
+    dac cmP
+    jmp i cmP
+cmSemi, jsp cuSkip
+    jmp cmdLoop
+cmC, 0
+cmP, 0
+endloc
+
+// The commands by their first letter, A to Z.
+cmTab, cAsk
+    cBad
+    cComm
+    cDo
+    cErase
+    cFor
+    cGoto
+    cBad
+    cIf
+    cBad
+    cBad
+    cLib
+    cMod
+    cBad
+#ifndef FOCAL_1C
+    cOut
+#else
+    cBad
+#endif
+    cBad
+    cQuit
+    cRet
+    cSet
+    cType
+    cBad
+    cBad
+    cWrite
+    cBad
+    cBad
+    cBad
+
+// cBad -- ?03.28.
+// Reached by jmp.
+cBad, lac [ERR_NOCMD]
+    jmp i tmErr
+
+// cComm -- COMMENT or CONTINUE.
+// The rest of the line is passed over; a ? in it is text.
+// Reached by jmp.
+local ccL, ccE
+cComm, law 1
+    dac trText
+ccL, jsp cuPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp ccE
+    jsp cuSkip
+    jmp ccL
+ccE, dzm trText
+    jmp eol
+endloc
+
+// cErase, cMod -- ERASE and MODIFY (editcmd.ac), which end the line and any
+// program, as FOCAL,1969's do.
+// cWrite -- WRITE, on the printer under O P, after which the line goes on at
+// its next ;, since WRITE reads its first argument only.
+// Reached by jmp.
+cErase, jsp cmErase
+    jmp ready
+cMod, jsp cmModify
+    jmp ready
+cWrite,
+#ifndef FOCAL_1C
+    lac lpGo
+    dac ptOn
+#endif
+    jsp cmWrite
+    jsp skipCmd
+    jmp cmdLoop
+
+#ifndef FOCAL_1C
+// cOut -- OUTPUT PRINTER (O P) and OUTPUT TERMINAL (O T).
+// TYPE's output and WRITE's listing go to the line printer (lpt.ac) from O P
+// until O T, an error, Ctrl-C, a lost connection or a restart; O T prints a
+// partial line first.
+// The word is known by its first letter, and the rest of the command is
+// passed over, as LIBRARY's words are.
+// Errors: ?31.70 no word, or a word other than PRINTER or TERMINAL.
+// Reached by jmp.
+local ouC, ouP, ouBad
+cOut, jsp nxBlank
+    dio ouC
+    jsp skipCmd
+    lac ouC
+    SKIP_NEXT_IF_DIFFERENT [0120]
+    jmp ouP
+    SKIP_NEXT_IF_SAME [0124]
+    jmp ouBad
+    jsp i [lpOff:7]
+    jmp cmdLoop
+ouP, law PT_LPT
+    dac lpGo
+    jmp cmdLoop
+ouBad, lac [ERR_OUTWORD]
+    jmp i tmErr
+ouC, 0
+endloc
+#endif
+
+// cQuit -- QUIT, which ends everything.
+// cRet -- RETURN, which sets the line register to 0 and ends the line.
+// Reached by jmp.
+cQuit, jmp ready
+cRet, dzm lnReg
+    jmp eol
+
+// cStar -- *, which makes the tape the input source (rdBegin) from the next
+// character read on, so the rest of the line runs first and an ASK in it
+// reads the tape.
+// The * must stand alone, followed by a blank, a ; or the end of the line.
+// Errors: ?03.28 anything else after the *.
+// Reached by jmp.
+local csGo
+cStar, jsp cuSkip
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [040]
+    jmp csGo
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp csGo
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp csGo
+    jmp cBad
+csGo, jsp i [rdBegin:PTBANK]
+    jmp cmdLoop
+endloc
+
+// cLib -- L with nothing after it but ; and more commands ends the DCS2
+// session (tmBye), which ends the line and any program, the rest not run.
+// On the typewriter only the line and any program end, and * follows.
+// L with an argument is LIBRARY.
+// Its word, running on to a blank, a ;, a comma or the end, is known by its
+// first letter: PUNCH, UNIT n, and the file system's SAVE name, CALL name,
+// DELETE name, LIST and FORMAT.
+// Errors: ?30.71 a word not LIBRARY's.
+// Reached by jmp.
+local lbBye, lbC, lbW, lbGo, lbBad, lbNamed, lbBare
+cLib, jsp nxBlank
+    dio lbC
+    lac lbC
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp lbBye
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp lbBye
+    lio lbC
+    jsp isLetter
+    jmp lbBad
+lbW, jsp cuSkip
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [040]
+    jmp lbGo
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp lbGo
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp lbGo
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp lbGo
+    jmp lbW
+lbGo, lac lbC
+    SKIP_NEXT_IF_DIFFERENT [0120]
+    jmp lbPunch
+#ifndef FOCAL_1C
+    SKIP_NEXT_IF_DIFFERENT [0125]
+    jmp lbUnit
+    lio [LB_SAVE]
+    SKIP_NEXT_IF_DIFFERENT [0123]
+    jmp lbNamed
+    lio [LB_CALL]
+    SKIP_NEXT_IF_DIFFERENT [0103]
+    jmp lbNamed
+    lio [LB_DELETE]
+    SKIP_NEXT_IF_DIFFERENT [0104]
+    jmp lbNamed
+    lio [LB_LIST]
+    SKIP_NEXT_IF_DIFFERENT [0114]
+    jmp lbBare
+    lio [LB_FORMAT]
+    SKIP_NEXT_IF_DIFFERENT [0106]
+    jmp lbBare
+#endif
+lbBad, lac [ERR_LBWORD]
+    jmp i tmErr
+#ifndef FOCAL_1C
+lbBye, jsp tmBye
+    jmp ready
+#else
+lbBye, jmp ready
+#endif
+#ifndef FOCAL_1C
+// a name after the word; LIST and FORMAT pass over the rest, as PUNCH does
+lbNamed, dio lbOp
+    jsp lbName
+    jmp lbRun
+lbBare, dio lbOp
+    jsp skipCmd
+    jmp lbRun
+#endif
+lbC, 0
+endloc
+
+#ifndef FOCAL_1C
+
+// lbUnit -- LIBRARY UNIT n, which selects Microtape drive n, 1 to 8, or the
+// drum for 0, from now until a restart (go).
+// Errors: ?30.<0 anything but one digit 0 to 8 before ; or the end.
+// Reached by jmp.
+local unN
+lbUnit, jsp nxBlank
+    jsp cuGet
+    lai
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lbArg
+    sub [0d9]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lbArg
+    add [0d9]
+    dac unN
+    jsp lbEnd
+    lac unN
+    dac lbDrive
+    jmp cmdLoop
+unN, 0
+endloc
+
+// lbName -- read a program's name into lbNm, then blanks, and ; or the end
+// of the line, which is not taken.
+// The name is 1 to 6 letters and digits, the first a letter, two characters
+// a word, the first in the high nine bits, zeros after it.
+// Errors: ?30.<0 no name, a bad one, or anything else after it.
+// AC and IO are clobbered.
+// Called via jsp.
+local nmX, nmK, nmL, nmE
+lbName, dap nmX
+    dzm lbNm
+    dzm lbNm+1
+    dzm lbNm+2
+    dzm nmK
+    jsp nxBlank
+    jsp isLetter
+    jmp lbArg
+nmL, jsp nxPeek
+    jsp isAlnum
+    jmp nmE
+    lac nmK
+    SKIP_NEXT_IF_DIFFERENT [6]
+    jmp lbArg               // a seventh character
+    dac chK
+    jsp cuSkip
+    lac [lbNm]
+    dac chA
+    jsp chPut
+    idx nmK
+    jmp nmL
+nmE, jsp lbEnd
+nmX, jmp .
+nmK, 0
+endloc
+
+// lbEnd -- pass blanks, then require ; or the end of the line, which is not
+// taken.
+// Errors: ?30.<0 anything else.
+// AC and IO are clobbered.
+// Called via jsp.
+// lbArg -- ?30.<0.
+// Reached by jmp.
+local leX
+lbEnd, dap leX
+    jsp nxBlank
+    lai
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp leX
+    SKIP_NEXT_IF_SAME [CH_CR]
+    jmp lbArg
+leX, jmp .
+lbArg, lac [ERR_LBARG]
+    jmp i tmErr
+endloc
+
+// lbRun -- run LIBRARY's operation lbOp on the file system (fsLib, bank 7),
+// with tmErr at lbBrk meanwhile, so a SAVE cut short deletes its file.
+// A CALL has opened its file as the reader's input.
+// The program is then erased, as ERASE ALL, which ends the line and any
+// program, and the file's lines come in at *, then GO (ptape.ac).
+// The other operations go on at the line's next ;.
+// Errors: those of fsLib.
+// Reached by jmp.
+local rnE, rnCall
+lbRun, lac [lbBrk]
+    dac tmErr
+    lio lbOp
+    jsp i [fsLib:7]
+    dac rnE
+    lac [errH]
+    dac tmErr
+    lac rnE
+    SKIP_NEXT_IF_AC_ZERO
+    jmp i tmErr
+    lac lbOp
+    SKIP_NEXT_IF_DIFFERENT [LB_CALL]
+    jmp rnCall
+    jsp skipCmd
+    jmp cmdLoop
+rnCall, jsp brkChk           // a Ctrl-C typed during the search is seen here
+    jsp stInit
+    jsp i stVarClr
+    jmp ready
+rnE, 0
+endloc
+
+// lbBrk -- tmErr while a LIBRARY operation runs.
+// Deletes a SAVE's file (fsStop), then handles the error as any other, its
+// code in AC.
+// Reached by jmp.
+local bkE
+lbBrk, dac bkE
+    jsp i [fsStop:7]
+    lac [errH]
+    dac tmErr
+    lac bkE
+    jmp errH
+bkE, 0
+endloc
+
+// lbCall -- call the bank-0 routine whose address is in lbFn, via jsp, for
+// code in another bank, which the routine's dap return cannot reach.
+// IO goes to the routine; AC and IO are as it leaves them.
+// Called via jsp i.
+lbCall, dac lbR
+    jsp i lbFn
+    jmp i lbR
+
+lbNm,                       // the name, as the library directory holds it
+    table 3
+lbDrive, 0                  // the Microtape drive, 1 to 8, or 0 the drum
+lbOp, 0                     // the operation, LB_SAVE ...
+lbR, 0                      // lbCall's return, a full address
+lbFn, 0                     // lbCall's routine
+#endif
+
+// lbPunch -- LIBRARY PUNCH, which punches leader, then exactly what WRITE ALL
+// types, then trailer; nothing goes to the terminal meanwhile.
+// The rest of the command is passed over, and the line goes on at its next ;.
+// The program and the variables are not touched.
+// Ctrl-C or a lost connection stops the listing (ptBrk), and the trailer is
+// still punched.
+// Reached by jmp.
+local pbE
+lbPunch, jsp skipCmd
+    lac [ptBrk]
+    dac tmErr
+    jsp i [ptLead:PTBANK]
+    law 1
+    dac ptOn
+    jsp cmWrite             // at ; or the end, so WRITE lists all
+    dzm ptOn
+    jsp i [ptLead:PTBANK]
+    lac [errH]
+    dac tmErr
+    jmp cmdLoop
+
+// ptBrk -- tmErr while LIBRARY PUNCH runs.
+// Punches the trailer, then handles the error as any other, its code in AC.
+// Reached by jmp.
+ptBrk, dac pbE
+    dzm ptOn
+    jsp i [ptLead:PTBANK]
+    lac [errH]
+    dac tmErr
+    lac pbE
+    jmp errH
+pbE, 0
+endloc
+
+// cGoto -- GOTO n, and GO, which set the line register and the cursor to
+// line n, or to the first line with no argument or 0.
+// gotoW is the same with the line word in AC, for IF.
+// Errors: ?03.05 a group or a missing line, and lnGet's.
+// Reached by jmp.
+local gtW, goFirst, goNone, gtBad
+cGoto, lio [1]
+    jsp lnGet
+gotoW, dac gtW
+    jsp nxPeek              // a ? just after the argument toggles the trace now
+    lac gtW
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp goFirst
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp gtBad
+    lio gtW
+    jsp stFind
+    SKIP_NEXT_IF_AC_ZERO
+    jmp gtBad
+    lac gtW
+    dac lnReg
+    lio stP
+    jsp cuSetS
+    jmp cmdLoop
+goFirst, lac [TX_BASE]
+    dac stP
+    lac i stP
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp goNone
+    dac lnReg
+    lio stP
+    jsp cuSetS
+    jmp cmdLoop
+// with no program, the line ends as it does after the last line
+goNone, dzm lnReg
+    jmp eol2
+gtBad, lac [ERR_GOTO]
+    jmp i tmErr
+gtW, 0
+endloc
+
+// cIf -- IF expression targets.
+// The first target is taken for a negative value, the second for zero, the
+// third for positive.
+// A branch past the targets given falls through to the rest of the line
+// after the next ;.
+// A target taken is a GOTO, and an empty one is line 0, the whole program.
+// Reached by jmp.
+local ifK, ifI, ifW, ifNn, ifPos, ifSet, ifL, ifGo, ifFall
+cIf, law 1
+    dac evIf
+    cli
+    jsp evalX
+    dzm evIf
+    lac [ifV]
+    FPCALLA(fpStA)
+    lac ifV+1
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ifNn
+    law 1
+    jmp ifSet
+ifNn, and [0377777]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ifPos
+    law 2
+    jmp ifSet
+ifPos, law 3
+ifSet, dac ifK
+    law 1
+    dac ifI
+ifL, lio [1]
+    jsp lnGet
+    dac ifW
+    lac ifI
+    SKIP_NEXT_IF_DIFFERENT ifK
+    jmp ifGo
+    idx ifI
+    jsp nxBlank
+    lai
+    SKIP_NEXT_IF_SAME [054]
+    jmp ifFall
+    jsp cuSkip
+    jmp ifL
+ifGo, lac ifW
+    jmp gotoW
+ifFall, jsp skipCmd
+    jmp cmdLoop
+ifK, 0
+ifI, 0
+ifW, 0
+endloc
+
+// cDo -- DO n, of a line, a group, or everything (no argument, 0, or a word
+// starting with A).
+// A frame saves the cursor, the line register and the range.
+// DO of a group or of everything sets the register to its first line; DO of
+// one line leaves it.
+// After the DO returns, the line goes on at the character that ended the
+// argument.
+// Errors: ?02.52 a missing line, ?02.32 a missing group, lnGet's, and
+// ?02.79 from the list.
+// Reached by jmp.
+local doT, doAw, doNum, doGrp, doAll, doNoL, doNoG
+cDo, jsp nxBlank
+    lai
+    SKIP_NEXT_IF_SAME [0101]
+    jmp doNum
+doAw, jsp nxPeek
+    jsp isLetter
+    jmp doAll
+    jsp cuSkip
+    jmp doAw
+doNum, lio [1]
+    jsp lnGet
+    dac doW
+    jsp nxPeek              // a ? just after the argument toggles the trace now
+    lac doW
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp doAll
+    and [01777]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp doGrp
+    lio doW
+    jsp stFind
+    SKIP_NEXT_IF_AC_ZERO
+    jmp doNoL
+    lio [FK_DO1]
+    jsp doPush
+    lio stP
+    jsp cuSetS
+    jmp cmdLoop
+doGrp, lio doW
+    jsp stFind
+    lio i stP
+    dio doT
+    lac doT
+    and [0776000]
+    SKIP_NEXT_IF_SAME doW
+    jmp doNoG
+    lio [FK_DOG]
+    jsp doPush
+    lac doT
+    dac lnReg
+    lio stP
+    jsp cuSetS
+    jmp cmdLoop
+// everything; with no program, nothing runs
+doAll, dzm doW
+    lac [TX_BASE]
+    dac stP
+    lac i stP
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp cmdLoop
+    dac doT
+    lio [FK_DOA]
+    jsp doPush
+    lac doT
+    dac lnReg
+    lio [TX_BASE]
+    jsp cuSetS
+    jmp cmdLoop
+doNoL, lac [ERR_DOLINE]
+    jmp i tmErr
+doNoG, lac [ERR_DOGRP]
+    jmp i tmErr
+doT, 0
+endloc
+
+// doPush -- push a DO frame of the kind in IO, whose range is doW.
+// The frame holds the cursor, the line register, the range and the kind.
+// AC and IO are clobbered.
+// Called via jsp.
+local dpX, dpK
+doPush, dap dpX
+    dio dpK
+    jsp curGet
+    lio cgA
+    jsp pdPush
+    lio cgI
+    jsp pdPush
+    lio lnReg
+    jsp pdPush
+    lio doW
+    jsp pdPush
+    lio dpK
+    jsp pdPush
+dpX, jmp .
+dpK, 0
+endloc
+
+// cFor -- FOR var = start, limit; or start, step, limit; then a ; or a comma,
+// after which the rest of the line is the loop's body.
+// The index is set to the start, the step and limit are evaluated once, and
+// a frame holds them with the body's place.
+// With one value it is a SET, and the line goes on.
+// Errors: ?04.39 no =, ?31.<7 no ; or comma after the values, varRef's,
+// evalX's and ?02.79.
+// Reached by jmp.
+local foA, foTwo, foGo, foTk, foNoEq
+cFor, jsp varRef
+    dac foA
+    jsp nxBlank
+    lai
+    SKIP_NEXT_IF_SAME [075]
+    jmp foNoEq
+    jsp cuSkip
+    cli
+    jsp evalX
+    lac foA
+    FPCALLA(fpStA)
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_SAME [054]
+    jmp cmdLoop
+    jsp cuSkip
+    cli
+    jsp evalX
+    lac [foStp]
+    FPCALLA(fpStA)
+    jsp nxPeek
+    lai
+    SKIP_NEXT_IF_SAME [054]
+    jmp foTwo
+    jsp cuSkip
+    cli
+    jsp evalX
+    lac [foLim]
+    FPCALLA(fpStA)
+    jmp foGo
+// two values, so the second is the limit and the step is 1
+foTwo, lac foStp
+    dac foLim
+    lac foStp+1
+    dac foLim+1
+    lac foStp+2
+    dac foLim+2
+    law 1
+    dac foStp
+    lac [0200000]
+    dac foStp+1
+    dzm foStp+2
+foGo, jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp foTk
+    SKIP_NEXT_IF_DIFFERENT [054]
+    jmp foTk
+    lac [ERR_NOFUNC]
+    jmp i tmErr
+foTk, jsp cuSkip
+    lio foA
+    jsp pdPush
+    lio [foStp]
+    jsp push3
+    lio [foLim]
+    jsp push3
+    jsp curGet
+    lio cgA
+    jsp pdPush
+    lio cgI
+    jsp pdPush
+    lio [FK_FOR]
+    jsp pdPush
+    jmp cmdLoop
+foNoEq, lac [ERR_NOEQ]
+    jmp i tmErr
+foA, 0
+endloc
+
+// eol -- the end of a line, by the rule in the file header.
+// eol2 is the same without the trace's CR LF.
+// Reached by jmp.
+local eoK, eoT, eoN, eoK0, eoGo, eoNone
+eol,
+#ifndef FOCAL_1C
+    dzm ptOn                // TYPE $ ends here, not at cmdLoop
+#endif
+    lac trOn
+    SKIP_NEXT_IF_AC_ZERO
+    jsp newline
+eol2, dzm eoK
+    lac pdP
+#ifndef FOCAL_1C
+    SKIP_NEXT_IF_DIFFERENT [PD_BASE]
+#else
+    SKIP_NEXT_IF_DIFFERENT pdBase
+#endif
+    jmp eoK0
+    sub [1]
+    dac eoT
+    lac i eoT
+    dac eoK
+eoK0, lac eoK
+    SKIP_NEXT_IF_DIFFERENT [FK_FOR]
+    jmp forNext
+    lac lnReg
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp eoNone
+    lac eoK
+    SKIP_NEXT_IF_DIFFERENT [FK_DO1]
+    jmp doRet
+    lio lnReg
+    jsp stFind
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jsp stSkip
+    lio i stP
+    SKIP_NEXT_IF_IO_NOT_ZERO
+    jmp eoNone
+    dio eoN
+    lac eoK
+    SKIP_NEXT_IF_SAME [FK_DOG]
+    jmp eoGo
+    // a DO of a group returns once the next line is outside it
+    lac pdP
+    sub [2]
+    dac eoT
+    lac i eoT
+    xor eoN
+    and [0776000]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp doRet
+eoGo, lac eoN
+    dac lnReg
+    lio stP
+    jsp cuSetS
+    jmp cmdLoop
+// nothing more to run here, so the DO on top returns, or with none, *
+eoNone, lac eoK
+    SKIP_NEXT_IF_AC_ZERO
+    jmp doRet
+    jmp ready
+eoK, 0
+eoT, 0
+eoN, 0
+endloc
+
+// doRet -- return from the DO frame on top, the cursor and the line register
+// restored.
+// Reached by jmp.
+local drP
+doRet, lac pdP
+    sub [FR_DO]
+    dac pdP
+    dac drP
+    lac i drP
+    dac csA
+    idx drP
+    lac i drP
+    dac csI
+    idx drP
+    lac i drP
+    dac lnReg
+    jsp curSet
+    jmp cmdLoop
+drP, 0
+endloc
+
+// forNext -- end a pass of the FOR frame on top.
+// The index is stepped, and while it is at most the limit the body runs
+// again; else the frame goes and the line ends as it would have.
+// Reached by jmp.
+local fnB, fnA, fnT, fnEnd
+forNext, lac pdP
+    sub [FR_FOR]
+    dac fnB
+    lac i fnB
+    dac fnA
+    FPCALLA(fpLdA)
+    lac fnB
+    add [1]
+    FPCALLA(fpLdB)
+    FPCALL(fpAdd)
+    lac fnA
+    FPCALLA(fpStA)
+    lac fnB
+    add [4]
+    FPCALLA(fpLdB)
+    FPCALL(fpCmp)
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp fnEnd
+    lac fnB
+    add [7]
+    dac fnT
+    lac i fnT
+    dac csA
+    idx fnT
+    lac i fnT
+    dac csI
+    jsp curSet
+    jmp cmdLoop
+fnEnd, lac fnB
+    dac pdP
+    jmp eol2
+fnB, 0
+fnA, 0
+fnT, 0
+endloc
+
+// curGet -- get the cursor's place.
+// cgA is its stored line's first text word, 0 for the line buffer, and cgI
+// the characters taken.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local cgX
+curGet, dap cgX
+    lac cuSrc
+    SKIP_NEXT_IF_AC_ZERO
+    lac cuA
+    dac cgA
+    lac cuI
+    dac cgI
+cgX, jmp .
+endloc
+
+// curSet -- set the cursor back to the place csA, csI, as curGet gave it.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local ctX, ctL, ctI, ctT
+curSet, dap ctX
+    lac csA
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ctL
+    dac cuA
+    sub [1]
+    dac ctT
+    lac i ctT
+    dac cuN
+    lac [cuPS]
+    dac cuPth
+    law 1
+    dac cuSrc
+    jmp ctI
+ctL, dzm cuSrc
+    lac [cuPL]
+    dac cuPth
+    lac lnLen
+    dac cuN
+ctI, lac csI
+    dac cuI
+ctX, jmp .
+ctT, 0
+endloc
+
+// skipCmd -- pass the source to the next ; or the end of the line.
+// AC and IO are clobbered.
+// Called via jsp.
+local skX, skL
+skipCmd, dap skX
+skL, jsp nxPeek
+    lai
+    SKIP_NEXT_IF_DIFFERENT [073]
+    jmp skX
+    SKIP_NEXT_IF_DIFFERENT [CH_CR]
+    jmp skX
+    jsp cuSkip
+    jmp skL
+skX, jmp .
+endloc
+
+// nxPeek -- look at the source's next character without taking it, CR at the
+// end.
+// A ? there toggles the trace and is taken, and the character after it is
+// looked at.
+// IO is the character; AC is clobbered.
+// Called via jsp.
+local npX, npL
+nxPeek, dap npX
+npL, jsp cuPeek
+    lai
+    SKIP_NEXT_IF_SAME [077]
+    jmp npX
+    jsp cuSkip
+    lac trOn
+    xor [1]
+    dac trOn
+    SKIP_NEXT_IF_AC_ZERO
+    lac [trHook]
+    dac cuHook              // the hook while the trace is on, else none
+    jmp npL
+npX, jmp .
+endloc
+
+// nxBlank -- pass the blanks at the source's place.
+// IO is the character it stopped at, not taken, as nxPeek gives it; AC is
+// clobbered.
+// Called via jsp.
+local nbX, nbL
+nxBlank, dap nbX
+nbL, jsp nxPeek
+    lai
+    SKIP_NEXT_IF_SAME [040]
+    jmp nbX
+    jsp cuSkip
+    jmp nbL
+nbX, jmp .
+endloc
+
+// trHook -- the trace's hook (cuHook).
+// Prints the character in IO taken from the source while the trace is on,
+// unless it is in a string (trMute), or is a ? outside a comment (trText).
+// It prints on the terminal even under O P (putT).
+// AC is clobbered, IO is preserved.
+// Called via jsp i cuHook.
+local thX, thC, thP, thO
+trHook, dap thX
+    dio thC
+    lac trOn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp thO
+    lac trMute
+    SKIP_NEXT_IF_AC_ZERO
+    jmp thO
+    lac thC
+    SKIP_NEXT_IF_SAME [077]
+    jmp thP
+    lac trText
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp thO
+thP, lio thC
+    jsp putT
+thO, lio thC
+thX, jmp .
+thC, 0
+endloc
+
+// isLetter, isDigit, isAlnum, isCloser -- skip when the character in IO is a
+// letter (upper case), a digit, either, or a closing enclosure.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local ilX
+isLetter, dap ilX
+    lai
+    sub [0101]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ilX
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ilX
+    idx ilX
+ilX, jmp .
+endloc
+
+local idX
+isDigit, dap idX
+    lai
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp idX
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp idX
+    idx idX
+idX, jmp .
+endloc
+
+local iaX, iaY, iaL
+isAlnum, dap iaX
+    lai
+    sub [060]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp iaX
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp iaL
+iaY, idx iaX
+    jmp iaX
+// from 072 on, a letter is 0101 to 0132
+iaL, sub [7]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp iaX
+    sub [0d26]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp iaX
+    jmp iaY
+iaX, jmp .
+endloc
+
+local icX, icY
+isCloser, dap icX
+    lai
+    SKIP_NEXT_IF_DIFFERENT [051]
+    jmp icY
+    SKIP_NEXT_IF_DIFFERENT [0135]
+    jmp icY
+    SKIP_NEXT_IF_DIFFERENT [076]
+    jmp icY
+    jmp icX
+icY, idx icX
+icX, jmp .
+endloc
+
+// opener -- AC = the closing partner ) ] or > of the opening enclosure in IO,
+// or 0 for any other character.
+// IO is preserved.
+// Called via jsp.
+local opX, opP, opB, opA
+opener, dap opX
+    lai
+    SKIP_NEXT_IF_DIFFERENT [050]
+    jmp opP
+    SKIP_NEXT_IF_DIFFERENT [0133]
+    jmp opB
+    SKIP_NEXT_IF_DIFFERENT [074]
+    jmp opA
+    cla
+    jmp opX
+opP, law 051
+    jmp opX
+opB, law 0135
+    jmp opX
+opA, law 076
+opX, jmp .
+endloc
+
+// pdPush -- push IO.
+// Errors: ?02.79 the list is full; in FOCAL-1C it is full when it meets the
+// variables, which never lie below pdP.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local ppX
+pdPush, dap ppX
+    lac pdP
+#ifndef FOCAL_1C
+    SKIP_NEXT_IF_DIFFERENT [PD_END]
+#else
+    SKIP_NEXT_IF_DIFFERENT vrTop
+#endif
+    jmp pdFull
+    dio i pdP
+    idx pdP
+ppX, jmp .
+endloc
+
+// pdFull -- ?02.79.
+// Reached by jmp.
+pdFull, lac [ERR_PDL]
+    jmp i tmErr
+
+// pdPop -- pop into IO.
+// pdTop -- IO = the word on top, left there.
+// Both clobber AC.
+// Called via jsp.
+local pqX, ptX, ptT
+pdPop, dap pqX
+    lac pdP
+    sub [1]
+    dac pdP
+    lio i pdP
+pqX, jmp .
+
+pdTop, dap ptX
+    lac pdP
+    sub [1]
+    dac ptT
+    lio i ptT
+ptX, jmp .
+ptT, 0
+endloc
+
+// push3 -- push the three words at the bank-0 address in IO.
+// AC and IO are clobbered.
+// Called via jsp.
+local p3X, p3P
+push3, dap p3X
+    dio p3P
+    lio i p3P
+    jsp pdPush
+    idx p3P
+    lio i p3P
+    jsp pdPush
+    idx p3P
+    lio i p3P
+    jsp pdPush
+p3X, jmp .
+p3P, 0
+endloc
+
+// p2d -- print the number in IO, 0 to 129, as two digits, the tens digit '0'
+// plus the tens, so 10 to 12 tens print as : ; <, as FOCAL,1969's error
+// codes do.
+// AC and IO are clobbered.
+// Called via jsp.
+local p2X, p2V, p2T, p2L, p2O
+p2d, dap p2X
+    dio p2V
+    dzm p2T
+p2L, lac p2V
+    sub [0d10]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp p2O
+    dac p2V
+    idx p2T
+    jmp p2L
+p2O, lio p2T
+    jsp putDig
+    lio p2V
+    jsp putDig
+p2X, jmp .
+p2V, 0
+p2T, 0
+endloc
+
+lnReg, 0                    // the line register, the line being run, 0 at *
+pdP, 0                      // the push-down list's next free word
+#ifdef FOCAL_1C
+pdBase, 0                   // its first word, above the text, set at *
+#endif
+trOn, 0                     // the trace is on
+trMute, 0                   // in a string, so the trace prints nothing
+trText, 0                   // in a comment, so a ? is text
+evIf, 0                     // evalX reads IF's expression
+cgA, 0                      // curGet's place
+cgI, 0
+csA, 0                      // curSet's place
+csI, 0
+doW, 0                      // DO's line word, the range of the frame it pushes
+ifV,                        // IF's value
+    table 3
+foStp,                      // FOR's step
+    table 3
+foLim,                      // FOR's limit
+    table 3

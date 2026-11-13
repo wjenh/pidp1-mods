@@ -75,7 +75,7 @@ unsigned char *newP;
     else if( !(inP = fopen(nameP, "rb")) )
     {
         fprintf(stderr, "%s: %s: %s\n", progName, nameP, strerror(errno));
-        return( false ) );
+        return( false );
     }
     bufP->dataP = NULL;
     bufP->len = 0;
@@ -252,7 +252,7 @@ bool sawCtl;
 
     // FOCAL keeps a line longer than its buffer only as a stored line: after
     // any blanks, its first character must be a digit, else ?10.:5.
-    if( focal && (len > LINE_BUF_MAX) )
+    if( len > LINE_BUF_MAX )
     {
         first = 0;
         while( (first < len) && (lineP[first] == ' ') )

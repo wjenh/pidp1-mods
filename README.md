@@ -85,7 +85,6 @@ Note that **am1** can generate **macro_1** code if you really want to use it, bu
 A sample drum image containing multiple programs is provided, use the *drumlist* tool to see what's included.
 
 See the philosophical ramblings at the end of this document if you want to know why this version has gone
-
 in the direction it has.
 
 The entire build can exist in parallel with the original distribution, but if the OS commands and desktop items are
@@ -206,7 +205,7 @@ They are here because it was suggested that they be added.
 
 ## Why not track the original repo? Some philosophy.
 
-There are several reasons, but the primary one is a difference in philosopy.
+There are several reasons, but the primary one is a difference in philosophy.
 
 The original branch was centered around a view of *inside the black box is what is important*.
 While this did provide a pretty accurate representation in software of the detailed operation of the original hardware,
@@ -254,7 +253,7 @@ Finally, there is new software like the **am1** assembler.
 This falls into the convenience class also.
 If you want to fully recreate the original experience, you can of course use the original tools.
 However, the macro1 assembler is crude and error-prone.
-The new assembler and related tools are much easier and safter to use, and increase productivity.
+The new assembler and related tools are much easier and safer to use, and increase productivity.
 
 Philosophically, this is not wrong.
 We don't use paper tape today.
@@ -263,7 +262,7 @@ None of the original developers would have refused to use a better assembler bec
 that originally existed.
 In fact, there were several other assemblers at the time, such as **concise** and **midas**.
 
-Note also that PDP-1s were freely hacked, differences exisited across many of them, the most extreme example
+Note also that PDP-1s were freely hacked, differences existed across many of them, the most extreme example
 being the MIT PDP-1X, although the BBN PDP-1D is pretty close.
 
 There is one more practical reason for this divergence. The original version is really not being actively maintained

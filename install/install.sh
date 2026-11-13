@@ -283,7 +283,7 @@ while true; do
 
 	    sudo ln -sf $INSTALLDIR/bin/mtp /usr/local/bin/mtp
 	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
-	    sudo ln -sf $INSTALLDIR/bin/fstools /usr/local/bin/fstools
+	    sudo ln -sf $INSTALLDIR/bin/fstool /usr/local/bin/fstool
 
 	    sudo ln -sf $INSTALLDIR/bin/ovlload /usr/local/bin/ovlload
 

@@ -21,9 +21,9 @@
  * -p         - pack: move the files down to close the gaps between them
  * -n name    - the file's name: 1 to 9 characters, no control character, no leading blank,
  *               matched without regard to case and kept in upper case
- * -t type    - the file's type, octal 0-7777, default 0
+ * -t type    - the file's type, octal 0-7777, decimal 0-4095, default 0
  * -r         - mark the file read-only
- * -b blocks  - the blocks to allocate, octal, at least the data's and at most 0777;
+ * -b blocks  - the blocks to allocate, at least the data's size and at most 511, octal 0777;
  *              defaults to the data's size,  one block for an empty file
  * -f form    - the host file's format:
  *                bytes (the default), two 8-bit bytes a word, the first in
@@ -39,9 +39,10 @@
  * each a run of contiguous blocks.
  * A tape or a drum volume this tool writes works with the library routines and vice-versa.
  *
- * A drum volume is a run of whole tracks, 16 blocks of 0400 words a track with no checksum,
- * skewed by one block a track; its directory records its first track, and a volume whose
- * directory records another is refused, as the library's drMount refuses it.
+ * A drum volume is a run of tracks, 16 blocks of 256, octal 0400, words a track with no checksum,
+ * skewed by one block a track.
+ * its directory records its first track, and a volume whose
+ * directory records a different one is refused, as the library's drMount refuses it.
  *
  * The image is read completely, changed in memory, and written to a temporary file in its own
  * directory which is then renamed, so a failure leaves an existing file as it was.
@@ -240,7 +241,7 @@ static int cmdDelete(const char *nameP, bool force);
 static int cmdExtract(const char *nameP, enum form f, const char *outputP);
 static int cmdFormat(bool force, bool existed);
 static int cmdPack(void);
-static long octalArg(const char *argP, char opt);
+static long numericArg(const char *argP, char opt);
 static void usage(void);
 
 int
@@ -306,7 +307,7 @@ int i;
             break;
 
         case 't':
-            type = octalArg(optarg, 't');
+            type = numericArg(optarg, 't');
             if( type > ITYPE )
             {
                 fprintf(stderr, "fstool: -t %s: the type is octal 0-7777\n", optarg);
@@ -320,7 +321,7 @@ int i;
 
         case 'b':
             // Held below int's range; anything past 0777 is refused as RANGE later.
-            blocks = octalArg(optarg, 'b');
+            blocks = numericArg(optarg, 'b');
             if( blocks > 07777777 )
             {
                 blocks = 07777777;
@@ -382,11 +383,11 @@ int i;
         volBlks = (drTracks * DR_BPT);
         if( drTracks == 1 )
         {
-            snprintf(volName, sizeof(volName), "%s track %03o", imageNameP, drFirst);
+            snprintf(volName, sizeof(volName), "%s track %3d", imageNameP, drFirst);
         }
         else
         {
-            snprintf(volName, sizeof(volName), "%s tracks %03o-%03o", imageNameP, drFirst,
+            snprintf(volName, sizeof(volName), "%s tracks %3d-%3d", imageNameP, drFirst,
                 ((drFirst + drTracks) - 1));
         }
         volNameP = volName;
@@ -655,7 +656,7 @@ int i;
     if( (fstat(fileno(fP), &st) != 0) || !S_ISREG(st.st_mode) || ((st.st_size % sizeof(buf)) != 0) ||
         ((st.st_size / (off_t) sizeof(buf)) > BLKS) )
     {
-        fprintf(stderr, "fstool: %s: not a tape image, a whole number of %d-byte blocks, at most %#o\n",
+        fprintf(stderr, "fstool: %s: not a tape image, a whole number of %d-byte blocks, at most %d\n",
             pathP, (int) sizeof(buf), BLKS);
         fclose(fP);
         return(false);
@@ -677,7 +678,7 @@ int i;
             if( image[blk][i] > MASK )
             {
                 fprintf(stderr,
-                    "fstool: %s: not a tape image (block %#o word %#o is %#o, more than 18 bits)\n",
+                    "fstool: %s: not a tape image (block %d word %d is octal %o, more than 18 bits)\n",
                     pathP, blk, i, image[blk][i]);
                 fclose(fP);
                 return(false);
@@ -720,7 +721,7 @@ long end;
     if( (fstat(fileno(fP), &st) != 0) || !S_ISREG(st.st_mode) || ((st.st_size % 4) != 0) ||
         ((st.st_size / 4) > DR_WORDS) )
     {
-        fprintf(stderr, "fstool: %s: not a drum file, a whole number of 4-byte words, at most %#o\n",
+        fprintf(stderr, "fstool: %s: not a drum file, a whole number of 4-byte words, at most %d\n",
             pathP, DR_WORDS);
         fclose(fP);
         return(false);
@@ -759,7 +760,7 @@ long end;
             if( drum[i] > MASK )
             {
                 fprintf(stderr,
-                    "fstool: %s: not a drum file (track %#o word %#o is %#o, more than 18 bits)\n",
+                    "fstool: %s: not a drum file (track %d word %d is octal 0%o, more than 18 bits)\n",
                     pathP, (int) (i / DR_TRACKW), (int) (i % DR_TRACKW), drum[i]);
                 return(false);
             }
@@ -921,7 +922,7 @@ int blk;
             if( onDrum && (dirP[DDEV] != (uint32_t) drFirst) )
             {
                 snprintf(detail, sizeof(detail), "the directory records the volume's first track as "
-                    "%#o, not %#o", dirP[DDEV], drFirst);
+                    "%d, not %d", dirP[DDEV], drFirst);
                 libError(E_NOFS, NULL, detail);
                 return(false);
             }
@@ -934,8 +935,8 @@ int blk;
     if( onDrum && (dP[DMAGIC] == MAGIC) && (dP[DVER] == VERSION) && (dP[DBLKS] != 0)
         && ((dP[DBLKS] % DR_BPT) == 0) )
     {
-        snprintf(detail, sizeof(detail), "the directory in block 1 is for %#o blocks, %#o tracks, "
-            "not %#o", dP[DBLKS], (dP[DBLKS] / DR_BPT), drTracks);
+        snprintf(detail, sizeof(detail), "the directory in block 1 is for %d blocks, %d tracks, "
+            "not %d", dP[DBLKS], (dP[DBLKS] / DR_BPT), drTracks);
         libError(E_NOFS, NULL, detail);
         return(false);
     }
@@ -1211,7 +1212,7 @@ uint32_t w;
                 | ((uint32_t) bytesP[(4 * i) + 2] << 16) | ((uint32_t) bytesP[(4 * i) + 3] << 24));
             if( w > MASK )
             {
-                fprintf(stderr, "fstool: %s: word %#lo is %#o, larger than 18 bits\n", pathP,
+                fprintf(stderr, "fstool: %s: word %ld is octal 0%o, larger than 18 bits\n", pathP,
                     (unsigned long) i, w);
                 free(bytesP);
                 free(wordsP);
@@ -1456,8 +1457,8 @@ char meaning[128];
     return(1);
 }
 
-// -D's value: first,tracks in octal, a volume of whole tracks on the drum, or all, every
-// volume, for -l. A volume not on the drum is NOUNIT, as the library's drMount gives it.
+// -D's value: first, tracks, a volume of tracks on the drum, or all, every volume, for -l.
+// A volume not on the drum is NOUNIT, as the library's drMount gives it.
 // Exits on any fault.
 static void
 parseVolume(const char *argP)
@@ -1480,10 +1481,10 @@ long tracks;
     tracks = -1;
     if( (*cP >= '0') && (*cP <= '7') )
     {
-        first = strtol(cP, &endP, 8);
-        if( (*endP == ',') && (endP[1] >= '0') && (endP[1] <= '7') )
+        first = strtol(cP, &endP, 0);
+        if( *endP == ',')
         {
-            tracks = strtol(&endP[1], &endP, 8);
+            tracks = strtol(&endP[1], &endP, 0);
         }
         if( (*endP != '\0') || (errno != 0) )
         {
@@ -1492,13 +1493,13 @@ long tracks;
     }
     if( tracks < 0 )
     {
-        fprintf(stderr, "fstool: -D %s: a volume is first,tracks, both octal, or all\n", argP);
+        fprintf(stderr, "fstool: -D %s: a volume is first,tracks, or all\n", argP);
         usage();
     }
     if( (first >= DR_TRACKS) || (tracks < 1) || ((first + tracks) > DR_TRACKS) )
     {
         fprintf(stderr, "fstool: -D %s: NOUNIT, the volume's tracks are not on the drum: the first "
-            "track is 0-037, with at least one track, the last within 037\n", argP);
+            "track is 0-31, octal 0-037, with at least one track, the last less than 32, octal 040\n", argP);
         exit(1);
     }
     drFirst = (int) first;
@@ -1529,7 +1530,7 @@ int last;
     }
 
     freeSpace(0, &total, &largest, &fit);
-    printf("%s: generation %o, %#o blocks, %#o free, largest gap %#o\n", volNameP,
+    printf("%s: generation %d, %d blocks, %d free, largest gap %d\n", volNameP,
         dirP[DGEN], dirP[DBLKS], total, largest);
     printf("slot  name       type  app  ro  first  blocks    words\n");
     for( slot = 0; slot < NENT; slot++ )
@@ -1540,13 +1541,13 @@ int last;
             continue;
         }
         unpackName(eP, name);
-        printf("%#4o  %-9s  %04o  %3.2o  %-2s  %#5o  %#6o  %#7o\n", slot, name,
+        printf("%4d  %-9s  %4d  0%3.2o  %-2s  %5d  %6d  %7d\n", slot, name,
             (eP[DEINFO] & ITYPE), ((eP[DEINFO] & IAPP) >> IAPPSHIFT),
             ((eP[DEINFO] & IRO) ? "ro" : ""), eP[DEFIRST], eP[DEALLOC], eP[DELEN]);
 
         if( eP[DEMOVE] != 0 )
         {
-            fprintf(stderr, "fstool: %s: %s: warning: marked as moving to block %#o; a pack was "
+            fprintf(stderr, "fstool: %s: %s: warning: marked as moving to block %d; a pack was "
                 "stopped while moving it\n", volNameP, name, eP[DEMOVE]);
         }
         last = (int) (eP[DEFIRST] + ((eP[DELEN] + WDS - 1) / WDS));
@@ -1554,7 +1555,7 @@ int last;
         {
             if( !blockOk(blk) )
             {
-                fprintf(stderr, "fstool: %s: %s: warning: block %#o does not total zero, a checksum error\n",
+                fprintf(stderr, "fstool: %s: %s: warning: block %d does not total zero, a checksum error\n",
                     volNameP, name, blk);
             }
         }
@@ -1758,7 +1759,7 @@ char detail[128];
         blk = (int) (eP[DEFIRST] + (uint32_t) (i / WDS));
         if( ((i % WDS) == 0) && !blockOk(blk) )
         {
-            snprintf(detail, sizeof(detail), "block %#o does not total zero, a checksum error", blk);
+            snprintf(detail, sizeof(detail), "block %d does not total zero, a checksum error", blk);
             free(wordsP);
             return(libError(E_BADBLOCK, nameP, detail));
         }
@@ -1900,11 +1901,11 @@ int i;
     return(0);
 }
 
-// List every volume on the drum file: each track whose block 1, or else 2, holds this file
-// system's directory recording that track as its first, with blocks for whole tracks within
-// the drum. A volume overlapping one listed before it, a directory left from an earlier
-// format, gives a warning.
-// Returns the exit status: NOFS when no track starts a volume.
+// List every volume on the drum file, each track whose block 1 or 2 holds a file
+// system directory recording that track as its first, with blocks for whole tracks within
+// the drum.
+// A volume overlapping one listed before it, which indicates a directory left from an earlierformat, gives a warning.
+// Returns the exit status, NOFS when no track starts a volume.
 static int
 cmdScan(void)
 {
@@ -1956,23 +1957,23 @@ int t;
         }
         if( drTracks == 1 )
         {
-            printf("%s: track %03o, ", imageNameP, t);
+            printf("%s: track %3d, ", imageNameP, t);
         }
         else
         {
-            printf("%s: tracks %03o-%03o, ", imageNameP, t, ((t + drTracks) - 1));
+            printf("%s: tracks %3d-%3d, ", imageNameP, t, ((t + drTracks) - 1));
         }
-        printf("generation %o, %#o blocks, %d file%s, %#o free, largest gap %#o\n", dP[DGEN],
+        printf("generation %d, %d blocks, %d file%s, %d free, largest gap %d\n", dP[DGEN],
             volBlks, files, ((files == 1) ? "" : "s"), total, largest);
         if( blk != DIRBLK )
         {
-            fprintf(stderr, "fstool: %s: track %03o: warning: directory block 1 is not the file "
+            fprintf(stderr, "fstool: %s: track %3d: warning: directory block 1 is not the file "
                 "system's; the copy in block 2 was read\n", imageNameP, t);
         }
         if( t < lastEnd )
         {
-            fprintf(stderr, "fstool: %s: track %03o: warning: inside the volume listed before it, "
-                "which ends at track %03o; one of the two is left from an earlier format\n",
+            fprintf(stderr, "fstool: %s: track %3d: warning: inside the volume listed before it, "
+                "which ends at track %3d; one of the two is left from an earlier format\n",
                 imageNameP, t, (lastEnd - 1));
         }
         if( (t + drTracks) > lastEnd )
@@ -1990,20 +1991,22 @@ int t;
     return(0);
 }
 
-// An octal option value, digits 0-7 only.
+// A numeric option value.
+// Any base supported by strtol() with a base of 0 is valid,
+// e.g, 10, 012, 0b1101, 0x3F.
 // Exits through usage on anything else.
 static long
-octalArg(const char *argP, char opt)
+numericArg(const char *argP, char opt)
 {
 char *endP;
 long v;
 
     errno = 0;
-    v = strtol(argP, &endP, 8);
+    v = strtol(argP, &endP, 0);
     if( (*argP == '\0') || (*endP != '\0') || (errno != 0) || (v < 0) || (*argP == '-')
         || (*argP == '+') )
     {
-        fprintf(stderr, "fstool: -%c %s: not an octal number\n", opt, argP);
+        fprintf(stderr, "fstool: -%c %s: not a valid number\n", opt, argP);
         usage();
     }
 
@@ -2029,9 +2032,9 @@ usage(void)
         "  -x extracts name to output, -i formats an empty directory, a missing image is created.\n"
         "  -p packs the files to close any gaps.\n"
         "  -n name: 1 to 9 characters, any case, no control characters or a leading blank.\n"
-        "  -t type: octal 0-7777, default 0.\n"
+        "  -t type: decimal 0-4095, octal 0-7777, default 0.\n"
         "  -r: the file is read-only.\n"
-        "  -b blocks: octal, at least as big as the data, at most 0777; default is the data's size.\n"
+        "  -b blocks: at least as big as the data, at most 511, octal 0777, default is the data's size.\n"
         "  -f form:\n"
         "     bytes (default), two 8-bit bytes a word;\n"
         "     text, as bytes with line terminators stored as CR;\n"
@@ -2040,7 +2043,7 @@ usage(void)
         "    add replaces a file of that name;\n"
         "    delete removes a read-only file;\n"
         "    format overwrites another program's data.\n"
-        "  Numbers are octal.\n"
+        "  Numbers are decimal unless they start with a leading 0, 0x, or 0b.\n"
         "  Change a tape or a drum volume only when not being used by a program\n"
         "    A program that has it mounted would undo the change.\n"
         "    A tape in %s, or the drum %s, gives a warning.\n",

@@ -3,7 +3,7 @@ CC=gcc -O3
 
 all: mtp fstool asr33tape
 
-install: mtp fstool
+install: mtp fstool asr33tape
 	cp mtp ../../bin/mtp
 	strip ../../bin/mtp
 	cp fstool ../../bin/fstool

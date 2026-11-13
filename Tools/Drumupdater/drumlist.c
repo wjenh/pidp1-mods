@@ -23,6 +23,7 @@
  * 22/10/2026 Claude - an overlay's drum range is its span; a track's overlays in drum address order
  * 11-Nov-2026 Claude - file system volumes, by ovlfile.c's fsVolumeAt()
  * 13-Nov-2026 wje - change mtfs to fstool
+ * 13-Nov-2026 wje - fstool now is decimal by default, change hint to match
  *
  */
 #include <stdlib.h>
@@ -180,7 +181,7 @@ OvlFile *filesP;
             {
                 zTracks = 0;
             }
-            printf("Track %d: file system volume of %d track%s (fstool -D %o,%o), generation %o, %d file%s%s\n",
+            printf("Track %d: file system volume of %d track%s (fstool -D %d,%d), generation %d, %d file%s%s\n",
                 trackNo, vol.tracks, (vol.tracks == 1) ? "" : "s", trackNo, vol.tracks, vol.generation,
                 vol.files, (vol.files == 1) ? "" : "s",
                 (vol.fromCopy) ? ", from the directory's copy in block 2" : "");

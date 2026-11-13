@@ -14,8 +14,9 @@ Fstool directly modifies a tape image or a drum file that contains the file syst
 Numbers can be entered as decimal, octal, hex, or binary.\
 If the first digit is *not* a 0, it is decimal.\
 If the first digit is 0 followed by a digit 0-7, it is octal.\
-If the first 2 digits are 0x, it is hexadeclimal, 0-9a-fA-F are allowed.\
-If the first 2 digits are 0b, it is binary and only the digits 0 and 1 are allowed.
+If the first 2 digits are 0x, it is hexadecimal, 0-9a-fA-F are allowed.\
+If the first 2 digits are 0b, it is binary and only the digits 0 and 1 are allowed.\
+This holds for every number, `-t`, `-b` and both numbers of `-D`.
 
 It lists the files, extracts a file, adds a host file, deletes a file,
 formats a tape or a drum volume, and packs it to recover space left from deleting files.
@@ -68,11 +69,11 @@ A drum block has no checksum.
 A half word of 9 bits is extracted as `bytes` or `text` using only its low 8 bits
 with a warning, `words` keeps all 9 bits.
 
-**The listing**, always in *decimal*, except for the application word, which is octal.:
+**The listing**, always in *decimal*, except for the application word, which is octal with a leading 0:
 ```
-tape.img: generation 2, 576 blocks, 573 free, largest gap 572
+tape.img: generation 2, 576 blocks, 572 free, largest gap 572
 slot  name       type  app  ro  first  blocks    words
-   0  ALPHA        83   00          3       1        0
+   0  ALPHA        83  000          3       1        0
 ```
 `type` is bits 6-17 of the information word and `app` bits 1-5 as set by a program.
 `fstool` leaves them 0.
@@ -101,18 +102,24 @@ A volume on the drum is a run of entire tracks as a program gives them to `drMou
 The first number is the starting track, the second is the number of tracks.\
 Thus, the ending track will be (starting + number of tracks - 1).\
 
-For example, -D 030,010` is the volume of tracks 030 to 037, 030 + 010 - 1).\
-Both numbers are octal because of the leading 0.\
+For example, `-D 030,010` is the volume of tracks 030 to 037 (030 + 010 - 1).\
+Both numbers are octal because of the leading 0; each can be in any of the forms above,
+so `-D 24,8`, `-D 0x18,8` and `-D 0b11000,0b1000` are the same volume.\
 The drum file must be named, there is no default.\
 The emulator uses */opt/pidp1-mods/pdp23drum*.\
 More examples:
 ```
 fstool -D 030,010 -i pdp23drum
-fstool -D 20,10 -a -n notes -f text -s notes.txt pdp23drum  Decimal track 20, decimal 10 tracks long
-fstool -D 0x5,10 -l pdp23drum Hex track 5, decimal 10 tracks long.
-pdp23drum tracks 030-037: generation 2, 0200 blocks, 0173 free, largest gap 0173
+fstool -D 030,010 -a -n notes -f text -s notes.txt pdp23drum
+fstool -D 20,10 -l pdp23drum     # decimal track 20, decimal 10 tracks long
+fstool -D 0x5,10 -l pdp23drum    # hex track 5, decimal 10 tracks long
+```
+The listing names the tracks in decimal:
+```
+fstool -D 030,010 -l pdp23drum
+pdp23drum tracks  24- 31: generation 2, 128 blocks, 123 free, largest gap 123
 slot  name       type  app  ro  first  blocks    words
-   0  NOTES      0000   00         03      02     0412
+   0  NOTES         0  000          3       2      266
 ```
 A volume has 16 blocks a track, 13 for files on a volume of one track.
 Messages show the volume the same as the listing does.
@@ -129,7 +136,7 @@ Tracks never written read as zeros and format without force.
 in block 2, records that track as the volume's first:
 ```
 fstool -D all -l pdp23drum
-pdp23drum: tracks 030-037, generation 2, 0200 blocks, 1 file, 0173 free, largest gap 0173
+pdp23drum: tracks  24- 31, generation 2, 128 blocks, 1 file, 123 free, largest gap 123
 ```
 `-D first,tracks -l` lists a volume's files.
 A volume starting inside one listed before it gives a warning, one of the two is left from an
@@ -137,7 +144,7 @@ earlier format.
 With no volume on the drum, a NOFS error is given.
 
 **The drum file.** It holds 040 tracks of 010000 words, each in a little-endian 32-bit word and a
-file shorter than the drum capaciy reads as zeros past its end.
+file shorter than the drum capacity reads as zeros past its end.
 Every word outside the volume's tracks is left unchanged.
 The file grows only to the end of the last track written, a format of a volume past the
 file's end lengthens it to the end of the volume's first track.
@@ -150,7 +157,7 @@ A program that already has it mounted keeps its directory in its handle, and its
 directory write undoes the change and a transfer the drum makes while `fstool` runs can be lost as
 well.
 Change a volume only while the loaded program is not using the drum.
-When the drum file is */opt/pidp1-mods/pdp23drum*, a command that writes gives a warning.
+When the drum file is */opt/pidp1-mods/pdp23drum*, a command that writes gives a warning but
 still writes.
 
 `drumlist` lists each volume on the drum with its tracks as well as the drum's other tenants.

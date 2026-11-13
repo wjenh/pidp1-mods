@@ -67,6 +67,7 @@
  * 11-Nov-2026 Claude/wje initial version
  * 13-Nov-2026 Claude file system volumes on a Type 23 drum file, -D
  * 13-Nov-2026 wje rename, reorganize
+ * 13-Nov-2026 wje values can now be decimal, octal, hex, or binary.
  *
  */
 #include <stdlib.h>
@@ -1457,14 +1458,15 @@ char meaning[128];
     return(1);
 }
 
-// -D's value: first, tracks, a volume of tracks on the drum, or all, every volume, for -l.
+// -D's value: first,tracks, a volume of tracks on the drum, each number in any form numericArg
+// takes, or all, every volume, for -l.
 // A volume not on the drum is NOUNIT, as the library's drMount gives it.
 // Exits on any fault.
 static void
 parseVolume(const char *argP)
 {
-const char *cP;
-char *endP;
+char buf[64];
+char *commaP;
 long first;
 long tracks;
 
@@ -1475,28 +1477,24 @@ long tracks;
         return;
     }
 
-    errno = 0;
-    cP = argP;
-    first = -1;
-    tracks = -1;
-    if( (*cP >= '0') && (*cP <= '7') )
+    // numericArg takes a whole string, so the pair is split at its comma into two.
+    commaP = NULL;
+    if( strlen(argP) < sizeof(buf) )
     {
-        first = strtol(cP, &endP, 0);
-        if( *endP == ',')
-        {
-            tracks = strtol(&endP[1], &endP, 0);
-        }
-        if( (*endP != '\0') || (errno != 0) )
-        {
-            tracks = -1;
-        }
+        strcpy(buf, argP);
+        commaP = strchr(buf, ',');
     }
-    if( tracks < 0 )
+    if( commaP == NULL )
     {
         fprintf(stderr, "fstool: -D %s: a volume is first,tracks, or all\n", argP);
         usage();
     }
-    if( (first >= DR_TRACKS) || (tracks < 1) || ((first + tracks) > DR_TRACKS) )
+    *commaP = '\0';
+    first = numericArg(buf, 'D');
+    tracks = numericArg(&commaP[1], 'D');
+
+    // tracks is compared with the room left, as first + tracks could overflow.
+    if( (first >= DR_TRACKS) || (tracks < 1) || (tracks > (DR_TRACKS - first)) )
     {
         fprintf(stderr, "fstool: -D %s: NOUNIT, the volume's tracks are not on the drum: the first "
             "track is 0-31, octal 0-037, with at least one track, the last less than 32, octal 040\n", argP);
@@ -1541,7 +1539,7 @@ int last;
             continue;
         }
         unpackName(eP, name);
-        printf("%4d  %-9s  %4d  0%3.2o  %-2s  %5d  %6d  %7d\n", slot, name,
+        printf("%4d  %-9s  %4d  0%02o  %-2s  %5d  %6d  %7d\n", slot, name,
             (eP[DEINFO] & ITYPE), ((eP[DEINFO] & IAPP) >> IAPPSHIFT),
             ((eP[DEINFO] & IRO) ? "ro" : ""), eP[DEFIRST], eP[DEALLOC], eP[DELEN]);
 
@@ -1991,20 +1989,35 @@ int t;
     return(0);
 }
 
-// A numeric option value.
-// Any base supported by strtol() with a base of 0 is valid,
+// A numeric option value: decimal, or with a leading 0 octal, 0x hexadecimal, 0b binary,
 // e.g, 10, 012, 0b1101, 0x3F.
 // Exits through usage on anything else.
 static long
 numericArg(const char *argP, char opt)
 {
+const char *digitsP;
 char *endP;
+int base;
 long v;
 
+    // strtol() reads 0b as binary only in a C23 library, so binary's prefix is taken here and
+    // its digits checked; strtol() with a base of 0 reads the other forms.
+    digitsP = argP;
+    base = 0;
+    if( (argP[0] == '0') && ((argP[1] == 'b') || (argP[1] == 'B')) )
+    {
+        digitsP = &argP[2];
+        base = 2;
+        if( strspn(digitsP, "01") != strlen(digitsP) )
+        {
+            digitsP = "";
+        }
+    }
+
     errno = 0;
-    v = strtol(argP, &endP, 0);
-    if( (*argP == '\0') || (*endP != '\0') || (errno != 0) || (v < 0) || (*argP == '-')
-        || (*argP == '+') )
+    v = strtol(digitsP, &endP, base);
+    if( (*digitsP == '\0') || (*endP != '\0') || (errno != 0) || (v < 0) || (*digitsP == '-')
+        || (*digitsP == '+') )
     {
         fprintf(stderr, "fstool: -%c %s: not a valid number\n", opt, argP);
         usage();

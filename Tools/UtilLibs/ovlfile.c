@@ -15,6 +15,7 @@
  * 21-Oct-2026 Claude the drum writer moved out of ovlload.c, for ad1 and fastload too
  * 21-Oct-2026 wje cleanup
  * 22-Oct-2026 Claude V2, the packed drum layout: each overlay's drum address and span
+ * 13-Nov-2026 Claude/wje add file system volume recognition
  */
 
 #include <unistd.h>
@@ -452,6 +453,47 @@ int
 storyByte(const int32_t *drumP, int byteOff)
 {
     return( (byteOff & 1) ? (drumP[byteOff / 2] & 0377) : ((drumP[byteOff / 2] >> 8) & 0377) );
+}
+
+// Whether a file system volume begins at a track, as the drum's mount finds one: block 1, or
+// else its copy in block 2, this file system's directory, recording the track as the volume's
+// first, its blocks whole tracks within the drum.
+// Returns true with *volP filled, else false.
+bool
+fsVolumeAt(const int32_t *drumP, int track, FsVolume *volP)
+{
+int b;
+int k;
+int blocks;
+const int32_t *dirP;
+
+    for( b = FSV_DIRBLK; b <= FSV_DIRBLK2; ++b )
+    {
+        dirP = &drumP[(track * OVL_TRACKWORDS) + (b * FSV_BLOCKWORDS)];
+        blocks = dirP[FSV_DBLKS];
+        if( (dirP[FSV_DMAGIC] != FSV_MAGIC) || (dirP[FSV_DVER] != FSV_VERSION) || (blocks <= 0) ||
+            ((blocks % FSV_BPT) != 0) || ((track + (blocks / FSV_BPT)) > OVL_TRACKS) ||
+            (dirP[FSV_DFIRST] != track) )
+        {
+            continue;
+        }
+
+        volP->tracks = (blocks / FSV_BPT);
+        volP->generation = dirP[FSV_DGEN];
+        volP->fromCopy = (b != FSV_DIRBLK);
+        volP->files = 0;
+        for( k = 0; k < FSV_NENT; ++k )
+        {
+            if( dirP[FSV_DENT0 + (k * FSV_ENTW)] != 0 )
+            {
+                ++volP->files;
+            }
+        }
+
+        return(true);
+    }
+
+    return(false);
 }
 
 // The drum writer.

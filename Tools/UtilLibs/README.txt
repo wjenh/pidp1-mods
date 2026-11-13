@@ -13,6 +13,7 @@ ad1link.c, ad1link.h     the client side of the emulator's debugger link: ad1, f
 tapeimage.c, tapeimage.h a bin or am1 tape read as read-in would, and sent over the link or
                          written to a core-memory file: fastload, ovlload.
 ovlfile.c, ovlfile.h     an am1 .ovl file read and checked, and the drum's other tenants
-                         recognized: ovlload, drumlist. The drum writer, the overwrite warnings
-                         and the stamp check: ovlload, ad1's load and fastload.
+                         recognized: ovlload, drumlist; file system volumes: drumlist. The
+                         drum writer, the overwrite warnings and the stamp check: ovlload,
+                         ad1's load and fastload.
 flexoConversion.c        ASCII to and from Flexo (concise), as DCS2 (IOT_22) does it.

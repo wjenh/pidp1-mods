@@ -6,6 +6,7 @@
  * 18-Oct-2026 wje cleanup
  * 21-Oct-2026 Claude the drum writer moved out of ovlload.c
  * 22-Oct-2026 Claude V2 files, each overlay's drum address and span
+ * 13-Nov-2026 Claude a file system volume recognized, for drumlist
  */
 
 #ifndef OVLFILE_H
@@ -47,6 +48,32 @@
 #define ZH_FILE_LENGTH 0x1A
 #define ZH_HEADER_BYTES 0x40
 
+// A file system volume, as Am1Includes/DRUM's drFormat writes one: a run of whole tracks of
+// 16 blocks of 0400 words, the directory in block 1 and its copy in block 2, which on the
+// volume's first track lie at their own addresses, unskewed. The directory's header words.
+#define FSV_MAGIC 0556446           // MTF in sixbit
+#define FSV_VERSION 1
+#define FSV_BLOCKWORDS 0400
+#define FSV_BPT 16
+#define FSV_DIRBLK 1
+#define FSV_DIRBLK2 2
+#define FSV_DMAGIC 0
+#define FSV_DVER 1
+#define FSV_DGEN 2
+#define FSV_DBLKS 3
+#define FSV_DFIRST 4                // the volume's first track
+#define FSV_DENT0 010               // FSV_NENT entries of FSV_ENTW words, a free one's first 0
+#define FSV_ENTW 010
+#define FSV_NENT 037
+
+typedef struct
+{
+    int tracks;
+    int generation;
+    int files;
+    bool fromCopy;                  // block 1 is not the file system's, the copy in block 2 is
+} FsVolume;
+
 typedef struct
 {
     char name[OVL_NAMESIZE];
@@ -79,6 +106,7 @@ bool drumupdaterMarked(const int32_t *drumP, int track);
 bool adventureSaved(const int32_t *drumP);
 int storyTracks(const int32_t *drumP);
 int storyByte(const int32_t *drumP, int byteOff);
+bool fsVolumeAt(const int32_t *drumP, int track, FsVolume *volP);
 
 // The drum writer. Its faults and warnings go to errFP, each beginning with "progName: ";
 // what it did goes to stdout. A tool calls ovlSetProgram() first; until then, faults and

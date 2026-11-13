@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.15\
-Edit date 09-Nov-2026\
-An error under the top strip is cleared by the next click or key press.
+This is version 1.16\
+Edit date 13-Nov-2026\
+Minor update for fstool
 
 ## What is pdp1central?
 
@@ -323,7 +323,7 @@ is on.
 
 The drum images in /opt/pidp1-mods/Drums, then what its index.txt lists (see Libraries below),
 and beside them what the chosen image holds, as drumlist lists it: Adventure, a Z-machine story,
-drumupdater's tracks or overlays.
+drumupdater's tracks, file system volumes, or overlays.
 
 - Pick puts the chosen image on the drum:
   1. The drum as it is now is copied to /opt/pidp1-mods/pdp23drum.bak, replacing the last one.

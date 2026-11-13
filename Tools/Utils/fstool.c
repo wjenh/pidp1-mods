@@ -1,13 +1,18 @@
 /*
- * mtfs: manage a Microtape file system on a Type 550 tape image.
+ * fstool: manage a file system on a Type 550 tape image or a Type 23 drum file.
  *
- * Usage: mtfs -l image
- *        mtfs -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image
- *        mtfs -d -n name [-F] image
- *        mtfs -x -n name [-f bytes|text|words] -o output image
- *        mtfs -i [-F] image
- *        mtfs -p image
+ * Usage: fstool [-D first,tracks] -l image
+ *        fstool -D all -l drumfile
+ *        fstool [-D first,tracks] -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F]
+ *             -s source image
+ *        fstool [-D first,tracks] -d -n name [-F] image
+ *        fstool [-D first,tracks] -x -n name [-f bytes|text|words] -o output image
+ *        fstool [-D first,tracks] -i [-F] image
+ *        fstool [-D first,tracks] -p image
  * where:
+ * -D first,tracks - the image is a drum file and the volume is its tracks first to
+ *              first+tracks-1, both octal; without -D the image is a tape
+ * -D all     - with -l only: list every volume on the drum file
  * -l         - list the directory
  * -a         - add the host file source to the tape as -n name
  * -d         - delete -n name
@@ -28,28 +33,39 @@
  * -F         - force: add replaces a file of the same name, delete removes a read-only file,
  *                format overwrites another program's data in blocks 1 and 2
  *
- * The tape is the file system of the am1 library in Am1Includes/MICROTAPE, see its README.md.
+ * The file system is the am1 library's in Am1Includes/FILESYSTEM, with the tape's layer in
+ * Am1Includes/MICROTAPE and the drum's in Am1Includes/DRUM, see their README.md files.
  * Block 0 unused, the directory is in block 1 and a copy in block 2, the files from block 3,
  * each a run of contiguous blocks.
- * A tape this tool writes works with the library routines and vice-versa.
+ * A tape or a drum volume this tool writes works with the library routines and vice-versa.
+ *
+ * A drum volume is a run of whole tracks, 16 blocks of 0400 words a track with no checksum,
+ * skewed by one block a track; its directory records its first track, and a volume whose
+ * directory records another is refused, as the library's drMount refuses it.
  *
  * The image is read completely, changed in memory, and written to a temporary file in its own
  * directory which is then renamed, so a failure leaves an existing file as it was.
- * It grows only to the last block written.
+ * A tape image grows only to the last block written.
+ * A drum file keeps every word outside the volume's tracks and grows only to the end of the
+ * last track written.
  * A read-only image is not written.
  *
- * The Microtape IOT mounts an image again when the file changes, but a program that has
- * the tape mounted keeps its own copy of the directory and its next directory write undoes
+ * The Microtape IOT mounts an image again when the file changes, and the drum reads its file
+ * again at the first transfer after the file is replaced, but a program that has the tape or
+ * the volume mounted keeps its own copy of the directory and its next directory write undoes
  * this tool's change.
- * A command that writes an image named in microtapes.txt gives a warning but continues.
+ * A command that writes an image named in microtapes.txt, or the emulator's drum file, gives
+ * a warning but continues.
  *
  * Exit status is 0 on success, 1 on any error.
  * An error gives the library's status code.
- * See Docs/UsingType550Microtape.md for more information.
+ * See Docs/UsingMtfs.md for more information.
  *
  * Revision history:
  *
  * 11-Nov-2026 Claude/wje initial version
+ * 13-Nov-2026 Claude file system volumes on a Type 23 drum file, -D
+ * 13-Nov-2026 wje rename, reorganize
  *
  */
 #include <stdlib.h>
@@ -71,6 +87,10 @@
 #ifndef MTFS_TAPEDIR
 #define MTFS_TAPEDIR    "/opt/pidp1-mods/Microtapes"    // where a relative name in the list is
 #endif
+// The emulator's drum file.
+#ifndef MTFS_DRUM
+#define MTFS_DRUM       "/opt/pidp1-mods/pdp23drum"
+#endif
 
 // Each tape block has a leading checksum, the data, and the trailing checksum, each word
 // in a little-endian 32-bit word.
@@ -80,7 +100,15 @@
 #define MASK            0777777
 #define BLANKCK         MASK        // the leading checksum of a block, and of a blank one
 
-// The file system's layout (Am1Includes/MICROTAPE/mtfs.ah).
+// The drum file: 040 tracks of 010000 words, each in a little-endian 32-bit word, a file
+// shorter than the drum reading as zeros past its end. A volume's track k (0 its first) holds
+// its block j at ((j + k) mod 16) x 0400 (Am1Includes/DRUM/drum.ah).
+#define DR_TRACKS       040
+#define DR_TRACKW       010000
+#define DR_WORDS        (DR_TRACKS * DR_TRACKW)
+#define DR_BPT          16
+
+// The file system's layout (Am1Includes/FILESYSTEM/fs.ah).
 #define DIRBLK          1
 #define DIRBLK2         2
 #define FIRSTBLK        3
@@ -88,6 +116,8 @@
 #define DVER            1
 #define DGEN            2
 #define DBLKS           3
+#define DDEV            4           // the device's words, the drum's first track and 3 zeros
+#define DDEVW           4
 #define MAGIC           0556446     // MTF in sixbit
 #define VERSION         1
 #define GENMASK         0377777     // the generation is kept positive
@@ -108,6 +138,7 @@
 
 // The library's status codes the tool can duplicate.
 #define E_OK            0
+#define E_NOUNIT        1
 #define E_LOCKED        3
 #define E_BADBLOCK      5
 #define E_NOFS          7
@@ -119,57 +150,74 @@
 #define E_NOSPACE       015
 #define E_RANGE         016
 #define E_READONLY      017
-#define E_LAST          022
+#define E_LAST          023
 
 #define SOURCE_MAX      (16 * 1024 * 1024)  // a host file larger than any tape can hold
 
 enum form { FORM_BYTES, FORM_TEXT, FORM_WORDS };
 
 static const char *errName[E_LAST + 1] = {
-    "OK", "NODRIVE", "NOTAPE", "LOCKED", "HALTED", "BADBLOCK", "ENDZONE", "NOFS",
+    "OK", "NOUNIT", "NOMEDIUM", "LOCKED", "HALTED", "BADBLOCK", "ENDZONE", "NOFS",
     "FOREIGN", "NAME", "EXISTS", "NOTFOUND", "DIRFULL", "NOSPACE", "RANGE", "READONLY",
-    "BADFD", "SMALLBUF", "TIMEOUT"
+    "BADFD", "SMALLBUF", "TIMEOUT", "XFER"
 };
+// Each %s is the device's noun, "tape" or "volume".
 static const char *errMeaning[E_LAST + 1] = {
     "success",
-    "the drive is not 1-8",
+    "the volume's tracks are not on the drum",
     "no tape on the drive",
-    "the tape is write-locked",
+    "the %s is write-locked",
     "a halt stopped the tape",
     "a block checksum failed",
     "the tape ran into an end zone",
-    "the tape has no file system directory",
+    "the %s has no file system directory",
     "blocks 1 and 2 hold another program's data",
     "a name must be 1 to 9 characters with no control characters and no leading blank",
-    "a file of that name is already on the tape",
-    "no file of that name is on the tape",
+    "a file of that name is already on the %s",
+    "no file of that name is on the %s",
     "every directory slot is in use",
-    "no gap on the tape is large enough",
-    "past the end of the tape or of the file's allocation",
+    "no gap on the %s is large enough",
+    "past the end of the %s or of the file's allocation",
     "the file is marked read-only",
     "the descriptor is not open",
     "the buffer is smaller than one block",
-    "a search found no block mark"
+    "a search found no block mark",
+    "a drum transfer was cut short"
 };
 
 static uint32_t image[BLKS][BLKW];
+static uint32_t drum[DR_WORDS];     // the drum file's words, zero past its end
+static bool trackWritten[DR_TRACKS];
+static long drumWords;              // words in the drum file as read
 static int imageBlks;               // blocks in the image file as read
 static int topBlks;                 // blocks the image file will hold when written
+static bool onDrum;                 // the image is a drum file
+static bool drumScan;               // -D all: every volume on the drum file
+static int drFirst;                 // the drum volume's first track
+static int drTracks;                // its tracks
+static int volBlks;                 // the volume's blocks, a tape's or 16 a drum track
 static uint32_t *dirP;              // the directory's data words, in block DIRBLK
 static int dirFrom;                 // the block the directory was read from
-static const char *imageNameP;      // the image as named, for messages
+static const char *imageNameP;      // the image as named, for messages about the file
+static const char *volNameP;        // the tape or the volume, for messages about its contents
+static char volName[PATH_MAX + 32];
+static const char *devNounP;        // "tape" or "volume"
 static bool changed;                // the directory was written, so the image is to be
 
 static int onesAdd(int a, int b);
 static int blockTotal(const uint32_t *blkP);
+static uint32_t *blockData(int blk);
 static bool blockOk(int blk);
 static bool blockBlank(int blk);
 static void putBlock(int blk, const uint32_t *dataP);
 static void copyBlock(int to, int from);
 static bool dirOk(const uint32_t *dataP);
 static bool readImage(const char *pathP, bool mayBeMissing);
+static bool readDrum(const char *pathP, bool mayBeMissing);
 static bool writeImage(const char *pathP);
-static int mountDir(void);
+static bool writeDrum(const char *pathP);
+static bool replaceFile(const char *pathP, const uint8_t *bytesP, size_t len);
+static bool mountDir(void);
 static void writeDir(void);
 static uint32_t *entry(int slot);
 static int packName(const char *nameP, uint32_t *nmP);
@@ -181,8 +229,11 @@ static uint32_t *sourceWords(const char *pathP, enum form f, long *countP);
 static bool writeHost(const char *pathP, const uint32_t *wordsP, long count, enum form f);
 static bool canonPath(const char *pathP, char *outP, size_t size);
 static void warnIfListed(const char *pathP);
+static void warnIfDrum(const char *pathP);
 static int libError(int code, const char *nameP, const char *detailP);
+static void parseVolume(const char *argP);
 static int cmdList(void);
+static int cmdScan(void);
 static int cmdAdd(const char *nameP, int type, bool readOnly, int blocks, enum form f,
     bool force, const char *sourceP);
 static int cmdDelete(const char *nameP, bool force);
@@ -221,7 +272,7 @@ int i;
     readOnly = force = false;
     nSeen = 0;
     seen[0] = '\0';
-    while( (opt = getopt(argc, argv, "ladxipn:t:rb:f:Fs:o:")) != -1 )
+    while( (opt = getopt(argc, argv, "ladxipn:t:rb:f:Fs:o:D:")) != -1 )
     {
         if( opt == '?' )
         {
@@ -244,7 +295,7 @@ int i;
         case 'p':
             if( cmd && (cmd != opt) )
             {
-                fprintf(stderr, "mtfs: only one of -l -a -d -x -i -p\n");
+                fprintf(stderr, "fstool: only one of -l -a -d -x -i -p\n");
                 usage();
             }
             cmd = (char) opt;
@@ -258,7 +309,7 @@ int i;
             type = octalArg(optarg, 't');
             if( type > ITYPE )
             {
-                fprintf(stderr, "mtfs: -t %s: the type is octal 0-7777\n", optarg);
+                fprintf(stderr, "fstool: -t %s: the type is octal 0-7777\n", optarg);
                 exit(1);
             }
             break;
@@ -291,7 +342,7 @@ int i;
             }
             else
             {
-                fprintf(stderr, "mtfs: -f %s: the form is bytes, text or words\n", optarg);
+                fprintf(stderr, "fstool: -f %s: the form is bytes, text or words\n", optarg);
                 exit(1);
             }
             break;
@@ -308,6 +359,10 @@ int i;
             outputP = optarg;
             break;
 
+        case 'D':
+            parseVolume(optarg);
+            break;
+
         default:
             usage();
         }
@@ -318,35 +373,53 @@ int i;
         usage();
     }
     imageNameP = argv[optind];
+    volNameP = imageNameP;
+    devNounP = "tape";
+    volBlks = BLKS;
+    if( onDrum && !drumScan )
+    {
+        devNounP = "volume";
+        volBlks = (drTracks * DR_BPT);
+        if( drTracks == 1 )
+        {
+            snprintf(volName, sizeof(volName), "%s track %03o", imageNameP, drFirst);
+        }
+        else
+        {
+            snprintf(volName, sizeof(volName), "%s tracks %03o-%03o", imageNameP, drFirst,
+                ((drFirst + drTracks) - 1));
+        }
+        volNameP = volName;
+    }
 
-    // Each command takes only its own options, and its required ones.
+    // Each command takes only its own options, and its required ones; -D goes with any.
     switch( cmd )
     {
     case 'a':
-        allowedP = "antrbfFs";
+        allowedP = "antrbfFsD";
         break;
 
     case 'd':
-        allowedP = "dnF";
+        allowedP = "dnFD";
         break;
 
     case 'x':
-        allowedP = "xnfo";
+        allowedP = "xnfoD";
         break;
 
     case 'i':
-        allowedP = "iF";
+        allowedP = "iFD";
         break;
 
     default:
-        allowedP = (cmd == 'l') ? "l" : "p";
+        allowedP = (cmd == 'l') ? "lD" : "pD";
         break;
     }
     for( i = 0; i < nSeen; i++ )
     {
         if( !strchr(allowedP, seen[i]) )
         {
-            fprintf(stderr, "mtfs: -%c cannot be used with -%c\n", seen[i], cmd);
+            fprintf(stderr, "fstool: -%c cannot be used with -%c\n", seen[i], cmd);
             usage();
         }
     }
@@ -355,23 +428,29 @@ int i;
     {
         usage();
     }
+    if( drumScan && (cmd != 'l') )
+    {
+        fprintf(stderr, "fstool: -D all is only for -l; the other commands name a volume, -D first,tracks\n");
+        usage();
+    }
 
-    // The image: a missing one is a blank tape only to format.
+    // The image: a missing one is a blank tape or drum only to format.
     writes = (strchr("adip", cmd) != NULL);
     existed = (access(imageNameP, F_OK) == 0);
-    if( !readImage(imageNameP, (cmd == 'i')) )
+    if( !(onDrum ? readDrum(imageNameP, (cmd == 'i')) : readImage(imageNameP, (cmd == 'i'))) )
     {
         return(1);
     }
     if( writes && existed && (access(imageNameP, W_OK) != 0) )
     {
-        return(libError(E_LOCKED, NULL, "the image file is read-only"));
+        return(libError(E_LOCKED, NULL, (onDrum ? "the drum file is read-only"
+            : "the image file is read-only")));
     }
 
     switch( cmd )
     {
     case 'l':
-        status = cmdList();
+        status = (drumScan ? cmdScan() : cmdList());
         break;
 
     case 'a':
@@ -397,8 +476,15 @@ int i;
 
     if( (status == 0) && writes && changed )
     {
-        warnIfListed(imageNameP);
-        if( !writeImage(imageNameP) )
+        if( onDrum )
+        {
+            warnIfDrum(imageNameP);
+        }
+        else
+        {
+            warnIfListed(imageNameP);
+        }
+        if( !(onDrum ? writeDrum(imageNameP) : writeImage(imageNameP)) )
         {
             status = 1;
         }
@@ -438,13 +524,35 @@ int i;
     return(s);
 }
 
+// A volume block's 0400 data words: on a tape past its leading checksum, on the drum where
+// the skewed layout puts it.
+static uint32_t *
+blockData(int blk)
+{
+int k;
+
+    if( !onDrum )
+    {
+        return(&image[blk][1]);
+    }
+    k = (blk / DR_BPT);
+
+    return(&drum[((drFirst + k) * DR_TRACKW) + ((((blk % DR_BPT) + k) % DR_BPT) * WDS)]);
+}
+
 // Whether a block totals zero, +0 or -0, as the control checks it on a read.
+// A drum block has no checksum and is always good.
 static bool
 blockOk(int blk)
 {
 int s;
 
+    if( onDrum )
+    {
+        return(true);
+    }
     s = blockTotal(image[blk]);
+
     return((s == 0) || (s == MASK));
 }
 
@@ -470,10 +578,16 @@ int i;
 }
 
 // Write a block as the control writes one forward: -0 leading, the data, then the complement
-// of their sum, so the block totals zero.
+// of their sum, so the block totals zero. A drum block is its data alone.
 static void
 putBlock(int blk, const uint32_t *dataP)
 {
+    if( onDrum )
+    {
+        memcpy(blockData(blk), dataP, (WDS * sizeof(uint32_t)));
+        trackWritten[drFirst + (blk / DR_BPT)] = true;
+        return;
+    }
     image[blk][0] = BLANKCK;
     memcpy(&image[blk][1], dataP, (WDS * sizeof(uint32_t)));
     image[blk][BLKW - 1] = 0;
@@ -489,6 +603,11 @@ putBlock(int blk, const uint32_t *dataP)
 static void
 copyBlock(int to, int from)
 {
+    if( onDrum )
+    {
+        putBlock(to, blockData(from));
+        return;
+    }
     memmove(image[to], image[from], sizeof(image[0]));
     if( (to >= topBlks) && !blockBlank(to) )
     {
@@ -497,11 +616,11 @@ copyBlock(int to, int from)
 }
 
 // Whether a directory block's data is this file system's: the magic, the version and the
-// tape's blocks, as the library's mtfDirOk checks them.
+// volume's blocks, as the library's fsDirOk checks them.
 static bool
 dirOk(const uint32_t *dataP)
 {
-    return((dataP[DMAGIC] == MAGIC) && (dataP[DVER] == VERSION) && (dataP[DBLKS] == BLKS));
+    return((dataP[DMAGIC] == MAGIC) && (dataP[DVER] == VERSION) && (dataP[DBLKS] == (uint32_t) volBlks));
 }
 
 // Read the image into memory, every block past its end blank. A missing image is a blank tape
@@ -528,7 +647,7 @@ int i;
         {
             return(true);
         }
-        fprintf(stderr, "mtfs: %s: %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: %s\n", pathP, strerror(errno));
         return(false);
     }
 
@@ -536,7 +655,7 @@ int i;
     if( (fstat(fileno(fP), &st) != 0) || !S_ISREG(st.st_mode) || ((st.st_size % sizeof(buf)) != 0) ||
         ((st.st_size / (off_t) sizeof(buf)) > BLKS) )
     {
-        fprintf(stderr, "mtfs: %s: not a tape image, a whole number of %d-byte blocks, at most %#o\n",
+        fprintf(stderr, "fstool: %s: not a tape image, a whole number of %d-byte blocks, at most %#o\n",
             pathP, (int) sizeof(buf), BLKS);
         fclose(fP);
         return(false);
@@ -547,7 +666,7 @@ int i;
     {
         if( fread(buf, 1, sizeof(buf), fP) != sizeof(buf) )
         {
-            fprintf(stderr, "mtfs: %s: %s\n", pathP, ferror(fP) ? strerror(errno) : "short read");
+            fprintf(stderr, "fstool: %s: %s\n", pathP, ferror(fP) ? strerror(errno) : "short read");
             fclose(fP);
             return(false);
         }
@@ -558,7 +677,7 @@ int i;
             if( image[blk][i] > MASK )
             {
                 fprintf(stderr,
-                    "mtfs: %s: not a tape image (block %#o word %#o is %#o, more than 18 bits)\n",
+                    "fstool: %s: not a tape image (block %#o word %#o is %#o, more than 18 bits)\n",
                     pathP, blk, i, image[blk][i]);
                 fclose(fP);
                 return(false);
@@ -571,22 +690,171 @@ int i;
     return(true);
 }
 
-// Write the image's topBlks blocks to a temporary file and rename it to the given name,
-// keeping its mode.
-// A failure leaves the old image intact.
+// Read the drum file into memory, every word past its end zero. A missing file is a blank drum
+// when mayBeMissing. Returns false, with a message, when it cannot be read, is no drum file, or
+// holds a word of more than 18 bits on the volume's tracks.
+static bool
+readDrum(const char *pathP, bool mayBeMissing)
+{
+uint8_t *bufP;
+struct stat st;
+FILE *fP;
+long i;
+long first;
+long end;
+
+    memset(drum, 0, sizeof(drum));
+    drumWords = 0;
+
+    if( !(fP = fopen(pathP, "rb")) )
+    {
+        if( (errno == ENOENT) && mayBeMissing )
+        {
+            return(true);
+        }
+        fprintf(stderr, "fstool: %s: %s\n", pathP, strerror(errno));
+        return(false);
+    }
+
+    // The emulator writes whole words, and no more than the drum's.
+    if( (fstat(fileno(fP), &st) != 0) || !S_ISREG(st.st_mode) || ((st.st_size % 4) != 0) ||
+        ((st.st_size / 4) > DR_WORDS) )
+    {
+        fprintf(stderr, "fstool: %s: not a drum file, a whole number of 4-byte words, at most %#o\n",
+            pathP, DR_WORDS);
+        fclose(fP);
+        return(false);
+    }
+
+    drumWords = (long) (st.st_size / 4);
+    if( !(bufP = malloc((size_t) st.st_size + 1)) )
+    {
+        fprintf(stderr, "fstool: out of memory\n");
+        fclose(fP);
+        return(false);
+    }
+    if( fread(bufP, 1, (size_t) st.st_size, fP) != (size_t) st.st_size )
+    {
+        fprintf(stderr, "fstool: %s: %s\n", pathP, ferror(fP) ? strerror(errno) : "short read");
+        free(bufP);
+        fclose(fP);
+        return(false);
+    }
+    fclose(fP);
+    for( i = 0; i < drumWords; i++ )
+    {
+        drum[i] = ((uint32_t) bufP[4 * i] | ((uint32_t) bufP[(4 * i) + 1] << 8)
+            | ((uint32_t) bufP[(4 * i) + 2] << 16) | ((uint32_t) bufP[(4 * i) + 3] << 24));
+    }
+    free(bufP);
+
+    // Another program's tracks are kept as they are, whatever they hold; only the volume's
+    // words are this file system's.
+    if( !drumScan )
+    {
+        first = ((long) drFirst * DR_TRACKW);
+        end = ((long) (drFirst + drTracks) * DR_TRACKW);
+        for( i = first; i < end; i++ )
+        {
+            if( drum[i] > MASK )
+            {
+                fprintf(stderr,
+                    "fstool: %s: not a drum file (track %#o word %#o is %#o, more than 18 bits)\n",
+                    pathP, (int) (i / DR_TRACKW), (int) (i % DR_TRACKW), drum[i]);
+                return(false);
+            }
+        }
+    }
+
+    return(true);
+}
+
+// Write the image's topBlks blocks over the image file.
 // Returns false with a message on any failure.
 static bool
 writeImage(const char *pathP)
 {
+uint8_t *bufP;
+size_t n;
+int blk;
+int i;
+bool ok;
+
+    if( !(bufP = malloc(((size_t) topBlks * BLKW * 4) + 1)) )
+    {
+        fprintf(stderr, "fstool: out of memory\n");
+        return(false);
+    }
+    n = 0;
+    for( blk = 0; blk < topBlks; blk++ )
+    {
+        for( i = 0; i < BLKW; i++ )
+        {
+            bufP[n++] = (uint8_t) (image[blk][i] & 0377);
+            bufP[n++] = (uint8_t) ((image[blk][i] >> 8) & 0377);
+            bufP[n++] = (uint8_t) ((image[blk][i] >> 16) & 0377);
+            bufP[n++] = 0;
+        }
+    }
+    ok = replaceFile(pathP, bufP, n);
+    free(bufP);
+
+    return(ok);
+}
+
+// Write the drum over the drum file: every word as read, the volume's changed, the file grown
+// only to the end of the last track written.
+// Returns false with a message on any failure.
+static bool
+writeDrum(const char *pathP)
+{
+uint8_t *bufP;
+long words;
+long i;
+int t;
+bool ok;
+
+    words = drumWords;
+    for( t = 0; t < DR_TRACKS; t++ )
+    {
+        if( trackWritten[t] && (((long) (t + 1) * DR_TRACKW) > words) )
+        {
+            words = ((long) (t + 1) * DR_TRACKW);
+        }
+    }
+    if( !(bufP = malloc(((size_t) words * 4) + 1)) )
+    {
+        fprintf(stderr, "fstool: out of memory\n");
+        return(false);
+    }
+
+    // All 32 bits, so a word another program left wider than 18 bits is written back as it was.
+    for( i = 0; i < words; i++ )
+    {
+        bufP[4 * i] = (uint8_t) (drum[i] & 0377);
+        bufP[(4 * i) + 1] = (uint8_t) ((drum[i] >> 8) & 0377);
+        bufP[(4 * i) + 2] = (uint8_t) ((drum[i] >> 16) & 0377);
+        bufP[(4 * i) + 3] = (uint8_t) ((drum[i] >> 24) & 0377);
+    }
+    ok = replaceFile(pathP, bufP, ((size_t) words * 4));
+    free(bufP);
+
+    return(ok);
+}
+
+// Write len bytes to a temporary file in the file's directory and rename it to the given name,
+// keeping its mode.
+// A failure leaves the old file intact.
+// Returns false with a message on any failure.
+static bool
+replaceFile(const char *pathP, const uint8_t *bytesP, size_t len)
+{
 char tmp[PATH_MAX + 16];
-uint8_t buf[BLKW * 4];
 struct stat st;
 mode_t mode;
 mode_t mask;
 FILE *fP;
 int fd;
-int blk;
-int i;
 bool ok;
 
     if( stat(pathP, &st) == 0 )
@@ -603,35 +871,25 @@ bool ok;
     snprintf(tmp, sizeof(tmp), "%s.XXXXXX", pathP);
     if( (fd = mkstemp(tmp)) < 0 )
     {
-        fprintf(stderr, "mtfs: %s: can't create temporary file: %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: can't create temporary file: %s\n", pathP, strerror(errno));
         return(false);
     }
     if( !(fP = fdopen(fd, "wb")) )
     {
-        fprintf(stderr, "mtfs: %s: %s\n", tmp, strerror(errno));
+        fprintf(stderr, "fstool: %s: %s\n", tmp, strerror(errno));
         close(fd);
         unlink(tmp);
         return(false);
     }
 
-    ok = true;
-    for( blk = 0; ok && (blk < topBlks); blk++ )
-    {
-        for( i = 0; i < BLKW; i++ )
-        {
-            buf[4 * i] = (uint8_t) (image[blk][i] & 0377);
-            buf[(4 * i) + 1] = (uint8_t) ((image[blk][i] >> 8) & 0377);
-            buf[(4 * i) + 2] = (uint8_t) ((image[blk][i] >> 16) & 0377);
-            buf[(4 * i) + 3] = 0;
-        }
-        ok = (fwrite(buf, 1, sizeof(buf), fP) == sizeof(buf));
-    }
+    ok = (fwrite(bytesP, 1, len, fP) == len);
     ok = (ok && (fflush(fP) == 0) && (fchmod(fd, mode) == 0) && (fsync(fd) == 0));
     ok = ((fclose(fP) == 0) && ok);
 
     if( !ok || (rename(tmp, pathP) != 0) )
     {
-        fprintf(stderr, "mtfs: %s: can't write image %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: can't write %s %s\n", pathP, (onDrum ? "drum file" : "image"),
+            strerror(errno));
         unlink(tmp);
         return(false);
     }
@@ -640,32 +898,54 @@ bool ok;
 }
 
 // Find the directory as the library's mount does: block 1 if it totals zero and is the file
-// system's, else block 2, copied into block 1's place in memory.
-// Returns E_OK, or E_NOFS when neither copy is good.
-static int
+// system's, else block 2, copied into block 1's place in memory. On the drum, a directory
+// whose recorded first track is not the volume's is refused, as drMount refuses it.
+// Returns true, or false after reporting NOFS.
+static bool
 mountDir(void)
 {
+char detail[160];
+uint32_t *dP;
 int blk;
 
     for( blk = DIRBLK; blk <= DIRBLK2; blk++ )
     {
-        if( blockOk(blk) && dirOk(&image[blk][1]) )
+        if( blockOk(blk) && dirOk(blockData(blk)) )
         {
             dirFrom = blk;
             if( blk != DIRBLK )
             {
-                memcpy(&image[DIRBLK][1], &image[blk][1], (WDS * sizeof(uint32_t)));
+                memcpy(blockData(DIRBLK), blockData(blk), (WDS * sizeof(uint32_t)));
             }
-            dirP = &image[DIRBLK][1];
-            return(E_OK);
+            dirP = blockData(DIRBLK);
+            if( onDrum && (dirP[DDEV] != (uint32_t) drFirst) )
+            {
+                snprintf(detail, sizeof(detail), "the directory records the volume's first track as "
+                    "%#o, not %#o", dirP[DDEV], drFirst);
+                libError(E_NOFS, NULL, detail);
+                return(false);
+            }
+            return(true);
         }
     }
 
-    return(E_NOFS);
+    // On the drum, a directory of another size says which tracks to name.
+    dP = blockData(DIRBLK);
+    if( onDrum && (dP[DMAGIC] == MAGIC) && (dP[DVER] == VERSION) && (dP[DBLKS] != 0)
+        && ((dP[DBLKS] % DR_BPT) == 0) )
+    {
+        snprintf(detail, sizeof(detail), "the directory in block 1 is for %#o blocks, %#o tracks, "
+            "not %#o", dP[DBLKS], (dP[DBLKS] / DR_BPT), drTracks);
+        libError(E_NOFS, NULL, detail);
+        return(false);
+    }
+    libError(E_NOFS, NULL, NULL);
+
+    return(false);
 }
 
 // Write the directory as both copies, blocks 1 then 2, increasing the generation, as the
-// library's mtfWrDir does.
+// library's fsWrDir does.
 static void
 writeDir(void)
 {
@@ -675,7 +955,7 @@ uint32_t data[WDS];
     memcpy(data, dirP, sizeof(data));
     putBlock(DIRBLK, data);
     putBlock(DIRBLK2, data);
-    dirP = &image[DIRBLK][1];
+    dirP = blockData(DIRBLK);
     changed = true;
 }
 
@@ -800,7 +1080,7 @@ int slot;
     for( iter = 0; iter <= NENT; iter++ )
     {
         // The file with the lowest first block at or past pos.
-        first = BLKS;
+        first = volBlks;
         alloc = 0;
         for( slot = 0; slot < NENT; slot++ )
         {
@@ -822,7 +1102,7 @@ int slot;
         {
             *fitP = pos;
         }
-        if( first == BLKS )
+        if( first == volBlks )
         {
             break;
         }
@@ -841,19 +1121,19 @@ size_t n;
 
     if( !(fP = fopen(pathP, "rb")) )
     {
-        fprintf(stderr, "mtfs: %s: %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: %s\n", pathP, strerror(errno));
         return(NULL);
     }
     if( !(bufP = malloc(SOURCE_MAX + 1)) )
     {
-        fprintf(stderr, "mtfs: out of memory\n");
+        fprintf(stderr, "fstool: out of memory\n");
         fclose(fP);
         return(NULL);
     }
     n = fread(bufP, 1, (SOURCE_MAX + 1), fP);
     if( ferror(fP) )
     {
-        fprintf(stderr, "mtfs: %s: %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: %s\n", pathP, strerror(errno));
         free(bufP);
         fclose(fP);
         return(NULL);
@@ -900,7 +1180,7 @@ uint32_t w;
     {
         if( (len % 4) != 0 )
         {
-            fprintf(stderr, "mtfs: %s: a word file must be a whole number of 4-byte words\n", pathP);
+            fprintf(stderr, "fstool: %s: a word file must be a whole number of 4-byte words\n", pathP);
             free(bytesP);
             return(NULL);
         }
@@ -919,7 +1199,7 @@ uint32_t w;
 
     if( !(wordsP = calloc((size_t) (count + 1), sizeof(uint32_t))) )
     {
-        fprintf(stderr, "mtfs: out of memory\n");
+        fprintf(stderr, "fstool: out of memory\n");
         free(bytesP);
         return(NULL);
     }
@@ -931,7 +1211,7 @@ uint32_t w;
                 | ((uint32_t) bytesP[(4 * i) + 2] << 16) | ((uint32_t) bytesP[(4 * i) + 3] << 24));
             if( w > MASK )
             {
-                fprintf(stderr, "mtfs: %s: word %#lo is %#o, larger than 18 bits\n", pathP,
+                fprintf(stderr, "fstool: %s: word %#lo is %#o, larger than 18 bits\n", pathP,
                     (unsigned long) i, w);
                 free(bytesP);
                 free(wordsP);
@@ -973,7 +1253,7 @@ bool ok;
 
     if( !(bufP = malloc((size_t) ((count * 4) + 1))) )
     {
-        fprintf(stderr, "mtfs: out of memory\n");
+        fprintf(stderr, "fstool: out of memory\n");
         return(false);
     }
 
@@ -1017,13 +1297,13 @@ bool ok;
     }
     if( wide )
     {
-        fprintf(stderr, "mtfs: %s: warning: a half word greater than 8 bits was written as its low 8 "
+        fprintf(stderr, "fstool: %s: warning: a half word greater than 8 bits was written as its low 8 "
             "bits; -f words keeps all bits\n", pathP);
     }
 
     if( !(fP = fopen(pathP, "wb")) )
     {
-        fprintf(stderr, "mtfs: %s: %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: %s\n", pathP, strerror(errno));
         free(bufP);
         return(false);
     }
@@ -1032,7 +1312,7 @@ bool ok;
     free(bufP);
     if( !ok )
     {
-        fprintf(stderr, "mtfs: %s: %s\n", pathP, strerror(errno));
+        fprintf(stderr, "fstool: %s: %s\n", pathP, strerror(errno));
     }
 
     return(ok);
@@ -1131,7 +1411,7 @@ int drive;
         }
         if( canonPath(listed, theirs, sizeof(theirs)) && (strcmp(mine, theirs) == 0) )
         {
-            fprintf(stderr, "mtfs: %s: warning: the tape is on drive %d in %s; a loaded program that "
+            fprintf(stderr, "fstool: %s: warning: the tape is on drive %d in %s; a loaded program that "
                 "has it mounted keeps its own directory, and its next directory write will "
                 "undo this change\n", pathP, drive, MTFS_LIST);
             break;
@@ -1140,20 +1420,89 @@ int drive;
     fclose(fP);
 }
 
+// Warn when the drum file is the emulator's: a program holding the volume mounted keeps its
+// own directory, and its next directory write would undo this change.
+static void
+warnIfDrum(const char *pathP)
+{
+char mine[PATH_MAX + 2];
+char theirs[PATH_MAX + 2];
+
+    if( canonPath(pathP, mine, sizeof(mine)) && canonPath(MTFS_DRUM, theirs, sizeof(theirs))
+        && (strcmp(mine, theirs) == 0) )
+    {
+        fprintf(stderr, "fstool: %s: warning: this is the emulator's drum; a loaded program that has "
+            "the volume mounted keeps its own directory, and its next directory write will undo "
+            "this change\n", volNameP);
+    }
+}
+
 // Report one of the library's status codes for the file named if any with its meaning or
 // the detail given.
 // Returns 1, the exit status.
 static int
 libError(int code, const char *nameP, const char *detailP)
 {
-    fprintf(stderr, "mtfs: %s: ", imageNameP);
+char meaning[128];
+
+    fprintf(stderr, "fstool: %s: ", volNameP);
     if( nameP )
     {
         fprintf(stderr, "%s: ", nameP);
     }
-    fprintf(stderr, "%s, %s\n", errName[code], (detailP ? detailP : errMeaning[code]));
+    snprintf(meaning, sizeof(meaning), errMeaning[code], devNounP);
+    fprintf(stderr, "%s, %s\n", errName[code], (detailP ? detailP : meaning));
 
     return(1);
+}
+
+// -D's value: first,tracks in octal, a volume of whole tracks on the drum, or all, every
+// volume, for -l. A volume not on the drum is NOUNIT, as the library's drMount gives it.
+// Exits on any fault.
+static void
+parseVolume(const char *argP)
+{
+const char *cP;
+char *endP;
+long first;
+long tracks;
+
+    onDrum = true;
+    drumScan = (strcmp(argP, "all") == 0);
+    if( drumScan )
+    {
+        return;
+    }
+
+    errno = 0;
+    cP = argP;
+    first = -1;
+    tracks = -1;
+    if( (*cP >= '0') && (*cP <= '7') )
+    {
+        first = strtol(cP, &endP, 8);
+        if( (*endP == ',') && (endP[1] >= '0') && (endP[1] <= '7') )
+        {
+            tracks = strtol(&endP[1], &endP, 8);
+        }
+        if( (*endP != '\0') || (errno != 0) )
+        {
+            tracks = -1;
+        }
+    }
+    if( tracks < 0 )
+    {
+        fprintf(stderr, "fstool: -D %s: a volume is first,tracks, both octal, or all\n", argP);
+        usage();
+    }
+    if( (first >= DR_TRACKS) || (tracks < 1) || ((first + tracks) > DR_TRACKS) )
+    {
+        fprintf(stderr, "fstool: -D %s: NOUNIT, the volume's tracks are not on the drum: the first "
+            "track is 0-037, with at least one track, the last within 037\n", argP);
+        exit(1);
+    }
+    drFirst = (int) first;
+    drTracks = (int) tracks;
 }
 
 // List the directory, in octal, with warnings for what the library routines report as warnings.
@@ -1168,20 +1517,19 @@ int fit;
 int slot;
 int blk;
 int last;
-int status;
 
-    if( (status = mountDir()) != E_OK )
+    if( !mountDir() )
     {
-        return(libError(status, NULL, NULL));
+        return(1);
     }
     if( dirFrom != DIRBLK )
     {
-        fprintf(stderr, "mtfs: %s: warning: directory block 1 is bad; the copy in block 2 was "
-            "read\n", imageNameP);
+        fprintf(stderr, "fstool: %s: warning: directory block 1 is bad; the copy in block 2 was "
+            "read\n", volNameP);
     }
 
     freeSpace(0, &total, &largest, &fit);
-    printf("%s: generation %o, %#o blocks, %#o free, largest gap %#o\n", imageNameP,
+    printf("%s: generation %o, %#o blocks, %#o free, largest gap %#o\n", volNameP,
         dirP[DGEN], dirP[DBLKS], total, largest);
     printf("slot  name       type  app  ro  first  blocks    words\n");
     for( slot = 0; slot < NENT; slot++ )
@@ -1198,16 +1546,16 @@ int status;
 
         if( eP[DEMOVE] != 0 )
         {
-            fprintf(stderr, "mtfs: %s: %s: warning: marked as moving to block %#o; a pack was "
-                "stopped while moving it\n", imageNameP, name, eP[DEMOVE]);
+            fprintf(stderr, "fstool: %s: %s: warning: marked as moving to block %#o; a pack was "
+                "stopped while moving it\n", volNameP, name, eP[DEMOVE]);
         }
         last = (int) (eP[DEFIRST] + ((eP[DELEN] + WDS - 1) / WDS));
-        for( blk = (int) eP[DEFIRST]; (blk < last) && (blk < BLKS); blk++ )
+        for( blk = (int) eP[DEFIRST]; (blk < last) && (blk < volBlks); blk++ )
         {
             if( !blockOk(blk) )
             {
-                fprintf(stderr, "mtfs: %s: %s: warning: block %#o does not total zero, a checksum error\n",
-                    imageNameP, name, blk);
+                fprintf(stderr, "fstool: %s: %s: warning: block %#o does not total zero, a checksum error\n",
+                    volNameP, name, blk);
             }
         }
     }
@@ -1246,9 +1594,9 @@ int status;
     // Messages name the file as it is saved, in upper case.
     unpackName(nm, shown);
     nameP = shown;
-    if( (status = mountDir()) != E_OK )
+    if( !mountDir() )
     {
-        return(libError(status, NULL, NULL));
+        return(1);
     }
     if( !(wordsP = sourceWords(sourceP, f, &count)) )
     {
@@ -1340,9 +1688,9 @@ int status;
     // Messages name the file as it is stored, in upper case.
     unpackName(nm, shown);
     nameP = shown;
-    if( (status = mountDir()) != E_OK )
+    if( !mountDir() )
     {
-        return(libError(status, NULL, NULL));
+        return(1);
     }
     if( lookup(nm, &slot, &freeSlot) != E_OK )
     {
@@ -1359,7 +1707,7 @@ int status;
 }
 
 // Extract name's words bounded by its length to a host file.
-// A block that does not total zero is BADBLOCK.
+// A tape block that does not total zero is BADBLOCK; a drum block has no checksum.
 // Returns the exit status.
 static int
 cmdExtract(const char *nameP, enum form f, const char *outputP)
@@ -1374,7 +1722,7 @@ int slot;
 int freeSlot;
 int blk;
 int status;
-char detail[64];
+char detail[128];
 
     if( (status = packName(nameP, nm)) != E_OK )
     {
@@ -1383,9 +1731,9 @@ char detail[64];
     // Messages name the file as it is kept, in upper case.
     unpackName(nm, shown);
     nameP = shown;
-    if( (status = mountDir()) != E_OK )
+    if( !mountDir() )
     {
-        return(libError(status, NULL, NULL));
+        return(1);
     }
     if( lookup(nm, &slot, &freeSlot) != E_OK )
     {
@@ -1393,15 +1741,16 @@ char detail[64];
     }
     eP = entry(slot);
     count = (long) eP[DELEN];
-    if( (count > ((long) eP[DEALLOC] * WDS)) || (((long) eP[DEFIRST] + eP[DEALLOC]) > BLKS) )
+    if( (count > ((long) eP[DEALLOC] * WDS)) || (((long) eP[DEFIRST] + eP[DEALLOC]) > volBlks) )
     {
-        return(libError(E_RANGE, nameP, "the entry's length or blocks are past its allocation "
-            "or the end of the tape"));
+        snprintf(detail, sizeof(detail), "the entry's length or blocks are past its allocation "
+            "or the end of the %s", devNounP);
+        return(libError(E_RANGE, nameP, detail));
     }
 
     if( !(wordsP = calloc((size_t) (count + 1), sizeof(uint32_t))) )
     {
-        fprintf(stderr, "mtfs: out of memory\n");
+        fprintf(stderr, "fstool: out of memory\n");
         return(1);
     }
     for( i = 0; i < count; i++ )
@@ -1413,7 +1762,7 @@ char detail[64];
             free(wordsP);
             return(libError(E_BADBLOCK, nameP, detail));
         }
-        wordsP[i] = image[blk][1 + (i % WDS)];
+        wordsP[i] = blockData(blk)[i % WDS];
     }
     status = (writeHost(outputP, wordsP, count, f) ? 0 : 1);
     free(wordsP);
@@ -1421,15 +1770,17 @@ char detail[64];
     return(status);
 }
 
-// Format: an empty directory at generation 1.
+// Format: an empty directory at generation 1, on the drum with the volume's first track.
 // Unless forced, refused with FOREIGN when blocks 1 and 2 hold another program's data.
-// It must be this file system's or both total zero with only zero data, blank blocks.
+// One must be this file system's, of the volume's blocks, or both total zero with only zero
+// data, blank blocks; never-written drum tracks read as zeros.
 // File blocks are not touched.
 // Returns the exit status.
 static int
 cmdFormat(bool force, bool existed)
 {
 uint32_t data[WDS];
+uint32_t *bP;
 int ours;
 int zeros;
 int blk;
@@ -1444,15 +1795,16 @@ int i;
             {
                 continue;
             }
-            if( dirOk(&image[blk][1]) )
+            bP = blockData(blk);
+            if( dirOk(bP) )
             {
                 ours++;
                 continue;
             }
-            for( i = 1; (i <= WDS) && (image[blk][i] == 0); i++ )
+            for( i = 0; (i < WDS) && (bP[i] == 0); i++ )
             {
             }
-            if( i > WDS )
+            if( i == WDS )
             {
                 zeros++;
             }
@@ -1468,9 +1820,13 @@ int i;
     data[DMAGIC] = MAGIC;
     data[DVER] = VERSION;
     data[DGEN] = 0;
-    data[DBLKS] = BLKS;
-    memcpy(&image[DIRBLK][1], data, sizeof(data));
-    dirP = &image[DIRBLK][1];
+    data[DBLKS] = (uint32_t) volBlks;
+    if( onDrum )
+    {
+        data[DDEV] = (uint32_t) drFirst;
+    }
+    memcpy(blockData(DIRBLK), data, sizeof(data));
+    dirP = blockData(DIRBLK);
     writeDir();
 
     return(0);
@@ -1492,11 +1848,10 @@ int moved;
 int iter;
 int slot;
 int i;
-int status;
 
-    if( (status = mountDir()) != E_OK )
+    if( !mountDir() )
     {
-        return(libError(status, NULL, NULL));
+        return(1);
     }
 
     moved = 0;
@@ -1504,7 +1859,7 @@ int status;
     for( iter = 0; iter <= NENT; iter++ )
     {
         selP = NULL;
-        first = BLKS;
+        first = volBlks;
         for( slot = 0; slot < NENT; slot++ )
         {
             eP = entry(slot);
@@ -1523,7 +1878,7 @@ int status;
         // Lowest block first, which is safe as the new place is below the old.
         if( (selP[DEMOVE] == 0) && (first != pos) )
         {
-            for( i = 0; (i < alloc) && ((first + i) < BLKS); i++ )
+            for( i = 0; (i < alloc) && ((first + i) < volBlks); i++ )
             {
                 copyBlock((pos + i), (first + i));
             }
@@ -1536,11 +1891,101 @@ int status;
 
     if( moved == 0 )
     {
-        printf("%s: no gaps to close\n", imageNameP);
+        printf("%s: no gaps to close\n", volNameP);
         return(0);
     }
     writeDir();
-    printf("%s: %d file%s moved\n", imageNameP, moved, ((moved == 1) ? "" : "s"));
+    printf("%s: %d file%s moved\n", volNameP, moved, ((moved == 1) ? "" : "s"));
+
+    return(0);
+}
+
+// List every volume on the drum file: each track whose block 1, or else 2, holds this file
+// system's directory recording that track as its first, with blocks for whole tracks within
+// the drum. A volume overlapping one listed before it, a directory left from an earlier
+// format, gives a warning.
+// Returns the exit status: NOFS when no track starts a volume.
+static int
+cmdScan(void)
+{
+uint32_t *dP;
+int found;
+int lastEnd;
+int total;
+int largest;
+int fit;
+int files;
+int slot;
+int blk;
+int t;
+
+    found = 0;
+    lastEnd = 0;
+    for( t = 0; t < DR_TRACKS; t++ )
+    {
+        // blockData() and freeSpace() take the volume from these.
+        drFirst = t;
+        dP = NULL;
+        for( blk = DIRBLK; blk <= DIRBLK2; blk++ )
+        {
+            dP = blockData(blk);
+            if( (dP[DMAGIC] == MAGIC) && (dP[DVER] == VERSION) && (dP[DBLKS] != 0)
+                && ((dP[DBLKS] % DR_BPT) == 0) && ((t + (dP[DBLKS] / DR_BPT)) <= DR_TRACKS)
+                && (dP[DDEV] == (uint32_t) t) )
+            {
+                break;
+            }
+            dP = NULL;
+        }
+        if( !dP )
+        {
+            continue;
+        }
+
+        drTracks = (int) (dP[DBLKS] / DR_BPT);
+        volBlks = (int) dP[DBLKS];
+        dirP = dP;
+        freeSpace(0, &total, &largest, &fit);
+        files = 0;
+        for( slot = 0; slot < NENT; slot++ )
+        {
+            if( entry(slot)[0] != 0 )
+            {
+                files++;
+            }
+        }
+        if( drTracks == 1 )
+        {
+            printf("%s: track %03o, ", imageNameP, t);
+        }
+        else
+        {
+            printf("%s: tracks %03o-%03o, ", imageNameP, t, ((t + drTracks) - 1));
+        }
+        printf("generation %o, %#o blocks, %d file%s, %#o free, largest gap %#o\n", dP[DGEN],
+            volBlks, files, ((files == 1) ? "" : "s"), total, largest);
+        if( blk != DIRBLK )
+        {
+            fprintf(stderr, "fstool: %s: track %03o: warning: directory block 1 is not the file "
+                "system's; the copy in block 2 was read\n", imageNameP, t);
+        }
+        if( t < lastEnd )
+        {
+            fprintf(stderr, "fstool: %s: track %03o: warning: inside the volume listed before it, "
+                "which ends at track %03o; one of the two is left from an earlier format\n",
+                imageNameP, t, (lastEnd - 1));
+        }
+        if( (t + drTracks) > lastEnd )
+        {
+            lastEnd = (t + drTracks);
+        }
+        found++;
+    }
+
+    if( found == 0 )
+    {
+        return(libError(E_NOFS, NULL, "no track starts a file system volume"));
+    }
 
     return(0);
 }
@@ -1558,7 +2003,7 @@ long v;
     if( (*argP == '\0') || (*endP != '\0') || (errno != 0) || (v < 0) || (*argP == '-')
         || (*argP == '+') )
     {
-        fprintf(stderr, "mtfs: -%c %s: not an octal number\n", opt, argP);
+        fprintf(stderr, "fstool: -%c %s: not an octal number\n", opt, argP);
         usage();
     }
 
@@ -1569,20 +2014,24 @@ static void
 usage(void)
 {
     fprintf(stderr,
-        "Usage: mtfs -l image\n"
-        "       mtfs -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image\n"
-        "       mtfs -d -n name [-F] image\n"
-        "       mtfs -x -n name [-f bytes|text|words] -o output image\n"
-        "       mtfs -i [-F] image\n"
-        "       mtfs -p image\n"
-        "  The Microtape file system on a Type 550 tape image.\n"
+        "Usage: fstool [-D first,tracks] -l image\n"
+        "       fstool -D all -l drumfile\n"
+        "       fstool [-D first,tracks] -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F]\n"
+        "            -s source image\n"
+        "       fstool [-D first,tracks] -d -n name [-F] image\n"
+        "       fstool [-D first,tracks] -x -n name [-f bytes|text|words] -o output image\n"
+        "       fstool [-D first,tracks] -i [-F] image\n"
+        "       fstool [-D first,tracks] -p image\n"
+        "  Manage the file system on a Type 550 tape image, or with -D on a Type 23 drum file.\n"
+        "  -D first,tracks: the image is a drum file, the volume its tracks first to first+tracks-1.\n"
+        "  -D all: with -l, list every volume on the drum file.\n"
         "  -l lists the directory, -a adds source as name, -d deletes name.\n"
-        "  -x extracts name to output, -i formats an empty tape directory, a missing image is created.\n"
+        "  -x extracts name to output, -i formats an empty directory, a missing image is created.\n"
         "  -p packs the files to close any gaps.\n"
         "  -n name: 1 to 9 characters, any case, no control characters or a leading blank.\n"
         "  -t type: octal 0-7777, default 0.\n"
         "  -r: the file is read-only.\n"
-        "  -b blocks: octal, at least as big as the data, at most 0777; default the data's size.\n"
+        "  -b blocks: octal, at least as big as the data, at most 0777; default is the data's size.\n"
         "  -f form:\n"
         "     bytes (default), two 8-bit bytes a word;\n"
         "     text, as bytes with line terminators stored as CR;\n"
@@ -1592,9 +2041,9 @@ usage(void)
         "    delete removes a read-only file;\n"
         "    format overwrites another program's data.\n"
         "  Numbers are octal.\n"
-        "  Change a tape only when not being used by a program\n"
+        "  Change a tape or a drum volume only when not being used by a program\n"
         "    A program that has it mounted would undo the change.\n"
-        "    A tape in %s gives a warning.\n",
-        MTFS_LIST);
+        "    A tape in %s, or the drum %s, gives a warning.\n",
+        MTFS_LIST, MTFS_DRUM);
     exit(1);
 }

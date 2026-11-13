@@ -192,8 +192,8 @@ while true; do
 		make -C $INSTALLDIR/Tools/Drumupdater install
 		make -C $INSTALLDIR/Tools/Drumupdater clean
                 # The microtape tools
-		make -C $INSTALLDIR/Tools/TapeUtils install
-		make -C $INSTALLDIR/Tools/TapeUtils clean
+		make -C $INSTALLDIR/Tools/Utils install
+		make -C $INSTALLDIR/Tools/Utils clean
                 # The overlay tools
 		make -C $INSTALLDIR/Tools/Ovlload install
 		make -C $INSTALLDIR/Tools/Ovlload clean
@@ -283,6 +283,7 @@ while true; do
 
 	    sudo ln -sf $INSTALLDIR/bin/mtp /usr/local/bin/mtp
 	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
+	    sudo ln -sf $INSTALLDIR/bin/fstools /usr/local/bin/fstools
 
 	    sudo ln -sf $INSTALLDIR/bin/ovlload /usr/local/bin/ovlload
 

@@ -15,6 +15,8 @@
 // 10-Nov-2026, Claude: the library.
 // 12-Nov-2026, Claude: the handle's entries and mtbSetHandle, for the file system made
 // device-independent; its names from FILESYSTEM/fs.ah.
+// 12-Nov-2026, Claude: mtbSetHandle zeros the header's device words in the handle, which a
+// format now keeps.
 
 #ifndef MTBLOCK_AC
 #define MTBLOCK_AC
@@ -26,6 +28,8 @@
 assert FS_HBREAD == FS_HDEV + 1
 assert FS_HBWRITE == FS_HDEV + 2
 assert FS_HBLKS == FS_HDEV + 3
+// and zeros the header's device words four by name.
+assert FS_DDEVW == 4
 
 local mbRtn, mbPar, mbWr, mbWm, mbDrv, mbBlk, mbCnt, mbAt, mbSbm, mbStat, mbWc, mbSum, mbBad, \
     mbTmo, mbWord, mbN, mbGo, mbRange, mbNoDrv, mbNoTape, mbExit, mbFault, mf0, mf1, mf2, \
@@ -488,8 +492,10 @@ hb1,
     jmp i hbRtn
 
 // Set a handle for a tape: the drive, the device, the entries above, and the tape's blocks as
-// the volume's. mtMount and mtFormat call it; a program moving blocks through fsBRead and
-// fsBWrite without a mount may call it too. The drive is checked at the first transfer.
+// the volume's; the directory header's device words, which a tape does not use, zero in the
+// handle, so that a format writes them as zeros. mtMount and mtFormat call it; a program moving
+// blocks through fsBRead and fsBWrite without a mount may call it too. The drive is checked at
+// the first transfer.
 // Entry: AC = the handle's 16-bit address, IO = the drive, 1-8. Exit: AC is clobbered, IO is
 // preserved. Called via jda.
 mtbSetHandle, 0
@@ -511,6 +517,16 @@ mtbSetHandle, 0
     idx hbQ
     lac [MTBLKS]
     dac i hbQ                   // FS_HBLKS
+    lac mtbSetHandle
+    add [FS_HDIR+FS_DDEV]
+    dac hbQ
+    dzm i hbQ
+    idx hbQ
+    dzm i hbQ
+    idx hbQ
+    dzm i hbQ
+    idx hbQ
+    dzm i hbQ
     jmp i hbRtn
 
 mbRtn, 0

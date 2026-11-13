@@ -6,6 +6,8 @@
 // 10-Nov-2026, Claude: the library, as MICROTAPE/mtfformat.ac.
 // 12-Nov-2026, Claude: moved here and renamed; the device's format sets the handle, and the
 // volume's blocks come from it.
+// 12-Nov-2026, Claude: the header's device words kept from the handle, as its setter left
+// them, for the drum's first track.
 
 #ifndef FSFORMAT_AC
 #define FSFORMAT_AC
@@ -15,7 +17,10 @@
 #include <AIDS/skipmacros.ah>
 
 local fmRtn, fmH, fmF, fmQ, fmA, fmN, fmS, fmSbm, fmBlk, fmOff, fmV, fmZ, fmB, fmNew, fmZero, \
-    fmEnd, fmForeign, fmRd, fr1, fr2, fr3, frx
+    fmEnd, fmForeign, fmRd, fr1, fr2, fr3, frx, fmD0, fmD1, fmD2, fmD3
+
+// The device's header words are kept four by name.
+assert FS_DDEVW == 4
 
 // Format a volume: an empty directory written as both copies, and the handle mounted on it.
 // Without force, a volume whose directory blocks hold another program's data is refused: one
@@ -23,9 +28,10 @@ local fmRtn, fmH, fmF, fmQ, fmA, fmN, fmS, fmSbm, fmBlk, fmOff, fmV, fmZ, fmB, f
 // Files' blocks are not touched. Sequence breaks are off throughout and turned on again only
 // if they were on.
 // Entry: AC = the handle's 16-bit address, its FS_HUNIT and device words (FS_HDEV to
-// FS_HBLKS) set; IO = force, nonzero to format whatever is there. Exit: AC = FS_OK,
-// FS_EFOREIGN, or the block layer's error; the handle is mounted only on FS_OK. IO is
-// clobbered. Called via jda.
+// FS_HBLKS) set, and the directory header's device words (FS_HDIR+FS_DDEV, FS_DDEVW words),
+// which the new directory keeps; IO = force, nonzero to format whatever is there.
+// Exit: AC = FS_OK, FS_EFOREIGN, or the block layer's error; the handle is mounted only on
+// FS_OK. IO is clobbered. Called via jda.
 fsFormatVol, 0
     dac fmRtn
     eem
@@ -48,6 +54,22 @@ fsFormatVol, 0
     dac fmQ
     lac i fmQ
     dac fmB
+
+    // The device's header words, before the reads below put a block over them.
+    lac fmH
+    add [FS_HDIR+FS_DDEV]
+    dac fmQ
+    lac i fmQ
+    dac fmD0
+    idx fmQ
+    lac i fmQ
+    dac fmD1
+    idx fmQ
+    lac i fmQ
+    dac fmD2
+    idx fmQ
+    lac i fmQ
+    dac fmD3
 
     // Unless forced, what blocks 1 and 2 hold: fmV counts this file system's, fmZ the zeros.
     lac fmF
@@ -97,6 +119,18 @@ fmZero,
     idx fmA
     lac fmB
     dac i fmA                   // FS_DBLKS
+    idx fmA
+    lac fmD0
+    dac i fmA                   // FS_DDEV to FS_DDEV+3, the device's
+    idx fmA
+    lac fmD1
+    dac i fmA
+    idx fmA
+    lac fmD2
+    dac i fmA
+    idx fmA
+    lac fmD3
+    dac i fmA
     lac fmH
     farjda(fsWrDir:*)
     SKIP_NEXT_IF_AC_ZERO
@@ -173,6 +207,10 @@ fmOff, 0
 fmV, 0
 fmZ, 0
 fmB, 0
+fmD0, 0
+fmD1, 0
+fmD2, 0
+fmD3, 0
 endloc
 
 // The block layer's parameter block for this file's reads, FS_BW words; global so its full

@@ -11,6 +11,8 @@
 // stays refused.
 // 12-Nov-2026, Claude: moved here from MICROTAPE/mtfs.ah, renamed fs and FS_; the handle names
 // its device, its block entries and the volume's blocks; the block layer's parameter block.
+// 12-Nov-2026, Claude: FS_EXFER for the drum; the header's device words named, set by the
+// device's handle setter.
 
 #ifndef FS_AH
 #define FS_AH
@@ -38,6 +40,7 @@
 #define FS_EBADFD 020       // the descriptor is not open
 #define FS_ESMALLBUF 021    // pack's buffer is smaller than one block
 #define FS_ETIMEOUT 022     // a tape search saw no block mark in its time
+#define FS_EXFER 023        // a drum transfer cut short, by a halt or a failed host write
 
 // The block, the same on every device.
 #define FS_BLKW 0400
@@ -115,13 +118,15 @@
 #define FS_DIRBLK2 2
 #define FS_FIRSTBLK 3
 
-// The directory block's header. Words 4 to 7 are a device's own: written as zeros by
-// fsFormatVol and carried through every later directory write from the handle's copy, so a
-// device's layer may set them there.
+// The directory block's header. Words 4 to 7, from FS_DDEV, are a device's own: its handle
+// setter writes them into the handle's copy of the directory, fsFormatVol keeps them from
+// there, and every later directory write carries them from the handle's copy.
 #define FS_DMAGIC 0         // FS_MAGIC: the volume holds this file system
 #define FS_DVER 1           // FS_VERSION
 #define FS_DGEN 2           // the generation, new for every write of the directory
 #define FS_DBLKS 3          // the blocks on the volume, the handle's FS_HBLKS
+#define FS_DDEV 4           // the first of the device's FS_DDEVW words
+#define FS_DDEVW 4
 #define FS_MAGIC 0556446    // MTF in sixbit, as the first tapes were written
 #define FS_VERSION 1
 
@@ -152,7 +157,8 @@
 // A handle, FS_HANDLEW words, one per mounted volume. A device's mount and format set
 // FS_HUNIT and the four device words; the file system reads blocks only through FS_HBREAD and
 // FS_HBWRITE, which take an FS_B parameter block.
-#define FS_HUNIT 0          // the unit, as the device's layer defines it: a tape's drive, 1-8
+#define FS_HUNIT 0          // the unit, as the device's layer defines it: a tape's drive, 1-8;
+                            // a drum volume's first track, 0-037
 #define FS_HSTATE 1         // 0 not mounted, 1 mounted
 #define FS_HGEN 2           // the directory's generation as read
 #define FS_HMOUNT 3         // counts the mounts and formats, so a descriptor knows its own

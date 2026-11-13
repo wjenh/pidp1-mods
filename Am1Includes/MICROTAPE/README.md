@@ -3,7 +3,7 @@
 This also documents the Microtape's layer of the file system.
 The file system's calls are in `FILESYSTEM/README.md`.
 
-This is version 2.0\
+This is version 2.1\
 12-Nov-2026
 
 ## What's here?

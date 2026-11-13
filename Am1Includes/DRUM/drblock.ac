@@ -1,0 +1,323 @@
+// drblock.ac -- the drum's block layer for the file system: drbHRead and drbHWrite move whole
+// blocks of a volume, a run of whole tracks, between the drum and memory; drbSetHandle sets a
+// handle for a volume and names them in it. There is no drum block layer by unit apart from
+// a handle: a program moving raw blocks sets a handle with drbSetHandle and calls fsBRead and
+// fsBWrite.
+// Include DRUM/drum.ah, then this file once, in any bank, and place that bank's constants. The
+// code runs with the extend window open and reaches the caller's parameter block, the handle
+// and the buffer by their 16-bit addresses. Each entry is entered by jda, farjda (memory.ah)
+// from another bank; it returns with the window open. Not reentrant; not to be called from a
+// break routine.
+// A run is moved with one transfer for each track it touches, and also split where its buffer
+// crosses a core bank, since a transfer neither leaves its track nor its core bank: it wraps
+// within each. With the layout's skew (drum.ah), a run within a track is one transfer that may
+// wrap past the track's last word. Busy is polled with cks; sequence breaks are off throughout
+// and turned on again at the end only if they were on (FS_SBS_RESTORE), which clears the end
+// break every transfer requests.
+// 12-Nov-2026, Claude: the drum's layer.
+
+#ifndef DRBLOCK_AC
+#define DRBLOCK_AC
+
+#include <DRUM/drum.ah>
+#include <AIDS/skipmacros.ah>
+
+// drbSetHandle fills the device words in order, and the header's device words four by name.
+assert FS_HBREAD == FS_HDEV + 1
+assert FS_HBWRITE == FS_HDEV + 2
+assert FS_HBLKS == FS_HDEV + 3
+assert FS_DDEVW == 4
+// A block count is the tracks times 16, a shift of 4.
+assert DR_BPT == 0d16
+
+local dbRtn, dbPar, dbWr, dbH, dbBlk, dbCnt, dbAt, dbBlks, dbFirst, dbW, dbR, dbK, dbO, dbM, \
+    dbT, dbF, dbV, dbV2, dbS, dbSbm, dbGo, db1, db2, db3, db4, dbWait, dbEnd, dbRange, dbXfer, \
+    shRtn, shP, shH, shF, shN, shQ, shBad
+
+// Read blocks of the handle's volume into memory.
+// Entry: AC = an FS_B parameter block's 16-bit address: the handle, the first block, the count
+// and the buffer's 16-bit address. Exit: AC = FS_OK, FS_ERANGE for blocks not all on the
+// volume, or FS_EXFER for a transfer cut short; the buffer holds count x FS_BLKW words, or on
+// FS_EXFER those moved before it. IO is clobbered. Called via jda, through fsBRead.
+drbHRead, 0
+    dac dbRtn
+    lac drbHRead
+    dac dbPar
+    dzm dbWr
+    jmp dbGo
+
+// Write blocks of the handle's volume from memory.
+// Entry and exit as drbHRead's, the drum holding on FS_EXFER the words moved before it. IO is
+// clobbered. Called via jda, through fsBWrite.
+drbHWrite, 0
+    dac dbRtn
+    lac drbHWrite
+    dac dbPar
+    law 1
+    dac dbWr
+
+dbGo,
+    eem
+    FS_SBS_OFF(dbSbm)
+
+    // The parameters, and the volume's first track and blocks from the handle.
+    lac i dbPar                 // FS_BHANDLE
+    dac dbH
+    idx dbPar
+    lac i dbPar
+    dac dbBlk
+    idx dbPar
+    lac i dbPar
+    dac dbCnt
+    idx dbPar
+    lac i dbPar
+    dac dbAt
+    lac i dbH                   // FS_HUNIT
+    dac dbFirst
+    lac dbH
+    add [FS_HBLKS]
+    dac dbT
+    lac i dbT
+    dac dbBlks
+
+    // A first block on the volume, a count of at least 1, and their sum within it, each
+    // bounded first so that the sum cannot overflow.
+    lac dbBlk
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp dbRange
+    sub dbBlks
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dbRange
+    lac dbCnt
+    sma sza i                   // skip if at least one block
+    jmp dbRange
+    sub dbBlks
+    sub [1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dbRange
+    lac dbBlk
+    add dbCnt
+    sub dbBlks
+    sub [1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dbRange
+
+    // In words from here: dbW the volume's word, dbR the words left.
+    lac dbBlk
+    sal 8s                      // times FS_BLKW
+    dac dbW
+    lac dbCnt
+    sal 8s
+    dac dbR
+
+    // Each transfer: dbK the track within the volume, dbO the word within that track, dbM the
+    // words, the least of those left, those to the track's end and those to the core bank's.
+db1,
+    lac dbW
+    sar 6s
+    sar 6s
+    dac dbK
+    lac dbW
+    and [DR_TRACKW-1]
+    dac dbO
+    lac [DR_TRACKW]
+    sub dbO
+    dac dbM
+    lac dbAt
+    and [DR_TRACKW-1]
+    dac dbT
+    lac [DR_TRACKW]
+    sub dbT
+    dac dbT
+    sub dbM
+    SKIP_NEXT_IF_AC_NEGATIVE    // skip if the core bank ends first
+    jmp db2
+    lac dbT
+    dac dbM
+db2,
+    lac dbR
+    sub dbM
+    SKIP_NEXT_IF_AC_NEGATIVE    // skip if fewer words are left
+    jmp db3
+    lac dbR
+    dac dbM
+db3,
+
+    // The drum's address, skewed a block for each track into the volume, and the track's field,
+    // bits 1-5 of dia's and dwc's words.
+    lac dbK
+    sal 8s
+    add dbO
+    and [DR_TRACKW-1]
+    dac dbT
+    lac dbFirst
+    add dbK
+    sal 6s
+    sal 6s
+    dac dbF
+
+    // dia: the field and the address, with the read enable for a read; dwc: the field and the
+    // count, a whole track's being 0, with the write enable for a write.
+    lac dbF
+    ior dbT
+    lio dbWr
+    SKIP_NEXT_IF_IO_NOT_ZERO    // skip if writing
+    ior [drmrd]
+    dac dbV
+    lac dbM
+    and [DR_TRACKW-1]
+    ior dbF
+    lio dbWr
+    SKIP_NEXT_IF_IO_NOT_ZERO    // skip if writing
+    jmp db4
+    ior [drmwrt]
+db4,
+    dac dbV2
+    lio dbV
+    dia
+    lio dbV2
+    dwc
+    lio dbAt
+    dcl                         // the transfer starts
+dbWait,
+    cks
+    rir 1s                      // busy, CKSDRM, bit 17, to the sign
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO
+    jmp dbWait
+    t23dra
+    dio dbV
+    lac dbV
+    and [DR_DRAERR]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dbXfer
+
+    // On past the words moved.
+    lac dbW
+    add dbM
+    dac dbW
+    lac dbAt
+    add dbM
+    dac dbAt
+    lac dbR
+    sub dbM
+    dac dbR
+    SKIP_NEXT_IF_AC_ZERO
+    jmp db1
+    cla
+dbEnd,
+    dac dbS
+    FS_SBS_RESTORE(dbSbm)
+    lac dbS
+    jmp i dbRtn
+dbRange,
+    law FS_ERANGE
+    jmp dbEnd
+dbXfer,
+    law FS_EXFER
+    jmp dbEnd
+
+// Set a handle for a drum volume: the first track as its unit, the device, the entries above,
+// the volume's blocks, and the directory header's device words in the handle, the first track
+// then zeros, which a format writes and a mount checks. drMount and drFormat call it; a program
+// moving blocks through fsBRead and fsBWrite without a mount may call it too. The handle is
+// not changed when the tracks are refused.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
+// (DR_PFIRST) and the tracks (DR_PTRACKS). Exit: AC = FS_OK, or FS_ENOUNIT for a first track
+// not 0-037, no tracks, or a last track past 037. IO is clobbered. Called via jda.
+drbSetHandle, 0
+    dac shRtn
+    eem
+    lac drbSetHandle
+    dac shP
+    lac i shP
+    dac shH
+    idx shP
+    lac i shP
+    dac shF
+    idx shP
+    lac i shP
+    dac shN
+
+    // A first track on the drum, at least one track, and the last on it, each bounded first so
+    // that the sum cannot overflow.
+    lac shF
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp shBad
+    sub [DR_TRACKS]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp shBad
+    lac shN
+    sma sza i                   // skip if at least one track
+    jmp shBad
+    sub [DR_TRACKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp shBad
+    lac shF
+    add shN
+    sub [DR_TRACKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp shBad
+
+    lac shF
+    dac i shH                   // FS_HUNIT
+    lac shH
+    add [FS_HDEV]
+    dac shQ
+    law FS_DEVDRUM
+    dac i shQ
+    idx shQ
+    lac [drbHRead:.]
+    dac i shQ
+    idx shQ
+    lac [drbHWrite:.]
+    dac i shQ
+    idx shQ
+    lac shN
+    sal 4s                      // DR_BPT blocks a track
+    dac i shQ                   // FS_HBLKS
+    lac shH
+    add [FS_HDIR+DR_DFIRST]
+    dac shQ
+    lac shF
+    dac i shQ
+    idx shQ
+    dzm i shQ
+    idx shQ
+    dzm i shQ
+    idx shQ
+    dzm i shQ
+    cla
+    jmp i shRtn
+shBad,
+    law FS_ENOUNIT
+    jmp i shRtn
+
+dbRtn, 0
+dbPar, 0
+dbWr, 0
+dbH, 0
+dbBlk, 0
+dbCnt, 0
+dbAt, 0
+dbBlks, 0
+dbFirst, 0
+dbW, 0
+dbR, 0
+dbK, 0
+dbO, 0
+dbM, 0
+dbT, 0
+dbF, 0
+dbV, 0
+dbV2, 0
+dbS, 0
+dbSbm, 0
+shRtn, 0
+shP, 0
+shH, 0
+shF, 0
+shN, 0
+shQ, 0
+endloc
+
+#endif

@@ -1,0 +1,66 @@
+// drformat.ac -- drFormat: give a drum volume, a run of whole tracks, an empty directory, both
+// copies, and mount it.
+// Include DRUM/drum.ah, then this file once, in any bank, and place that bank's constants. It
+// includes drblock.ac and FILESYSTEM/fsformat.ac. Called as fsdir.ac's entries are.
+// 12-Nov-2026, Claude: the drum's layer.
+
+#ifndef DRFORMAT_AC
+#define DRFORMAT_AC
+
+#include <DRUM/drum.ah>
+#include <DRUM/drblock.ac>
+#include <FILESYSTEM/fsformat.ac>
+#include <AIDS/skipmacros.ah>
+
+local dfRtn, dfP, dfH, dfQ, dfS, dfFail
+
+// Format a drum volume: the handle takes the first track and the drum's device words, then
+// fsFormatVol writes an empty directory as both copies, the first track in its header, and
+// mounts the handle on it. Without force, a volume whose blocks 1 and 2 hold another program's
+// data is refused; tracks never written read as zeros and are not. Files' blocks are not
+// touched. Sequence breaks are off throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
+// (DR_PFIRST), the tracks (DR_PTRACKS) and force (DR_PFORCE, nonzero to format whatever is
+// there). Exit: AC = FS_OK, FS_ENOUNIT for tracks not on the drum, FS_EFOREIGN, or the block
+// layer's error; the handle is mounted only on FS_OK. IO is clobbered. Called via jda.
+drFormat, 0
+    dac dfRtn
+    eem
+    lac drFormat
+    dac dfP
+    lac i dfP
+    dac dfH
+    lac dfP
+    farjda(drbSetHandle:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dfFail
+    lac dfP
+    add [DR_PFORCE]
+    dac dfQ
+    lio i dfQ
+    lac dfH
+    farjda(fsFormatVol:*)
+    jmp i dfRtn
+
+    // Refused: the handle not mounted, and descriptors of an earlier mount on it refused.
+dfFail,
+    dac dfS
+    lac dfH
+    add [FS_HSTATE]
+    dac dfQ
+    dzm i dfQ
+    lac dfH
+    add [FS_HMOUNT]
+    dac dfQ
+    idx i dfQ
+    lac dfS
+    jmp i dfRtn
+
+dfRtn, 0
+dfP, 0
+dfH, 0
+dfQ, 0
+dfS, 0
+endloc
+
+#endif

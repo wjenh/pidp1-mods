@@ -1,0 +1,80 @@
+// drmount.ac -- drMount: open the file system on a drum volume, a run of whole tracks, its
+// directory read into a handle (FILESYSTEM/fs.ah, FS_HANDLE), which the file system's calls
+// then take.
+// Include DRUM/drum.ah, then this file once, in any bank, and place that bank's constants. It
+// includes drblock.ac and FILESYSTEM/fsdir.ac. Called as fsdir.ac's entries are.
+// 12-Nov-2026, Claude: the drum's layer.
+
+#ifndef DRMOUNT_AC
+#define DRMOUNT_AC
+
+#include <DRUM/drum.ah>
+#include <DRUM/drblock.ac>
+#include <FILESYSTEM/fsdir.ac>
+#include <AIDS/skipmacros.ah>
+
+local dmRtn, dmP, dmH, dmQ, dmS, dmSbm, dmWrong, dmFail, dmEnd
+
+// Mount a drum volume: the handle takes the first track, the drum's device words and the
+// directory, the copy in block 2 if block 1 is not good. A directory whose recorded first
+// track is not the one given is refused, so a volume is never read at another run of tracks.
+// Sequence breaks are off throughout and turned on again only if they were on.
+// Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
+// (DR_PFIRST) and the tracks (DR_PTRACKS). Exit: AC = FS_OK, FS_ENOUNIT for tracks not on the
+// drum, FS_ENOFS for a volume without this file system, its block count not the tracks', or
+// its first track another, or the block layer's error; the handle is mounted only on FS_OK.
+// IO is clobbered. Called via jda.
+drMount, 0
+    dac dmRtn
+    eem
+    lac drMount
+    dac dmP
+    FS_SBS_OFF(dmSbm)
+    lac i dmP
+    dac dmH
+    lac dmP
+    farjda(drbSetHandle:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dmFail
+    lac dmH
+    farjda(fsRdDir:*)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dmEnd                   // fsRdDir left the handle not mounted
+    lac dmH
+    add [FS_HDIR+DR_DFIRST]
+    dac dmQ
+    lac i dmQ
+    sas i dmH                   // skip if the first track given, FS_HUNIT
+    jmp dmWrong
+    cla
+    jmp dmEnd
+
+    // Refused: the handle not mounted, and descriptors of an earlier mount on it refused.
+dmWrong,
+    law FS_ENOFS
+dmFail,
+    dac dmS
+    lac dmH
+    add [FS_HSTATE]
+    dac dmQ
+    dzm i dmQ
+    lac dmH
+    add [FS_HMOUNT]
+    dac dmQ
+    idx i dmQ
+    lac dmS
+dmEnd,
+    dac dmS
+    FS_SBS_RESTORE(dmSbm)
+    lac dmS
+    jmp i dmRtn
+
+dmRtn, 0
+dmP, 0
+dmH, 0
+dmQ, 0
+dmS, 0
+dmSbm, 0
+endloc
+
+#endif

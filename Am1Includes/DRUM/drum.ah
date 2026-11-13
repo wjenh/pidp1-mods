@@ -1,0 +1,38 @@
+// drum.ah -- definitions for the drum's layer of the file system: a volume as a run of whole
+// tracks, drMount's, drFormat's and drbSetHandle's parameter block, and the layout. It includes
+// the file system's definitions (FILESYSTEM/fs.ah) and the drum's IOTs under the names that
+// do not clash with the Type 340's (type23alt.ah).
+// Definitions only; the code is in drblock.ac, drmount.ac and drformat.ac, which include this.
+// See README.md beside it.
+// 12-Nov-2026, Claude: the drum's layer.
+
+#ifndef DRUM_AH
+#define DRUM_AH
+
+#include <FILESYSTEM/fs.ah>
+#include <DRUM/type23alt.ah>
+
+// The drum: 040 tracks of 010000 words, 16 blocks a track.
+#define DR_TRACKS 040
+#define DR_TRACKW 010000
+#define DR_BPT 0d16
+assert DR_BPT * FS_BLKW == DR_TRACKW
+
+// drMount's, drFormat's and drbSetHandle's parameter block: the handle's 16-bit address
+// (FS_PHANDLE), then these.
+#define DR_PFIRST 1         // the volume's first track, 0-037
+#define DR_PTRACKS 2        // its tracks, at least 1, the last within 037
+#define DR_PFORCE 3         // drFormat: nonzero formats whatever the directory blocks hold
+
+// The directory header's first device word: the volume's first track, written at format and
+// checked at every mount.
+#define DR_DFIRST FS_DDEV
+
+// The layout: the volume's track k (0 the first) holds its block j at ((j + k) mod 16) x 0400,
+// a skew of one block a track, so that a run crossing a track starts a block after where the
+// last track's run ended rather than a revolution later.
+
+// dra's error bits: error, parity, transfer incomplete.
+#define DR_DRAERR 0700000
+
+#endif

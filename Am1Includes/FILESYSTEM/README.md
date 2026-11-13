@@ -5,7 +5,7 @@ The call are the sames on every device.
 A device's specific layer mounts and formats its volumes and moves its
 blocks, see `MICROTAPE/` for the Type 550 Microtape and `DRUM/` for the Type 23 Parallel Drumn.
 
-This is version 2.0\
+This is version 2.1\
 12-Nov-2026
 Initial version.
 
@@ -257,6 +257,7 @@ means for it.
 | 020 | `FS_EBADFD` | file system | the descriptor is not open or no longer valid |
 | 021 | `FS_ESMALLBUF` | file system | pack's buffer is under 0400 words |
 | 022 | `FS_ETIMEOUT` | device | a Microtape search saw no block mark, the tape couldn't be read |
+| 023 | `FS_EXFER` | device | a drum transfer failed. If from a halt the call can be repeated, or the drum file couldn't be written |
 
 ## An example
 

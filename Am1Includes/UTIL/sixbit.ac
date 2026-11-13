@@ -118,7 +118,7 @@ pending, 0          // where we build our am1 character pair
 //
 am1ToSixbit, 0
     local loop, check, pad, done, tooLong, badChar, put, putx, getch, gc1, gc2, getx, \
-        src, half, word, inword, left, nchars, ch
+        src, half, word, inword, nleft, nchars, ch
     dac rtn         // full 16-bit address preservation
     lac i rtn       // pick up the destination address
     dac ptr
@@ -128,7 +128,7 @@ am1ToSixbit, 0
     lai
     sma sza i       // is the count <= 0?
     cla             // yes, no room at all
-    dac left        // destination words not yet filled
+    dac nleft       // destination words not yet filled
     dzm half
     dzm word
     dzm nchars
@@ -156,7 +156,7 @@ check,
     jmp badChar
     add [0100]      // the SIXBIT character
     dac ch
-    lac left
+    lac nleft
     sza i           // is there room?
     jmp tooLong
     idx nchars
@@ -164,7 +164,7 @@ check,
     jmp loop
 
 pad,                // blanks until the destination's words are filled
-    lac left
+    lac nleft
     sza i
     jmp done
     dzm ch
@@ -200,8 +200,8 @@ put,
     law i 3
     dac inword
     law i 1
-    add left
-    dac left
+    add nleft
+    dac nleft
 putx,
     jmp .
 
@@ -232,7 +232,7 @@ src, 0
 half, 0
 word, 0
 inword, 0
-left, 0
+nleft, 0
 nchars, 0
 ch, 0
     endloc

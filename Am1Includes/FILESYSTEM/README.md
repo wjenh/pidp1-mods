@@ -1,9 +1,9 @@
 ## The file system
 
 Include files for a file system of named files on a block device.
-The call are the sames on every device.
+The calls are the same on every device.
 A device's specific layer mounts and formats its volumes and moves its
-blocks, see `MICROTAPE/` for the Type 550 Microtape and `DRUM/` for the Type 23 Parallel Drumn.
+blocks, see `MICROTAPE/` for the Type 550 Microtape and `DRUM/` for the Type 23 Parallel Drum.
 
 This is version 2.1\
 12-Nov-2026
@@ -36,15 +36,15 @@ works the same regardless of the underlying device.
 | Device | Directory | Mount, format |
 |---|---|---|
 | Type 550 Microtape | `MICROTAPE/`, see its `README.md` | `mtMount`, `mtFormat` |
-| Type 23 Parallel Drum | `DRUM/`, see its `README.md` | `dmMount`, `dmFormat` |
+| Type 23 Parallel Drum | `DRUM/`, see its `README.md` | `drMount`, `drFormat` |
 
-A program can mount multple volumes at once, on one device or several, each with its own
+A program can mount multiple volumes at once, on one device or several, each with its own
 handle, and have files open on all of them.
 
 ## The volume
 
 A volume holds blocks of 256 words (0400, `FS_BLKW`), on every device.
-How many there are is specific to the device, a Microtape holds 576 (01100).
+How many there are is specific to the device, a Microtape holds 576 (01100), a drum volume 16 for each track.
 The file system uses them as:
 | Block | Holds |
 |---|---|
@@ -146,14 +146,15 @@ and a descriptor keeps the count it was opened with.
   While a call runs, nothing driven by breaks runs.
   For example, a display refreshed by breaks will not update.
   How long a call takes is specific to the device, up to about 30 seconds on a Microtape,
-  less than about 60 milliseconds maximum on the drum.
+  and on the drum a few revolutions of about 35 ms each, more for `fsPack`.
 - **A program that keeps breaks off** and turns them on later, after calls, should do `cbs`
   before its `esm`.
   A flag the device raised while breaks are off is held as a request and
   `esm` will cause an immediate break.
 - **Every call blocks** until it is done.
 - **No call retries.** A missed word or a bad block is reported.
-  A halt during a call stops the transfer and the call returns `FS_EHALTED`.
+  A halt during a call stops the transfer and the call returns `FS_EHALTED` on a Microtape,
+  `FS_EXFER` on the drum.
   The call can be repeated.
 
 ### The calls
@@ -239,10 +240,10 @@ means for it.
 | Code | Name | From | Meaning |
 |---|---|---|---|
 | 0 | `FS_OK` | | done |
-| 1 | `FS_ENOUNIT` | device | no such unit: on a Microtape, the drive is not 1-8 |
+| 1 | `FS_ENOUNIT` | device | no such unit: on a Microtape, the drive is not 1-8; on the drum, tracks not on the drum |
 | 2 | `FS_ENOMEDIUM` | device | nothing to read: on a Microtape, no tape on the drive, or it ran off its reel |
 | 3 | `FS_ELOCKED` | device | a write to a write-locked unit |
-| 4 | `FS_EHALTED` | device | a halt stopped the transfer; the call can be repeated |
+| 4 | `FS_EHALTED` | device | a halt stopped a Microtape's transfer; the call can be repeated |
 | 5 | `FS_EBADBLOCK` | device | a block did not total zero or a word was missed |
 | 6 | `FS_EENDZONE` | device | a Microtape ran into an end zone |
 | 7 | `FS_ENOFS` | file system | no file system on the volume, or the handle is not mounted, or no device has set it |
@@ -387,23 +388,30 @@ A device supports the file system with a layer in its own directory that include
   `fsBRead` and `fsBWrite` reach them through the handle, so they can be in any bank.
 - **Setting the handle**: `FS_HUNIT` the unit as the device defines it, `FS_HDEV` the device
   (`FS_DEVMT`, `FS_DEVDRUM`), `FS_HBREAD` and `FS_HBWRITE` the entries' 16-bit addresses,
-  `FS_HBLKS` the volume's blocks.
-  `FS_HDEV` to `FS_HBLKS` are the handle's words 4 to 7, and the only device state a handle
-  has besides `FS_HUNIT`.
+  `FS_HBLKS` the volume's blocks, and the directory header's words 4 to 7 in the handle's copy
+  (below).
+  `FS_HDEV` to `FS_HBLKS` are the handle's words 4 to 7, and with the header's words the only
+  device state a handle has other than `FS_HUNIT`.
 - **A mount**: sequence breaks off (`FS_SBS_OFF`), the handle set, `fsRdDir` with AC the
   handle, breaks restored (`FS_SBS_RESTORE`), its status returned.
   `fsRdDir` checks each copy with `fsDirOk`, so the directory's block count must equal the
   handle's `FS_HBLKS`.
 - **A format**: the handle set, then `fsFormatVol` with AC the handle and IO the force flag.
   It turns breaks off and on itself.
-- **The directory header's words 4 to 7** are the device's to define, written as zeros by
-  `fsFormatVol` then carried through every later directory write from the handle's copy, so
-  a device can record its own state there after a format.
+- **The directory header's words 4 to 7** `FS_DDEV`, at `FS_HDIR+FS_DDEV` in the handle, are
+  the device's to define.
+  `fsFormatVol` writes into the new directory what the handle's copy holds when it is called,
+  and every later directory write carries them from the handle's copy.
+  A device that does not use them sets them to zeros, as the Microtape's does, so a handle
+  another device used formats the same.
+  A mount can check them after `fsRdDir`.
+  The drum's refuses a directory whose first track is not the one given.
 
-The Microtape's layer, `MICROTAPE/mtblock.ac`, `mtmount.ac` and `mtformat.ac`, is the model.
+The Microtape's layer, `MICROTAPE/mtblock.ac`, `mtmount.ac` and `mtformat.ac`, and the drum's,
+`DRUM/drblock.ac`, `drmount.ac` and `drformat.ac`, are the models.
 
 # See also
 
-`MICROTAPE/README.md`, the Microtape's layer, its mount and format.\
-`DRUM/README.md`, the drums's layer, its mount and format.\
+`MICROTAPE/README.md`, the Microtape's read/write,  mount, and format logic.\
+`DRUM/README.md`, the drum's read/write, mount, and format logic.\
 See UsingMtfs.md in the Docs directory for a description of mtfs, a file system maintenance utility.

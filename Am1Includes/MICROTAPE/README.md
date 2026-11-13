@@ -58,7 +58,7 @@ address of the parameter block, AC the status on return.
 | `mtFormat` | `FS_PHANDLE` the handle, `MT_PDRIVE` the drive, `MT_PFORCE` nonzero to format the tape | the handle mounted on an empty directory |
 | `mtMount` | `FS_PHANDLE`, `MT_PDRIVE` | the handle is mounted |
 | `mtbRead`, `mtbWrite` | `MTB_PDRIVE`, `MTB_PBLOCK` the first block, `MTB_PCOUNT` the blocks, `MTB_PBUF` 0400 words a block | the blocks, read in forward order, checksums kept |
-| `mtbSetHandle` | AC = the handle, IO = the drive, not a parameter block; called by `jda` | the handle set for the tape: the drive, the device words; not mounted |
+| `mtbSetHandle` | AC = the handle, IO = the drive, not a parameter block; called by `jda` | the handle set for the tape: the drive, the device words, the directory header's words 4 to 7 zeros; not mounted |
 | `mtbHRead`, `mtbHWrite` | an `FS_B` block: the handle, the first block, the count, the buffer | the file system's entries, reached through the handle by `fsBRead` and `fsBWrite` |
 
 - **`mtMount`** reads the directory from block 1, or from the copy in block 2 if block 1 is
@@ -72,6 +72,8 @@ address of the parameter block, AC the status on return.
   It writes block 1 or 2 of a file-system tape as ordinary data blocks.
 - **`mtbSetHandle`** lets a program move a tape's blocks through `fsBRead` and `fsBWrite`
   without mounting it; the drive is checked at the first transfer.
+  It also zeros the handle's copy of the directory header's words 4 to 7, which a tape does
+  not use, `mtFormat` writes them as zeros so a previously-used handle doesn't carry forward incorrect data.
 
 ### Status codes on a tape
 

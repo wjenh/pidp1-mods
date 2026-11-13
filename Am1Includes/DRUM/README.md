@@ -30,7 +30,7 @@ See the Docs directory for detailed drum usage and Docs/UsingOverlays.md for ove
 
 ## The file system on the drum
 
-A drum volume is a set of entire tracks, the first track starts a 0 to 037, the last no greater than 037.
+A drum volume is a set of entire tracks, the first track is 0 to 037, the last no greater than 037.
 A track holds 16 blocks of 256 words, so a volume of n tracks has 16n blocks.
 A block never crosses a track boundary.
 Its layout is that which the file system defines: block 0 is unused,
@@ -41,7 +41,7 @@ A program includes `DRUM/drum.ah`, `drmount.ac`, and `drformat.ac` and the file 
 the calls it uses.
 A program can also simultaneously use the Microtape drive.
 
-- Multipe volumes share the dru, each with tracks of its own, each with its own handle.
+- Multiple volumes share the drum, each with tracks of its own, each with its own handle.
   The library does not know which tracks other programs or overlays use.
   The separation is the program's responsibility.
 - The volume's first track is recorded in its directory and checked at every mount.
@@ -62,7 +62,7 @@ A program can also simultaneously use the Microtape drive.
   and write in runs.
 - **The Type 340 display** IOTs `dra` and `dss` conflict with drum IOTs of the same name,
   the filesystem layer uses `t23dra` to avoid conflicts.
-  Include the Type 340's definitions after the file system's files.
+  A program can include both, in either order.
 
 ### The layout
 
@@ -79,8 +79,8 @@ word t x 010000 + a, each word a little-endian 32-bit word, and applies the skew
 
 ### The calls
 
-Each is called va `farjda` n`memory.ah` from any bank.
-AC is the 16-bit address of the parameter block, and AC had the status on return.
+Each is called via `farjda` (`memory.ah`) from any bank.
+AC is the 16-bit address of the parameter block, and AC has the status on return.
 Every parameter block here is `FS_PHANDLE` the handle's 16-bit address, then `DR_PFIRST` the
 first track, then `DR_PTRACKS` the tracks, and for `drFormat`, `DR_PFORCE`.
 
@@ -97,7 +97,7 @@ first track, then `DR_PTRACKS` the tracks, and for `drFormat`, `DR_PFORCE`.
   count is not 16 times the tracks given, and one whose recorded first track is not the one
   given.
   A refused mount leaves the handle not mounted and descriptors of any earlier mount refused.
-- **`drFormat`** writes an empty directory as both entries with the first track in its header and
+- **`drFormat`** writes an empty directory as both copies with the first track in its header and
   mounts the handle for it.
   Without force it refuses with `FS_EFOREIGN` a volume whose blocks 1 and 2 hold another
   program's data.
@@ -108,8 +108,8 @@ first track, then `DR_PTRACKS` the tracks, and for `drFormat`, `DR_PFORCE`.
   Refused tracks leave the handle unchanged.
 - The block entries move entire blocks and split a run where one crosses a track and where
   its buffer crosses a core bank, since a transfer wraps within both.
-  A buffer can across bank boundaries.
-  A run's words must fit in core,a count of 0400 blocks or more is not handled.
+  A buffer can cross bank boundaries.
+  A run's words must fit in core, a count of 0400 blocks or more is not handled.
 
 ### Status codes on the drum
 
@@ -123,7 +123,7 @@ These are the codes the drum layer returns.
 | 023 | `FS_EXFER` | a transfer didn't complete |
 
 `FS_EXFER` has two causes which the drum cannot tell apart:
-- **A halt after the transfer's first word**: (a `hlt`, the STOP switch, an ad1 stop or
+- **A halt after the transfer's first word**: a `hlt`, the STOP switch, an ad1 stop or
   breakpoint, or a single step.
   The words before the halt are moved, the rest not.
   The call can be repeated, and succeeds.

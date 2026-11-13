@@ -1,0 +1,51 @@
+initret, 0
+acqret, 0
+pubret, 0
+svcret, 0
+nextret,0
+dmaret, 0
+sumret, 0
+copyret,0
+track,  1
+frame,  0
+ntrack, 0
+cached, 0
+active, 0
+build,  020100
+limit,  024000
+dest,   0
+emitv,  0
+src,    0
+dst,    0
+leftn,  0
+cksum,  0
+expect, 0
+readtrk,0
+status, 0
+waits,  0
+framestart,0
+xpos,   0
+halfval,0
+bindex, 0
+height, 0
+part,   0
+hip,    0
+numsrc, 0
+ncopy,  0
+nrender,0
+nframes,0
+cury,0
+lasty,0
+mag,0
+quarter,0
+segdir,0
+gainret,0
+gain,0
+shown_gain,0
+fresh,0
+dmaoffset,0
+dmapass,0
+resetret,0
+input_source,0
+haltlist, halt
+assert . <= 0400, "display state exceeds allocation"

@@ -1,0 +1,50 @@
+Signal Analysis Workstation: 256-point fixed-point FFT and power kernel
+// No device I/O. Input: 256 original sample words at bank 0 location 4000.
+// Output: real 2000, imaginary 2400; power limbs in bank 1 at 2000 and 2400.
+// All arithmetic is original PDP-1 plus Type 10 MUL; no PDP-1D instructions.
+0100/
+done,   0
+ovfcnt, 0
+#include "state.ac"
+0400/
+go,     lem
+        lsm
+        cbs
+        dzm done
+        dzm ovfcnt
+        szo
+        nop
+        jsp fft
+        jsp power
+        law 1
+        dac done
+        hlt
+#include "kernel.ac"
+constants
+assert . <= 02000, "code/literals exceed 0400-1777"
+2000/
+real,
+        table 0400, 0
+2400/
+imag,
+        table 0400, 0
+3000/
+#include "generated/twiddles.ac"
+3400/
+window,
+        table 0400, 0
+4000/
+input,
+        table 0400, 0
+4400/
+bitrev,
+#include "generated/bitrev.ac"
+bank 1
+2000/
+phi,
+        table 0400, 0
+2400/
+plo,
+        table 0400, 0
+assert . <= 03000, "power arrays exceed allocation"
+start go:0

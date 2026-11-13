@@ -1,0 +1,124 @@
+PDP1_ROOT ?= /opt/pidp1-mods
+AM1 ?= $(PDP1_ROOT)/bin/am1
+WAV_DRUM ?= $(CURDIR)/samples/Apollo11.drm
+FS_DEPS := $(wildcard $(PDP1_ROOT)/Am1Includes/FILESYSTEM/*.ah $(PDP1_ROOT)/Am1Includes/FILESYSTEM/*.ac $(PDP1_ROOT)/Am1Includes/MICROTAPE/*.ah $(PDP1_ROOT)/Am1Includes/MICROTAPE/*.ac)
+CC ?= cc
+CFLAGS ?= -O2 -Wall -Wextra -Werror
+
+.PHONY: all test tables test-drum test-frontend drum-image drum-status drum-pick drum-restore run live-status drum-changing test-changing test-wav test-imported-cpu
+all: probe.rim core.rim workstation.rim tests/cpu_runner
+
+tables:
+	python3 generate_tables.py
+
+generated/twiddles.ac generated/bitrev.ac generated/scene.ac &: generate_tables.py generated/tape-config.json
+	python3 generate_tables.py
+
+probe.rim: probe.am1
+	$(AM1) -d -S $<
+
+core.rim: core.am1 state.ac kernel.ac generated/twiddles.ac generated/bitrev.ac
+	$(AM1) -d -S $<
+
+tests/cpu_runner: tests/cpu_runner.c $(PDP1_ROOT)/src/pdp1/pdp1.o
+	$(CC) $(CFLAGS) -I$(PDP1_ROOT)/src/pdp1 -I$(PDP1_ROOT)/src/common -o $@ $< $(PDP1_ROOT)/src/pdp1/pdp1.o -lm
+
+test: all test-drum test-frontend test-gain test-refresh test-changing test-wav test-tape
+	python3 tests/test_core.py
+
+test-drum:
+	python3 tests/test_drum.py
+
+drum-image:
+	python3 drum.py --root "$(PDP1_ROOT)" create
+
+drum-status:
+	python3 drum.py --root "$(PDP1_ROOT)" status
+
+drum-pick:
+	python3 drum.py --root "$(PDP1_ROOT)" pick
+
+drum-restore:
+	python3 drum.py --root "$(PDP1_ROOT)" restore
+
+workstation.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	$(AM1) -d -S workstation.am1
+
+workstation-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	cp workstation.am1 workstation-test.am1
+	$(AM1) -d -S -DSAW_TEST workstation-test.am1
+
+tests/frontend_runner: tests/frontend_runner.c tests/cpu_runner.c $(PDP1_ROOT)/src/pdp1/pdp1.o
+	$(CC) $(CFLAGS) -I$(PDP1_ROOT)/src/pdp1 -I$(PDP1_ROOT)/src/common -o $@ $< $(PDP1_ROOT)/src/pdp1/pdp1.o -lm
+
+test-frontend: workstation.rim workstation-test.rim workstation-sequence.rim tests/frontend_runner
+	python3 tests/test_frontend.py
+
+workstation-sequence.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	cp workstation.am1 workstation-sequence.am1
+	$(AM1) -d -S -DSAW_TEST -DSAW_TEST_FRAMES=0d18 workstation-sequence.am1
+
+run: workstation.rim
+	python3 live.py --root "$(PDP1_ROOT)" run
+
+live-status:
+	python3 live.py --root "$(PDP1_ROOT)" status
+
+drum-changing:
+	python3 drum.py --root "$(PDP1_ROOT)" create-changing
+
+test-changing: workstation-sequence.rim tests/frontend_runner
+	python3 tests/test_changing.py
+
+test-wav:
+	python3 tests/test_wav.py
+
+workstation-wav-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	cp workstation.am1 workstation-wav-test.am1
+	$(AM1) -d -S -DSAW_TEST -DSAW_TEST_FRAMES=0d146 workstation-wav-test.am1
+
+tests/wav_runner: tests/frontend_runner.c tests/cpu_runner.c $(PDP1_ROOT)/src/pdp1/pdp1.o
+	$(CC) $(CFLAGS) -DRUNNER_CYCLE_LIMIT=60000000 -I$(PDP1_ROOT)/src/pdp1 -I$(PDP1_ROOT)/src/common -o $@ $< $(PDP1_ROOT)/src/pdp1/pdp1.o -lm
+
+test-imported-cpu: workstation-wav-test.rim tests/wav_runner
+	python3 tests/test_imported_cpu.py "$(WAV_DRUM)"
+
+.PHONY: test-gain
+test-gain: workstation.rim workstation-test.rim tests/frontend_runner
+	python3 tests/test_gain.py
+
+.PHONY: test-refresh
+test-refresh: workstation.rim tests/frontend_runner
+	python3 tests/test_refresh.py
+
+# Produce LIST_TRACE with SAW_LIST_TRACE while running test-imported-cpu.
+.PHONY: test-scan-profile
+test-scan-profile:
+	python3 tests/test_scan_profile.py "$(LIST_TRACE)" "$(WAV_DRUM)" "$(BASELINE_COST)"
+
+workstation-tape.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	cp workstation.am1 workstation-tape.am1
+	$(AM1) -d -S -DSAW_TAPE workstation-tape.am1
+
+.PHONY: run-tape
+run-tape: workstation.rim workstation-tape.rim
+	python3 live.py --root "$(PDP1_ROOT)" --source tape run
+
+tests/tape_runner: tests/frontend_runner.c tests/cpu_runner.c
+	$(CC) $(CFLAGS) -DSAW_REAL_TAPE -DRUNNER_CYCLE_LIMIT=100000000 -DMT_BASE_DIR='"/tmp/saw-isolated-root"' -DMT_TAPE_DIR='"/tmp/saw-isolated-tapes"' -DMT_LIST_FILE='"/tmp/saw-isolated-no-list"' -I$(PDP1_ROOT)/src/pdp1 -I$(PDP1_ROOT)/src/common -I$(PDP1_ROOT)/IOTs -I$(PDP1_ROOT)/IOTs/Lib -I$(PDP1_ROOT)/IOTs/Microtape -o $@ tests/frontend_runner.c $(PDP1_ROOT)/IOTs/Microtape/microtape.c $(PDP1_ROOT)/IOTs/Microtape/control550.c $(PDP1_ROOT)/IOTs/Microtape/transport555.c $(PDP1_ROOT)/src/pdp1/pdp1.o -lm -pthread
+
+workstation-tape-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	cp workstation.am1 workstation-tape-test.am1
+	$(AM1) -d -S -DSAW_TAPE -DSAW_TEST workstation-tape-test.am1
+
+.PHONY: test-tape
+test-tape: workstation-tape-test.rim tests/tape_runner
+	python3 tests/test_tape_loader.py
+
+workstation-tape-sequence.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+	cp workstation.am1 workstation-tape-sequence.am1
+	$(AM1) -d -S -DSAW_TAPE -DSAW_TEST -DSAW_TEST_FRAMES=0d146 workstation-tape-sequence.am1
+
+.PHONY: test-tape-apollo
+test-tape-apollo: workstation-tape-sequence.rim tests/tape_runner
+	python3 tests/test_tape_apollo.py

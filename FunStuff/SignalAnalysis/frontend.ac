@@ -1,0 +1,600 @@
+// Field-1 acquisition and scene construction. Cross-field JSP entries save the
+// full return word before LEM; field-local helpers use DAP (12-bit return).
+// Shared scratch is non-reentrant. The bank-0 display ISR uses its own scratch,
+// so it may interrupt any of these routines, including an extended-memory store.
+// Flow: uiinit validates the directory -> acquire caches/checksums one track ->
+// field-0 FFT/power -> publish builds the inactive list -> ISR adopts it at HALT.
+// gaincheck rebuilds from retained waveform/power without counting a new FFT.
+// EMIT bounds-checks every word. The ISR independently refreshes the active list.
+// The CPU never writes an active list; display_next acknowledges the handoff.
+#define VWORD(dx,tail) sal 8s; ior segdir; ior [visible deltax(dx) tail]; EMIT
+#define EMIT dac emitv; lac dest; sad limit; jmp listfull; lac emitv; eem; dac i dest; lem; idx dest; jsp svc
+
+// Common initialization is also callable by the read-only tape loader.
+uireset,dac initret
+        lem
+        jsp resetui
+        eem
+        jmp i initret
+resetui,dap resetret
+        dzm active
+        dzm input_source
+        dzm cached
+        dzm frame
+        dzm nframes
+        dzm nrender
+        dzm shown_gain
+        law 1
+        dac track
+        lac [listA:2]
+        dac build
+        lio [haltlist:.]
+        dla
+initwait,t340dss
+        jmp initwait
+        jmp i resetret
+uiinit, dac initret
+        lem
+        jsp resetui
+        dzm readtrk
+        jsp readall
+        dzm expect
+        jsp checksum
+        lac [cache:3]
+        dac src
+        law directory
+        dac dst
+        lac [-0d280]
+        dac leftn
+        jsp copy
+        lac directory
+        sas [0615327]
+        jmp badhead
+        lac directory+1
+        sas [1]
+        jmp badhead
+        lac directory+2
+        sas [0d4096]
+        jmp badhead
+        lac directory+3
+        sas [0d256]
+        jmp badhead
+        lac directory+6
+        sas [0d17]
+        jmp badhead
+        lac directory+7
+        sas [1]
+        jmp badhead
+        lac directory+010
+        sas [0d8]
+        jmp badhead
+        lac directory+011
+        sza
+        jmp badhead
+        lac directory+4
+        and [0777740]
+        sza
+        jmp badhead
+        lac directory+4
+        dac ntrack
+        sza i
+        jmp badhead
+        eem
+        jmp i initret
+
+// Fill the bank-3 cache with read-only 128-word DMA requests, then checksum
+// the entire track before using it. A 4096-word request occupies the drum's
+// higher-priority memory channel for ~34.8 ms and stretches a display pass.
+// Each chunk is ~1.1 ms; after completion wait for a display boundary before
+// submitting another. Startup has no active display, so it skips that wait.
+readall,dap dmaret
+        dzm dmaoffset
+dmachunk,dzm waits
+        lac readtrk
+        sal 6s
+        sal 6s
+        ior [drmrd]
+        add dmaoffset
+        dac status
+        lio status
+        dia
+        lio [0d128]             // write enable remains clear
+        dwc
+        lac dmaoffset
+        add [cache:3]
+        dac status
+        lio status
+        dcl
+waitdma,jsp svc
+        cks
+        dio status
+        lac status
+        and [CKSDRM]
+        sza
+        jmp stillbusy
+        t23dra
+        dio status
+        lac status
+        and [0400000]
+        sza
+        jmp badread
+        // Never CBS here: it could also discard a pending display completion.
+        // The display ISR safely ignores a drum-only break on the shared channel.
+        lac dmaoffset
+        add [0d128]
+        dac dmaoffset
+        sas [0d4096]
+        jmp dmamore
+        jmp i dmaret
+dmamore,lac active
+        sza i
+        jmp dmachunk
+        lac nrender
+        dac dmapass
+dmawait,lac nrender
+        sad dmapass
+        jmp dmawait
+        jmp dmachunk
+stillbusy,idx waits
+        sas [040000]
+        jmp waitdma
+        jmp badread
+
+checksum,dap sumret
+        dzm cksum
+        lac [cache:3]
+        dac src
+        lac [-0d4096]
+        dac leftn
+sumloop,eem
+        lac i src
+        lem
+        add cksum
+        dac cksum
+        idx src
+        jsp svc
+        isp leftn
+        jmp sumloop
+        lac cksum
+        sas expect
+        jmp badsum
+        szo                     // signed overflow in a raw modulo checksum is expected
+        nop
+        jmp i sumret
+
+// Local returns use DAP: a full saved bank-1 PC would look like another defer
+// pointer with extend mode off. src is full extended; dst is local field 1.
+copy,   dap copyret
+copyloop,eem
+        lac i src
+        lem
+        dac i dst
+        idx src
+        idx dst
+        jsp svc
+        isp leftn
+        jmp copyloop
+        jmp i copyret
+
+acquire,dac acqret
+        lem
+        lac input_source
+        sza
+        jmp ramframe
+        lac cached
+        sas track
+        jmp cachemiss
+        jmp selectframe
+cachemiss,lac track
+        sub [1]
+        sal 3s
+        add [directory+040]
+        dac src
+        lac i src
+        sas track
+        jmp badhead
+        lac src
+        add [3]
+        dac src
+        lac i src
+        dac expect
+        lac track
+        dac readtrk
+        jsp readall
+        jsp checksum
+        lac track
+        dac cached
+selectframe,lac frame
+        sal 8s
+        add [cache:3]
+        dac framestart
+framecopy,lac framestart
+        dac src
+        lac [input:0]
+        dac dst
+        lac [-0d256]
+        dac leftn
+acqcopy,eem
+        lac i src
+        dac i dst
+        lem
+        idx src
+        idx dst
+        jsp svc
+        isp leftn
+        jmp acqcopy
+        eem
+        jmp i acqret
+
+// A complete, validated tape recording occupies fields 5..15; one field per
+// logical second, matching the existing track/frame controls and zero padding.
+ramframe,lac track
+        sub [1]
+        sal 6s
+        sal 6s
+        add [050000]
+        dac part
+        lac frame
+        sal 8s
+        add part
+        dac framestart
+        jmp framecopy
+
+nextfr, dac nextret
+        lem
+        idx frame
+        sas [0d16]
+        jmp nextdone
+        dzm frame
+        idx track
+        sub ntrack
+        sas [1]
+        jmp nextdone
+        law 1
+        dac track
+nextdone,eem
+        jmp i nextret
+
+// Cross-field gateway; local calls use svc and return with extend mode off.
+service,dac sfarret
+        lem
+        jsp svc
+        eem
+        jmp i sfarret
+sfarret,0
+svc,    dap svcret
+        jmp i svcret            // the completion ISR refreshes independently of main work
+
+// Redraw on S3 changes even in hold mode; retain the completed FFT/power words.
+gaincheck,dac gainret
+        lem
+        cla
+        szs 030
+        law 1
+        sas shown_gain
+        jmp newgain
+        jmp gainok
+newgain,jsp replot
+        lem
+gainok, eem
+        jmp i gainret
+
+replot, dac pubret
+        lem
+        dzm fresh
+        jmp buildscene
+
+publish,dac pubret
+        lem
+        law 1
+        dac fresh
+        lac framestart
+        dac src
+        law waveform
+        dac dst
+        lac [-0d256]
+        dac leftn
+        jsp copy
+buildscene,dzm gain
+        szs 030                 // latch S3 once for the entire list and its label
+        idx gain
+        lac build
+        dac dest
+        add [03700]
+        dac limit
+        law scene
+        dac numsrc
+        lac [sceneend-scene]
+        dac ncopy
+        jsp template
+        lac input_source
+        sza
+        jmp tapesourcelabel
+        law source_drum
+        dac numsrc
+        lac [source_drum_end-source_drum]
+        jmp sourcelabel
+tapesourcelabel,law source_tape
+        dac numsrc
+        lac [source_tape_end-source_tape]
+sourcelabel,dac ncopy
+        jsp template
+        lac gain
+        sza
+        jmp highlabel
+        law gain4
+        dac numsrc
+        lac [gain4end-gain4]
+        jmp gainlabel
+highlabel,law gain64
+        dac numsrc
+        lac [gain64end-gain64]
+gainlabel,dac ncopy
+        jsp template
+        lac [scale(0) intensity(4) lpoff next(point)]
+        EMIT
+        law waveform
+        dac src
+        dzm bindex
+        lac [0d128]
+        dac xpos
+waveplot,lac i src
+        sar 1s
+        dac halfval
+        sar 1s
+        add halfval              // 3/4 signal amplitude, then scale to screen units
+        sar 9s
+        add [0d768]
+        dac cury
+        lac bindex
+        sza
+        jmp wavevector
+        lac cury
+        ior [y(0) next(point)]
+        EMIT
+        lac xpos
+        ior [show next(parameter)]
+        EMIT
+        jmp wavedone
+wavevector,lac cury
+        sub lasty
+        dac mag
+        dzm segdir
+        sma
+        jmp positive
+        cma
+        dac mag
+        lac [down]
+        dac segdir
+// The 340 shortens its BRM counter to 3..7 bits. At unit spacing a 64-pixel
+// rise costs 127 pulses; that cost repeats for every steep sample-to-sample line.
+// Keep short slopes at unit spacing. For |dy| >= 16, draw the vertical bulk at
+// spacing 4 (16..31 pixels) or 8 (32+), then return to unit spacing for
+// the exact (3, dy mod spacing) endpoint. The remainder fits a 3-bit BRM count.
+// All 256 samples remain endpoints; only the dots BETWEEN endpoints are coarser.
+positive,lac mag
+        sub [0d16]
+        sma
+        jmp fastwave
+        lac [scale(0) next(vector)]
+        EMIT
+        lac mag
+        VWORD(3,end)
+        jmp wavedone
+fastwave,lac mag
+        sub [0d32]
+        sma
+        jmp widewave
+        lac [scale(2) next(vector)]
+        EMIT
+        lac mag
+        sar 2s
+        VWORD(0,end)
+        lac mag
+        and [3]
+        dac quarter
+        jmp waveend
+widewave,lac [scale(3) next(vector)]
+        EMIT
+        lac mag
+        sar 3s
+        VWORD(0,end)
+        lac mag
+        and [7]
+        dac quarter
+waveend,lac [scale(0) next(vector)]
+        EMIT
+        lac quarter
+        VWORD(3,end)
+wavedone,lac cury
+        dac lasty
+        lac xpos
+        add [3]
+        dac xpos
+        idx src
+        idx bindex
+        sas [0d256]
+        jmp waveplot
+        dzm bindex
+        law phi
+        dac hip
+        lac [0d128]
+        dac xpos
+barplot,lac i hip
+        dac height
+        lac gain
+        sza
+        jmp scaledbar           // X64 uses the full high limb: 16x the X4 height
+        lac height
+        sar 4s                  // X4
+        dac height
+scaledbar,
+        lac bindex
+        sza
+        jmp notdc
+        jmp endpoint
+notdc,  sas [0d128]
+        jmp haveheight
+endpoint,lac height
+        sar 1s
+        dac height
+haveheight,lac height
+        sub [0d256]
+        sma
+        jmp clipheight
+        jmp heightok
+clipheight,lac [0d256]
+        dac height
+heightok,lac height
+        sza i
+        jmp nextbar
+        // Select spacing in the positioning header rather than emitting a
+        // redundant parameter after X. This saves one word per nonzero bar and
+        // keeps the worst list bound below the 1984-word allocation.
+        lac height
+        sub [0d16]
+        sma
+        jmp barwidehead
+        lac [scale(0) intensity(5) next(point)]
+        jmp barhead
+barwidehead,lac [scale(2) intensity(5) next(point)]
+barhead,EMIT
+        lac [y(0d64) next(point)]
+        EMIT
+        lac xpos
+        ior [next(vector)]
+        EMIT
+// Bars use the same spacing optimization and retain the exact weighted/clipped
+// height. A 256-pixel bar is 63+1 coarse steps: one 64-step vector would double
+// the BRM count from 63 to 127 pulses, so this split saves a scan-time boundary.
+barseg, lac height
+        sub [0d16]
+        sma
+        jmp fastbar
+        lac height
+        sal 8s
+        ior [visible end]
+        EMIT
+        jmp nextbar
+fastbar,lac height
+        sar 2s
+        sas [0d64]
+        jmp coarsebar
+        lac [visible deltay(0d63)]
+        EMIT
+        law 1
+coarsebar,sal 8s
+        ior [visible end]
+        EMIT
+        lac height
+        and [3]
+        sza i
+        jmp nextbar
+        dac quarter
+        lac [scale(0) next(vector)]
+        EMIT
+        lac quarter
+        sal 8s
+        ior [visible end]
+        EMIT
+nextbar,lac xpos
+        add [6]
+        dac xpos
+        idx hip
+        idx bindex
+        sas [0d129]
+        jmp barplot
+        law footer
+        dac numsrc
+        lac [footerend-footer]
+        dac ncopy
+        jsp template
+        lac [next(character)]
+        EMIT
+        lac track
+        add [tracknums]
+        dac numsrc
+        lac i numsrc
+        EMIT
+        lac [next(character)]
+        EMIT
+        law framelabel
+        dac numsrc
+        lac [framelabelend-framelabel]
+        dac ncopy
+        jsp template
+        lac [next(character)]
+        EMIT
+        lac frame
+        add [framenums]
+        dac numsrc
+        lac i numsrc
+        EMIT
+        lac [halt interrupt]
+        EMIT
+        lac active
+        sza i
+        jmp firstdisplay
+        // Post the complete inactive list; ISR flips only at the old list's HALT.
+        lac build
+        eem
+        dac i [display_next:0]
+        lem
+pubwait,eem
+        lac i [display_next:0]
+        lem
+        sza
+        jmp pubwait
+        lac active
+        dac part
+        lac build
+        dac active
+        lac part
+        dac build
+        jmp pubdone
+firstdisplay,lac build
+        dac active
+        eem
+        dac i [display_go:0]
+        rck
+        dio i [display_at:0]
+        lem
+        lio active
+        dla
+        idx nrender
+        lac [listB:2]
+        dac build
+        cbs
+        esm
+pubdone,
+        lac gain
+        dac shown_gain
+        lac fresh
+        sza
+        idx nframes             // a gain-only redraw does not count as another FFT
+        eem
+        jmp i pubret
+
+// Copy a nonempty static display sequence; EMIT maintains the previous scene.
+template,dap tmprtn
+        dzm tmpcount
+tmploop,lac i numsrc
+        EMIT
+        idx numsrc
+        idx tmpcount
+        sas ncopy
+        jmp tmploop
+        jmp i tmprtn
+tmprtn, 0
+tmpcount,0
+badhead,law 1
+        jmp failure
+badread,law 2
+        jmp failure
+badsum, law 3
+        jmp failure
+baddisplay,law 4
+        jmp failure
+listfull,law 5
+failure,eem
+        jmp i [faultstop:0]

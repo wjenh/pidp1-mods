@@ -1,0 +1,7 @@
+// Fixed-size configuration; symbols remain identical in drum and tape builds.
+tape_drive, 0d8
+tape_name,
+    ascii "APOLLO11"
+    0
+    table 6-(.-tape_name), 0
+// Tape image selection is host-side; the guest deliberately issues no MMT.

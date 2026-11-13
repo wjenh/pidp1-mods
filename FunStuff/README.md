@@ -5,6 +5,7 @@ Each directory has a makefile, just type make in one.
 
 ## What programs are there?
 
+- [SignalAnalysis](SignalAnalysis/README.md) displays a waveform and 256-point FFT power spectrum on the Type 340, using drum or named Microtape recordings.
 - Pong contains the pong game converted from the original macro to am1
 - Rotator contains a program that will cycle through up to 6 programs, one per minute, from the drum
 - Switcher contains a program that will listen for a telnet connection and ask for a program to run

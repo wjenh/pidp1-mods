@@ -1,0 +1,35 @@
+# Local state, recovery data and Python caches
+__pycache__/
+*.py[cod]
+.DS_Store
+._*
+snapshots/
+diagnostics/
+*-live.json
+live-results.json
+drum-state.json
+drum-switch.lock
+
+# Reproducible listings and development test builds
+*.lst
+*.map
+core.rim
+core.sym
+probe.rim
+probe.sym
+workstation-test.*
+workstation-sequence.*
+workstation-wav-test.*
+workstation-tape.am1
+workstation-tape-test.*
+workstation-tape-sequence.*
+tests/cpu_runner
+tests/frontend_runner
+tests/wav_runner
+tests/tape_runner
+tests/*-results.json
+tests/results.json
+build/
+
+# Original WAVs are linked and credited, not required at runtime
+audio/*.wav

@@ -1,0 +1,67 @@
+// Bank-0 display-completion sequence break, after Sketchpad/spbreak.ac.
+// Locations 0..2 hold the interrupted AC, packed OV/extend/PC and IO.
+// The inactive list is posted in display_next and acknowledged only at HALT.
+// No FFT workspace or field-1 subroutine state is touched by this handler.
+// IO is scratch until restored from 2; arithmetic here may set overflow, which
+// DEBREAK restores from 1. The minute-wrapping BBN clock measures completion
+// intervals, including the preceding scan and restart/interrupt overhead.
+// Reading run-time milliseconds is not a host wall-clock deadline guarantee.
+0200/
+display_isr,
+        t340dss
+        jmp display_done        // a drum completion can use the same break channel
+        t340dsv
+        jmp display_checkh
+        jmp display_edge
+display_checkh,t340dsh
+        jmp display_end
+        jmp display_edge
+display_end,
+        lac display_go
+        sza i
+        jmp display_done
+        rck
+        dio display_now
+        lac display_now
+        sub display_at
+        sma
+        jmp display_delta
+        add [0d60000]
+display_delta,dac display_ms
+        sub display_max
+        spa
+        jmp display_mincheck
+        lac display_ms
+        dac display_max
+display_mincheck,lac display_ms
+        sub display_min
+        sma
+        jmp display_budget
+        lac display_ms
+        dac display_min
+display_budget,lac display_ms
+        sub [0d26]
+        sma
+        idx display_late
+        idx display_count
+        lac display_now
+        dac display_at
+        lac display_next
+        sza i
+        jmp display_again
+        dac display_go
+        dzm display_next        // old list is now free; CPU cannot resume until DEBREAK
+display_again,lio display_go
+        dla
+        eem
+        idx i [nrender:1]
+display_done,lio 2
+        lac 0
+        jmp i 1                 // restores overflow, addressing mode and interrupted PC
+display_edge,law 4
+        dac fault
+        lsm
+        hlt
+        jmp .-1
+constants
+assert . <= 0400, "display interrupt exceeds low-core allocation"

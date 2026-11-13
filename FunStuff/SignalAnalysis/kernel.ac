@@ -1,0 +1,193 @@
+// Non-reentrant, field-local routines. JSP return words include saved flags/field.
+// All live loop state is in memory; MUL may destroy IO. Extend mode is off at entry/exit.
+fft,    dac fftrtn
+        law input
+        dac srcp
+        law bitrev
+        dac revp
+        dzm count
+load,   lac i srcp
+        sar 1s                  // one initial guard bit, original sample unchanged
+        dac value
+        lac i revp
+        add [real]
+        dac pa
+        lac value
+        dac i pa
+        lac pa
+        add [0400]
+        dac ia
+        dzm i ia
+        idx srcp
+        idx revp
+        idx count
+        sas [0400]
+        jmp load
+        law 2
+        dac length
+        law 1
+        dac half
+        law 0200
+        dac stride
+stage,  dzm base
+group,  dzm j
+        dzm k
+butter, lac base
+        add j
+        add [real]
+        dac pa
+        add half
+        dac pb
+        add [0400]
+        dac ib
+        lac pa
+        add [0400]
+        dac ia
+        lac k
+        sza
+        jmp nonuni
+        lac i pb
+        dac tr
+        lac i ib
+        dac ti
+        jmp scale
+nonuni, sas [0100]
+        jmp general
+        lac i ib                // exact W^64 = -j
+        dac tr
+        lac i pb
+        cma
+        dac ti
+        jmp scale
+general,lac k
+        add [cosine]
+        dac cp
+        lac k
+        add [nsine]
+        dac sp
+        lac i pb
+        mul i cp
+        dac p1
+        lac i ib
+        mul i sp
+        dac p2
+        lac p1
+        sub p2
+        dac tr
+        lac i pb
+        mul i sp
+        dac p1
+        lac i ib
+        mul i cp
+        dac p2
+        lac p1
+        add p2
+        dac ti
+scale,  lac tr
+        sar 1s
+        dac th
+        lac i pa
+        sar 1s
+        dac ah
+        add th
+        dac i pa
+        lac ah
+        sub th
+        dac i pb
+        lac ti
+        sar 1s
+        dac th
+        lac i ia
+        sar 1s
+        dac ah
+        add th
+        dac i ia
+        lac ah
+        sub th
+        dac i ib
+        szo
+        idx ovfcnt
+#ifdef WORKSTATION
+        idx yields
+        and [3]
+        sza
+        jmp noyield
+        jsp uiyield
+noyield,
+#endif
+        lac k
+        add stride
+        dac k
+        idx j
+        sas half
+        jmp butter
+        lac base
+        add length
+        dac base
+        sas [0400]
+        jmp group
+        lac length
+        dac half
+        sal 1s
+        dac length
+        lac stride
+        sar 1s
+        dac stride
+        lac length
+        sas [01000]
+        jmp stage
+        jmp i fftrtn
+
+// Exact full-product nonnegative power S=R^2+I^2, stored as base-2^17 limbs.
+// These limbs are not MUL's AC:IO format. Signed overflow during unsigned low-limb
+// addition is expected; bit 0 of that 18-bit sum carries into the high limb.
+power,  dac powrtn
+        law real
+        dac rp
+        law imag
+        dac ip
+        lac [phi:1]
+        dac hp
+        lac [plo:1]
+        dac lp
+        dzm count
+pwloop, lac i rp
+        mul i rp
+        dac hi1
+        dio lo1
+        lac lo1
+        rar 1s                  // positive product's final IO bit is zero
+        and [0377777]
+        dac lo1
+        lac i ip
+        mul i ip
+        dac hi2
+        dio lo2
+        lac lo2
+        rar 1s
+        and [0377777]
+        add lo1
+        dac sumlo
+        and [0400000]
+        sza
+        idx hi2
+        lac sumlo
+        and [0377777]
+        eem
+        dac i lp
+        lem
+        lac hi1
+        add hi2
+        eem
+        dac i hp
+        lem
+        idx rp
+        idx ip
+        idx hp
+        idx lp
+        szo                     // clear expected unsigned-limb overflow
+        nop
+        idx count
+        sas [0201]              // 129 bins: include DC and Nyquist
+        jmp pwloop
+        jmp i powrtn

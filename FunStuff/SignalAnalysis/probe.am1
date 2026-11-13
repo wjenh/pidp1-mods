@@ -1,0 +1,49 @@
+Signal Analysis Workstation: target arithmetic and extended-memory probe
+0100/
+status, 0
+farptr, 010400
+0400/
+go,     lem
+        lsm
+        cbs
+        dzm status
+        lac [0200000]
+        mul [0200000]
+        sas [0100000]
+        jmp fail
+        lac [0577777]
+        mul [0200000]
+        sas [0677777]
+        jmp fail
+        lac [0777776]
+        mul [0000001]
+        sas [0777777]       // negative tiny product truncates to -0 in AC
+        jmp fail
+        lac [0777774]       // -3
+        sar 1s
+        sas [0777776]       // -1, truncation toward zero
+        jmp fail
+        lac [0777777]
+        sar 1s
+        sas [0777777]
+        jmp fail
+        lac [0123456]
+        eem
+        dac i farptr
+        cla
+        lac i farptr
+        lem
+        sas [0123456]
+        jmp fail
+        law 1
+        dac status
+        hlt
+fail,   law 2
+        dac status
+        hlt
+constants
+assert . < 02000, "probe exceeds code allocation"
+bank 1
+0400/
+remote, 0
+start go:0

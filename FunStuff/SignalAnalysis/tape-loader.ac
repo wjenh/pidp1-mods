@@ -1,0 +1,317 @@
+// Read-only startup loader, field 4. Calls Bill's filesystem only before the
+// ordinary display ISR is armed. Local work is LEM; farjda returns EEM, so each
+// library call is followed by LEM. AC/IO are scratch; t_ret saves the far return.
+// The field-1 loading scene loops natively in the Type 340 without interrupts.
+#include <MICROTAPE/microtape.ah>
+
+tapeinit,dac t_ret
+        lem
+        dzm t_status
+        dzm t_stage
+        dzm t_error
+        dzm t_retry_total
+        lio [loading_scene:1]
+        dla
+        // The host selects an existing ,locked image before execution. Do not
+        // issue MMT: that extension can create a blank image for a missing path.
+        law 2
+        dac t_stage
+        lac [t_handle:4]
+        dac t_pb
+        lac tape_drive
+        dac t_pb+1
+        lac [t_pb:4]
+        farjda(mtMount:*)
+        lem
+        dac t_status
+        sza
+        jmp t_device_error
+        law 3
+        dac t_stage
+        lac [t_handle:4]
+        dac t_pb
+        lac [tape_name:4]
+        dac t_pb+1
+        lac [t_fd:4]
+        dac t_pb+2
+        lac [t_pb:4]
+        farjda(fsOpenName:*)
+        lem
+        dac t_status
+        sza
+        jmp t_device_error
+        law 4
+        dac t_stage
+        lac [t_fd:4]
+        dac t_pb
+        lac [t_header:4]
+        dac t_pb+1
+        lac [0d256]
+        dac t_pb+2
+        jsp t_read
+        lac t_actual
+        sas [0d256]
+        jmp t_short_error
+        law 5
+        dac t_stage
+        lac t_header
+        sas [0615327]
+        jmp t_header_error
+        lac t_header+1
+        sas [2]
+        jmp t_header_error
+        lac t_header+2
+        sas [0d4096]
+        jmp t_header_error
+        lac t_header+3
+        sas [0d256]
+        jmp t_header_error
+        lac t_header+6
+        sas [0d17]
+        jmp t_header_error
+        lac t_header+7
+        sas [1]
+        jmp t_header_error
+        lac t_header+010
+        sas [0d8]
+        jmp t_header_error
+        lac t_header+011
+        sas [0]
+        jmp t_header_error
+        lac t_header+5
+        and [017]
+        sza
+        jmp t_header_error
+        lac t_header+5
+        sar 4s
+        dac t_tracks
+        sub [1]
+        sma
+        jmp t_upper
+        jmp t_header_error
+t_upper,lac t_tracks
+        sub [0d12]
+        sma
+        jmp t_header_error
+        lac t_header+5
+        sal 8s
+        dac t_words
+        lac t_header+4
+        sub [1]
+        sma
+        jmp t_validhigh
+        jmp t_header_error
+t_validhigh,lac t_header+4
+        sub t_words
+        sma sza
+        jmp t_header_error
+        lac t_words
+        sub [0d4096]
+        sub t_header+4
+        sma
+        jmp t_header_error
+        lac t_fd+FS_FLEN
+        sub [0d256]
+        sas t_words
+        jmp t_header_error
+        // Reserved words and the complete header checksum must both be valid.
+        law t_header+0d13
+        dac t_scan
+        lac [-0d243]
+        dac t_left
+t_reserved,lac i t_scan
+        sas [0]
+        jmp t_header_error
+        idx t_scan
+        isp t_left
+        jmp t_reserved
+        lac [t_header:4]
+        dac t_scan
+        lac [-0d256]
+        dac t_left
+        jsp t_checksum
+        lac t_sum
+        sza
+        jmp t_header_error
+        law 6
+        dac t_stage
+        lac [t_fd:4]
+        dac t_pb
+        lac [050000]
+        dac t_destination
+        lac t_words
+        dac t_remaining
+        // Retryable 1024-word reads isolate an occasional missed transport word.
+        // A retry never discards an already verified earlier chunk.
+t_payload,lac t_destination
+        dac t_pb+1
+        lac [0d1024]
+        dac t_pb+2
+        jsp t_read
+        lac t_actual
+        sas [0d1024]
+        jmp t_short_error
+        lac t_destination
+        add [0d1024]
+        dac t_destination
+        lac t_remaining
+        sub [0d1024]
+        dac t_remaining
+        sza
+        jmp t_payload
+        law 7
+        dac t_stage
+        lac [t_fd:4]
+        farjda(fsClose:*)
+        lem
+        dac t_status
+        sza
+        jmp t_device_error
+        law 0d8
+        dac t_stage
+        lac [050000]
+        dac t_scan
+        lac t_words
+        cma
+        dac t_left
+        jsp t_checksum
+        lac t_sum
+        sza i
+        cla                     // canonicalize either zero encoding for checksum comparison
+        sas t_header+013        // payload checksum, header word 11 decimal
+        jmp t_short_error
+        lac t_words
+        sub t_header+4
+        sza i
+        jmp t_ready
+        cma
+        dac t_left
+        lac t_header+4
+        add [050000]
+        dac t_scan
+t_padding,eem
+        lac i t_scan
+        lem
+        sas [0]
+        jmp t_short_error
+        idx t_scan
+        isp t_left
+        jmp t_padding
+t_ready,eem
+        lac t_tracks
+        dac i [ntrack:1]
+        law 1
+        dac i [input_source:1]
+        lio [haltlist:1]
+        dla
+        lem
+t_stopwait,t340dss
+        jmp t_stopwait
+        law 0d9
+        dac t_stage
+        eem
+        jmp i t_ret
+
+// fsRead can return FS_OK with a short read. The caller checks t_actual.
+t_read,dap t_readret
+        lac t_fd+FS_FPOS
+        dac t_readpos
+        law 5
+        dac t_tries
+t_read_again,lac [t_pb:4]
+        farjda(fsRead:*)
+        lem
+        dio t_actual
+        dac t_status
+        sza
+        jmp t_read_check
+        jmp i t_readret
+t_read_check,sas [FS_EBADBLOCK]
+        jmp t_device_error
+        // A missed word leaves the transport stopped, and may have advanced
+        // the descriptor. Restore the original position before a bounded retry.
+        lac t_tries
+        sub [1]
+        dac t_tries
+        sza
+        jmp t_read_retry
+        jmp t_device_error
+t_read_retry,idx t_retry_total
+        lac [t_fd:4]
+        dac t_seekpb
+        lac t_readpos
+        dac t_seekpb+1
+        lac [t_seekpb:4]
+        farjda(fsSeek:*)
+        lem
+        dac t_status
+        sza
+        jmp t_device_error
+        jmp t_read_again
+
+t_checksum,dap t_sumret
+        dzm t_sum
+t_sumloop,eem
+        lac i t_scan
+        lem
+        add t_sum
+        dac t_sum
+        idx t_scan
+        isp t_left
+        jmp t_sumloop
+        szo
+        nop
+        jmp i t_sumret
+
+t_device_error,law 6
+        jmp t_failed
+t_header_error,law 7
+        jmp t_failed
+t_short_error,law 0d8
+t_failed,dac t_error
+        // Read-only close cannot change the directory; preserve the original status.
+        lac t_fd+FS_FFLAGS
+        and [FS_FOPEN]
+        sza i
+        jmp t_failed_scene
+        lac [t_fd:4]
+        farjda(fsClose:*)
+        lem
+t_failed_scene,
+        lio [loading_error:1]
+        dla
+        eem
+        lac t_error
+        dac i [fault:0]
+        lem
+        lsm
+t_failed_hold,jmp t_failed_hold // keep error scene refreshing; no invalid data reaches FFT
+
+t_ret,0
+t_readret,0
+t_sumret,0
+t_stage,0
+t_status,0
+t_error,0
+t_actual,0
+t_readpos,0
+t_destination,0
+t_remaining,0
+t_tries,0
+t_retry_total,0
+t_seekpb,
+        table 2,0
+t_tracks,0
+t_words,0
+t_scan,0
+t_left,0
+t_sum,0
+t_pb,
+        table 3,0
+t_header,
+        table 0400,0
+#include <MICROTAPE/mtmount.ac>
+#include <FILESYSTEM/fsio.ac>
+constants
+FS_HANDLE(t_handle)
+FS_FILE(t_fd)

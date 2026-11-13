@@ -1,0 +1,179 @@
+PiDP-1 Signal Analysis Workstation - Type 23 drum and Type 340
+#define WORKSTATION 1
+#include <TYPE340/type340alt.ah>
+#include <DRUM/type23drumdefs.ah>
+#include <CLOCK/clockdefs.ah>
+0/
+        0
+        0
+        0
+        jmp display_isr
+0100/
+done,   0
+ovfcnt, 0
+fault,  0
+keys,   0
+yields, 0
+yret,   0
+#include "state.ac"
+display_go,0
+display_next,0
+display_at,0
+display_now,0
+display_ms,0
+display_min,0
+display_max,0
+display_late,0
+display_count,0
+#include "display.ac"
+0400/
+go,     lem
+        lsm
+        cbs
+        iot 053                 // clear channel enables if SBS16 is in use
+        iot 051                 // allow channel 0; harmless in single-channel mode
+        dzm display_go
+        dzm display_next
+        dzm display_count
+        dzm display_max
+        dzm display_late
+        dzm display_ms
+        lac [0377777]
+        dac display_min
+        lac [clsena]
+        cls
+        dzm done
+        dzm fault
+        dzm keys
+        dzm yields
+        eem
+        jsp i [uireset:1]
+        lac i [source_mode:4]
+        lem
+        sza
+        jmp tapeboot
+        eem
+        jsp i [uiinit:1]
+        lem
+        jmp analyse
+tapeboot,eem
+        jsp i [tapeinit:4]
+        lem
+analyse,eem
+        jsp i [acquire:1]
+        lem
+        dzm ovfcnt
+        szo
+        nop
+        jsp fft
+        jsp power
+        eem
+        jsp i [publish:1]
+        lem
+        law 1
+        dac done
+#ifdef SAW_TEST
+#ifndef SAW_TEST_FRAMES
+#define SAW_TEST_FRAMES 1
+#endif
+        eem
+        lac i [nframes:1]
+        lem
+        sas [SAW_TEST_FRAMES]
+        jmp advance
+        hlt
+#endif
+idle,   jsp uiyield
+        eem
+        jsp i [gaincheck:1]
+        lem
+        szs 010                  // sense-switch selector occupies bits 12-14
+        jmp advance
+        szs 020
+        jmp keyon
+        dzm keys
+        jmp idle
+keyon,  lac keys
+        sza
+        jmp idle
+        law 1
+        dac keys
+advance,eem
+        jsp i [nextfr:1]
+        lem
+        jmp analyse
+uiyield,dac yret
+        eem
+        jsp i [service:1]
+        lem
+        jmp i yret
+faultstop,dac fault
+        hlt
+        jmp .-1
+#include "kernel.ac"
+constants
+assert . <= 02000, "numeric code exceeds allocation"
+2000/
+real,
+        table 0400, 0
+2400/
+imag,
+        table 0400, 0
+3000/
+#include "generated/twiddles.ac"
+3400/
+window,
+        table 0400, 0
+4000/
+input,
+        table 0400, 0
+4400/
+bitrev,
+#include "generated/bitrev.ac"
+bank 1
+0100/
+#include "ui-state.ac"
+0400/
+directory,
+        table 01000, 0
+1400/
+waveform,
+        table 0400, 0
+2000/
+phi,
+        table 0400, 0
+2400/
+plo,
+        table 0400, 0
+4000/
+#include "frontend.ac"
+constants
+assert . <= 06000, "driver code exceeds allocation"
+6000/
+#include "generated/scene.ac"
+assert . <= 07700, "display templates exceed allocation"
+bank 2
+0100/
+listA,
+        table 03700, 0
+4000/
+listB,
+        table 03700, 0
+bank 3
+0000/
+cache,
+        table 010000, 0
+bank 4
+0000/
+source_mode,
+#ifdef SAW_TAPE
+        1
+#else
+        0
+#endif
+#include "generated/tape-config.ac"
+0200/
+#include "tape-loader.ac"
+constants
+assert . <= 010000, "Microtape loader exceeds field 4"
+start go:0

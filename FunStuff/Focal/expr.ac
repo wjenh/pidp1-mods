@@ -1,6 +1,8 @@
 // expr.ac -- PDP-1 FOCAL's expressions: numbers, variables, the three
 // enclosures, the operators, and the functions: FABS, FSGN and FITR here,
-// seven in fpfunc.ac, and FMOV and FDRW in plotter.ac.
+// seven in fpfunc.ac, and FDEV, FCLR, FMOV, FDRW and FDIS in display.ac,
+// which sends FMOV and FDRW on to plotter.ac unless FDEV has chosen the
+// display.
 //
 // FOCAL,1969's rules: ^ binds tightest, then *, then /, then + and - together,
 // each level left to right; a sign only at the start or just after an opening
@@ -14,8 +16,8 @@
 // the number package (fparith.ac, fpconv.ac) through FPCALL, so a compiler can
 // drive the same parse with other actions.
 //
-// FOCAL-1C (FOCAL_1C defined) has no plotter, so no FMOV and FDRW and no
-// argument list.
+// FOCAL-1C (FOCAL_1C defined) has no plotter and no display, so none of
+// display.ac's functions and no argument list.
 // A comma ends the expression, as in FOCAL,1969.
 // Its extended functions are built only under FN_EXT (focal.ah).
 //
@@ -38,7 +40,7 @@
 // Errors: ?07.;6 no operand, ?07.22 an operand after an operand, ?07.38 an
 // enclosure after one, ?08.47 an enclosure not closed by its partner, ?07.:9,
 // ?07.:8 and ?31.<7 for functions, and the number package's, its functions',
-// the plotter's and vrFind's.
+// the plotter's, the display's and vrFind's.
 // FA is the value; AC and IO are clobbered.
 // Called via jsp.
 local exX, exCl, exC, exSg, exEm, exK, exNm, exA, exW, exO, exFc, exFk, \
@@ -397,10 +399,10 @@ exClose, dzm exPr
     jmp exHv
 
 // the functions: 0 FABS, 1 FSGN (1 for zero), 2 FITR, and from 3 on
-// fpfunc.ac's and plotter.ac's, each through its full address in fnEnt.
+// fpfunc.ac's and display.ac's, each through its full address in fnEnt.
 // exA is the function's number plus 0100 for each comma.
 // Those below FN_TWO take one argument, the others two, the first left on
-// the list for the function to take (plotter.ac).
+// the list for the function to take (display.ac, plotter.ac).
 exFun, lac exA
 #ifndef FOCAL_1C
     sub [FN_TWO]
@@ -796,11 +798,14 @@ fnTab, FN3('A','B','S')
     FN3('A','T','N')
     FN3('R','A','N')
 #ifndef FOCAL_1C
+    FN3('D','E','V')
+    FN3('C','L','R')
     FN3('M','O','V')
     FN3('D','R','W')
+    FN3('D','I','S')
 #endif
 
-// fpfunc.ac's and plotter.ac's entries, in fnTab's order from FSQT on.
+// fpfunc.ac's and display.ac's entries, in fnTab's order from FSQT on.
 // Each is called with the (last) argument in FA, the window open.
 #ifdef FN_EXT
 fnEnt, fnSqt:1
@@ -812,8 +817,11 @@ fnEnt, fnSqt:1
     fnRan:1
 #endif
 #ifndef FOCAL_1C
-    fnMov:7
-    fnDrw:7
+    fdDev:7
+    fdClr:7
+    fdMov:7
+    fdDrw:7
+    fdDis:7
 #endif
 
 exPd, 0                     // fpSrc has a character looked at and not taken

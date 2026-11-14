@@ -4,10 +4,11 @@ PDP-1 FOCAL
 // version 1.0. One user on DCS2 channel 0, port 2030, or on the typewriter
 // while sense switch 6 is on.
 //
-// Requires mul and div (muldiv=on), the BBN clock (the reader's time limit)
-// and at least 8 banks of memory. It uses a Type 550 Microtape and tracks
-// 030 to 037 of the Type 23 drum for LIBRARY, the CalComp plotter for FMOV
-// and FDRW, and the Type 62 line printer for OUTPUT PRINTER. The banks:
+// Requires mul and div (muldiv=on), the BBN clock (the reader's time limit
+// and the display's refresh) and at least 9 banks of memory. It uses a Type
+// 550 Microtape and tracks 030 to 037 of the Type 23 drum for LIBRARY, the
+// CalComp plotter and the Type 340 display for FMOV and FDRW, the Type 340
+// for FDIS, and the Type 62 line printer for OUTPUT PRINTER. The banks:
 //   bank 0  the interpreter, the terminal, the program store
 //   bank 1  the number package, the terminal's tables and buffers
 //   banks 2 and 3  the program text
@@ -15,7 +16,8 @@ PDP-1 FOCAL
 //   bank 5  the push-down list
 //   bank 6  the shared file system, library 2.1, and its handle
 //   bank 7  the paper tape, FOCAL's library over the file system with its
-//           buffer, the plotter and the line printer
+//           buffer, the plotter, the line printer and the display
+//   bank 010  the display's list, written at run time
 // The extend window is open throughout.
 //
 // Build with this directory on the include path.
@@ -29,6 +31,9 @@ PDP-1 FOCAL
 //   in place of FOCAL's own Microtape library
 // 13-Nov-2026 Claude/wje LIBRARY UNIT 0, the library on the drum
 // 13-Nov-2026 Claude/wje comments of every source cleaned for release
+// 14-Nov-2026 Claude/wje FDIS, FDEV and FCLR, and FMOV and FDRW on the
+//   Type 340 display (display.ac)
+// 14-Nov-2026 Claude/wje display.ac's comments cleaned for release
 
 #include <AIDS/skipmacros.ah>
 #include <DCS/dcs2defs.ah>
@@ -106,6 +111,10 @@ bank 7
 #include "fslib.ac"
 #include "plotter.ac"
 #include "lpt.ac"
+// The 340's command words from here on only; its IOTs as t340dla and the
+// like, since the drum has dra and dss.
+#include <TYPE340/type340alt.ah>
+#include "display.ac"
 constants
 
 start go

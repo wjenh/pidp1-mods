@@ -268,10 +268,16 @@ gcX, jmp .
 // ring and leaves by jmp i tmErr with ?01.00's code.
 // A lost DCS2 connection drops the caller, listens again, and leaves by
 // jmp i tmErr with 0.
+// While the Type 340 shows a picture, it first lets the display's refresh
+// (dpRef, display.ac) start the next frame when one is due, since brkChk
+// runs before every command, every character sent and in every wait.
 // Returns when nothing more is waiting.
 // AC and IO are clobbered.
 // Called via jsp.
 brkChk, dap bkX
+#ifndef FOCAL_1C
+    xct dpHk                // the display's refresh, while it shows anything
+#endif
 bkLoop, lac tmDev
 #ifndef FOCAL_1C
     SKIP_NEXT_IF_DIFFERENT [DEV_DCS]
@@ -498,4 +504,7 @@ ptOn, 0                     // 1 while LIBRARY PUNCH runs, output to the punch;
                             // to the printer; PT_FILE for LIBRARY SAVE's file
 #ifndef FOCAL_1C
 lpGo, 0                     // PT_LPT while OUTPUT PRINTER is in effect, else 0
+dpHk, nop                   // brkChk's call of the display's refresh (display.ac
+                            // sets it), a nop while the display shows nothing
+dpRA, 0                     // the refresh's full address, dpHk's jsp i's target
 #endif

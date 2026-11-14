@@ -1,0 +1,495 @@
+// display.ac -- PDP-1 FOCAL's Type 340 display. It gives FDIS(X,Y),
+// FDEV(X), FCLR(X), and FMOV(X,Y) and FDRW(X,Y) on the display after
+// FDEV(1) (Docs/UsingType340Display.md).
+//
+// FDIS lights the point (X,Y) and returns the integer part of Y, as
+// FOCAL,1969's FDIS does.
+// FDEV(0) sends FMOV and FDRW to the plotter (plotter.ac), as at the start.
+// FDEV(1) sends them to the display, where FMOV moves the beam unlit and
+// FDRW draws a line from where it is; any other argument is ?31.64.
+// FCLR clears the picture, its argument evaluated and ignored.
+// X and Y are rounded as the plotter's are (pgRnd) and run 0 to DP_MAX, the
+// origin at the bottom left; off that is ?31.62, before anything is drawn.
+// FDIS moves the beam as well, so an FDRW after it starts there.
+//
+// The picture is a list the 340 runs by itself, in bank 010 from DP_LIST.
+// Word 0 sets the scale, which is unknown until a list sets it, and the
+// intensity.
+// Each entry starts and ends in point mode.
+// A point is a Y word and a shown X word.
+// A line is its start as a point, since a vector lights only the ends of its
+// steps, then one vector word for each part of at most 127 points either
+// way, then a parameter word back to point mode.
+// The list ends with a trailer, a Y word into parameter mode and a halt.
+// New entries are written after the trailer and moved down over it only
+// while the 340 is stopped (dpFlush), so it never reads a word being changed.
+//
+// brkChk (termio.ac) runs before every command, every character sent and in
+// every wait.
+// It executes dpHk, a nop until the list holds something, then a jsp i to
+// dpRef, which starts the next frame once the BBN clock's countdown, polled
+// through cks, has run out and the 340 has stopped.
+// So at most about 30 frames a second, with no sequence break, and fewer
+// while FOCAL waits longer than DP_MS in one place.
+// ERASE, errors and Ctrl-C leave the picture alone; FCLR and a restart at
+// 0100 (dpInit) empty it.
+//
+// Goes in bank 7, after plotter.ac, whose fnMov, fnDrw and pgRnd it uses.
+// fdDev, fdClr, fdMov, fdDrw and fdDis are called via jsp i to their full
+// addresses from expr.ac's exFun, and dpRef via jsp i from brkChk, each with
+// the extend window open, and return by jmp i with it open; dpInit is
+// called via jsp from rdInit (ptape.ac).
+// Bank 0's and bank 1's words, and the list, are reached through full
+// addresses.
+// Needs focal.ah, <AIDS/skipmacros.ah>, <CLOCK/clockdefs.ah> and
+// <TYPE340/type340alt.ah>.
+
+// The list's fixed words.
+#define DP_W0   parameter scale(0) intensity(DP_INTENS) lpoff next(point)
+#define DP_TR0  y(0) next(parameter)
+#define DP_TR1  halt
+
+local dvX, dvBad, dvRet, dvErr, clX, mvX, mvGo, mvEnd, dwGo, dwXp, dwY, dwYp, \
+    dwN, dwBig, dwK, dwSeg, dwLast, dwNx, dwDot, dsX
+
+// fdDev -- FDEV(X), where FMOV and FDRW draw, 0 the plotter, 1 the display.
+// Entry: X in FA.
+// Exit: FA is 0.
+// Errors: ?31.64 an X that rounds to neither.
+// AC and IO are clobbered.
+// Called via jsp i.
+fdDev, dac dvX
+    jsp pgRnd
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dvBad
+    dzm dpDev
+    jmp dvRet
+dvBad, SKIP_NEXT_IF_SAME [1]
+    jmp dvErr
+    dac dpDev
+dvRet, cla
+    FPCALLA(fpFlt)
+    jmp i dvX
+dvErr, lio [ERR_DPDEV]
+    jmp dpErr
+
+// fdClr -- FCLR(X), clear the picture.
+// Entry: X in FA, ignored.
+// Exit: FA is 0.
+// AC and IO are clobbered.
+// Called via jsp i.
+fdClr, dac clX
+    jsp dpReset
+    cla
+    FPCALLA(fpFlt)
+    jmp i clX
+
+// fdMov, fdDrw -- FMOV(X,Y) and FDRW(X,Y), on the plotter while dpDev is
+// 0, else the beam moved, or a line drawn, to (X,Y).
+// Entry: Y in FA, X the top three words of the push-down list, which are
+// taken off it.
+// Exit: FA is 0.
+// Errors: ?31.62 off the screen, ?31.63 the list full; the plotter's.
+// AC and IO are clobbered.
+// Called via jsp i.
+fdMov, dac mvX
+    lac dpDev
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mvGo
+    lac mvX
+    jmp fnMov               // as if called itself, its return in AC
+mvGo, jsp dpXY
+// the beam's place, for FMOV and every FDRW
+mvEnd, lac dpNx
+    dac dpX
+    lac dpNy
+    dac dpY
+    cla
+    FPCALLA(fpFlt)
+    jmp i mvX
+
+// FDRW shares FMOV's return word and its end
+fdDrw, dac mvX
+    lac dpDev
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dwGo
+    lac mvX
+    jmp fnDrw
+dwGo, jsp dpXY
+// each axis's distance, its size and its direction bit
+    dzm dpSx
+    lac dpNx
+    sub dpX
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dwXp
+    cma
+    dac dpAx
+    lac [left]
+    dac dpSx
+    jmp dwY
+dwXp, dac dpAx
+dwY, dzm dpSy
+    lac dpNy
+    sub dpY
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dwYp
+    cma
+    dac dpAy
+    lac [down]
+    dac dpSy
+    jmp dwN
+dwYp, dac dpAy
+// a line of no length is a point
+dwN, lac dpAx
+    ior dpAy
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp dwDot
+// k parts, the larger distance over 127 rounded up
+    lac dpAx
+    sub dpAy
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dwBig
+    lac dpAy
+    jmp dwK
+dwBig, lac dpAx
+dwK, add [0d126]
+    lia
+    cla
+    scl 1s
+    div [0d127]
+    jmp dpDvE
+    dac dpK
+// room for the start's two words, the k vectors and the parameter word
+    add [3]
+    lia
+    jsp dpRoom
+    lac dpY
+    ior [y(0) next(point)]
+    lia
+    jsp dpPut
+    lac dpX
+    ior [x(0) show next(vector)]
+    lia
+    jsp dpPut
+// part i ends at floor(a i / k) along each axis, a the axis's distance, so
+// no part is longer than 127 and the last ends exactly at (X,Y)
+    dzm dpPx
+    dzm dpPy
+    law 1
+    dac dpI
+dwSeg, lac dpAx
+    mul dpI
+    div dpK
+    jmp dpDvE
+    dac dpCx
+    lac dpAy
+    mul dpI
+    div dpK
+    jmp dpDvE
+    dac dpCy
+    sub dpPy
+    ral 8s                  // deltay's field, bits 3 to 9
+    dac dpT0
+    lac dpCx
+    sub dpPx
+    ior dpT0
+    ior dpSx
+    ior dpSy
+    ior [visible]
+    dac dpT0
+    lac dpI
+    SKIP_NEXT_IF_SAME dpK
+    jmp dwLast
+    lac dpT0
+    ior [end]
+    dac dpT0
+dwLast, lio dpT0
+    jsp dpPut
+    lac dpCx
+    dac dpPx
+    lac dpCy
+    dac dpPy
+    lac dpI
+    SKIP_NEXT_IF_DIFFERENT dpK
+    jmp dwNx
+    idx dpI
+    jmp dwSeg
+dwNx, lio [parameter next(point)]
+    jsp dpPut
+    jsp dpShow
+    jmp mvEnd
+// the dot, as FDIS lights it
+dwDot, lio [2]
+    jsp dpRoom
+    jsp dpDot
+    jmp mvEnd
+
+// fdDis -- FDIS(X,Y), light the point (X,Y).
+// Entry: Y in FA, X the top three words of the push-down list, which are
+// taken off it.
+// Exit: FA is Y's integer part.
+// Errors: ?31.62 off the screen, ?31.63 the list full.
+// AC and IO are clobbered.
+// Called via jsp i.
+fdDis, dac dsX
+    jsp dpXY
+    lio [2]
+    jsp dpRoom
+    jsp dpDot
+    lac dpNx
+    dac dpX
+    lac dpNy
+    dac dpY
+    lac [dpYb:7]
+    FPCALLA(fpLdA)
+    FPCALL(fpFitr)
+    jmp i dsX
+
+dvX, 0
+clX, 0
+mvX, 0
+dsX, 0
+endloc
+
+// dpXY -- take X off the push-down list and Y from FA, each rounded and
+// checked.
+// Exit: dpNx and dpNy are the point; FA is Y, as it came, also in dpYb.
+// Errors: ?31.62 either off the screen, nothing changed but the list.
+// AC and IO are clobbered.
+// Called via jsp.
+local xyX
+dpXY, dap xyX
+    lac [dpYb:7]
+    FPCALLA(fpStA)
+    lac i [pdP:0]
+    sub [3]
+    dac i [pdP:0]
+    FPCALLA(fpLdA)
+    jsp pgRnd
+    dac dpNx
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp dpOff
+    sub [DP_MAX+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dpOff
+    lac [dpYb:7]
+    FPCALLA(fpLdA)
+    jsp pgRnd
+    dac dpNy
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp dpOff
+    sub [DP_MAX+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dpOff
+xyX, jmp .
+endloc
+
+// dpDot -- write a point entry for (dpNx, dpNy), its room already checked,
+// and show the picture.
+// AC and IO are clobbered.
+// Called via jsp.
+local dtX
+dpDot, dap dtX
+    lac dpNy
+    ior [y(0) next(point)]
+    lia
+    jsp dpPut
+    lac dpNx
+    ior [x(0) show next(point)]
+    lia
+    jsp dpPut
+    jsp dpShow
+dtX, jmp .
+endloc
+
+// dpRoom -- ?31.63 unless IO more words fit after the pending entries.
+// Entry: IO the words.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local rmX
+dpRoom, dap rmX
+    lai
+    add dpW
+    sub [DP_END+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dpFull
+rmX, jmp .
+endloc
+
+// dpPut -- put the word in IO at dpW, the next pending word.
+// Entry: IO the word.
+// AC is clobbered, IO is preserved.
+// Called via jsp.
+local ptX
+dpPut, dap ptX
+    dio i dpW
+    idx dpW
+ptX, jmp .
+endloc
+
+// dpShow -- after an entry, put the refresh's call in brkChk and make a
+// first frame due in a millisecond, unless the picture is already shown.
+// AC and IO are clobbered.
+// Called via jsp.
+local shX
+dpShow, dap shX
+    lac dpOn
+    SKIP_NEXT_IF_AC_ZERO
+    jmp shX
+    law 1
+    dac dpOn
+    lac [jsp i dpRA:0]
+    dac i [dpHk:0]
+    law 1
+    cct
+shX, jmp .
+endloc
+
+// dpRef -- the refresh, from brkChk.
+// Once the countdown has run out and the 340 has stopped, it moves the
+// pending entries in, starts the list, and counts down DP_MS again.
+// The countdown's flag stays up until a frame starts, so a frame running
+// late starts the next as soon as it ends.
+// AC and IO are clobbered.
+// Called via jsp i.
+local rfX, rfT
+dpRef, dac rfX
+    cks
+    dio rfT
+    lac rfT
+    and [cctcks]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp i rfX
+    t340dss t340dsv t340dsh // skip if stopped, or halted at an edge
+    jmp i rfX
+    jsp dpFlush
+    t340dcf
+    lio [DP_LIST]
+    t340dla
+    lac [DP_MS]
+    cct
+    jmp i rfX
+rfX, 0
+rfT, 0
+endloc
+
+// dpFlush -- with the 340 stopped, move the pending entries down over the
+// trailer, and write the trailer after them.
+// AC and IO are clobbered.
+// Called via jsp.
+local flX, flL, flS, flD, flC
+dpFlush, dap flX
+    lac dpW
+    sub dpT
+    sub [2]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp flX
+    cma
+    dac flC
+    lac dpT
+    dac flD
+    add [2]
+    dac flS
+flL, lac i flS
+    dac i flD
+    idx flS
+    idx flD
+    isp flC
+    jmp flL
+    lac flD
+    dac dpT
+    jsp dpTrail
+flX, jmp .
+flS, 0
+flD, 0
+flC, 0
+endloc
+
+// dpTrail -- write the trailer at dpT, and set dpW to the word after it,
+// nothing pending.
+// AC and IO are clobbered.
+// Called via jsp.
+local trX
+dpTrail, dap trX
+    lac dpT
+    dac dpW
+    lio [DP_TR0]
+    jsp dpPut
+    lio [DP_TR1]
+    jsp dpPut
+trX, jmp .
+endloc
+
+// dpReset -- empty the list, stop any frame running, and take the
+// refresh's call out of brkChk, for FCLR and the start.
+// AC and IO are clobbered.
+// Called via jsp.
+local rsX
+dpReset, dap rsX
+    lac [DP_W0]
+    dac i [DP_LIST]
+    lac [DP_LIST+1]
+    dac dpT
+    jsp dpTrail
+    t340dcf
+    lio [DP_LIST]
+    t340dla                 // a frame running is cut off
+    dzm dpOn
+    lac [nop]
+    dac i [dpHk:0]
+    cla
+    cct                     // the countdown stopped, its flag cleared
+rsX, jmp .
+endloc
+
+// dpInit -- set the display as at a cold start, the list empty, FMOV and
+// FDRW on the plotter, the beam at (0,0).
+// AC and IO are clobbered.
+// Called via jsp, from rdInit.
+local inX
+dpInit, dap inX
+    lac [dpRef:7]
+    dac i [dpRA:0]
+    dzm dpDev
+    dzm dpX
+    dzm dpY
+    jsp dpReset
+inX, jmp .
+endloc
+
+// dpOff, dpFull, dpErr -- leave through tmErr with ?31.62, ?31.63, or the
+// code in IO.
+// AC and IO are clobbered.
+// Reached by jmp; they do not return.
+dpOff, lio [ERR_DPXY]
+    jmp dpErr
+dpFull, lio [ERR_DPFULL]
+    jmp dpErr
+dpDvE, lio [ERR_DPFULL]     // div cannot overflow here; never taken
+dpErr, lac i [tmErr:0]
+    dac dpT0
+    lai
+    jmp i dpT0
+
+// The display's state, set at every start (dpInit).
+dpDev, 0                    // 1 while FMOV and FDRW draw on the display
+dpOn, 0                     // 1 while brkChk calls dpRef
+dpT, 0                      // the trailer's first word, a full address
+dpW, 0                      // the next pending word
+dpX, 0                      // the beam's place, where FDRW starts
+dpY, 0
+dpNx, 0                     // the point given, rounded
+dpNy, 0
+dpAx, 0                     // a line's distance along each axis
+dpAy, 0
+dpSx, 0                     // its direction bits, left and down
+dpSy, 0
+dpK, 0                      // its parts
+dpI, 0                      // the part being written, 1 to dpK
+dpCx, 0                     // where part dpI ends, from the start
+dpCy, 0
+dpPx, 0                     // where the part before it ended
+dpPy, 0
+dpT0, 0
+dpYb,                       // Y, while X is taken off the list
+    table 3

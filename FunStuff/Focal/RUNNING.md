@@ -7,9 +7,9 @@ This guide gives only what you need to run it and what differs from the manual.
 It talks over a DCS2 telnet connection on port 2030, or on the typewriter with sense switch 6 on.
 Programs are saved on paper tape or by name in a library on a Type 550 Microtape or on the drum.
 
-This is version 1.0\
-Edit date 13-Nov-2026\
-Initial version.
+This is version 1.1\
+Edit date 14-Nov-2026\
+Updated for the Type 340 display support
 
 ## Building and starting it
 
@@ -23,16 +23,19 @@ make
 This makes *focal.rim*.
 
 Load *focal.rim* like any other tape using *pdp1central*, *fastload*, or the paper tape reader.
-The starging address is 0100.
-It needs the multiply and divide instructions (`muldiv=on`), the BBN clock, DCS2, and at least eight banks of memory.
+The starting address is 0100.
+It needs the multiply and divide instructions (`muldiv=on`), the BBN clock, DCS2, and at least nine banks of memory,
+the ninth, bank 010, is for the Type 340's display list.
 The library operations need a Microtape on a drive,
 or tracks 030 to 037 of the Type 23 drum.
 Without either FOCAL runs as usual and only the LIBRARY words that use them will give an error.
-FMOV and FDRW draw on the CalComp plotter, device 73, and `OUTPUT PRINTER` prints on the Type 62 line printer,
-device 45, see below.
 
-When it starts it waits for a connection or if sense switch 6 is on, the Soroban typewriter.
-It prints `PDP-1 FOCAL, 1969/2026`, `*` and and is ready.
+FMOV and FDRW draw on the CalComp plotter, device 73.\
+FDIS, and FMOV and FDRW will draw on the Type 340 display after issuing `FDEV(1)`.\
+`OUTPUT PRINTER` prints on the Type 62 line printer, device 45, see below.
+
+When it starts it waits for a telnet connection or if sense switch 6 is on, the Soroban typewriter.\
+It prints `PDP-1 FOCAL, 1969/2026`, `*` and is ready.\
 Starting again at 0100 clears everything, the program, the variables, the format, and the trace.
 
 ## Talking to FOCAL
@@ -95,7 +98,7 @@ Turning sense switch 5 on is an immediate stop, turn it off again after the stop
   when it is not 0: `01.10`, `01.105`, `120.50`.
 - **Numbers** are kept to about 10 digits, not FOCAL,1969's 7, and printed as FOCAL,1969 prints them
   to at most six significant digits.
-  S sixth digit may differ from the manual's by one; the manual's is the less exact.
+  A sixth digit may differ from the manual's by one; the manual's is the less exact.
   A FOR whose step is not exact in binary can end a pass sooner or later than expected.
   The table of section 4.1 ends at 1.00009 here, where the manual's goes on to 1.0001.
 - **The manual's faults are fixed.** An extra `)` is an error, not endless zeros.
@@ -125,6 +128,9 @@ Turning sense switch 5 on is an immediate stop, turn it off again after the stop
 | `?31.50` | the file is read-only, it cannot be deleted |
 | `?31.60` | the plotter's X is off the paper |
 | `?31.61` | the plotter's Y is past 65,535 either direction |
+| `?31.62` | the display's X or Y is off the screen, 0 to 1023 |
+| `?31.63` | the display's display list is full |
+| `?31.64` | FDEV's argument is not 0 or 1 |
 | `?31.70` | OUTPUT with no word, or a word other than PRINTER or TERMINAL |
 
 The library's other errors are LIBRA's, the manual's disk library:
@@ -132,7 +138,7 @@ The library's other errors are LIBRA's, the manual's disk library:
 - `?30.<0` a bad or missing argument
 - `?31.42` the name is not saved
 - `?31.43` it is already saved
-- `?31.44` the library holds 31 files alreadf
+- `?31.44` the library holds 31 files already
 
 ## Drawing on the plotter
 
@@ -166,6 +172,47 @@ FOCAL waits on the plotter's free flag on `cks` bit 7, the configuration file `p
 
 Functions take a list of arguments.
 `FABS(1,2)` and similar give `?07.:8`, where FOCAL,1969 gives `?08.47` if the argument list isn't valid.
+
+## Drawing on the Type 340 display
+
+FOCAL can draw on the Type 340 display, see *Docs/UsingType340Display.md* for using it.
+Each function returns as soon as the display list has the new point or line:
+```
+*SET Z=FDEV(1)
+*SET Z=FMOV(100,100); SET Z=FDRW(900,100); SET Z=FDRW(900,900)
+*FOR X=0,10,1000; SET Z=FDIS(X,500+400*FSIN(X/100))
+```
+- `FDIS(X,Y)` draws the point (X,Y) and returns the integer part of Y, as FOCAL,1969's FDIS does.
+- `FDEV(X)` picks where FMOV and FDRW draw, `FDEV(0)` the plotter, the initial default, `FDEV(1)` the display.
+  It returns 0.
+- After `FDEV(1)`, `FMOV(X,Y)` moves the beam to (X,Y) without drawing and `FDRW(X,Y)` draws a line from
+  where the beam is to (X,Y), both ends visible.
+  An `FDRW` to where the beam already is draws that point.
+  Each returns 0.
+- `FCLR(X)` clears the display list  and returns 0, its argument is ignored.
+
+X runs 0 to 1023 left to right and Y 0 to 1023 bottom to top, each rounded to the nearest point.
+A point off the screen is an error, nothing will be drawn.
+
+The display list has space for 4,093 words, 2,046 points plus an initial configuration word.
+A point takes two words in memory, and a line three plus one for each run of 127 points or part thereof
+along its longer side.
+
+A full display list is an error, but display will continue, showing as much as fit.
+ERASE, an error, and Ctrl-C keep the display list and the image will still be shown.
+`FCLR` clears it, and starting FOCAL again at 0100 clears it and sets `FDEV(0)`.
+
+Once there are points to display, the Type 340 will continuously display them with no additonal program
+interaction needed.
+It draws one pass through its display list and halts.
+FOCAL starts it again about 30 times a second while it computes or waits for a key,
+the BBN clock's 1 millisecond countdown provides the timing.
+
+The break system is not used, so what FOCAL is doing can delay updates.
+It is slower while FOCAL waits for a device, such printing a character on the typewriter,
+a line on the printer, a LIBRARY transfer, or a complex floating point calculation and the image can flicker.
+
+With nothing displayed a program runs as fast as usual, with 500 points shown about a fifth slower.
 
 ## Printing on the line printer
 
@@ -236,7 +283,7 @@ LIST shows other programs' files that use the same library also.
 One whose name is longer than 6 characters cannot be called or deleted from FOCAL.
 
 **The drum.** FOCAL's library is tracks 030 to 037, the drum's top eight.
-Preservinge those those tracks is up to you, use *pdp1central* to manage drum copies.
+Preserving those tracks is up to you, use *pdp1central* to manage drum copies.
 To put the library on other tracks, change `DR_LIB0`, the first track, and `DR_LIBN`, how many tracks,
 in *focal.ah* and type `make`.
 A library already on the drum has to be created again.
@@ -244,7 +291,7 @@ On the drum each LIBRARY takes well under a second.
 On a tape it can take up to about 30 seconds while the tape searches, and Ctrl-C is seen only once the search is over.
 
 **A saved program** is WRITE ALL's listing as text.
-A program can be copied to and from the librarywith *fstool*, the file system's tool, see *Docs/UsingFstool.md*:
+A program can be copied to and from the library with *fstool*, the file system's tool, see *Docs/UsingFstool.md*:
 ```
 fstool -l samples.mtp
 fstool -x -n CH41 -f text -o ch41.fc samples.mtp
@@ -262,8 +309,9 @@ An invalid library `L L` gives `?31.49`.
 
 ## The samples
 
-*Samples/* has the programs of the manual's chapter 4, each as WRITE ALL lists it.
-*samples.mtp* is a Microtape holding them also, made from the listings by *fstool*.
+*Samples/* has the programs of the manual's chapter 4 and two drawings of PDP-1 FOCAL's own,
+each as WRITE ALL lists it.
+*samples.mtp* is a Microtape holding the chapter 4 programs and `PLT340`, made from the listings by *fstool*.
 Mount *samples.mtp* on drive 1, type `L L` to see them and `L C CH41` to run one.
 
 | Name | File | Section | What it does |
@@ -276,14 +324,20 @@ Mount *samples.mtp* on drive 1, type `L L` to see them and `L C CH41` to run one
 | `CH46` | *ch4-6.focal* | 4.6 | a dice game against the house |
 | `CH47B` | *ch4-7b.focal* | 4.7, Example 2 | the largest of twelve numbers typed, three rows of four |
 | `CH47C` | *ch4-7c.focal* | 4.7, Example 3 | simultaneous equations in up to four unknowns |
+| `PLT340` | *plot340.focal* | | *plot.focal*'s damped sine wave and axes drawn on the Type 340 display |
 
-Section 4.5.1 draws on the PDP-8's scope with FDIS, which PDP-1 FOCAL does not have, so it is left out.
+Section 4.5.1 draws on the PDP-8's scope with FDIS and is not among the samples.
 4.7's Example 1 is a single direct command, not a program.
 The listings are text, use `asr33tape punch` to make a paper tape of any of them.
 
 *Samples/plot.focal*, not on the tape, draws a damped sine wave and its axes on the plotter,
 10 inches by 6, in about half a minute.
 Type its lines, or read its tape with `*`, then `GO`.
+
+*Samples/plot340.focal*, `PLT340` on the tape, draws the same graph on the Type 340 display,
+1000 points by 600 across the middle of the screen.
+It clears the display first, renders the plot, then ends with `FDEV(0)`, so FMOV and FDRW
+will go to the plotter again but the imange will contnue to be displayed.
 
 ## Credits
 

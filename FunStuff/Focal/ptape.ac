@@ -46,7 +46,8 @@
 // bank 0, but rfGet may leave through tmErr.
 // Bank 0's words are reached through full addresses.
 // Needs focal.ah, <AIDS/skipmacros.ah>, <CLOCK/clockdefs.ah> and, except in
-// FOCAL-1C, lpt.ac (lpInit, lpPut) and fslib.ac (sfPut, rfGet, rfRest).
+// FOCAL-1C, lpt.ac (lpInit, lpPut), fslib.ac (sfPut, rfGet, rfRest) and
+// display.ac (dpInit).
 
 #ifndef FOCAL_1C
 // A difference of two clock readings, in AC, brought into 0 to 59,999, where
@@ -61,8 +62,9 @@ local ppX, ppNl, ppLp, plX, plLoop, plN, riX, rbX, rbNew, rbGo, \
 
 // rdInit -- set the reader as at a cold start: no reading, the tape at a
 // line's start, no request made, and the clock enabled.
-// It also readies the line printer (lpInit) and clears the library's file
-// reading, GO and SAVE, since this is the bank's one call at the start.
+// It also readies the line printer (lpInit) and the display (dpInit), and
+// clears the library's file reading, GO and SAVE, since this is the bank's
+// one call at the start.
 // AC and IO are clobbered.
 // Called via jsp i.
 rdInit, dac riX
@@ -82,6 +84,7 @@ rdInit, dac riX
     dzm rfInj
     dzm sfOpen
     jsp lpInit
+    jsp dpInit
 #endif
     jmp i riX
 

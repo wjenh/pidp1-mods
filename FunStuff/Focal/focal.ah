@@ -176,17 +176,17 @@
 // A function's name is the three letters after its F, A to Z as 1 to 26, six
 // bits each.
 // FN_COUNT names are known, and the first FN_BUILT are built.
-// In PDP-1 FOCAL all of them are built, and those from FN_TWO on, the
-// plotter's, take two arguments, the others one.
+// In PDP-1 FOCAL all of them are built, and those from FN_TWO on, FMOV,
+// FDRW and FDIS, take two arguments, the others one.
 // FOCAL-1C has no plotter, and builds the extended functions (FN_EXT) only
 // when F1C_FUNCS is defined, as FOCAL,1969 keeps them or not at its start.
 // A name known and not built is ?31.<7.
 #define FN3(a,b,c)   ((((a)-0100)<<0d12)|(((b)-0100)<<6)|((c)-0100))
 #ifndef FOCAL_1C
 #define FN_EXT
-#define FN_COUNT     0d12
-#define FN_BUILT     0d12
-#define FN_TWO       0d10
+#define FN_COUNT     0d15
+#define FN_BUILT     0d15
+#define FN_TWO       0d12
 #else
 #ifdef F1C_FUNCS
 #define FN_EXT
@@ -227,6 +227,20 @@
 #define PT_FILE      3
 #define RD_FILE      2
 #define ERR_OUTWORD  (0d31*0d128+0d70)    // ?31.70 OUTPUT with no word, or not P or T
+
+// The Type 340 display (display.ac).
+// Its list is bank 010, DP_LIST to DP_END-1.
+// Coordinates run 0 to DP_MAX both ways.
+// The list is started again at most once every DP_MS milliseconds, drawn at
+// intensity DP_INTENS (0 to 7).
+#define DP_LIST      0100000
+#define DP_END       0110000
+#define DP_MAX       0d1023
+#define DP_MS        0d33
+#define DP_INTENS    4
+#define ERR_DPXY     (0d31*0d128+0d62)    // ?31.62 X or Y off the screen
+#define ERR_DPFULL   (0d31*0d128+0d63)    // ?31.63 the display's list is full
+#define ERR_DPDEV    (0d31*0d128+0d64)    // ?31.64 FDEV's argument not 0 or 1
 
 // ASK's value: at most AK_MAX characters are kept.
 #define AK_MAX       0d40

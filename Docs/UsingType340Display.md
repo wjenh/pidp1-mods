@@ -2,10 +2,9 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.22
-
-Edit date 8-Nov-2026\
-Include more timing info, clean up some wording.
+This is version 1.23\
+Edit date 14-Nov-2026\
+Describe the initial state for the scale factor and intensity.
 
 ## What is it?
 
@@ -67,9 +66,13 @@ needs to, which can be never, it is autonomous.
 
 At any time, the 340 is in one of three states, *halted*, *running*, or *paused*.
 It is initially in the halted state.
+The original hardware did not initialize the scale or intensity, they had random values.
+This enulatioon initializes scale and intensity to 0, which sufficiently matches the original behavior.
 
 When a *dla*, *display load address counter* IOT is issued it enters running state and remains in that state
 until it executes a *halt* instruction, an edge violation occurs, or a lightpen hit is seen.
+The program mode is always *parameter*, so the first word of the display list must be a valid
+parameter command.
 
 For a stop or edge violation, it enters the halt state and sets the *stop* flag which can be tested with the
 *dss*, *display skip on stop interrupt* IOT.
@@ -116,7 +119,6 @@ different IOT assignments.
 - dsv - display skip on vertical edge violation
 - dsh - display skip on horizontal edge violation
 
-
 In more detail:
 
 Only one IOT, dla, takes a value passed in the IO register.\
@@ -129,7 +131,7 @@ Only two standard IOTs return a value, dra and drc, both in the IO register.\
 | dcf | 720215 | none | none | clears the lightpen, stop and edge violation flags; it neither starts nor stops the display: a running display keeps running, a halted one stays halted |
 | dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
 | drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
-| dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 4 |
+| dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 3 |
 | dss | 720217 | none | none ||
 | dsv | 720417 | none | none ||
 | dsh | 721017 | none | none ||
@@ -143,10 +145,7 @@ are x >> 1 and y >> 1.
 The x coordinate is in IO bits 0-8, the y coordinate in bits 9-17.
 The values are indeterminate if there has not been a lightpen hit.
 
-**Note 3** - this is deprecated, it is exactly eqivalent to drc now.
-Motion prediction is always done and is handled in the core display logic in the pidp-1 emulator.
-
-**Note 4** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\
+**Note 3** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\
 dsv dsh dss
 
 ## Motion prediction

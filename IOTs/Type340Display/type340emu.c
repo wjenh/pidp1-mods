@@ -77,6 +77,7 @@
  * 7-Nov-2026 Claude - the 0.5 us setup is charged only before vector, vector continue, increment,
  *    subroutine and slave words, and a dla start no longer charges 1.5 us: on the PDP-1 the 340's
  *    setup delay runs inside the word's own 5 us cycle (H-340 p. 2-9, F17 p. 6-35).
+ * 14-Nov-2026 wje - statically initialize the scale to 1, 0 is not correct.
  */
 
 #include <stdlib.h>
@@ -327,8 +328,8 @@ static uint64_t dueNs;      // getNow() at which the modeled time so far is used
 static volatile int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
 static int lpX, lpY, lpDisplay;      // last lp hit display coordinates and display number
-static int curScale;
-static int curIntensity;
+static int curScale = 1;    // the hardware starup setting was random, this is sufficient, 0 here is not valid.
+static int curIntensity;    // this was also probably random, 0 is a valid value so it is fine.
 static int shiftState;     // will be 0 for upper shift or 64 for lower shift, first set or second set
 static volatile int flags;  // FLAG x values; set by the 340 thread, cleared by the IOTs, changed only atomically
 

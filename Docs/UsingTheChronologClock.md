@@ -1,8 +1,8 @@
 
 ## Using the Chrono-Log series 2100 time-of-day clock
 
-This is version 1.0\
-Edit date 24-Aug-2026
+This is version 1.1\
+Edit date 14-Nov-2026
 
 # What is it?
 
@@ -26,9 +26,9 @@ into a format that could be represented by the machine's word size, 18 bits for 
 # The packed format
 
 The AC register will contain:
-- hours as a binary number in bits 0-4, 5 bits with a range of 0-23
-- minutes as a binary number in bits 5-10, 6 bits with a range of 0-59
-- seconds as a binary number in bits 11-17, 6 bits with a range of 0-59
+- hours as a binary number in bits 0-4, 5 bits with a range of 0-23, bit 5 unused
+- minutes as a binary number in bits 6-11, 6 bits with a range of 0-59
+- seconds as a binary number in bits 12-17, 6 bits with a range of 0-59
 
 The IO register will contain:
 - month as a binary number in bits 0-3, 4 bits with a range of 1-12

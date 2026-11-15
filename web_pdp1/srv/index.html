@@ -35,9 +35,10 @@
         .container {
             display: grid;
             grid-template-columns: 300px 1fr;
-            grid-template-rows: auto 1fr auto;
+            grid-template-rows: auto auto 1fr auto;
             grid-template-areas:
                 "header header"
+                "sidebar panel-content"
                 "sidebar main-content"
                 "sidebar tape-content"
                 "sidebar misc-content";
@@ -289,6 +290,25 @@
             grid-template-columns: 1fr; /* Switch to single column */
         }
 
+        /* The front panel, see panel.js */
+        .panel-content {
+            grid-area: panel-content;
+        }
+
+        #frontPanel {
+            display: block;
+            width: 800px;
+            max-width: 100%;
+            margin: 0 auto;
+            cursor: pointer;
+        }
+
+        #panel-status {
+            font-size: 14px;
+            font-weight: 400;
+            margin-left: 12px;
+        }
+
         .misc-content {
             grid-area: misc-content;
             display: grid;
@@ -396,6 +416,7 @@
                 grid-template-areas:
                     "header"
                     "sidebar"
+                    "panel-content"
                     "main-content"
                     "tape-content"
                     "misc-content";
@@ -499,6 +520,14 @@
                         Audio Output
                     </label>
                 </div>
+
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="panel-show" onchange="panelShow(this.checked);">
+                        <span class="checkmark"></span>
+                        Front Panel
+                    </label>
+                </div>
             </div>
 
             <div class="setting-group">
@@ -518,6 +547,21 @@
             </div>
         </div>
 
+        <div class="panel-content" style="display: none;">
+            <!-- Front Panel, see panel.js -->
+            <div class="panel">
+                <div class="panel-header">
+                    Front Panel<span id="panel-status"></span>
+                    <div class="header-controls">
+                        <button class="button" id="panel-io">Rack Panel</button>
+                        <button class="button" id="panel-800">800px</button>
+                        <button class="button" id="panel-1200">1200px</button>
+                        <button class="button" id="panel-full">Full Width</button>
+                    </div>
+                </div>
+                <canvas id="frontPanel"></canvas>
+            </div>
+        </div>
         <div class="main-content">
             <!-- Type 30 Display Panel -->
             <div class="panel">
@@ -716,6 +760,7 @@
     <script src="p7sim.js?v=2"></script>
     <script src="typewriter.js"></script>
     <script src="papertape.js"></script>
+    <script src="panel.js"></script>
 
     <script>
 const print = console.log
@@ -806,6 +851,10 @@ function handleMessage(msg) {
 
 	case 'points':
 		display.processIncoming(msg.points);
+		break;
+
+	case 'panel':
+		if(frontPanel) frontPanel.update(msg);
 		break;
 
 	case 'reader_position':
@@ -1020,6 +1069,29 @@ typewriter = new Typewriter(document.getElementById('typewriter'),
 		document.getElementById('typewriter-output'));
 
 display = new p7sim(document.getElementById('display'));
+
+// The front panel; whether it shows, its size and the rack top panel are kept in localStorage.
+let frontPanel = new FrontPanel(document.getElementById('frontPanel'), document.getElementById('panel-status'),
+		(m) => { if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); });
+frontPanel.load().catch((e) => print('front panel art failed to load', e));
+function panelWidth(w) {
+	document.getElementById('frontPanel').style.width = w;
+	localStorage.setItem('panelWidth', w);
+}
+panelWidth(localStorage.getItem('panelWidth') || '800px');
+document.getElementById('panel-800').onclick = () => panelWidth('800px');
+document.getElementById('panel-1200').onclick = () => panelWidth('1200px');
+document.getElementById('panel-full').onclick = () => panelWidth('100%');
+document.getElementById('panel-io').onclick = () => frontPanel.setShowIo(!frontPanel.showIo);
+// The Front Panel tick box in Controls shows or hides the whole section; it starts hidden.
+function panelShow(on) {
+	document.querySelector('.panel-content').style.display = on ? '' : 'none';
+	document.getElementById('panel-show').checked = on;
+	frontPanel.setVisible(on);
+	localStorage.setItem('panelShow', on);
+}
+panelShow(localStorage.getItem('panelShow') === 'true');
+
 requestAnimationFrame(drawLoop);
 connectWS();
     </script>

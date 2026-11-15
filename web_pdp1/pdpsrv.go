@@ -39,6 +39,12 @@ type Message struct {
 	Source  string `json:"source"`
 	Listing string `json:"listing"`
 	RIM     []byte `json:"rim"`
+	// front panel, see panel.go
+	Lamps   []byte  `json:"lamps,omitempty"`
+	Sw      []int32 `json:"sw,omitempty"`
+	Base    []int32 `json:"base,omitempty"`
+	Mirror  bool    `json:"mirror,omitempty"`
+	Present bool    `json:"present,omitempty"`
 }
 
 type PeriphServer struct {
@@ -61,6 +67,8 @@ type PeriphServer struct {
 	// active connection is stored in channel
 	// for synchronization
 	wsConn chan *websocket.Conn
+
+	panel *Panel // the front panel, see panel.go
 }
 
 func NewServer(host string) *PeriphServer {
@@ -74,7 +82,13 @@ func NewServer(host string) *PeriphServer {
 		punchCtl:   make(chan int, 1),
 		wsConn:     make(chan *websocket.Conn, 1),
 		ptrbuf:     nil,
+		panel:      &Panel{},
 	}
+}
+
+// webConnected reports whether a browser is connected.
+func (s *PeriphServer) webConnected() bool {
+	return len(s.wsConn) > 0
 }
 
 func assemble(src string) (string, []byte, string) {
@@ -491,7 +505,9 @@ func (s *PeriphServer) handleTypewriter() {
 	}
 }
 
-func (s *PeriphServer) sendToWeb(msg Message) {
+// sendToWeb reports whether msg was sent: it is dropped when no browser is connected,
+// or another goroutine is sending at that moment.
+func (s *PeriphServer) sendToWeb(msg Message) bool {
 	select {
 	case ws := <-s.wsConn:
 		data, _ := json.Marshal(msg)
@@ -500,9 +516,11 @@ func (s *PeriphServer) sendToWeb(msg Message) {
 			log.Printf("Error sending to web: %v", err)
 		}
 		s.wsConn <- ws
+		return err == nil
 
 	default:
-		// not connected
+		// not connected, or the connection is in use
+		return false
 	}
 }
 
@@ -525,6 +543,7 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		<-s.wsConn
 
 		//s.readerData <- nil
+		s.panel.releaseKeys()
 		s.dpyCtl <- 0
 		s.typCtl <- 0
 		s.punchCtl <- 0
@@ -559,6 +578,9 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		case "disconnect_dpy":
 			s.dpyCtl <- 0
+
+		case "panel_sw":
+			s.panel.request(msg.Sw, msg.Base)
 
 		case "key":
 			// may not be connected and not receiving from chan
@@ -678,9 +700,16 @@ func main() {
 	go server.handleDisplay()
 	go server.handleTypewriter()
 	go server.handleCLI()
+	go server.handlePanel()
 
 	http.HandleFunc("/ws", server.handleWebSocket)
-	http.Handle("/", http.FileServer(http.Dir("srv")))
+	// no-cache: the browser checks each file with the server before using its copy, so an edited
+	// page or script is used at the next load (304 Not Modified when unchanged).
+	files := http.FileServer(http.Dir("srv"))
+	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
+	}))
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

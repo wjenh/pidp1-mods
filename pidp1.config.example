@@ -231,6 +231,12 @@ panelrealtime=false
 # at least 100.
 #panelscantime=1000
 
+# These are for the on-screen panel, vpanel_pdp1, see Docs/UsingVpanel.md.
+# vpanelscale multiplies the window size, 0.5 to 4.0, 1.5 makes it half again as large.
+#vpanelscale=1.0
+# vpaneliopanel shows the rack top (I/O) panel lamps above the console.
+#vpaneliopanel=true
+
 # If you get to the point you just can't stand waiting on the (accurately) slow typewriter,
 # you can pretend someone invented a supercharged soroban and up it to 200 chars/sec instead of 10.
 # Heresy? Well,then don't use it.

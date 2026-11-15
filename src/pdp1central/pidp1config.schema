@@ -98,3 +98,5 @@ panelrealtime|Panel|bool||off|newpanel|restart||Realtime priority for the panel 
 panellevels|Panel|int|8..64|8|newpanel|panel-sticky||Brightness levels
 panelcycletime|Panel|int|100..1000000|1000|newpanel|panel-sticky||How often the lamp brightnesses are recomputed, in microseconds
 panelscantime|Panel|int|100..1000000|1000|newpanel|panel-sticky||The time to scan one row of lamps, in microseconds
+vpanelscale|Panel|float|0.5..4.0|1.0|vpanel_pdp1|program||The on-screen panel's window size multiplier
+vpaneliopanel|Panel|bool||on|vpanel_pdp1|program||Show the rack top (I/O) panel lamps on the on-screen panel

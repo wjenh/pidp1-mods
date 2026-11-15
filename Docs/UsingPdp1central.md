@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.16\
-Edit date 13-Nov-2026\
-Minor update for fstool
+This is version 1.17\
+Edit date 15-Nov-2026\
+Relabel the pidp1 emulator buttons
 
 ## What is pdp1central?
 
@@ -70,26 +70,26 @@ A light for each program the chosen start-time choices run, green when it is run
 - port 1040, the emulator's command port, green when it accepts a connection.
 
 Then the buttons:
-- Start, Stop and Restart run pdp1control start, stop and restart.
+- Launch, Terminate and Restart run pdp1control start, stop and restart to control the emulator.
   They start and stop the emulator, not the programs.
-- Run, Continue and Halt operate the pidp-1 through the emulator's command port.
-  - Run is the Start key, execution starts at the address set by the address switches;
-  - Continue is the Continue key
-  - Halt is the Stop key
+- Start, Continue and Stop operate the pidp-1 through the emulator's command port.
+  - Start is the PDP-1 control panel Start switch and begins execution at the address set in the address switches
+  - Continue is the Continue switch
+  - Stop is the Stop switch
 - Reload runs pdp1control reload, the emulator rereads pidp1.config.
 - Exit leaves pdp1central.
 
-Run and Continue can be clicked only while the emulator is halted, and Halt only while it runs.
+Start and Continue can be clicked only while the emulator is halted, and Stop only while it runs.
 Pdp1central asks the emulator once a second whether it is running, so a halt by the program, by
 the panel, or by ad1 shows within a second.
 With the power switch off, all three are disabled.
-Each key does just what the panel's does.
+Each key does what the PDP-1 control panel does.
 
 While running, the buttons are disabled and the strip shows what operation is running and for how long.
 An error is shown under the strip until the next click or key press; an error the click or key
 itself causes stays until the next click or press.
 
-Stop ends the emulator first, then the t30dpy display, which normally closes by itself when the
+Teminate ends the emulator first, then the t30dpy display, which normally closes by itself when the
 emulator stops.
 Either still open after 3 seconds is ended.
 A Soroban window closes by itself when the emulator stops.

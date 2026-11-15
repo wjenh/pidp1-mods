@@ -1,8 +1,8 @@
 # Using the BBN Timesharing Clock
 
-This is version 1.1\
-Edit date 5-Nov-2026\
-Clarify when the clock starts.
+This is version 1.2\
+Edit date 15-Nov-2026\
+Fix some typos.
 
 This document explains how to use the BBN timesharing clock.
 
@@ -72,13 +72,13 @@ icc cct ttt ttt ttt ttt
 
 bit 0 i enables interrupt on timer done
 bits 1-4 specify the interrupt channel to use
-bita 5-17 countdown count, 1-8191, 017777, millisecnds to count down
+bits 5-17 countdown count, 1-8191, 017777, milliseconds to count down
 ```
 
 This provides a countdown timer that can provide a flag or interrupt after the number of 1msec counts
 have elapsed.
 Timing begins on the next instruction cycle after the IOT returns.
-If the countdouwn period is 0, then the timer is stopped if a countdown is in progress and the cks status bit
+If the countdown period is 0, then the timer is stopped if a countdown is in progress and the cks status bit
 is cleared.
 
 When the count reaches 0, bit 13, 0000020, in the cks check status instruction return value will be a 1.

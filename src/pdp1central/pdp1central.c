@@ -39,7 +39,7 @@
 // 07-Nov-2026 wje (Claude) - the "Also launch:" row: t30dpy and Soroban, the typewriter terminal,
 //     started by pdp1control.sh; the Companions row's Typewriter is now Soroban.
 // 09-Nov-2026 wje - add choice to the schema, clean out unused items, add missing ones.
-//    A choice setting is picked with option buttons in the Settings tab.
+// 15-Nov-2025 wje - rename the pdp1 emulator start and stop buttons to 'Laumch' and 'Terminate'.
 
 #include <errno.h>
 #include <limits.h>
@@ -2485,11 +2485,11 @@ bool usb, t30, idle, running;
     // Start, Stop and Restart are the processes'; Run, Continue and Halt the machine's panel keys,
     // each offered only in the state the emulator last reported, since a key's effect depends on it.
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 9, stripRatios);
-    if( button(ctxP, "Start", (idle && !running)) )
+    if( button(ctxP, "Launch", (idle && !running)) )
     {
         queueScript("start");
     }
-    if( button(ctxP, "Stop", (idle && running)) )
+    if( button(ctxP, "Terminate", (idle && running)) )
     {
         queueScript("stop");
     }
@@ -2497,7 +2497,7 @@ bool usb, t30, idle, running;
     {
         queueScript("restart");
     }
-    if( button(ctxP, "Run", (idle && running && (runState == RUN_HALTED))) )
+    if( button(ctxP, "Start", (idle && running && (runState == RUN_HALTED))) )
     {
         runKey("run");
     }
@@ -2505,7 +2505,7 @@ bool usb, t30, idle, running;
     {
         runKey("cont");
     }
-    if( button(ctxP, "Halt", (idle && running && (runState == RUN_RUNNING))) )
+    if( button(ctxP, "Stop", (idle && running && (runState == RUN_RUNNING))) )
     {
         runKey("halt");
     }
@@ -4176,22 +4176,32 @@ bool ok;
     }
 
     strcpy(rootPath, rootP);
-    ok = (rootJoin(configPath, "pidp1.config") && rootJoin(examplePath, "pidp1.config.example") &&
-        rootJoin(controlPath, "pdp1control.config") && rootJoin(scriptPath, "bin/pdp1control.sh") &&
-        rootJoin(askPath, "bin/askfile") && rootJoin(fastloadPath, "bin/fastload") &&
-        rootJoin(ovlloadPath, "bin/ovlload") && rootJoin(drumPath, "pdp23drum") &&
-        rootJoin(drumBakPath, "pdp23drum.bak") && rootJoin(drumsDir, "Drums") && rootJoin(drumlistPath, "bin/drumlist") &&
-        rootJoin(savePunchPath, "bin/save_ptp.sh") && rootJoin(mtpPath, "bin/mtp") && rootJoin(t30dpyPath, "bin/t30dpy") &&
+    ok = (rootJoin(configPath, "pidp1.config") &&
+        rootJoin(examplePath, "pidp1.config.example") &&
+        rootJoin(controlPath, "pdp1control.config") &&
+        rootJoin(scriptPath, "bin/pdp1control.sh") &&
+        rootJoin(askPath, "bin/askfile") &&
+        rootJoin(fastloadPath, "bin/fastload") &&
+        rootJoin(ovlloadPath, "bin/ovlload") &&
+        rootJoin(drumPath, "pdp23drum") &&
+        rootJoin(drumBakPath, "pdp23drum.bak") &&
+        rootJoin(drumsDir, "Drums") &&
+        rootJoin(drumlistPath, "bin/drumlist") &&
+        rootJoin(savePunchPath, "bin/save_ptp.sh") &&
+        rootJoin(mtpPath, "bin/mtp") &&
+        rootJoin(t30dpyPath, "bin/t30dpy") &&
         rootJoin(mtListPath, "microtapes.txt") &&
-        rootJoin(microtapeDir, "Microtapes") && rootJoin(tapesDir, "tapes") &&
-        rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") && rootJoin(stylePath, "pdp1central.config"));
+        rootJoin(microtapeDir, "Microtapes") &&
+        rootJoin(tapesDir, "tapes") &&
+        rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") &&
+        rootJoin(stylePath, "pdp1central.config"));
     if( schemaArgP )
     {
-        ok = (ok && (snprintf(schemaPath, sizeof(schemaPath), "%s", schemaArgP) < (int)sizeof(schemaPath)));
+        ok = ok && (snprintf(schemaPath, sizeof(schemaPath), "%s", schemaArgP) < (int)sizeof(schemaPath));
     }
     else
     {
-        ok = (ok && rootJoin(schemaPath, "src/pdp1central/pidp1config.schema"));
+        ok = ok && rootJoin(schemaPath, "src/pdp1central/pidp1config.schema");
     }
 
     return(ok);

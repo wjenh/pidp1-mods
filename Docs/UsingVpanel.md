@@ -12,6 +12,8 @@ Vpanel_pdp1 is a window showing the PDP-1 console: the lamps, the toggle switche
 It can be used in place of the PiDP-1 hardware panel, it does the same job as panel_pidp1 (newpanel) does
 for the hardware, and like that it is started before the emulator.
 It can also run alongside the hardware panel as a second view of it, see below.
+pdp1control.sh and pdp1central start it when the front panel choice is *virtual*, and only on a system with a desktop.
+Without a desktop, use the front panel of the web interface, below.
 
 Above the console it also shows the rack top (I/O) indicator panel, laid out like the PiDP-1's top panel:
 

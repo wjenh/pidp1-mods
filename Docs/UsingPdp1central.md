@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.17\
+This is version 1.18\
 Edit date 15-Nov-2026\
-Relabel the pidp1 emulator buttons
+The virtual front panel needs a desktop
 
 ## What is pdp1central?
 
@@ -456,6 +456,8 @@ usbtape=n
   The default is n.
 - frontpanel: pidp or virtual.
   The default is virtual.
+  With virtual, vpanel_pdp1 starts only on a system with a desktop, the same as Soroban.
+  Without a desktop, use the front panel of the web interface, see UsingVpanel.md.
 - usbtape: y or n.
   The default is n.
 

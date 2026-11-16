@@ -1,0 +1,187 @@
+// lptio.ac -- the body of lptio62.am1 and lptio64.am1: what every line printer IOT leaves in
+// IO, and lpf's own error. Each includes its printer's definitions and defines first:
+//   LOADC   the IOT that loads characters from IO (flb, lpb)
+//   PRESET  the IOTs run before the rest (the 64's lpc), each followed by jsp rec
+//   PRINTW  a print with the wait bit (slp i, pas i)
+// and gives pline, which prints the line loaded and records each IOT's IO.
+//
+// The program prints in ASCII mode to files in ~/lptio, which must exist and hold the
+// directory later/, and must not hold nodir/. Each IOT's IO is stored in res, in order, by
+// rec; rp points past the last. The program halts twice, phase 1 and phase 2:
+//   phase 1: c.txt is closed. Copy ~/lptio/later/c.txt, remove ~/lptio/later, and continue.
+//   phase 2: done.
+// Expected files: a.txt "A1" "A2"; b.txt "B1" "B2" "B3" and 120 Z's; c.txt "C1"; no nodir/.
+// Blank lines depend on the spacing configured, and are not part of the result.
+//
+// Expected IO, in order, -1 being 777776 (pline's own entries are 0 each):
+//   PRESET 0; lpm 1 0; lpf a 0; say A1 0; pline;
+//   lpf nodir -1; say A2 0; pline;
+//   lpf nodir -1; lpm 1 0; lpf b 0 (D4); say B1 0; pline;
+//   say B2 0; lpf of a name too long to read -1; pline;
+//   lpf c 0; say C1 0; pline; lpm 3 0; phase 1;
+//   lpm 1 -1 (c.txt cannot be opened); lpm 1 -1 (still not);
+//   PRINTW -1 (it completes; before 15-Nov-2026 the program stopped here for good);
+//   lpf b 0; say B3 0 (no stale failure); pline; say 128 Z's 0; pline; lpf 0 0; phase 2.
+// "say" records one entry, the OR of the IO of every LOADC it ran.
+
+100/
+go,
+    PRESET
+    lio [1]                 // D1: lpm with IO 1, ASCII mode
+    lpm
+    jsp rec
+    lio [nameA]
+    lpf
+    jsp rec
+    lac [tA1]
+    jda say
+    jsp pline
+
+    lio [nameBad]           // a directory that does not exist
+    lpf
+    jsp rec
+    lac [tA2]               // ruling 2(a): to a.txt
+    jda say
+    jsp pline
+
+    lio [nameBad]           // D4: a bad name, an IOT, a wait, then a good name
+    lpf
+    jsp rec
+    lio [1]
+    lpm
+    jsp rec
+    jsp wait
+    lio [nameB]
+    lpf
+    jsp rec
+    lac [tB1]
+    jda say
+    jsp pline
+
+    lac [tB2]               // loaded before an lpf whose name cannot be read
+    jda say
+    lio [nameLong]
+    lpf
+    jsp rec
+    jsp pline               // B2, untouched, to b.txt
+
+    lio [nameC]
+    lpf
+    jsp rec
+    lac [tC1]
+    jda say
+    jsp pline
+    lio [3]                 // close, ASCII kept
+    lpm
+    jsp rec
+    jsp wait                // c.txt is closed
+    lac [1]
+    dac phase
+    hlt                     // phase 1: ~/lptio/later is removed
+
+    lio [1]                 // opens c.txt again, and fails
+    lpm
+    jsp rec
+    jsp wait
+    lio [1]                 // and again
+    lpm
+    jsp rec
+    lio [1]                 // a failed print with the wait bit completes, with -1
+    PRINTW
+    jsp rec
+    lio [nameB]             // no stale failure after a good lpf
+    lpf
+    jsp rec
+    lac [tB3]
+    jda say
+    jsp pline
+
+    lac [tZ]                // D2: 128 characters, 120 printed
+    jda say
+    jsp pline
+
+    lio [0]
+    lpf
+    jsp rec
+    jsp wait
+    lac [2]
+    dac phase
+    hlt                     // phase 2: done
+    jmp .-1
+
+// Stores IO at rp and advances rp. Called by jsp. AC changed, IO preserved.
+rec, dap rcx
+    dio i rp
+    idx rp
+rcx, jmp .
+
+// Loads the zero-ended ASCII string whose address is in AC, a word at a time, by LOADC, and
+// records the OR of the IO each left. Called by jda. AC and IO changed.
+say, 0
+    dap syr
+    dzm sor
+syl, lio i say
+    dio stmp
+    lac stmp
+    sza i
+    jmp sye
+    LOADC
+    dio stmp
+    lac sor
+    ior stmp
+    dac sor
+    idx say
+    jmp syl
+sye, lio sor
+    jsp rec
+syr, jmp .
+
+// Waits about 230 ms of machine time, which the throttle keeps to the wall clock. Called by jsp.
+// AC changed, IO preserved.
+wait, dap wtr
+    law i 36
+    dac wcn
+wlp, law i 1000
+    dac wcm
+wil, isp wcm
+    jmp wil
+    isp wcn
+    jmp wlp
+wtr, jmp .
+
+phase, 0
+sor, 0
+stmp, 0
+wcn, 0
+wcm, 0
+rp, res
+
+nameA,
+    ascii "~/lptio/a.txt"
+nameB,
+    ascii "~/lptio/b.txt"
+nameC,
+    ascii "~/lptio/later/c.txt"
+nameBad,
+    ascii "~/lptio/nodir/x.txt"
+nameLong,
+    ascii "~/lptio/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+tA1,
+    ascii "A1"
+tA2,
+    ascii "A2"
+tB1,
+    ascii "B1"
+tB2,
+    ascii "B2"
+tB3,
+    ascii "B3"
+tC1,
+    ascii "C1"
+tZ,
+    ascii "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+
+constants
+
+res,
+    table 60

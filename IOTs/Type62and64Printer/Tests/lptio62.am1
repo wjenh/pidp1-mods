@@ -1,0 +1,25 @@
+Type 62 line printer: IO results and lpf's own error
+// Run with lptType64=false. What it does and expects is in lptio.ac.
+
+#include <LPT/type62defs.ah>
+
+#define LOADC flb
+#define PRESET
+#define PRINTW slp i
+
+#include "lptio.ac"
+
+// Prints the line loaded: prl, then slp, each with IO 1 (D1), each IO recorded. Called by jsp.
+// AC and IO changed.
+pline, dap plr
+    lio [1]
+    prl
+    jsp rec
+    lio [1]
+    slp
+    jsp rec
+plr, jmp .
+
+constants
+
+start 100

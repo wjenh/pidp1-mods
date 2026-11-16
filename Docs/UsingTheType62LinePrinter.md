@@ -1,14 +1,14 @@
 ## Using the Type 62 line printer
 
-The Type 62 line printer printed 120 character wide lines from a 64 character set using fiodec codes,
-called flexo in macro although was really concise code, which is fiodec without a parity bit.
-
+The Type 62 line printer printed 120 character wide lines from a 64 character set using FIODEC codes,
+called flexo in macro, although was really Concise code, FIODEC without a parity bit.
 It could print 600 lines per minute.
 
 **NOTE** that the operating mode can be switched to Type 64 if desired.\
 Use the lptType64 setting in the /opt/pidp1-mods/pidp1.config file.
 
-Updated 27-Sep-2026
+Updated 16-Nov-2026
+Clarifications added.
 
 ## The output
 
@@ -16,17 +16,12 @@ Line printer output is written to a file, */tmp/pdp1lpt.txt* by default, but see
 The file is opened in append mode if not already open and lines are written to it.\
 The file is flushed when each line is printed, the file can be viewed or copied at will.
 
-The file is closed if the file name is changed, the mode is changed, or a file close command is used, see below.
+The file is closed if the file name is changed with *lpf* or by an *lpm* with its close bit set, see below.
 
-The output file can also be a FIFO (named pipe, made with *mkfifo*) that another program reads.
-Until a reader opens it, the printer is simply not ready: printed lines are held, up to 16 KB of them,
-and an *slp* with wait or completion does not finish until a reader has taken its line.
-The rest of the machine keeps running meanwhile.
-If the reader goes away, the line being written when it left can be lost, and later lines are held
-until a reader opens the FIFO again.
-Changing the file with *lpf*, or closing it with *lpm*, drops any lines still held.
+If it can't be opened, every IOT call gives -1 in IO and what would be printed is discarded.
+An IOT that fails with wait or completion completes at once.
 
-In flexo mode, concise characters are converted to ascii with any character that has no equivalent printed as a space.
+In flexo mode, Concise characters are converted to ASCII with any character that has no equivalent printed as a space.
 The conversion set is the same as used by **macro1**, **am1**, **DCS2**, and any other character conversions
 provided in the pidp1-mods universe.
 
@@ -46,8 +41,8 @@ The Type 62 manual for the PDP-4 states a spacing time of 7.5 msecs.
 There are also varying descriptions of the Type 62 stating printing speeds of 600 lpm or 1000 lpm.
 The above are used, since that is what is in the PDP-1 Handbook.
 
-New characters could be transferred while line spacing is being done but not when the line was being printed.
-However this implementation allows new characters to be sent as soon as the print line instruction, *prl*
+New characters could be transferred while line spacing was being done but not when the line was being printed.
+However this implementation allows new characters to be sent as soon as the print line IOT, *prl*
 is executed, no waiting is required.
 
 But, see *Overstrike* below.
@@ -57,7 +52,7 @@ But, see *Overstrike* below.
 Configuration of several functions can be done in the pidp1.config file:
 
 - lptType64=true/false
-select Type 62 or Type 64 mode, default false
+select Type 62 or Type 64 mode, default false, Type 62
 - lptLines=nn
 sets the mumber of lines per page, default 66
 - lptLineSpacing=n0,n1,n2,n3,n4,n5,n6,n7, default 1,2,3,4,11,22,33,-1
@@ -77,7 +72,7 @@ A -1 means form-feed.
 ## Overstrike
 
 The original printer supported overstriking.
-This meant that the paper was not advanced when a *prl* instruction was issued, but the characters were printed.
+This meant that the paper was not advanced when a *prl* IOT was issued, but the characters were printed.
 Subsquent characters would be printed over existing characters on that line, overstruck.
 The paper was only advanced when an *slp* was executed.
 
@@ -97,7 +92,7 @@ slp
 ```
 The output will be a line *xyzdef*.
 
-## The IOT instructions
+## The IOTs
 
 There are only three original plus two added, implemented as IOT 45.
 
@@ -109,9 +104,9 @@ There are only three original plus two added, implemented as IOT 45.
 
 These as well as values for spacing format control are in the <LPT/type62defs.ah> include file.
 
-## The flb instruction
+## The flb IOT
 
-This adds the 2 in ascii mode or 3 in flexo mode characters in the IO register to the print buffer.
+This adds the characters in IO,  2 in ascii mode or 3 in flexo mode, to the print buffer.
 If the buffer overflows, extra characters are discarded.
 The characters are packed as 3, 6 bit characters as produced by the assembler *flexo* directive
 or packed as 2, 9 bit characters as produced by the **am1** *ascii* or quoted character directives.
@@ -119,20 +114,21 @@ or packed as 2, 9 bit characters as produced by the **am1** *ascii* or quoted ch
 ```
 721045
 
-IO - contains 3 flexo characters, a<<12 | b<<6 | c in flexo mode, 2 ascii characters a<<9 | b in ascii mode
+IO - contains 3 flexo characters, a<<12 | b<<6 | c in flexo mode, 2 ASCII characters a<<9 | b in ascii mode
 
-On return, IO will be 0 for success, 0777776 (-1) if the buffer overflowed.
+On return, IO will be 0 for success, 0777776 (-1) if the output file can't be opened.
+AC is unchanged.
 ```
-Wait, i, and completion, C are ignored.
+Wait, i, and completion, C, are ignored.
 
 In flexo mode, the word must have 3 characters, use a flexo space to pad it out.
 This is done automatically when the assembler directives are used.
 
 In ascii mode, either character can be a null, \\0, in which case it is ignored.
 
-## The slp instruction
+## The slp IOT
 
-This command advances by the number of lines specifed in the instruction.
+This command advances by the number of lines specifed in the IOT.
 Until this command is issued, the same line can be overstruck.
 
 In order to get the overstrike behavior, *prl*, below, doesn't actually output anything,
@@ -141,9 +137,10 @@ Only when *slp* is executed is text written to the output file.
 ```
 722x45
 
-IO and AC are unchanged.
+On return, IO will be 0 for success, 0777776 (-1) if the output file can't be opened.
+AC is unchanged.
 ```
-Wait, i, and completion, C are supported and will take 18 * number-of-lines milliseconds to be issued.
+Wait, i, and completion, C, are supported and will take 18 * number-of-lines milliseconds to be issued.
 
 The value of *x* selects one of 8 spacings, the default values are:
 
@@ -160,15 +157,15 @@ The original printer had a changeable spacing tape so customers could configure 
 of lines for each spacing.\
 This is supported by the lptLineSpacing setting in the /opt/pidp1-mods/pidp1.config file.
 
-Existing documentation has conflicting descriptions of the spacing tape function, some indicates
+Existing documentation has conflicting descriptions of the spacing tape function, some indicate
 that all 8 formats can be defined, others that formats 0 and 7 are fixed to be overstrike and form-feed
 respectively.
 This implementation allows all to be changed.
 
-## The prl instruction
+## The prl IOT
 
-In the original printer, this printed the current buffer and cleared it, but did not advance a line.
-In order to duplicate the overstrike behavior, this instructon does nothing but
+In the original printer this printed the current buffer and cleared it but did not advance a line.
+In order to duplicate the overstrike behavior, this IOT does nothing but
 reset the buffer position to 0 and delay for 84 milliseconds.
 
 The actual writing to the output file is done when *slp* is executed.
@@ -176,26 +173,33 @@ The actual writing to the output file is done when *slp* is executed.
 ```
 720045
 
-IO and AC are unchanged.
+On return, IO will be 0 for success, 0777776 (-1) if the output file can't be opened.
+AC is unchanged.
 ```
-Wait, i, and completion, C are supported and will take 84 milliseconds to be issued.
+Wait, i, and completion, C, are supported and will take 84 milliseconds to be issued.
 
-## The lpf instruction
+## The lpf IOT
 
-This is an added instruction because there is no actual line printer.
+This is an added IOT because there is no actual line printer.
 It allows setting of the output file to write to.
 ```
 723045
 
-IO - contains the address in memory of an ascii string giving the file name to use, or 0
+IO - contains the address in memory of an ASCII string giving the file name to use, or 0
 
-On return, IO will be 0 for success, 0777776 (-1) if the file can't be opened.
+On return, IO will be 0 for success, 0777776 (-1) if the name can't be read or the file can't be opened.
 AC is unchanged.
 ```
-Wait, i, and completion, C are ignored.
+Wait, i, and completion, C, are ignored.
+
+It opens the file, creating it if necessary, before it returns.
+If it fails, nothing is channged.
+The file in use before is still in use.
+A name can't be read if it has no null character within 128 words or is longer than 120 characters
+after any ~ is expanded.
 
 If IO is 0, the file name is reset to the default */tmp/pdp1lpt.txt*.\
-Otherwise the address is that of a string of ascii characters packed 2 per word as produced by the **am1**
+Otherwise the address is that of a string of ASCII characters packed 2 per word as produced by the **am1**
 *ascii* command.
 The first character is in the high 9 bits of a word, the second in the low 9 bits.
 For either, the high 9th bit is ignored.
@@ -215,15 +219,16 @@ Note that the file name cannot contain wildcards or other *globbing* characters,
 by the shell.
 However, ~/, ~username/, and relative paths can be used, *../b*.
 In specific, the path must be one that linux *open()* accepts, with the addition of the ~ processing.
-It can name a FIFO, see *The output* above.
+It must name a disk file, see *The output* above.
 
 Also note that unless an absolute path is given, the file will be relative to the current working directory
 of *the running pdp1 instance*, most likely */opt/pidp1-mods*, don't depend upon it.
 
-## The lpm instruction
+## The lpm IOT
 
-This is an added instruction for convenience.\
-It changes the character mode between flexo and ascii and the printer mode between Type 62 and Type 64.\
+This is an added IOT for convenience.\
+It changes the character mode between flexo and ascii.
+The printer type is set only by the lptType64 setting.\
 It can also close the print file.
 ```
 723145
@@ -231,14 +236,16 @@ It can also close the print file.
 IO bit 17 - 0 for flexo mode, 1 for ascii mode
 IO bit 16 - 0 for no operation, 1 to close the output file and reset the line number and flex shift state
 
-On return, the IO and AC are unchanged.
+On return, IO will be 0 for success, 0777776 (-1) if the output file can't be opened.
+AC is unchanged.
 ```
-Wait, i, and completion, C are ignored.
+Wait, i, and completion, C, are ignored.
 
-If flexo mode is set, then the *flb* instruction will expect flexo/concise characters packed three per word.\
-If ascii mode is set, then the *flb* instruction will expect ascii characters packed two per word.
+If flexo mode is set, then the *flb* IOT will expect flexo/concise characters packed three per word.\
+If ascii mode is set, then the *flb* IOT will expect ASCII characters packed two per word.
 
-If the output file is closed, it will be reopened when the next *slp* is executed.
+If the output file is closed, it will be reopened by the next printer IOT other than *lpf*,
+which opens the file it is given instead.
 
 The default is flexo mode.\
 See *flb* for more details.

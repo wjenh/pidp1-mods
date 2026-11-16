@@ -1,0 +1,22 @@
+Type 64 line printer: IO results and lpf's own error
+// Run with lptType64=true. What it does and expects is in lptio.ac.
+
+#include <LPT/type64defs.ah>
+
+#define LOADC lpb
+#define PRESET lio [1]; lpc; jsp rec
+#define PRINTW pas i LPT_SP1
+
+#include "lptio.ac"
+
+// Prints the line loaded and spaces: pas with format 1 and IO 1 (D1), its IO recorded. Called
+// by jsp. AC and IO changed.
+pline, dap plr
+    lio [1]
+    pas LPT_SP1
+    jsp rec
+plr, jmp .
+
+constants
+
+start 100

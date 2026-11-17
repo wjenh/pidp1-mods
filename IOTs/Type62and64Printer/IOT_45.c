@@ -10,7 +10,7 @@
  *
  * 21-Jun-2026 wje minor revision for some timing changes
  * 3-Jul-2026 wje minor cleanup, also avoid extraneous IO completions
- * 16-Nov-2026 Claude a failed IOT completes at once.
+ * 16-Nov-2026 wje rework, was too complicated
 */
 
 #include <stdio.h>

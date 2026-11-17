@@ -835,6 +835,10 @@ char *cP;
         }
 
         *outP++ = ch;
+        if( ch == '\\' )
+        {
+            *outP++ = ch;       // because it was originally two backslashes.
+        }
     }
 
     *outP = 0;

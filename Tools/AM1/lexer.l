@@ -349,99 +349,99 @@ type340[ \t]+           {
                         }
 
 flexo[ \t][^\n;]{1,3}   {
-                    int i, ch, shift, nshifts, nchars;
-                    char *cP;
-                    int rslt;
+                        int i, ch, shift, nshifts, nchars;
+                        char *cP;
+                        int rslt;
 
-                        cP = yytext;
-                        // skip to the argument
-                        while( *cP && !isspace(*cP) )
-                        {
-                            ++cP;
-                        }
-
-                        while( isspace(*cP) )
-                        {
-                            ++cP;
-                        }
-
-                        nchars = strlen(cP);
-                        for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
-                        {
-                            if( *cP == '\\' )           // special directive, red, black, newline
+                            cP = yytext;
+                            // skip to the argument
+                            while( *cP && !isspace(*cP) )
                             {
                                 ++cP;
-                                ++i;
-
-                                if( nchars <= 0 )
-                                {
-                                    verror("invalid \\ in flexo, no directive character");
-                                }
-
-                                switch( *cP )
-                                {
-                                case 'B':
-                                    ch = BLACK;
-                                    break;
-
-                                case 'R':
-                                    ch = RED;
-                                    break;
-
-                                case 'n':
-                                    ch = FLEX_CR;
-                                    break;
-
-                                case '\\':
-                                    ch = '\\';
-                                    break;
-
-                                default:
-                                    verror("\\%c in text is not valid", *cP);
-                                    // never returns, just to shut up overly-picky c compilers
-                                    ch = NONE;
-                                }
                             }
-                            else
+
+                            while( isspace(*cP) )
                             {
-                                ch = asciiToFlexo(*cP, &shift);
+                                ++cP;
                             }
 
-                            if( ch == NONE )
+                            nchars = strlen(cP);
+                            for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
+                            {
+                                if( *cP == '\\' )           // special directive, red, black, newline, or itself
+                                {
+                                    ++cP;
+                                    ++i;
+
+                                    if( nchars <= 0 )
+                                    {
+                                        verror("invalid \\ in flexo, no directive character");
+                                    }
+
+                                    switch( *cP )
+                                    {
+                                    case 'B':
+                                        ch = BLACK;
+                                        break;
+
+                                    case 'R':
+                                        ch = RED;
+                                        break;
+
+                                    case 'n':
+                                        ch = FLEX_CR;
+                                        break;
+
+                                    case '\\':
+                                        ch = '\202';      // there is no backslash in flexo, ' is usual
+                                        break;
+
+                                    default:
+                                        verror("\\%c in text is not valid", *cP);
+                                        // never returns, just to shut up overly-picky c compilers
+                                        ch = NONE;
+                                    }
+                                }
+                                else
+                                {
+                                    ch = asciiToFlexo(*cP, &shift);
+                                }
+
+                                if( ch == NONE )
+                                {
+                                    vwarn(WARN_FLEX,
+                                        "The character '%c' is not a Flexo character, replaced with space", *cP);
+                                    ch = FLEX_SPACE;
+                                }
+
+                                rslt <<= 6;
+                                rslt |= ch;
+
+                                if( (ch != CSHIFT) && (ch != CUNSHIFT) )
+                                {
+                                    ++cP;
+                                }
+                                else
+                                {
+                                    ++nshifts;
+                                }
+                            }
+
+                            if( (nchars + nshifts) > 3 )
                             {
                                 vwarn(WARN_FLEX,
-                                    "The character '%c' is not a Flexo character, replaced with space", *cP);
-                                ch = FLEX_SPACE;
+                                "only the first %d characters used because shift/unshift codes needed",
+                                nchars - nshifts);
                             }
 
-                            rslt <<= 6;
-                            rslt |= ch;
-
-                            if( (ch != CSHIFT) && (ch != CUNSHIFT) )
+                            while( nchars++ < 3 )
                             {
-                                ++cP;
+                                rslt <<= 6;
                             }
-                            else
-                            {
-                                ++nshifts;
-                            }
-                        }
 
-                        if( (nchars + nshifts) > 3 )
-                        {
-                            vwarn(WARN_FLEX,
-                            "only the first %d characters used because shift/unshift codes needed",
-                            nchars - nshifts);
+                            yylval.ival = rslt;
+                            return(FLEXO);
                         }
-
-                        while( nchars++ < 3 )
-                        {
-                            rslt <<= 6;
-                        }
-
-                        yylval.ival = rslt;
-                        return(FLEXO);
-                    }
 
 char[ \t]+.[lmr]        {
                     int rslt;
@@ -1101,7 +1101,7 @@ octal                   { decimalMode = false; }
                         return(LIBFILE);
                     }
 
-<DOTEXT>.               {
+<DOTEXT>.           {
                     int tmpc, rslt;
                     int count;
                     int shift;
@@ -1132,6 +1132,7 @@ octal                   { decimalMode = false; }
                                 {
                                     verror("invalid \\ in text, no directive character");
                                 }
+
                                 switch(tmpc)
                                 {
                                 case 'B':
@@ -1147,7 +1148,7 @@ octal                   { decimalMode = false; }
                                     break;
 
                                 case '\\':
-                                    rslt = tmpc;
+                                    rslt = asciiToFlexo(tmpc, &shift);  // flexo char is backarrow
                                     break;
 
                                 default:

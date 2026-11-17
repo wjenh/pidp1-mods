@@ -1,7 +1,6 @@
 /*
  * Examine a drum image, list tracks loaded via drumupdater, Adventure's and a
- * Z-machine story's tracks, file system volumes, and the overlays of any am1 overlay
- * files given.
+ * Z-machine story's tracks, and the overlays of any am1 overlay files given.
  *
  * Usage: drumlist [-i imagefile] [file.ovl ...]
  * where:
@@ -21,9 +20,6 @@
  * 22/09/2026 wje - add ppporch's adventure check
  * 13/10/2026 Claude - Z-machine stories, and the overlays of .ovl files
  * 22/10/2026 Claude - an overlay's drum range is its span; a track's overlays in drum address order
- * 11-Nov-2026 Claude - file system volumes, by ovlfile.c's fsVolumeAt()
- * 13-Nov-2026 wje - change mtfs to fstool
- * 13-Nov-2026 wje - fstool now is decimal by default, change hint to match
  *
  */
 #include <stdlib.h>
@@ -59,9 +55,6 @@ int j;
 int fileCount;
 int zTracks;
 int lastOverlayTrack;
-int volFirst = 0;
-int volEnd = 0;
-FsVolume vol;
 bool adventurePresent = false;
 bool claimed;
 bool listed;
@@ -161,33 +154,7 @@ OvlFile *filesP;
     {
         claimed = false;
 
-        // A volume first: its format leaves block 0 of its first track as it was, so a story's
-        // header or Adventure's magic there is what an earlier tenant left, and the tracks after
-        // the volume are not theirs either.
-        if( trackNo < volEnd )
-        {
-            printf("Track %d: file system volume from track %d\n", trackNo, volFirst);
-            claimed = true;
-        }
-        else if( fsVolumeAt(drum, trackNo, &vol) )
-        {
-            volFirst = trackNo;
-            volEnd = trackNo + vol.tracks;
-            if( (trackNo <= ADVENTURE_SAVE_TRACK) && (ADVENTURE_SAVE_TRACK < volEnd) )
-            {
-                adventurePresent = false;
-            }
-            if( trackNo == 0 )
-            {
-                zTracks = 0;
-            }
-            printf("Track %d: file system volume of %d track%s (fstool -D %d,%d), generation %d, %d file%s%s\n",
-                trackNo, vol.tracks, (vol.tracks == 1) ? "" : "s", trackNo, vol.tracks, vol.generation,
-                vol.files, (vol.files == 1) ? "" : "s",
-                (vol.fromCopy) ? ", from the directory's copy in block 2" : "");
-            claimed = true;
-        }
-        else if( trackNo < zTracks )
+        if( trackNo < zTracks )
         {
             if( trackNo == 0 )
             {

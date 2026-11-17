@@ -1105,6 +1105,12 @@ int i;
 int rslt;
 
     i = flexText.nchars;
+
+    if( i == 0 )            // a zero-length string still needs a terminator
+    {
+        return(1);          // so it uses one word
+    }
+
     rslt = i / 3;
     if( i % 3 )             // not a full word
     {

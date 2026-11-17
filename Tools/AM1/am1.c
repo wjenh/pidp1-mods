@@ -174,6 +174,8 @@
  * 12-Nov-2026 claude - -m (maccodegen.c) keeps a long comment's whole text, wrapped at blanks into
  *    lines of at most 72 columns, and writes block comments too
  * 12-Nov-2026 wje - the 1Dop warning was only enabled for macro, now for am1 also
+ * 17-Nov-2026 wje - flexo '\\' left the ascii for \ instead of the flexo char, an empty text string
+ *    properly created an empty word but gave the word count as 0
 */
 #include <unistd.h>
 #include <stdlib.h>

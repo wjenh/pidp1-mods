@@ -48,8 +48,24 @@ static int clockEnabled;
 static uint64_t displayDelay=5000000, clockBase;
 static unsigned clockOffset;
 static int clockRead;
+/* Scripted pen events exercise the guest ISR and picker state machine. Each
+ * line is: condition_address_octal expected_decimal x y hold_milliseconds.
+ * Events wait for the condition and a 350-ms lift; a held event hits every
+ * 10 ms. This adapter models flag/resume semantics, not beam hit geometry. */
+static FILE *penScript;
+static unsigned penAddress,penExpected,penX,penY,penHold,penRaw;
+static int penPending,penReady,penHolding;
+static uint64_t penDue,penUntil,penFinished;
+static uint64_t penStopDelay=1000000000;
+static void penNext(PDP1 *p) {
+    penReady=fscanf(penScript,"%o %u %u %u %u",&penAddress,&penExpected,&penX,&penY,&penHold)==5;
+    penDue=p->simtime+350000000;
+    if (!penReady) penFinished=p->simtime;
+}
+
 extern void dynamicReq(PDP1 *,int);
-static FILE *frameTrace, *listTrace;
+static FILE *frameTrace, *listTrace, *loadingTrace;
+static unsigned loadingSceneAddr,loadingDoneAddr,loadingTotalAddr;
 static unsigned tracedList;
 static unsigned frameCounterAddr, tracedFrames;
 
@@ -69,6 +85,17 @@ void dynamicIotProcessorDoPoll(PDP1 *p)
     mtIOPoll(p);
     if (p->core[0102] && getenv("SAW_STOP_ON_FAULT")) p->run=0;
 #endif
+    if (penScript) {
+        if (penHolding && p->simtime>=penUntil) { penHolding=0;penNext(p); }
+        if (!penPending && (lastDisplay==010400 || (lastDisplay>=020000 && lastDisplay<030000)) && p->simtime>=penDue &&
+            (penHolding || (penReady && p->core[penAddress]==penExpected))) {
+            if (penX==2048) { penNext(p);return; }
+            if (!penHolding) { penHolding=1;penUntil=p->simtime+(uint64_t)penHold*1000000; }
+            penRaw=((penX/2)<<9)|(penY/2);penPending=1;
+            displayDue=0;dynamicReq(p,0);penDue=p->simtime+10000000;
+        }
+        if (penFinished && p->simtime-penFinished>=penStopDelay) p->run=0;
+    }
     if (frameTrace && p->core[frameCounterAddr]!=tracedFrames) {
         tracedFrames=p->core[frameCounterAddr];
         fprintf(frameTrace,"%u",tracedFrames);
@@ -144,7 +171,11 @@ int dynamicIotProcessor(PDP1 *p,int dev,int pulse,int completion)
         if (!pulse) return 1;
         if (dev==015) {
             if (cmd==0) {
-                lastDisplay=p->io&0177777;displayStarts++;displayStopped=0;displayDue=p->simtime+displayDelay;
+                penPending=0;lastDisplay=p->io&0177777;displayStarts++;
+                if (loadingTrace && lastDisplay==loadingSceneAddr) {
+                    fprintf(loadingTrace,"%u %u\n",p->core[loadingDoneAddr],p->core[loadingTotalAddr]);
+                }
+                displayStopped=0;displayDue=p->simtime+displayDelay;
                 snapshotAddr=(lastDisplay>=020000 && lastDisplay<030000)?lastDisplay:0;
                 if (snapshotAddr) memcpy(displaySnapshot,p->core+snapshotAddr,sizeof(displaySnapshot));
                 if (listTrace && snapshotAddr && snapshotAddr!=tracedList) {
@@ -153,9 +184,12 @@ int dynamicIotProcessor(PDP1 *p,int dev,int pulse,int completion)
                     fputc('\n',listTrace);tracedList=snapshotAddr;
                 }
             }
+            else if (cmd==1) { penPending=0;displayStopped=0;displayDue=p->simtime+displayDelay; }
             else if (cmd==2) displayStopped=0;
             else { fprintf(stderr,"Unexpected 340 command\n");exit(4); }
-        } else if (dev==017 && (cmd&2) && displayStopped) p->pc=(p->pc+1)&07777;
+        } else if (dev==016 && cmd==1) p->io=penRaw;
+        else if (dev==017 && cmd==1 && penPending) p->pc=(p->pc+1)&07777;
+        else if (dev==017 && (cmd&2) && displayStopped) p->pc=(p->pc+1)&07777;
         return 1;
     }
     if (dev==032) {
@@ -190,7 +224,21 @@ int main(int argc,char **argv)
         if (!frameTrace) return 2;
     }
     if (getenv("SAW_LIST_TRACE")) { listTrace=fopen(getenv("SAW_LIST_TRACE"),"w");if (!listTrace) return 2; }
+    if (getenv("SAW_PEN_SCRIPT")) {
+        penScript=fopen(getenv("SAW_PEN_SCRIPT"),"r");if (!penScript)return 2;
+        penReady=fscanf(penScript,"%o %u %u %u %u",&penAddress,&penExpected,&penX,&penY,&penHold)==5;
+        if (getenv("SAW_PEN_STOP_DELAY_NS"))penStopDelay=strtoull(getenv("SAW_PEN_STOP_DELAY_NS"),NULL,10);
+    }
+    if (getenv("SAW_LOADING_TRACE")) {
+        if (!getenv("SAW_LOADING_SCENE_ADDR") || !getenv("SAW_LOADING_DONE_ADDR") || !getenv("SAW_LOADING_TOTAL_ADDR"))return 2;
+        loadingTrace=fopen(getenv("SAW_LOADING_TRACE"),"w");if (!loadingTrace)return 2;
+        loadingSceneAddr=strtoul(getenv("SAW_LOADING_SCENE_ADDR"),NULL,8);
+        loadingDoneAddr=strtoul(getenv("SAW_LOADING_DONE_ADDR"),NULL,8);
+        loadingTotalAddr=strtoul(getenv("SAW_LOADING_TOTAL_ADDR"),NULL,8);
+    }
     int result=cpu_only_main(5,argv);
+    if (loadingTrace) fclose(loadingTrace);
+    if (penScript) fclose(penScript);
     if (listTrace) fclose(listTrace);
     if (frameTrace) fclose(frameTrace);
     printf("drum_reads=%u display_starts=%u last_display=%06o\n",drumReads,displayStarts,lastDisplay);

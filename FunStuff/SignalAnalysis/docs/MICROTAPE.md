@@ -1,6 +1,6 @@
 # Read-only Microtape recordings
 
-Version 4 adds named recording loading using Bill's FILESYSTEM/MICROTAPE 2.1 library. The PDP-1 mounts the filesystem, opens the selected file and reads it through the emulated Type 550 into extended RAM. It validates the complete recording before starting the unchanged FFT and power calculation. No tape I/O takes place during analysis.
+Version 4 adds named recording loading using Bill's FILESYSTEM/MICROTAPE 2.1 library. The PDP-1 mounts the filesystem, opens the selected file and reads it through the emulated Type 550 into extended RAM. It validates the complete recording before starting the unchanged FFT and power calculation. No tape I/O takes place during FFT analysis. Version 5 adds a modal on-screen file picker; directory/loading operations pause analysis.
 
 The first supplied image, `samples/SignalStation.mtp`, contains three read-only files:
 
@@ -21,13 +21,15 @@ cd /opt/pidp1-mods/FunStuff/SignalAnalysis
 make run-tape
 ```
 
-The launcher validates/extracts the selected file with the host `mtfs` tool first, snapshots core, then selects the image on the configured drive with `,locked` in `microtapes.txt`. It preserves other drive assignments and saves the old assignment file under `snapshots/` before changing it. It refuses to replace a drive assigned to another image. It then loads the tape-start binary. All tape movement and sample loading are performed by the PDP-1 program, not by a host memory upload.
+The launcher validates/extracts the selected file with the host `fstool` tool (or legacy `mtfs`) first, snapshots core, then selects the image on the configured drive with `,locked` in `microtapes.txt`. It preserves other drive assignments and saves the old assignment file under `snapshots/` before changing it. It refuses to replace a drive assigned to another image. It then loads the tape-start binary. All tape movement and sample loading are performed by the PDP-1 program, not by a host memory upload.
 
-A paced looping `LOADING APOLLO11` scene refreshes without interrupts while the tape is read. An early single-read prototype took approximately 15 seconds; the final chunked loader deliberately spends longer to recover occasional missed transport words without repeating the whole recording. Its verified live Apollo load took about 40 seconds, including the first FFT. Actual time depends on tape position and retries. Allow up to three minutes before the launcher declares a timeout. A new run starts from the beginning; it reloads the recording rather than trusting samples left in RAM.
+A paced autonomous `READING MICROTAPE` scene refreshes without interrupts while the tape is read. Version 6 adds a rotating line and a completed data-block counter; see [LOADING.md](LOADING.md). An early single-read prototype took approximately 15 seconds; the final chunked loader deliberately spends longer to recover occasional missed transport words without repeating the whole recording. Its verified live Apollo load took about 40 seconds, including the first FFT. Actual time depends on tape position and retries. Allow up to three minutes before the launcher declares a timeout. A new run starts from the beginning; it reloads the recording rather than trusting samples left in RAM.
 
 The ordinary controls remain: Switch 1 run/hold, Switch 2 next frame, Switch 3 X4/X64 power gain. The source label shows the tape drive and recording. Track/frame labels refer to logical seconds and their sixteen FFT frames; the tape stays stopped during analysis. The last logical second is zero-padded as in the drum version.
 
-To select another supplied recording, halt first:
+For runtime selection, use **LOAD FILE**, select a name, release briefly, then **LOAD**. See [FILE-PICKER.md](FILE-PICKER.md) for paging, cancellation and recovery. No assembler rebuild is needed for an on-screen choice.
+
+To change the startup default instead, halt first:
 
 ```sh
 python3 tape.py configure --name CHANGING
@@ -51,7 +53,7 @@ Existing workstation drum images can be packed without another conversion:
 ```sh
 python3 tape.py pack /path/to/new.img \
   --recording MYCLIP=/path/to/myclip.drm \
-  --tool /opt/pidp1-mods/bin/mtfs
+  --tool /opt/pidp1-mods/bin/fstool
 ```
 
 The command creates a new image exclusively, marks files read-only, verifies extraction byte-for-byte, and publishes the image as a read-only host file. It refuses existing output names. It does not select a drive or modify a mounted tape.
@@ -113,3 +115,13 @@ The filesystem library disables sequence breaks around block movement and clears
 Fields 0–3 retain the numerical/display/drum layout. Field 4 contains configuration, the loader, header and filesystem state; the complete assembled field ends at octal `045640`, using 2976 words including reservations. Fields 5–15 hold up to 45056 sample words. `acquire` copies one RAM frame into the same input array used by the drum path. The numerical kernel and frozen truncation/scaling contract are unchanged.
 
 The filesystem needs PDP-1D instructions (`core1D` or `all1D`). The existing original-instruction-set kernel tests remain separate; tape integration tests enable the extensions. The tested Pi has both enabled. See `CODE-TOUR.md` for the rest of the program structure.
+
+## Host filesystem utility selection (v6.1)
+
+Tape packing, startup validation, package verification and tape integration tests prefer `bin/fstool` from the selected PiDP-1 installation. They fall back to `bin/mtfs` if fstool is absent or not executable. They do not use a different installation from PATH automatically. A failed fstool command is reported; it is not silently retried with mtfs.
+
+`live.py --root PATH` and `make PDP1_ROOT=PATH check` use that installation's tool. For packing, `tape.py pack ... --root PATH` selects its tool automatically; `--tool /path/to/fstool` or `--tool /path/to/mtfs` overrides discovery, including the legacy choice when both exist. An invalid explicit path produces an error.
+
+Fstool's numeric arguments now default to decimal, with leading-zero octal, `0x` hex and `0b` binary supported. Station packing/extraction use the common `-i`, `-a`, `-x`, `-r` and `-f words` interface without numeric CLI arguments, and the recording's binary word format is unchanged. Packing still creates a new image exclusively, verifies each extracted file byte-for-byte, and publishes it read-only. No active image or drive assignment is changed by packing or verification.
+
+`make -f Makefile.tests test-host-tools` checks discovery, installation isolation, explicit overrides and failure handling. With both utilities installed, `make -f Makefile.tests test-filesystem-compat` also writes temporary images with each utility, cross-extracts all three recordings using both readers, and tests custom-root/override packing and selected-file validation.

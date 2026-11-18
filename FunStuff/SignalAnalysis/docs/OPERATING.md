@@ -2,7 +2,7 @@
 
 Experimental preview v4, 10 November 2026. Reads recorded samples from a Type 23 drum, runs a 256-point fixed-point FFT on the PDP-1, and displays a connected waveform and power spectrum through the Type 340. Analysis is slower than the original recording; this is not live audio playback.
 
-Start with [Bill's setup and test guide](FIRST-TEST.md). Read [Microtape loading](MICROTAPE.md) for the new read-only tape source. Source navigation and calling conventions are explained in [the code tour](CODE-TOUR.md). A preassembled program and its complete workstation source are included. The development test suite and throwaway builds are omitted from this distribution. Validation results are summarized in `docs/VALIDATION.md`.
+Start with [Bill's setup and test guide](FIRST-TEST.md). Read [Microtape loading](MICROTAPE.md) for the new read-only tape source. Source navigation and calling conventions are explained in [the code tour](CODE-TOUR.md). The official checkout contains complete workstation source and development tests. Run `make check`, then `make` to create the operating programs and matching symbol files; standalone preview archives may include preassembled programs. Validation results are summarized in `docs/VALIDATION.md`.
 
 ## Controls
 
@@ -42,7 +42,7 @@ The helper refuses a running CPU, waits for the active drum file to close, and b
 - `live.py`, `drum.py`: loading/status and guarded drum selection. `tape.py` configures and prepares named recordings; `tape-loader.ac` performs read-only guest loading.
 - `import_wav.py`: optional WAV importer; needs FFmpeg and ffprobe. Run `python3 import_wav.py --help` for options.
 - `samples/`: three standalone drum images plus the new SignalStation.mtp named-recording tape. No recording is selected merely by unpacking the package.
-- `docs/`: design, integration notes and validation summary. Historical development notes describe test tools not included here.
+- `docs/`: design, integration notes and validation summary. Historical development notes also describe earlier designs and test observations.
 - `audio/README.md`: NASA source and conversion credit. The original WAV can be downloaded from the linked source; it is omitted from this package.
 - `SHA256SUMS`, `verify_package.py`: check the distributed files and sample-image checksums with `make check` before rebuilding or editing.
 
@@ -56,7 +56,7 @@ Optional development test sources are included under `tests/`, with targets in `
 
 Standard sampling is 4096 samples/second, 256 samples/frame, 62.5 ms/frame and 16 CPS/bin, displaying DC through 2048 CPS. Each sample track contains one second. The directory occupies track 0, leaving up to 31 seconds per image. A partial final track is zero padded. The current display does not distinguish padding with an on-screen valid-sample indicator.
 
-No windowing, automatic normalization, previous-frame navigation or light-pen control is implemented. Remaining quiet frames may contain insufficient energy or values lost during fixed-point truncation.
+No windowing, automatic normalization, or previous-frame navigation is implemented. Tape mode provides light-pen/mouse selection through LOAD FILE; see `FILE-PICKER.md`. Remaining quiet frames may contain insufficient energy or values lost during fixed-point truncation.
 
 Tape faults 6–8 display a refreshing error scene and report a stage/status; see `docs/MICROTAPE.md`.
 

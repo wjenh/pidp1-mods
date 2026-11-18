@@ -1,5 +1,5 @@
-// Read-only startup loader, field 4. Calls Bill's filesystem only before the
-// ordinary display ISR is armed. Local work is LEM; farjda returns EEM, so each
+// Read-only loader, field 4. Used at startup and by the modal file picker.
+// Both callers stop the ordinary display ISR before calling the filesystem. Local work is LEM; farjda returns EEM, so each
 // library call is followed by LEM. AC/IO are scratch; t_ret saves the far return.
 // The field-1 loading scene loops natively in the Type 340 without interrupts.
 #include <MICROTAPE/microtape.ah>
@@ -10,8 +10,9 @@ tapeinit,dac t_ret
         dzm t_stage
         dzm t_error
         dzm t_retry_total
-        lio [loading_scene:1]
-        dla
+        eem
+        jsp i [loading_begin:0]
+        lem
         // The host selects an existing ,locked image before execution. Do not
         // issue MMT: that extension can create a blank image for a missing path.
         law 2
@@ -133,6 +134,13 @@ t_reserved,lac i t_scan
         lac t_sum
         sza
         jmp t_header_error
+        // Payload blocks are 256 words; the header's frame-slot count is
+        // therefore exactly the data-block count (excluding header/directory).
+        lac t_header+5
+        eem
+        dac i [l_total:0]
+        jsp i [loading_update:0]
+        lem
         law 6
         dac t_stage
         lac [t_fd:4]
@@ -157,6 +165,13 @@ t_payload,lac t_destination
         lac t_remaining
         sub [0d1024]
         dac t_remaining
+        eem
+        lac i [l_loaded:0]
+        add [4]                 // credit only a complete successful 1024-word read
+        dac i [l_loaded:0]
+        jsp i [loading_update:0]
+        lem
+        lac t_remaining
         sza
         jmp t_payload
         law 7
@@ -284,9 +299,16 @@ t_failed_scene,
         lac t_error
         dac i [fault:0]
         lem
+        lac t_interactive
+        sza
+        jmp t_failed_return
         lsm
 t_failed_hold,jmp t_failed_hold // keep error scene refreshing; no invalid data reaches FFT
 
+t_failed_return,eem
+        jmp i t_ret
+
+t_interactive,0
 t_ret,0
 t_readret,0
 t_sumret,0

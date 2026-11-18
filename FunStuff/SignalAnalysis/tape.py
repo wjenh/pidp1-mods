@@ -2,6 +2,7 @@
 """Read-only Signal Station recording containers and exclusive Microtape preparation."""
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,6 +17,24 @@ HEADER_WORDS=256
 MAX_SECONDS=11
 DEFAULT_IMAGE='../FunStuff/SignalAnalysis/samples/SignalStation.mtp'
 DEFAULT_CONFIG={'name':'APOLLO11','drive':8,'image':DEFAULT_IMAGE}
+
+
+def filesystem_tool(root=DEFAULT_ROOT, tool=None, *, required=True):
+    """Prefer this installation's fstool; retain mtfs compatibility.
+
+    An explicit tool is authoritative. A failed fstool operation must never be
+    retried with mtfs, since that could hide a real image/format error.
+    """
+    if tool is not None:
+        found=shutil.which(str(tool))
+        if found:return Path(found).absolute()
+        raise DrumError('Filesystem tool is missing or not executable: '+str(tool))
+    root=Path(root).resolve()
+    for name in ('fstool','mtfs'):
+        candidate=root/'bin'/name
+        if candidate.is_file() and os.access(candidate,os.X_OK):return candidate
+    if required:raise DrumError(f'No executable fstool or mtfs in {root / "bin"}. Install fstool first.')
+    return None
 
 
 def validate_recording(data, max_seconds=MAX_SECONDS):
@@ -66,7 +85,7 @@ def write_config(home, **kwargs):
     return c
 
 
-def make_image(output, recordings, tool):
+def make_image(output, recordings, tool=None, *, root=DEFAULT_ROOT):
     output=Path(output).resolve()
     if output.exists():raise DrumError('Tape output exists; choose a new image name.')
     if not recordings:raise DrumError('Supply at least one NAME=drum.drm recording.')
@@ -75,6 +94,7 @@ def make_image(output, recordings, tool):
         name=config(name=name)['name']
         if name in names:raise DrumError('Duplicate recording name: '+name)
         names.append(name)
+    tool=filesystem_tool(root,tool)
     output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='saw-tape-') as td:
         p=Path(td);image=p/'new.img'
@@ -91,7 +111,7 @@ def make_image(output, recordings, tool):
             if check.read_bytes()!=data:raise DrumError('Microtape verification failed.')
             reports.append({'name':name,**validate_recording(data)})
         atomic_write(output,image.read_bytes(),replace=False,mode=0o444)
-    return {'image':str(output),'recordings':reports,'read_only':True}
+    return {'image':str(output),'recordings':reports,'read_only':True,'tool':str(tool)}
 
 
 
@@ -99,9 +119,10 @@ def selected_recording(root, home):
     c=config(**json.loads((Path(home)/'generated/tape-config.json').read_text()))
     image=(Path(root)/'Microtapes'/c['image']).resolve()
     if not image.is_file():raise DrumError('Tape image does not exist: '+str(image))
+    tool=filesystem_tool(root)
     with tempfile.TemporaryDirectory(prefix='saw-tape-inspect-') as td:
         words=Path(td)/'recording.words'
-        result=subprocess.run([str(Path(root)/'bin/mtfs'),'-x','-n',c['name'],'-f','words','-o',str(words),str(image)],capture_output=True,text=True)
+        result=subprocess.run([str(tool),'-x','-n',c['name'],'-f','words','-o',str(words),str(image)],capture_output=True,text=True)
         if result.returncode:raise DrumError('Cannot read selected tape recording: '+result.stderr.strip())
         report=validate_recording(words.read_bytes())
     return c,image,report
@@ -138,7 +159,7 @@ def select_drive(root, image, drive):
 def main():
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
     q=sub.add_parser('configure');q.add_argument('--name',default='APOLLO11');q.add_argument('--drive',type=int,default=8);q.add_argument('--image',default=DEFAULT_IMAGE)
-    q=sub.add_parser('pack');q.add_argument('output',type=Path);q.add_argument('--recording',action='append',required=True);q.add_argument('--tool',type=Path,default=DEFAULT_ROOT/'bin/mtfs')
+    q=sub.add_parser('pack');q.add_argument('output',type=Path);q.add_argument('--recording',action='append',required=True);q.add_argument('--tool',type=Path,help='Explicit fstool/mtfs executable (overrides automatic selection)');q.add_argument('--root',type=Path,default=DEFAULT_ROOT,help='PiDP-1 installation root for tool discovery')
     q=sub.add_parser('inspect');q.add_argument('words',type=Path)
     a=p.parse_args()
     try:
@@ -149,7 +170,7 @@ def main():
             for value in a.recording:
                 if '=' not in value:raise DrumError('Use --recording NAME=/path/to/drum.drm')
                 pairs.append(value.split('=',1))
-            result=make_image(a.output,pairs,a.tool)
+            result=make_image(a.output,pairs,a.tool,root=a.root)
         print(json.dumps(result,indent=2))
     except (OSError,ValueError,DrumError,subprocess.CalledProcessError) as e:p.exit(1,'tape: '+str(e)+'\n')
 

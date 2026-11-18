@@ -3,15 +3,15 @@ scene,
         scale(1) intensity(5) lpoff next(point)
         y(0d980) next(point)
         x(0d128) next(character)
-        type340 "PDP-1 SIGNAL ANALYZER"
+        type340 "\UPDP-1 SIGNAL ANALYZER"
         scale(1) intensity(5) lpoff next(point)
         y(0d930) next(point)
         x(0d128) next(character)
-        type340 "SIGNAL / 4096 SAMPLES PER SECOND"
+        type340 "\USIGNAL / 4096 SAMPLES PER SECOND"
         scale(1) intensity(5) lpoff next(point)
         y(0d390) next(point)
         x(0d128) next(character)
-        type340 "S1 RUN   S2 NEXT   S3 GAIN"
+        type340 "\US1 RUN   S2 NEXT   S3 GAIN"
         scale(2) intensity(2) lpoff next(point)
         y(0d768) next(point)
         x(0d128) next(vector)
@@ -33,7 +33,7 @@ scene,
         scale(1) intensity(5) lpoff next(point)
         y(0d28) next(point)
         x(0d128) next(character)
-        type340 "0"
+        type340 "\U0"
         scale(0) intensity(2) next(point)
         y(0d64) next(point)
         x(0d320) next(vector)
@@ -41,7 +41,7 @@ scene,
         scale(1) intensity(5) lpoff next(point)
         y(0d28) next(point)
         x(0d308) next(character)
-        type340 "512"
+        type340 "\U512"
         scale(0) intensity(2) next(point)
         y(0d64) next(point)
         x(0d512) next(vector)
@@ -49,7 +49,7 @@ scene,
         scale(1) intensity(5) lpoff next(point)
         y(0d28) next(point)
         x(0d500) next(character)
-        type340 "1024"
+        type340 "\U1024"
         scale(0) intensity(2) next(point)
         y(0d64) next(point)
         x(0d704) next(vector)
@@ -57,7 +57,7 @@ scene,
         scale(1) intensity(5) lpoff next(point)
         y(0d28) next(point)
         x(0d692) next(character)
-        type340 "1536"
+        type340 "\U1536"
         scale(0) intensity(2) next(point)
         y(0d64) next(point)
         x(0d896) next(vector)
@@ -65,33 +65,92 @@ scene,
         scale(1) intensity(5) lpoff next(point)
         y(0d28) next(point)
         x(0d884) next(character)
-        type340 "2048"
+        type340 "\U2048"
         scale(1) intensity(5) lpoff next(point)
         y(0d28) next(point)
         x(0d960) next(character)
-        type340 "CPS"
+        type340 "\UCPS"
 sceneend,
 source_drum,
         scale(1) intensity(5) lpoff next(point)
         y(0d930) next(point)
         x(0d680) next(character)
-        type340 "DRUM"
+        type340 "\UDRUM"
 source_drum_end,
 source_tape,
         scale(1) intensity(5) lpoff next(point)
         y(0d930) next(point)
-        x(0d680) next(character)
-        type340 "TAPE 8 APOLLO11"
+        x(0d600) next(character)
+        type340 "\UTAPE 8"
+        scale(1) intensity(5) lpoff next(point)
+        y(0d930) next(point)
+        x(0d700) next(parameter)
+source_tape_name,
+        next(character)
+        350137
+        next(character)
+        352037
+        next(character)
+        351737
+        next(character)
+        351437
+        next(character)
+        351437
+        next(character)
+        351737
+        next(character)
+        356137
+        next(character)
+        356137
+        next(character)
+        354037
+source_tape_name_end,
+        scale(1) intensity(4) lpon next(point)
+        y(0d980) next(point)
+        x(0d700) next(character)
+        type340 "\ULOAD FILE"
+        lpoff
 source_tape_end,
 loading_scene,
+        next(subroutine)
+        jump loading_spin:0 next(parameter)
+loading_common,
         scale(1) intensity(5) lpoff next(point)
         y(0d600) next(point)
         x(0d128) next(character)
-        type340 "LOADING APOLLO11"
+        type340 "\UREADING MICROTAPE"
         scale(1) intensity(5) lpoff next(point)
         y(0d550) next(point)
         x(0d128) next(character)
-        type340 "MICROTAPE DRIVE 8"
+        type340 "\UMICROTAPE DRIVE 8"
+        scale(1) intensity(5) lpoff next(point)
+        y(0d470) next(point)
+        x(0d128) next(character)
+        type340 "\UDATA BLOCKS"
+        scale(1) intensity(4) lpoff next(point)
+        y(0d470) next(point)
+        x(0d310) next(parameter)
+loading_count,
+        next(character)
+        356037
+        next(character)
+        356037
+        next(character)
+        356037
+        scale(1) intensity(5) lpoff next(point)
+        y(0d470) next(point)
+        x(0d370) next(character)
+        type340 "\U/"
+        scale(1) intensity(4) lpoff next(point)
+        y(0d470) next(point)
+        x(0d400) next(parameter)
+loading_total,
+        next(character)
+        355537
+        next(character)
+        355537
+        next(character)
+        355537
         scale(0) lpoff next(point)
         x(0d128) next(point)
         x(0d128) next(point)
@@ -350,16 +409,17 @@ loading_scene,
         x(0d128) next(point)
         x(0d128) next(parameter)
         next(subroutine)
-        jump loading_scene:1 next(parameter)
+loading_return,
+        jump loading_spin:0 next(parameter)
 loading_error,
         scale(1) intensity(5) lpoff next(point)
         y(0d600) next(point)
         x(0d128) next(character)
-        type340 "TAPE LOAD FAILED"
+        type340 "\UTAPE LOAD FAILED"
         scale(1) intensity(5) lpoff next(point)
         y(0d550) next(point)
         x(0d128) next(character)
-        type340 "CHECK TAPE AND FILE NAME"
+        type340 "\UCHECK TAPE AND FILE NAME"
         scale(0) lpoff next(point)
         x(0d128) next(point)
         x(0d128) next(point)
@@ -623,13 +683,13 @@ gain4,
         scale(1) intensity(5) lpoff next(point)
         y(0d440) next(point)
         x(0d128) next(character)
-        type340 "ONE-SIDED POWER X4"
+        type340 "\UONE-SIDED POWER X4"
 gain4end,
 gain64,
         scale(1) intensity(5) lpoff next(point)
         y(0d440) next(point)
         x(0d128) next(character)
-        type340 "ONE-SIDED POWER X64"
+        type340 "\UONE-SIDED POWER X64"
 gain64end,
 footer,
         scale(1) intensity(5) lpoff next(point)

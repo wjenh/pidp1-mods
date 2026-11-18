@@ -4,9 +4,9 @@ Fstool is a utility for managing the file system provided by the Am1Includes/FIL
 on a Microtape or Type 23 drum image,
 see Am1Includes/MICROTAPE or DRUM for more information.
 
-This is version 1.2\
-13-Nov-2026
-Numbers can be decimal, octal, hex, or binary
+This is version 1.3\
+17-Nov-2026
+Numbers can be decimal, octal, hex, or binary, -D only needs the initial track now
 
 ## Usage
 
@@ -21,13 +21,13 @@ This holds for every number, `-t`, `-b` and both numbers of `-D`.
 It lists the files, extracts a file, adds a host file, deletes a file,
 formats a tape or a drum volume, and packs it to recover space left from deleting files.
 ```
-fstool [-D first,tracks] -l image
+fstool [-D first] -l image
 fstool -D all -l drumfile
-fstool [-D first,tracks] -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image
-fstool [-D first,tracks] -d -n name [-F] image
-fstool [-D first,tracks] -x -n name [-f bytes|text|words] -o output image
-fstool [-D first,tracks] -i [-F] image
-fstool [-D first,tracks] -p image
+fstool [-D first] -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image
+fstool [-D first] -d -n name [-F] image
+fstool [-D first] -x -n name [-f bytes|text|words] -o output image
+fstool [-D first] -i [-F] image
+fstool [-D first] -p image
 ```
 
 | Option | Meaning |
@@ -44,8 +44,8 @@ fstool [-D first,tracks] -p image
 | `-b blocks` | the blocks to allocate, at least the file's data size and at most 511, octal 0777, default is the size needed, 1 for an empty file |
 | `-f form` | the host file's form, `bytes` by default |
 | `-F` | force: add replaces a file of that name, delete removes a read-only file, format overwrites another program's data in blocks 1 and 2 |
-| `-D first,tracks` | the image is a drum file and the volume is tracks `first` to `first+tracks-1` |
-| `-D all` | with `-l` only: list every volume on the drum file |
+| `-D first` | the image is a drum file and the volume starts at track `first` |
+| `-D all` | with `-l` only, list every volume on the drum file |
 
 'image' is the image file, a tape image or  with `-D` a drum image.
 The exit status is 0 on success and 1 on any error, and an error gives the library's status code:
@@ -138,7 +138,7 @@ in block 2, records that track as the volume's first:
 fstool -D all -l pdp23drum
 pdp23drum: tracks  24- 31, generation 2, 128 blocks, 1 file, 123 free, largest gap 123
 ```
-`-D first,tracks -l` lists a volume's files.
+`-D first -l` lists a volume's files.
 A volume starting inside one listed before it gives a warning, one of the two is left from an
 earlier format.
 With no volume on the drum, a NOFS error is given.

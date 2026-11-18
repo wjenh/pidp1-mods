@@ -2,7 +2,8 @@
 //
 // The emulator, pdp1, shares its panel state in /tmp/pdp1_panel, the Panel struct in
 // src/common/panel_pidp1.h, with the panel drivers: newpanel for the PiDP-1 hardware, vpanel_pdp1 on screen.
-// This reads it like they do and sends the browser, about 30 times a second while one is connected:
+// This reads it like they do and sends the browser, about 30 times a second while one is connected
+// and shows the front panel (it sends {"type":"panel_on"} and {"type":"panel_off"}):
 //
 //	{"type":"panel", "lamps":<180 brightness bytes, 10 rows of 18>, "sw":[sw0,sw1,sw2,sw3],
 //	 "mirror":<true while the hardware panel's driver runs>, "present":<true once the segment exists>}
@@ -22,6 +23,8 @@
 // 14-Nov-2026 Claude: H.S. CYCLE stretched as in vpanel_pdp1
 // 14-Nov-2026 Claude: look for the hardware panel's driver before every write, and outside the lock
 // 15-Nov-2026 Claude: a message sendToWeb dropped is sent again at the next tick
+// 18-Nov-2026 Claude: sent only while the browser shows the panel; new counts at each start;
+//                     the brightness rounded, so the browser's 128 and over is vpanel_pdp1's half or more
 
 package main
 
@@ -171,7 +174,8 @@ func (p *Panel) readLamps() []byte {
 			if r == hscRow && c == hscCol && on >= hscStretch {
 				on = elapsed
 			}
-			lamps[r*panelCols+c] = byte(on * 255 / elapsed)
+			// Rounded: on/elapsed >= 0.5, PWM_ON_THRESHOLD in vpanel_pdp1, is 128 and over.
+			lamps[r*panelCols+c] = byte((on*510 + elapsed) / (2 * elapsed))
 		}
 	}
 	return lamps
@@ -250,10 +254,26 @@ func (s *PeriphServer) handlePanel() {
 	var lastSw [4]int32
 	var lastLamps []byte
 	var lastMirror, lastPresent bool
+	active := false
 
 	for range tick.C {
-		if !s.webConnected() {
+		if !s.webConnected() || atomic.LoadInt32(&s.panelOn) == 0 {
+			active = false
 			continue
+		}
+
+		// Starting to send: the counts since the last send cover the time nothing was sent, take new
+		// ones, forget the last lamps, and send at once whatever the state, so a new page fills in.
+		if !active {
+			active = true
+			p.mu.Lock()
+			if p.mem != nil {
+				p.rebase()
+			}
+			p.lamps = nil
+			p.mu.Unlock()
+			lastSent = time.Time{}
+			lastLamps = nil
 		}
 
 		check := time.Since(lastCheck) >= hwCheckEvery

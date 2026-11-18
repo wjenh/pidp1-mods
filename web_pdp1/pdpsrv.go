@@ -13,6 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -67,6 +70,13 @@ type PeriphServer struct {
 	// active connection is stored in channel
 	// for synchronization
 	wsConn chan *websocket.Conn
+
+	// 18-Nov-2026 Claude: every write to the browser goes through ws under sendMu, so a message
+	// is never dropped because another goroutine is writing; nil while no browser is connected.
+	sendMu sync.Mutex
+	ws     *websocket.Conn
+
+	panelOn int32 // 1 while the browser shows the front panel, see handlePanel(); atomic
 
 	panel *Panel // the front panel, see panel.go
 }
@@ -505,23 +515,31 @@ func (s *PeriphServer) handleTypewriter() {
 	}
 }
 
-// sendToWeb reports whether msg was sent: it is dropped when no browser is connected,
-// or another goroutine is sending at that moment.
-func (s *PeriphServer) sendToWeb(msg Message) bool {
-	select {
-	case ws := <-s.wsConn:
-		data, _ := json.Marshal(msg)
-		err := ws.WriteMessage(websocket.TextMessage, data)
-		if err != nil {
-			log.Printf("Error sending to web: %v", err)
-		}
-		s.wsConn <- ws
-		return err == nil
+// How long one write to the browser may take before the connection counts as failed.
+const wsWriteTimeout = 5 * time.Second
 
-	default:
-		// not connected, or the connection is in use
+// sendToWeb reports whether msg was sent: it is dropped only when no browser is connected
+// or the write fails. A writer waits for one in progress, at most wsWriteTimeout for a slow browser.
+func (s *PeriphServer) sendToWeb(msg Message) bool {
+	data, _ := json.Marshal(msg)
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	if s.ws == nil {
 		return false
 	}
+	s.ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+	err := s.ws.WriteMessage(websocket.TextMessage, data)
+	if err != nil {
+		log.Printf("Error sending to web: %v", err)
+	}
+	return err == nil
+}
+
+// setWeb makes conn, or nil, the connection sendToWeb writes to, once no write is in progress.
+func (s *PeriphServer) setWeb(conn *websocket.Conn) {
+	s.sendMu.Lock()
+	s.ws = conn
+	s.sendMu.Unlock()
 }
 
 func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -535,11 +553,14 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("WebSocket connected")
 
 	s.wsConn <- conn
+	s.setWeb(conn)
 	// 20-Jun-2026 wje: claim the typewriter's and punch's exclusive slots for the
 	// duration of this browser session; released in the deferred cleanup below.
 	s.typCtl <- 1
 	s.punchCtl <- 1
 	defer func() {
+		s.setWeb(nil) // before the slot is freed, so a next browser's connection is never replaced
+		atomic.StoreInt32(&s.panelOn, 0)
 		<-s.wsConn
 
 		//s.readerData <- nil
@@ -581,6 +602,12 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		case "panel_sw":
 			s.panel.request(msg.Sw, msg.Base)
+
+		case "panel_on":
+			atomic.StoreInt32(&s.panelOn, 1)
+
+		case "panel_off":
+			atomic.StoreInt32(&s.panelOn, 0)
 
 		case "key":
 			// may not be connected and not receiving from chan

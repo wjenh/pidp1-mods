@@ -34,6 +34,7 @@
  *                    a change by another writer takes the keys too, so a key held in the browser stays held
  * 15-Nov-2026 Claude: each mouse button press looks for the hardware panel driver first,
  *                    thus a click never writes while the driver runs
+ * 18-Nov-2026 Claude: the mouse lets go only of a key it pressed, not one taken from another writer
  */
 #include <stdio.h>
 #include <unistd.h>
@@ -579,20 +580,20 @@ Element *e;
 		}
 	}
 
+    // A key's active is set while the mouse holds it. Only then does the mouse let it go: a key taken
+    // from another writer by mirrorSwitches(1), held in the browser for example, stays as that writer has it.
 	for(i = 0; i < nelem(keys); i++)
     {
 		e = &keys[i];
-		if(buttonstate == 0 || !ismouseover(e, x, y))
+		if( (buttonstate & 5) && ismouseover(e, x, y) )
+        {
+			e->state = (buttonstate & 1)?1:2;
+			e->active = 1;
+        }
+		else if( e->active )
         {
 			e->state = 0;
-        }
-		else if(buttonstate & 1)
-        {
-			e->state = 1;
-        }
-		else if(buttonstate & 4)
-        {
-			e->state = 2;
+			e->active = 0;
         }
 	}
 }
@@ -734,6 +735,7 @@ unsigned i;
         for(i = 0; i < nelem(keys); i++)
         {
             keys[i].state = 0;
+            keys[i].active = 0;
         }
         for(i = 0; i < nelem(switches); i++)
         {

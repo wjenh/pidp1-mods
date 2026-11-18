@@ -18,6 +18,8 @@
 // 14-Nov-2026 Claude: base64 decoding for browsers without Uint8Array.fromBase64
 // 15-Nov-2026 Claude: a key release always sent; the server's switches ignored briefly after a change
 // 15-Nov-2026 Claude: glow mode removed, a lamp's on/off decided as each message arrives
+// 18-Nov-2026 Claude: the server sends only while the panel is shown; a second key pressed lets go of the
+//                     first; the server rounds the brightness, a lamp is on at 128 and over
 
 // After a change, the server's switch words are ignored for this long: a message it read before the
 // change was applied would otherwise show the old setting again for a moment.
@@ -82,9 +84,11 @@ class FrontPanel {
 		this.resize();
 	}
 
+	// The server sends the panel only while it is shown. Called again when the connection opens.
 	setVisible(on) {
 		this.visible = on;
 		this.dirty = true;
+		this.send({ type: on ? 'panel_on' : 'panel_off' });
 	}
 
 	// Canvas pixels are the art's, artScale times logical, so it's sharp at any displayed size.
@@ -99,13 +103,13 @@ class FrontPanel {
 
 	// A "panel" message from the server.
 	// Its lamps are a brightness, 0-255, the share of the cycles since the server's last read each was lit.
-	// A lamp is on when lit at least half of them, PWM_ON_THRESHOLD in vpanel_pdp1; the server rounds down,
-	// so exactly half arrives as 127.
+	// A lamp is on when lit at least half of them, PWM_ON_THRESHOLD in vpanel_pdp1; the server rounds,
+	// so exactly half arrives as 128 and a little less as 127.
 	update(msg) {
 		this.present = !!msg.present;
 		this.mirror = !!msg.mirror;
 		if (msg.sw && performance.now() >= this.swHoldUntil) this.sw = msg.sw.slice(0, 4);
-		if (msg.lamps) this.lit = fromBase64(msg.lamps).map((b) => b >= 127 ? 1 : 0);
+		if (msg.lamps) this.lit = fromBase64(msg.lamps).map((b) => b >= 128 ? 1 : 0);
 		else if (!this.present) this.lit = new Uint8Array(180);
 		this.statusEl.textContent = !this.present ? 'emulator not running' :
 			(this.mirror ? 'mirroring hardware panel' : '');
@@ -179,7 +183,13 @@ class FrontPanel {
 		} else {
 			const bit = e.button === 0 ? h.el.down : (e.button === 2 ? h.el.up : 0);
 			if (!bit) return;
-			want[2] |= bit;
+			// A key held already, by another button, is let go first, or it would stay held.
+			if (this.heldKey) {
+				this.releaseKey();
+				want[2] = this.sw[2] | bit;
+			} else {
+				want[2] |= bit;
+			}
 			this.heldKey = { word: 2, mask: bit };
 		}
 		this.change(want);

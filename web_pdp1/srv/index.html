@@ -805,6 +805,7 @@ function connectWS() {
 		console.log('WebSocket connected');
 		emuoption('muldiv');
 		emuoption('audio');
+		frontPanel.setVisible(frontPanel.visible);	// the server sends the panel only while it is shown
 	};
 
 	ws.onmessage = (event) => {

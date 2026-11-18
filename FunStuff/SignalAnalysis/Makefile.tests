@@ -11,7 +11,7 @@ all: probe.rim core.rim workstation.rim tests/cpu_runner
 tables:
 	python3 generate_tables.py
 
-generated/twiddles.ac generated/bitrev.ac generated/scene.ac &: generate_tables.py generated/tape-config.json
+generated/twiddles.ac generated/bitrev.ac generated/scene.ac generated/picker-glyphs.ac generated/loading-animation.ac &: generate_tables.py generated/tape-config.json
 	python3 generate_tables.py
 
 probe.rim: probe.am1
@@ -23,7 +23,7 @@ core.rim: core.am1 state.ac kernel.ac generated/twiddles.ac generated/bitrev.ac
 tests/cpu_runner: tests/cpu_runner.c $(PDP1_ROOT)/src/pdp1/pdp1.o
 	$(CC) $(CFLAGS) -I$(PDP1_ROOT)/src/pdp1 -I$(PDP1_ROOT)/src/common -o $@ $< $(PDP1_ROOT)/src/pdp1/pdp1.o -lm
 
-test: all test-drum test-frontend test-gain test-refresh test-changing test-wav test-tape
+test: all test-drum test-frontend test-gain test-refresh test-changing test-wav test-tape test-picker test-loading test-host-tools
 	python3 tests/test_core.py
 
 test-drum:
@@ -41,10 +41,10 @@ drum-pick:
 drum-restore:
 	python3 drum.py --root "$(PDP1_ROOT)" restore
 
-workstation.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	$(AM1) -d -S workstation.am1
 
-workstation-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	cp workstation.am1 workstation-test.am1
 	$(AM1) -d -S -DSAW_TEST workstation-test.am1
 
@@ -54,7 +54,7 @@ tests/frontend_runner: tests/frontend_runner.c tests/cpu_runner.c $(PDP1_ROOT)/s
 test-frontend: workstation.rim workstation-test.rim workstation-sequence.rim tests/frontend_runner
 	python3 tests/test_frontend.py
 
-workstation-sequence.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation-sequence.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	cp workstation.am1 workstation-sequence.am1
 	$(AM1) -d -S -DSAW_TEST -DSAW_TEST_FRAMES=0d18 workstation-sequence.am1
 
@@ -73,7 +73,7 @@ test-changing: workstation-sequence.rim tests/frontend_runner
 test-wav:
 	python3 tests/test_wav.py
 
-workstation-wav-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation-wav-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	cp workstation.am1 workstation-wav-test.am1
 	$(AM1) -d -S -DSAW_TEST -DSAW_TEST_FRAMES=0d146 workstation-wav-test.am1
 
@@ -96,7 +96,7 @@ test-refresh: workstation.rim tests/frontend_runner
 test-scan-profile:
 	python3 tests/test_scan_profile.py "$(LIST_TRACE)" "$(WAV_DRUM)" "$(BASELINE_COST)"
 
-workstation-tape.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation-tape.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	cp workstation.am1 workstation-tape.am1
 	$(AM1) -d -S -DSAW_TAPE workstation-tape.am1
 
@@ -107,7 +107,7 @@ run-tape: workstation.rim workstation-tape.rim
 tests/tape_runner: tests/frontend_runner.c tests/cpu_runner.c
 	$(CC) $(CFLAGS) -DSAW_REAL_TAPE -DRUNNER_CYCLE_LIMIT=100000000 -DMT_BASE_DIR='"/tmp/saw-isolated-root"' -DMT_TAPE_DIR='"/tmp/saw-isolated-tapes"' -DMT_LIST_FILE='"/tmp/saw-isolated-no-list"' -I$(PDP1_ROOT)/src/pdp1 -I$(PDP1_ROOT)/src/common -I$(PDP1_ROOT)/IOTs -I$(PDP1_ROOT)/IOTs/Lib -I$(PDP1_ROOT)/IOTs/Microtape -o $@ tests/frontend_runner.c $(PDP1_ROOT)/IOTs/Microtape/microtape.c $(PDP1_ROOT)/IOTs/Microtape/control550.c $(PDP1_ROOT)/IOTs/Microtape/transport555.c $(PDP1_ROOT)/src/pdp1/pdp1.o -lm -pthread
 
-workstation-tape-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation-tape-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	cp workstation.am1 workstation-tape-test.am1
 	$(AM1) -d -S -DSAW_TAPE -DSAW_TEST workstation-tape-test.am1
 
@@ -115,10 +115,26 @@ workstation-tape-test.rim: workstation.am1 state.ac ui-state.ac kernel.ac fronte
 test-tape: workstation-tape-test.rim tests/tape_runner
 	python3 tests/test_tape_loader.py
 
-workstation-tape-sequence.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
+workstation-tape-sequence.rim: workstation.am1 state.ac ui-state.ac kernel.ac frontend.ac display.ac tape-loader.ac picker.ac loading.ac generated/loading-animation.ac generated/picker-glyphs.ac $(FS_DEPS) generated/tape-config.ac generated/twiddles.ac generated/bitrev.ac generated/scene.ac
 	cp workstation.am1 workstation-tape-sequence.am1
 	$(AM1) -d -S -DSAW_TAPE -DSAW_TEST -DSAW_TEST_FRAMES=0d146 workstation-tape-sequence.am1
 
 .PHONY: test-tape-apollo
 test-tape-apollo: workstation-tape-sequence.rim tests/tape_runner
 	python3 tests/test_tape_apollo.py
+
+.PHONY: test-picker
+test-picker: workstation-tape.rim tests/tape_runner
+	python3 tests/test_picker.py
+
+.PHONY: test-loading
+test-loading: workstation-tape.rim
+	python3 tests/test_loading.py
+
+.PHONY: test-host-tools
+test-host-tools:
+	python3 tests/test_host_tools.py
+
+.PHONY: test-filesystem-compat
+test-filesystem-compat:
+	PDP1_ROOT="$(PDP1_ROOT)" python3 tests/test_filesystem_compat.py

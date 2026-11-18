@@ -1,6 +1,6 @@
 # Reading the workstation code
 
-Start with `workstation.am1`. It lays out the four memory fields and runs the main loop: acquire 256 samples, compute FFT/power, publish a new scene, then hold or advance according to the sense switches. Source is AM1 assembly with C-style preprocessing; decimal constants use `0d`, and unmarked numeric constants are octal.
+Start with `workstation.am1`. It lays out the memory fields and runs the main loop: acquire 256 samples, compute FFT/power, publish a new scene, then hold or advance according to the sense switches. Source is AM1 assembly with C-style preprocessing; decimal constants use `0d`, and unmarked numeric constants are octal.
 
 ## Files and responsibilities
 
@@ -12,6 +12,8 @@ Start with `workstation.am1`. It lays out the four memory fields and runs the ma
 | `frontend.ac` | Directory/track validation, frame acquisition and construction of display lists |
 | `ui-state.ac` | Acquisition and scene-building scratch/state |
 | `tape-loader.ac`, `tape.py` | Read-only guest loading, recording validation, tape preparation and configuration |
+| `loading.ac` | Autonomous Type 340 spinner, completed data-block counter and decimal formatting |
+| `picker.ac` | Dynamic tape directory, modal light-pen file selection and reload recovery |
 | `display.ac` | Channel-0 sequence-break handler, buffer handoff and refresh timing |
 | `generate_tables.py`, `generated/` | Fixed twiddles, bit-reversal permutation and static display commands; no host FFT |
 | `drum.py` | Host-side image validation and guarded selection/backup/restore |
@@ -26,8 +28,8 @@ Power retains the complete product: `S = R*R + I*I`, stored in two unsigned 17-b
 
 ## Memory and calling conventions
 
-- Field 0: interrupt vector at 0–3, status words at 0100–0102, numerical state, interrupt scratch/handler, main code, FFT arrays, twiddles and input.
-- Field 1: acquisition/scene state, validated directory, retained waveform, power arrays, frontend code and static display templates.
+- Field 0: interrupt vector at 0–3, status words at 0100–0102, numerical state, interrupt scratch/handler, main code, FFT arrays, twiddles and input. The runtime file picker and loading indicators occupy previously unused space at 5000 and above.
+- Field 1: acquisition/scene state, validated directory (reused as the modal picker list in tape mode), retained waveform, power arrays, frontend code and static display templates.
 - Field 2: two 1984-word display lists.
 - Field 4: tape configuration, loader, header and Bill's filesystem state; fields 5–15: preloaded samples (11 seconds maximum).
 - Field 3: a full 4096-word sample-track cache. It is filled with 128-word read-only DMA requests, then validated as a whole before analysis. After each request, the frontend allows the display to finish a pass before issuing the next; this bounds drum-channel interference at the cost of slower track loading.
@@ -46,8 +48,8 @@ The Type 340's vector BRM count grows in powers of two, from 3 to 7 bits. A unit
 
 ## Errors, checks and future changes
 
-The CPU halts on invalid headers, DMA failure/timeouts, checksum mismatches, display edges or list overflow. The fault codes are listed in README. The drum selector independently refuses a running CPU, drains the stopped device handle and saves verified backups before publishing another image. Core snapshots are a separate loader precaution; neither helper automatically restores an interrupted whole-machine session.
+Drum/header/DMA/checksum faults 1–5, display edges and list overflow halt the CPU. Startup tape faults 6–8 show the autonomous error scene; runtime picker faults return to selection, with Cancel disabled once RAM is invalid. The Microtape guide lists the fault codes. The drum selector independently refuses a running CPU, drains the stopped device handle and saves verified backups before publishing another image. Core snapshots are a separate loader precaution; neither helper automatically restores an interrupted whole-machine session.
 
 The development suite checks arithmetic against an independent integer model, buffer immutability, all controls, sample/checksum errors, clock wrap, SBS modes and vector endpoints/bounds. `display_cost.py` in the development tests estimates nominal scan cost from the installed emulator's BRM, position and character models; live timing is checked separately. The distribution's `make check` checks package/sample integrity only.
 
-The v4 tape backend feeds the same 256-sample contract into acquisition without changing FFT arithmetic. Microtape loading now uses Bill's filesystem library during startup, then the same acquisition interface reads RAM. See `MICROTAPE.md` for its complete contract. PENMENU/PENKBD are candidates for later interactive controls; neither is silently enabled by this preview.
+The v4 tape backend feeds the same 256-sample contract into acquisition without changing FFT arithmetic. Microtape loading now uses Bill's filesystem library during startup, then the same acquisition interface reads RAM. See `MICROTAPE.md` for its complete contract. The v5 runtime picker is described in `FILE-PICKER.md`; it uses the native light-pen mechanism directly for dynamically populated names, with all filesystem work in the main loop.

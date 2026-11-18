@@ -4,7 +4,7 @@ import hashlib,json,os,re,struct,subprocess,sys,tempfile
 from pathlib import Path
 from test_core import ROOT,tape_memory,write_mem,read_mem,decode,reference
 sys.path.insert(0,str(ROOT))
-from tape import from_drum,make_image,validate_recording
+from tape import filesystem_tool, from_drum,make_image,validate_recording
 from drum import calibration_image
 
 
@@ -20,15 +20,19 @@ def main():
     memory,entry=tape_memory(ROOT/'workstation-tape-test.rim')
     sy={f[2]:int(f[0],8) for line in (ROOT/'workstation-tape-test.sym').read_text().splitlines()
         if len(f:=line.split())==4 and re.fullmatch('[0-7]{6}',f[0])}
+    tool=filesystem_tool()
     with tempfile.TemporaryDirectory(prefix='saw-mt-') as td:
         p=Path(td);source=p/'cal.drm';source.write_bytes(calibration_image())
-        image=p/'t.img';make_image(image,[('APOLLO11',source)],Path('/opt/pidp1-mods/bin/mtfs'))
+        image=p/'t.img';make_image(image,[('APOLLO11',source)],tool)
         code=p/'code';patch=p/'patch';out=p/'out';dummy=p/'unused.drm';dummy.write_bytes(calibration_image())
         write_mem(code,memory)
         def run(name='APOLLO11',path=image,extra=None):
             edits={sy['tape_name']+n:w for n,w in enumerate(ascii_words(name,6))}
+            edits[sy['t_interactive']]=1 # stale runtime flag must be cleared at boot
             write_mem(patch,edits)
-            env=dict(os.environ,SAW_STOP_ON_FAULT='1',SAW_TEST_TAPE_IMAGE=str(path),**(extra or {}))
+            env=dict(os.environ,SAW_STOP_ON_FAULT='1',SAW_TEST_TAPE_IMAGE=str(path),
+                SAW_LOADING_TRACE=str(p/'progress'),SAW_LOADING_SCENE_ADDR=f"{sy['loading_scene']:o}",
+                SAW_LOADING_DONE_ADDR=f"{sy['l_loaded']:o}",SAW_LOADING_TOTAL_ADDR=f"{sy['l_total']:o}",**(extra or {}))
             result=subprocess.run([str(ROOT/'tests/tape_runner'),str(code),str(patch),str(out),f'{entry:o}',str(dummy)],capture_output=True,text=True,env=env)
             assert result.returncode==0,(result.stdout,result.stderr)
             return read_mem(out),result.stdout
@@ -36,6 +40,11 @@ def main():
         mem,metrics=run()
         diag={k:mem[sy[k]] for k in ('fault','done','ovfcnt','t_stage','t_status','input_source','ntrack')}
         assert diag['fault']==0 and diag['done']==1 and diag['t_stage']==9,(diag,metrics)
+        progress=[tuple(map(int,line.split())) for line in (p/'progress').read_text().splitlines()]
+        assert progress==[(0,0),(0,16),(4,16),(8,16),(12,16),(16,16)],progress
+        from test_loading import counter_text
+        assert counter_text(mem,sy,'loading_count')=='016'
+        assert counter_text(mem,sy,'loading_total')=='016'
         raw=struct.unpack('<131072I',source.read_bytes())
         assert [mem[0o50000+n] for n in range(4096)]==list(raw[4096:8192])
         expected=reference([decode(w) for w in raw[4096:4352]])
@@ -44,7 +53,7 @@ def main():
         assert hashlib.sha256(image.read_bytes()).hexdigest()==before
         report={'calibration':diag,'real_type550':True,'loaded_samples_checked':4096,'FFT_and_power_match':True,'image_unchanged':True,'metrics':metrics.strip()}
         mem,_=run(name='MISSING')
-        assert mem[sy['fault']]==6 and mem[sy['t_status']]==0o13
+        assert mem[sy['fault']]==6 and mem[sy['t_status']]==0o13 and mem[sy['t_interactive']]==0
         mem,_=run(path=p/'absent.img')
         assert mem[sy['fault']]==6 and not (p/'absent.img').exists()
         errors=['missing recording','missing image without blank-tape creation']
@@ -55,8 +64,8 @@ def main():
                 data[12]=0;data[12]=(-sum(data[:256]))%((1<<18)-1)
             words=p/(label+'.words');words.write_bytes(struct.pack(f'<{len(data)}I',*data))
             test_image=p/(label+'.img')
-            subprocess.run(['/opt/pidp1-mods/bin/mtfs','-i',str(test_image)],check=True)
-            subprocess.run(['/opt/pidp1-mods/bin/mtfs','-a','-n','APOLLO11','-r','-f','words','-s',str(words),str(test_image)],check=True)
+            subprocess.run([str(tool),'-i',str(test_image)],check=True)
+            subprocess.run([str(tool),'-a','-n','APOLLO11','-r','-f','words','-s',str(words),str(test_image)],check=True)
             got,_=run(path=test_image)
             assert got[sy['fault']]==expected_fault and got[sy['done']]==0,(label,got[sy['fault']],got[sy['t_stage']])
             errors.append(label)
@@ -69,14 +78,18 @@ def main():
         mem,_=run(extra={'SAW_INJECT_TAPE_MISS':'1','SAW_TAPE_STAGE_ADDR':f"{sy['t_stage']:o}"})
         assert mem[sy['fault']]==0 and mem[sy['done']]==1
         assert mem[sy['t_retry_total']]>=1
+        assert [tuple(map(int,line.split())) for line in (p/'progress').read_text().splitlines()]==progress
         assert [mem[0o50000+n] for n in range(4096)]==list(raw[4096:8192])
         warm,_=run(extra={'SAW_START_TAPE_BLOCK':'100'})
         assert warm[sy['fault']]==0 and [warm[0o50000+n] for n in range(4096)]==list(raw[4096:8192])
         report['warm_tape_reverse_seek_passed']=True
+        report['block_counter_trace']=progress
         report['injected_missed_word_recovered']=True
         report['retries_on_injection']=mem[sy['t_retry_total']]
         mem,_=run(extra={'SAW_INJECT_TAPE_MISS':'repeat','SAW_TAPE_STAGE_ADDR':f"{sy['t_stage']:o}",'SAW_TAPE_TRIES_ADDR':f"{sy['t_tries']:o}"})
         assert mem[sy['fault']]==6 and mem[sy['done']]==0 and mem[sy['t_retry_total']]==4
+        assert mem[sy['l_loaded']]==0 and mem[sy['l_total']]==16
+        report['counter_does_not_credit_failed_attempts']=True
         report['persistent_read_error_stops_after_five_attempts']=True
         report['error_paths']=errors
     text=json.dumps(report,indent=2)+'\n';(ROOT/'tests/tape-results.json').write_text(text);print(text,end='')

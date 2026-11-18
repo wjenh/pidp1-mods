@@ -71,6 +71,10 @@ def status(home):
         stage=link.memory(sy['t_stage'],1)[0]
         tape_status=link.memory(sy['t_status'],1)[0]
         retries=link.memory(sy['t_retry_total'],1)[0]
+        namewords=link.memory(sy['tape_name'],6)
+        filename=''.join(chr((word>>shift)&0x1ff) for word in namewords for shift in (9,0)).split('\0',1)[0].rstrip()
+        blocks={'read':link.memory(sy['l_loaded'],1)[0],'total':link.memory(sy['l_total'],1)[0]}
+        picker={name:link.memory(sy[name],1)[0] for name in ('p_modal','p_count','p_page','p_selected','p_error','p_invalid')}
     powers=[h*(1<<17)+l for h,l in zip(hi,lo)]
     peaks=sorted(range(129),key=powers.__getitem__,reverse=True)[:2]
     return {'running':bool(state[10]),'powered_on':bool(state[12]),'pc':f'{state[2]:06o}',
@@ -79,6 +83,7 @@ def status(home):
             'published_frames':ui[sy['nframes']-0o10100],
             'refresh_starts':ui[sy['nrender']-0o10100],
             'source':'tape' if source else 'drum','tape_stage':stage,'tape_status':tape_status,'tape_read_retries':retries,
+            'tape_data_blocks':blocks,'tape_filename':filename,'file_picker':picker,
             'display_gain':64 if ui[sy['shown_gain']-0o10100] else 4,
             'display_timing_ms':{'last':timing[4],'min':timing[5] if timing[8] else None,
                                  'max':timing[6],'over_25ms':timing[7],'completed_passes':timing[8]},

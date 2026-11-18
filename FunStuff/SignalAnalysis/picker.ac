@@ -1,0 +1,556 @@
+// Runtime Microtape picker, bank 0's previously unused 5000..7777.
+// Only idle/main-loop code calls the filesystem. The ISR posts a light-pen
+// mailbox and resumes the beam; no tape call ever occurs in a break routine.
+// The modal screen occupies bank 1's unused-in-tape-mode directory workspace.
+// Its list is replaced only with sequence breaks off and the display stopped.
+// Cancel preserves RAM/FFT/the active list. Once loading starts RAM is invalid:
+// a failed load stays in the picker until a valid recording has replaced it.
+#include <MICROTAPE/microtape.ah>
+
+picker_service,dap p_return
+        cla
+        eem
+        lac i [input_source:1]
+        lem
+        sza i
+        jmp p_noaction
+        jsp p_press
+        sza i
+        jmp p_noaction
+        // Only the tape source's upper-right LOAD FILE label is pen-enabled.
+        lac p_y
+        sub [0d956]
+        sma
+        jmp p_open
+p_noaction,cla
+        jmp i p_return
+p_open,lac display_go
+        dac p_previous
+        dzm p_invalid
+        dzm p_page
+        dzm p_count
+        dzm p_selected
+        dzm p_error
+        jsp p_stop
+        eem
+        jsp i [loading_begin:0]
+        lem
+        lac [t_handle:4]
+        dac p_pb
+        eem
+        lac i [tape_drive:4]
+        lem
+        dac p_pb+1
+        lac [p_pb:0]
+        farjda(mtMount:*)
+        lem
+        sza
+        jmp p_mount_error
+        // Copy just the names of occupied slots; fsEntry operates in memory.
+        dzm p_slot
+p_directory,lac p_slot
+        dac p_pb+1
+        lac [p_entry:0]
+        dac p_pb+2
+        lac [p_pb:0]
+        farjda(fsEntry:*)
+        lem
+        sza
+        jmp p_mount_error
+        lac p_entry
+        sza i
+        jmp p_nextslot
+        lac p_count
+        dac p_part
+        sal 1s
+        add p_part
+        add [p_names]
+        dac p_ptr
+        lac p_entry
+        dac i p_ptr
+        idx p_ptr
+        lac p_entry+1
+        dac i p_ptr
+        idx p_ptr
+        lac p_entry+2
+        dac i p_ptr
+        idx p_count
+p_nextslot,idx p_slot
+        sas [0d31]
+        jmp p_directory
+        jmp p_redraw
+p_mount_error,dac p_error
+p_redraw,jsp p_stop
+        jsp p_draw
+        lac [directory:1]
+        dac display_go
+        jsp p_start
+        law 1
+        dac p_modal
+p_wait,jsp p_press
+        sza i
+        jmp p_wait
+        lac p_y
+        sub [0d260]
+        sma
+        jmp p_row
+        lac p_y
+        sub [0d120]
+        sma
+        jmp p_buttonhit
+        jmp p_wait
+p_buttonhit,lac p_x
+        sub [0d320]
+        sma
+        jmp p_notprev
+        lac p_page
+        sza i
+        jmp p_wait
+        sub [0d8]
+        dac p_page
+        dzm p_selected
+        jmp p_redraw
+p_notprev,lac p_x
+        sub [0d520]
+        sma
+        jmp p_notnext
+        lac p_page
+        add [0d8]
+        sub p_count
+        sma
+        jmp p_wait
+        lac p_page
+        add [0d8]
+        dac p_page
+        dzm p_selected
+        jmp p_redraw
+p_notnext,lac p_x
+        sub [0d740]
+        sma
+        jmp p_cancel
+        lac p_selected
+        sza i
+        jmp p_wait
+        jmp p_load
+p_cancel,lac p_invalid
+        sza
+        jmp p_wait
+        jsp p_stop
+        lac p_previous
+        dac display_go
+        jsp p_start
+        dzm p_modal
+        jmp p_noaction
+p_row,  lac p_y
+        sub [0d848]
+        spa
+        jmp p_rowbelow
+        jmp p_wait
+p_rowbelow,cma
+        sar 6s                  // row band: 784..847 -> 0, then 64 units per row
+        dac p_rowindex
+        sub [0d8]
+        sma
+        jmp p_wait
+        lac p_rowindex
+        add p_page
+        sub p_count
+        sma
+        jmp p_wait
+        lac p_rowindex
+        add p_page
+        add [1]                 // 1-based selection, 0 means no selection
+        dac p_selected
+        jmp p_redraw
+
+p_load, law 2
+        dac p_modal
+        jsp p_stop
+        law 1
+        dac p_invalid
+        eem
+        dac i [t_interactive:4]
+        dzm i [fault:0]
+        lem
+        lac p_selected
+        sub [1]
+        jda p_unpack
+        // Form the am1 ASCII filename: 9 characters (including SIXBIT padding)
+        // plus a zero low half. The original codes are used even for punctuation.
+        law p_chars
+        dac p_ptr
+        lac [tape_name:4]
+        dac p_target
+        law i 4
+        dac p_left
+p_asciipair,lac i p_ptr
+        add [040]
+        sal 9s
+        dac p_part
+        idx p_ptr
+        lac i p_ptr
+        add [040]
+        ior p_part
+        eem
+        dac i p_target
+        lem
+        idx p_ptr
+        idx p_target
+        isp p_left
+        jmp p_asciipair
+        lac i p_ptr
+        add [040]
+        sal 9s
+        eem
+        dac i p_target
+        idx p_target
+        dzm i p_target
+        jsp i [uireset:1]
+        jsp i [tapeinit:4]
+        lem
+        eem
+        lac i [fault:0]
+        lem
+        sza
+        jmp p_load_error
+        // Replace the source label only after a fully validated recording.
+        law p_chars
+        dac p_ptr
+        lac [source_tape_name:1]
+        add [1]
+        dac p_target
+        law i 0d9
+        dac p_left
+p_title,lac i p_ptr
+        add [picker_glyphs]
+        dac p_glyph
+        lac i p_glyph
+        eem
+        dac i p_target
+        lem
+        lac p_target
+        add [2]
+        dac p_target
+        idx p_ptr
+        isp p_left
+        jmp p_title
+        dzm p_error
+        dzm p_invalid
+        eem
+        dzm i [t_interactive:4]
+        lem
+        cla                     // discard a held hit after the loading interval
+        dac p_seen
+        lac pen_serial
+        dac p_seen
+        dzm p_modal
+        law 1
+        jmp i p_return          // caller starts the first FFT with frame/track reset
+p_load_error,eem
+        lac i [t_status:4]
+        lem
+        sza i
+        law 077                 // invalid application header/payload, not device status
+        dac p_error
+        // fault remains visible in status until the next load succeeds.
+        jmp p_redraw
+
+// Consume each mailbox publication once. Only a press separated by >=250 ms
+// from the previous hit can act; dragging/holding cannot repeat a LOAD.
+p_press,dap p_pressret
+        lsm
+        lac pen_serial
+        sad p_seen
+        jmp p_empty
+        dac p_seen
+        lac pen_word
+        dac p_position
+        lac pen_time
+        dac p_stamp
+        esm
+        lac p_stamp
+        sub p_lasttime
+        sma
+        jmp p_elapsed
+        add [0d60000]
+p_elapsed,dac p_gap
+        lac p_stamp
+        dac p_lasttime
+        lac p_gap
+        sub [0d250]
+        sma
+        jmp p_fresh
+p_empty,esm
+        cla
+        jmp i p_pressret
+p_fresh,lac p_position
+        and [0777]
+        sal 1s
+        dac p_y
+        lac p_position
+        sar 8s
+        and [01776]
+        dac p_x
+        law 1
+        jmp i p_pressret
+
+p_stop,dap p_stopret
+        lsm
+        cbs
+        dzm display_go
+        dzm display_next
+        lio [haltlist:1]
+        dla
+p_stopwait,t340dss
+        jmp p_stopwait
+        jmp i p_stopret
+p_start,dap p_startret
+        rck
+        dio display_at
+        cbs                     // clear old requests BEFORE starting a pen-sensitive list
+        lio display_go
+        dla
+        esm
+        jmp i p_startret
+
+// Build a bounded modal scene in directory[0..511], unused by tape acquisition.
+// Every emit checks its limit; no active display list is modified.
+p_draw,dap p_drawret
+        lac [directory:1]
+        dac p_out
+        law p_heading
+        dac p_src
+        lac [p_heading_end-p_heading]
+        dac p_len
+        jsp p_copy
+        dzm p_rowindex
+        lac [0d820]
+        dac p_rowy
+p_drawrow,lac p_page
+        add p_rowindex
+        sub p_count
+        sma
+        jmp p_drawbuttons
+        lac p_page
+        add p_rowindex
+        jda p_unpack
+        lac [scale(2) intensity(4) lpon next(point)]
+        jda p_emit
+        lac p_rowy
+        ior [y(0) next(point)]
+        jda p_emit
+        lac [x(0d180) next(parameter)]
+        jda p_emit
+        law p_chars
+        dac p_ptr
+        law i 0d9
+        dac p_left
+p_drawname,lac [next(character)]
+        jda p_emit
+        lac i p_ptr
+        add [picker_glyphs]
+        dac p_glyph
+        lac i p_glyph
+        jda p_emit
+        idx p_ptr
+        isp p_left
+        jmp p_drawname
+        lac p_page
+        add p_rowindex
+        add [1]
+        sas p_selected
+        jmp p_drawnext
+        lac [scale(2) intensity(4) lpoff next(point)]
+        jda p_emit
+        lac p_rowy
+        ior [y(0) next(point)]
+        jda p_emit
+        lac [x(0d128) next(character)]
+        jda p_emit
+        lac p_marker
+        jda p_emit
+p_drawnext,lac p_rowy
+        sub [0d64]
+        dac p_rowy
+        idx p_rowindex
+        sas [0d8]
+        jmp p_drawrow
+p_drawbuttons,law p_buttons
+        dac p_src
+        lac [p_buttons_end-p_buttons]
+        dac p_len
+        jsp p_copy
+        lac p_error
+        sza i
+        jmp p_drawcancel
+        law p_errortext
+        dac p_src
+        lac [p_errortext_end-p_errortext]
+        dac p_len
+        jsp p_copy
+p_drawcancel,lac p_invalid
+        sza
+        jmp p_drawend
+        law p_canceltext
+        dac p_src
+        lac [p_canceltext_end-p_canceltext]
+        dac p_len
+        jsp p_copy
+p_drawend,lac [scale(0) lpoff next(point)]
+        jda p_emit
+        law i 0d128
+        dac p_left
+p_pace,lac [x(0d128) next(point)]
+        jda p_emit
+        isp p_left
+        jmp p_pace
+        lac [x(0d128) next(parameter)]
+        jda p_emit
+        lac [lpoff halt interrupt]
+        jda p_emit
+        jmp i p_drawret
+p_copy,dap p_copyret
+p_copyloop,lac i p_src
+        jda p_emit
+        idx p_src
+        lac p_len
+        sub [1]
+        dac p_len
+        sza
+        jmp p_copyloop
+        jmp i p_copyret
+p_emit,0
+        dap p_emitret
+        lac p_emit
+        dac p_emitword
+        lac p_out
+        sub [011400]          // directory is 010400; 512-word workspace ends here
+        sma
+        jmp p_bounds
+        lac p_emitword
+        eem
+        dac i p_out
+        lem
+        idx p_out
+        jmp i p_emitret
+p_bounds,law 5
+        jmp faultstop
+
+// JDA entries preserve the argument in their first word; JSP would replace
+// AC with the return PC. Unpack an index in AC into nine DEC SIXBIT codes.
+p_unpack,0
+        dap p_unpackret
+        lac p_unpack
+        dac p_part
+        sal 1s
+        add p_part
+        add [p_names]
+        dac p_nameptr
+        law p_chars
+        dac p_charptr
+        law i 3
+        dac p_wordsleft
+p_unword,lac i p_nameptr
+        dac p_packed
+        law i 3
+        dac p_codesleft
+p_uncode,lac p_packed
+        ral 6s
+        dac p_packed
+        and [077]
+        dac i p_charptr
+        idx p_charptr
+        isp p_codesleft
+        jmp p_uncode
+        idx p_nameptr
+        isp p_wordsleft
+        jmp p_unword
+        jmp i p_unpackret
+
+p_pressret,0
+p_stopret,0
+p_startret,0
+p_drawret,0
+p_copyret,0
+p_emitret,0
+p_unpackret,0
+p_modal,0
+p_return,0
+p_previous,0
+p_invalid,0
+p_page,0
+p_count,0
+p_selected,0
+p_error,0
+p_slot,0
+p_ptr,0
+p_target,0
+p_left,0
+p_part,0
+p_glyph,0
+p_rowindex,0
+p_rowy,0
+p_seen,0
+p_stamp,0
+p_lasttime,-0d1000
+p_position,0
+p_gap,0
+p_x,0
+p_y,0
+p_out,0
+p_src,0
+p_len,0
+p_emitword,0
+p_nameptr,0
+p_charptr,0
+p_packed,0
+p_wordsleft,0
+p_codesleft,0
+p_pb,
+        table 3,0
+p_entry,
+        table 010,0
+p_chars,
+        table 0d9,0
+p_names,
+        table 0d93,0
+
+p_marker,
+        type340 "\U>"
+p_heading,
+        scale(2) intensity(4) lpoff next(point)
+        y(0d950) next(point)
+        x(0d128) next(character)
+        type340 "\USELECT TAPE FILE"
+        scale(1) intensity(4) lpoff next(point)
+        y(0d900) next(point)
+        x(0d128) next(character)
+        type340 "\USELECT A NAME, THEN LOAD"
+p_heading_end,
+p_buttons,
+        scale(2) intensity(4) lpon next(point)
+        y(0d180) next(point)
+        x(0d128) next(character)
+        type340 "\UPREV"
+        scale(2) intensity(4) lpon next(point)
+        y(0d180) next(point)
+        x(0d340) next(character)
+        type340 "\UNEXT"
+        scale(2) intensity(4) lpon next(point)
+        y(0d180) next(point)
+        x(0d560) next(character)
+        type340 "\ULOAD"
+p_buttons_end,
+p_canceltext,
+        scale(2) intensity(4) lpon next(point)
+        y(0d180) next(point)
+        x(0d760) next(character)
+        type340 "\UCANCEL"
+p_canceltext_end,
+p_errortext,
+        scale(1) intensity(4) lpoff next(point)
+        y(0d280) next(point)
+        x(0d128) next(character)
+        type340 "\ULOAD FAILED - SELECT ANOTHER FILE"
+p_errortext_end,
+#include "generated/picker-glyphs.ac"

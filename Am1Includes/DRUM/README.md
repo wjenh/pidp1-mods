@@ -89,6 +89,11 @@ formatted.
 The tracks are as given in the directory in block 1, or else in block 2.
 Opening one reads blocks 1 and 2 into the handle's block buffer.
 
+A program that always gives its tracks and is short of room can leave this out:
+`#define DR_FIXEDTRACKS 1` before the first include of `drum.ah` makes `drbSetHandle` about 90
+words smaller, and `DR_PTRACKS` of 0 is then refused with `FS_ENOUNIT`.
+The default, 0, keeps it.
+
 | Call | Parameter block | Result |
 |---|---|---|
 | `drFormat` | `FS_PHANDLE`, `DR_PFIRST`, `DR_PTRACKS`, `DR_PFORCE` nonzero to force formatting | the handle for an empty directory |
@@ -128,7 +133,7 @@ These are the codes the drum layer returns.
 
 | Code | Name | Meaning on the drum |
 |---|---|---|
-| 1 | `FS_ENOUNIT` | a first track not 0-037, or a last track past 037 |
+| 1 | `FS_ENOUNIT` | a first track not 0-037, a last track past 037, or with `DR_FIXEDTRACKS` no tracks |
 | 016 | `FS_ERANGE` | a first block not on the volume, a count under 1, or blocks running past the volume |
 | 023 | `FS_EXFER` | a transfer didn't complete |
 

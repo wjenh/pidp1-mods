@@ -21,7 +21,7 @@ local dfRtn, dfP, dfH, dfQ, dfS, dfFail
 // touched. Sequence breaks are off throughout and turned on again only if they were on.
 // Tracks of 0 keep the size of a volume already starting at the first track, from its
 // directory (drbSetHandle), so a reformat leaves none of its tracks behind; with no such
-// volume they are one track.
+// volume they are one track. With DR_FIXEDTRACKS (drum.ah) they are FS_ENOUNIT.
 // Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
 // (DR_PFIRST), the tracks (DR_PTRACKS, 0 as above) and force (DR_PFORCE, nonzero to format
 // whatever is there). Exit: AC = FS_OK, FS_ENOUNIT for tracks not on the drum, FS_EFOREIGN, or

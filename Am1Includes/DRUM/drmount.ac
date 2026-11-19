@@ -20,7 +20,7 @@ local dmRtn, dmP, dmH, dmQ, dmS, dmSbm, dmWrong, dmFail, dmEnd
 // track is not the one given is refused, so a volume is never read at another run of tracks.
 // Sequence breaks are off throughout and turned on again only if they were on.
 // Tracks of 0 are the volume's own, from its directory (drbSetHandle), so a program need not
-// know how many tracks were formatted.
+// know how many tracks were formatted; with DR_FIXEDTRACKS (drum.ah) they are FS_ENOUNIT.
 // Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
 // (DR_PFIRST) and the tracks (DR_PTRACKS), 0 for the volume's own. Exit: AC = FS_OK,
 // FS_ENOUNIT for tracks not on the drum, FS_ENOFS for a volume without this file system, its

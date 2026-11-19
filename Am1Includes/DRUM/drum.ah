@@ -12,6 +12,13 @@
 #include <FILESYSTEM/fs.ah>
 #include <DRUM/type23alt.ah>
 
+// DR_FIXEDTRACKS 1 builds the drum layer without tracks of 0, for a program that always gives
+// its volume's tracks and is short of room: drbSetHandle is then about 90 words smaller, and
+// tracks of 0 are refused with FS_ENOUNIT. Define it before the first include of this file.
+#ifndef DR_FIXEDTRACKS
+#define DR_FIXEDTRACKS 0
+#endif
+
 // The drum: 040 tracks of 010000 words, 16 blocks a track.
 #define DR_TRACKS 040
 #define DR_TRACKW 010000
@@ -22,7 +29,8 @@ assert DR_BPT * FS_BLKW == DR_TRACKW
 // (FS_PHANDLE), then these.
 #define DR_PFIRST 1         // the volume's first track, 0-037
 #define DR_PTRACKS 2        // its tracks, the last within 037; 0 for the volume's own, from its
-                            // directory, or one track when it has none (drbSetHandle)
+                            // directory, or one track when it has none (drbSetHandle), unless
+                            // DR_FIXEDTRACKS
 #define DR_PFORCE 3         // drFormat: nonzero formats whatever the directory blocks hold
 
 // The directory header's first device word: the volume's first track, written at format and

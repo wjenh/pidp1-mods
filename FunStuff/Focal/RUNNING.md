@@ -7,9 +7,9 @@ This guide gives only what you need to run it and what differs from the manual.
 It talks over a DCS2 telnet connection on port 2030, or on the typewriter with sense switch 6 on.
 Programs are saved on paper tape or by name in a library on a Type 550 Microtape or on the drum.
 
-This is version 1.1\
-Edit date 14-Nov-2026\
-Updated for the Type 340 display support
+This is version 1.2\
+Edit date 19-Nov-2026\
+Updated for fstool changes
 
 ## Building and starting it
 
@@ -296,9 +296,9 @@ A program can be copied to and from the library with *fstool*, the file system's
 fstool -l samples.mtp
 fstool -x -n CH41 -f text -o ch41.fc samples.mtp
 fstool -a -n PRIMES -f text -s primes.fc samples.mtp
-fstool -D 030,010 -l /opt/pidp1-mods/pdp23drum
+fstool -D 030 -l /opt/pidp1-mods/pdp23drum
 ```
-`-D 030,010` names FOCAL's drum tracks, eight from track 030.
+`-D 030` names FOCAL's drum tracks, eight from track 030.
 *fstool*'s numbers are decimal unless they start with 0.
 `030` is octal, as is `0777`, `24,8` is the same volume in decimal.
 A file added this way is loaded as usual.

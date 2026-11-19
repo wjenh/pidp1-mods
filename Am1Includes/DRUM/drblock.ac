@@ -32,7 +32,8 @@ assert DR_BPT == 0d16
 
 local dbRtn, dbPar, dbWr, dbH, dbBlk, dbCnt, dbAt, dbBlks, dbFirst, dbW, dbR, dbK, dbO, dbM, \
     dbT, dbF, dbV, dbV2, dbS, dbSbm, dbGo, db1, db2, db3, db4, dbWait, dbEnd, dbRange, dbXfer, \
-    shRtn, shP, shH, shF, shN, shQ, shBad
+    shRtn, shP, shH, shF, shN, shQ, shBad, shZ, shB, shT, sh1, sh2, sh3, shOk, shTrk, shNo, \
+    shTx, shSet, shSx
 
 // Read blocks of the handle's volume into memory.
 // Entry: AC = an FS_B parameter block's 16-bit address: the handle, the first block, the count
@@ -221,9 +222,17 @@ dbXfer,
 // then zeros, which a format writes and a mount checks. drMount and drFormat call it; a program
 // moving blocks through fsBRead and fsBWrite without a mount may call it too. The handle is
 // not changed when the tracks are refused.
+// Tracks of 0 are the volume's own, so a program need not know how many tracks were formatted:
+// the handle is set for one track, which holds blocks 1 and 2, then for the tracks of the
+// directory found there, block 1's or else block 2's, when it records this first track and a
+// block count of whole tracks within the drum. With neither, the handle stays at one track, so
+// a mount refuses it with FS_ENOFS and a format gives the volume one track. Those reads use the
+// handle's block buffer.
 // Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
-// (DR_PFIRST) and the tracks (DR_PTRACKS). Exit: AC = FS_OK, or FS_ENOUNIT for a first track
-// not 0-037, no tracks, or a last track past 037. IO is clobbered. Called via jda.
+// (DR_PFIRST) and the tracks (DR_PTRACKS), 0 for the volume's own. Exit: AC = FS_OK,
+// FS_ENOUNIT for a first track not 0-037 or a last track past 037, or with tracks of 0
+// FS_EXFER for a directory read cut short, the handle set for one track. IO is clobbered.
+// Called via jda.
 drbSetHandle, 0
     dac shRtn
     eem
@@ -239,13 +248,21 @@ drbSetHandle, 0
     dac shN
 
     // A first track on the drum, at least one track, and the last on it, each bounded first so
-    // that the sum cannot overflow.
+    // that the sum cannot overflow. Tracks of 0 are one until the directory is read.
     lac shF
     SKIP_NEXT_IF_AC_NOT_NEGATIVE
     jmp shBad
     sub [DR_TRACKS]
     SKIP_NEXT_IF_AC_NEGATIVE
     jmp shBad
+    dzm shZ
+    lac shN
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sh1
+    law 1
+    dac shN
+    dac shZ
+sh1,
     lac shN
     sma sza i                   // skip if at least one track
     jmp shBad
@@ -257,7 +274,106 @@ drbSetHandle, 0
     sub [DR_TRACKS+1]
     SKIP_NEXT_IF_AC_NEGATIVE
     jmp shBad
+    jsp shSet
+    lac shZ
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp shOk
 
+    // The volume's own tracks: block 1, then block 2, into the handle's block buffer, until
+    // one's header gives them.
+    law FS_DIRBLK
+    dac shB
+sh2,
+    lac shH
+    dac drbPb+FS_BHANDLE
+    lac shB
+    dac drbPb+FS_BBLOCK
+    law 1
+    dac drbPb+FS_BCOUNT
+    lac shH
+    add [FS_HBUF]
+    dac drbPb+FS_BBUF
+    lac [drbPb:.]
+    jda drbHRead
+    SKIP_NEXT_IF_AC_ZERO
+    jmp i shRtn                 // the read's error, the handle at one track
+    jsp shTrk
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sh3
+    dac shN
+    jsp shSet
+    jmp shOk
+sh3,
+    lac shB
+    sad [FS_DIRBLK2]            // skip unless block 2 was the one read
+    jmp shOk
+    law FS_DIRBLK2
+    dac shB
+    jmp sh2
+shOk,
+    cla
+    jmp i shRtn
+shBad,
+    law FS_ENOUNIT
+    jmp i shRtn
+
+// The tracks the directory header in the handle's block buffer gives: the file system's magic
+// and version, shF as its first track, and a block count of whole tracks, at least one, ending
+// within the drum.
+// Entry: shH the handle, shF the first track. Exit: AC = the tracks, 0 when the header gives
+// none. IO is preserved. Called via jsp.
+shTrk,
+    dap shTx
+    lac shH
+    add [FS_HBUF+FS_DMAGIC]
+    dac shQ
+    lac i shQ
+    sas [FS_MAGIC]              // skip if the magic
+    jmp shNo
+    lac shH
+    add [FS_HBUF+FS_DVER]
+    dac shQ
+    lac i shQ
+    sas [FS_VERSION]
+    jmp shNo
+    lac shH
+    add [FS_HBUF+DR_DFIRST]
+    dac shQ
+    lac i shQ
+    sas shF                     // skip if this first track
+    jmp shNo
+
+    // Whole tracks: the low 4 bits clear, then a positive count of tracks whose last is within
+    // the drum. A count of at most 017777 tracks and a first of at most 037 cannot overflow.
+    lac shH
+    add [FS_HBUF+FS_DBLKS]
+    dac shQ
+    lac i shQ
+    dac shT
+    and [DR_BPT-1]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp shNo
+    lac shT
+    sar 4s                      // DR_BPT blocks a track
+    dac shT
+    sma sza i                   // skip if at least one track
+    jmp shNo
+    add shF
+    sub [DR_TRACKS+1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp shNo
+    lac shT
+    jmp shTx
+shNo,
+    cla
+shTx,
+    jmp .
+
+// Write the handle for the tracks shN from shF, as drbSetHandle describes.
+// Entry: shH the handle, shF the first track, shN the tracks, both checked. Exit: AC and IO are
+// clobbered. Called via jsp.
+shSet,
+    dap shSx
     lac shF
     dac i shH                   // FS_HUNIT
     lac shH
@@ -286,11 +402,8 @@ drbSetHandle, 0
     dzm i shQ
     idx shQ
     dzm i shQ
-    cla
-    jmp i shRtn
-shBad,
-    law FS_ENOUNIT
-    jmp i shRtn
+shSx,
+    jmp .
 
 dbRtn, 0
 dbPar, 0
@@ -318,6 +431,14 @@ shH, 0
 shF, 0
 shN, 0
 shQ, 0
+shZ, 0
+shB, 0
+shT, 0
 endloc
+
+// The block layer's parameter block for drbSetHandle's directory reads, FS_BW words; global so
+// its full address can be taken.
+drbPb,
+    table FS_BW
 
 #endif

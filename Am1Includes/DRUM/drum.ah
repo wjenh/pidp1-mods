@@ -21,7 +21,8 @@ assert DR_BPT * FS_BLKW == DR_TRACKW
 // drMount's, drFormat's and drbSetHandle's parameter block: the handle's 16-bit address
 // (FS_PHANDLE), then these.
 #define DR_PFIRST 1         // the volume's first track, 0-037
-#define DR_PTRACKS 2        // its tracks, at least 1, the last within 037
+#define DR_PTRACKS 2        // its tracks, the last within 037; 0 for the volume's own, from its
+                            // directory, or one track when it has none (drbSetHandle)
 #define DR_PFORCE 3         // drFormat: nonzero formats whatever the directory blocks hold
 
 // The directory header's first device word: the volume's first track, written at format and

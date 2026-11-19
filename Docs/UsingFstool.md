@@ -4,9 +4,10 @@ Fstool is a utility for managing the file system provided by the Am1Includes/FIL
 on a Microtape or Type 23 drum image,
 see Am1Includes/MICROTAPE or DRUM for more information.
 
-This is version 1.3\
-17-Nov-2026
-Numbers can be decimal, octal, hex, or binary, -D only needs the initial track now
+This is version 1.4\
+19-Nov-2026
+A drum volume is named by its first track alone, its size is read from its directory;
+format takes the size as `-b` blocks
 
 ## Usage
 
@@ -16,7 +17,7 @@ If the first digit is *not* a 0, it is decimal.\
 If the first digit is 0 followed by a digit 0-7, it is octal.\
 If the first 2 digits are 0x, it is hexadecimal, 0-9a-fA-F are allowed.\
 If the first 2 digits are 0b, it is binary and only the digits 0 and 1 are allowed.\
-This holds for every number, `-t`, `-b` and both numbers of `-D`.
+This holds for every number, `-t`, `-b` and `-D`.
 
 It lists the files, extracts a file, adds a host file, deletes a file,
 formats a tape or a drum volume, and packs it to recover space left from deleting files.
@@ -26,7 +27,7 @@ fstool -D all -l drumfile
 fstool [-D first] -a -n name [-t type] [-r] [-b blocks] [-f bytes|text|words] [-F] -s source image
 fstool [-D first] -d -n name [-F] image
 fstool [-D first] -x -n name [-f bytes|text|words] -o output image
-fstool [-D first] -i [-F] image
+fstool [-D first [-b blocks]] -i [-F] image
 fstool [-D first] -p image
 ```
 
@@ -41,13 +42,14 @@ fstool [-D first] -p image
 | `-n name` | the file's name |
 | `-t type` | the type, decimal 0-4095, octal 0-7777, default 0 |
 | `-r` | the file is read-only |
-| `-b blocks` | the blocks to allocate, at least the file's data size and at most 511, octal 0777, default is the size needed, 1 for an empty file |
+| `-b blocks` | with `-a`, the blocks to allocate, at least the file's data size and at most 511, octal 0777, default is the size needed, 1 for an empty file; with `-i`, a drum volume's size, see *Drum volumes* |
 | `-f form` | the host file's form, `bytes` by default |
 | `-F` | force: add replaces a file of that name, delete removes a read-only file, format overwrites another program's data in blocks 1 and 2 |
 | `-D first` | the image is a drum file and the volume starts at track `first` |
 | `-D all` | with `-l` only, list every volume on the drum file |
 
-'image' is the image file, a tape image or  with `-D` a drum image.
+'image' is the image file, a tape image or with `-D` a drum image.
+With `-D` it is optional and if not given is the default drum file, */opt/pidp1-mods/pdp23drum*.
 The exit status is 0 on success and 1 on any error, and an error gives the library's status code:
 ```
 fstool: tape.img: ALPHA: EXISTS, a file of that name is already on the tape
@@ -99,24 +101,25 @@ When the image is listed in */opt/pidp1-mods/microtapes.txt*, `fstool` gives a w
 ## Drum volumes
 
 A volume on the drum is a run of entire tracks as a program gives them to `drMount` and `drFormat`.
-The first number is the starting track, the second is the number of tracks.\
-Thus, the ending track will be (starting + number of tracks - 1).\
+`-D` names it by its first track.
+Its size is read from its directory which records the volume's first track and its blocks, 16 a track.\
+The ending track will be (first + blocks / 16 - 1).
 
-For example, `-D 030,010` is the volume of tracks 030 to 037 (030 + 010 - 1).\
-Both numbers are octal because of the leading 0; each can be in any of the forms above,
-so `-D 24,8`, `-D 0x18,8` and `-D 0b11000,0b1000` are the same volume.\
-The drum file must be named, there is no default.\
-The emulator uses */opt/pidp1-mods/pdp23drum*.\
+For example, `-D 030` is the volume starting at track 030; formatted with `-b 128`, it is
+tracks 030 to 037 (030 + 8 - 1).\
+The number is octal because of the leading 0; it can be in any of the forms above,
+`-D 24`, `-D 0x18` and `-D 0b11000` are the same volume.\
+The drum file is optional, if not given, it is the live drum, */opt/pidp1-mods/pdp23drum*.\
 More examples:
 ```
-fstool -D 030,010 -i pdp23drum
-fstool -D 030,010 -a -n notes -f text -s notes.txt pdp23drum
-fstool -D 20,10 -l pdp23drum     # decimal track 20, decimal 10 tracks long
-fstool -D 0x5,10 -l pdp23drum    # hex track 5, decimal 10 tracks long
+fstool -D 030 -b 128 -i pdp23drum
+fstool -D 030 -a -n notes -f text -s notes.txt pdp23drum
+fstool -D 20 -l pdp23drum       # decimal track 20
+fstool -D 0x5 -l                # hex track 5, on /opt/pidp1-mods/pdp23drum
 ```
 The listing names the tracks in decimal:
 ```
-fstool -D 030,010 -l pdp23drum
+fstool -D 030 -l pdp23drum
 pdp23drum tracks  24- 31: generation 2, 128 blocks, 123 free, largest gap 123
 slot  name       type  app  ro  first  blocks    words
    0  NOTES         0  000          3       2      266
@@ -124,13 +127,23 @@ slot  name       type  app  ro  first  blocks    words
 A volume has 16 blocks a track, 13 for files on a volume of one track.
 Messages show the volume the same as the listing does.
 
-The volume's directory records its first track and a volume is only used over the tracks it was formatted on.
-One whose directory records another track, a raw copy of another volume, 
-or a volume named with the wrong number of tracks give a NOFS error.
+The volume's directory records its first track and a volume is only used over the tracks it was formatted for.
+One whose directory uses another track, a raw copy of another volume,
+or whose block count is not whole tracks within the drum gives a NOFS error, as does a track
+that starts no volume.
 
-Format writes the first track into the directory.
-It refuses, unless forced, tracks whose blocks 1 and 2 hold another program's data or a directory of another size.
+**Format.** `-b blocks` is the volume's size, whole tracks of 16 blocks within the drum's 32
+tracks, at least 16.
+Without `-b`, a volume already starting at that track keeps its size.
+Otherwise, the volume is one track, 16 blocks.
+
+A tape has one size, 576 blocks, and `-i` refuses `-b` there.
+
+Format writes the first track and the size into the directory.
+It refuses, unless forced, tracks whose blocks 1 and 2 hold another program's data.
 Tracks never written read as zeros and format without force.
+A format whose tracks share any with another volume gives a warning: a file added to either
+would overwrite the other's blocks.
 
 **Finding the volumes.** `-D all -l` lists each track whose directory, in block 1 or its copy
 in block 2, records that track as the volume's first:
@@ -143,13 +156,15 @@ A volume starting inside one listed before it gives a warning, one of the two is
 earlier format.
 With no volume on the drum, a NOFS error is given.
 
-**The drum file.** It holds 040 tracks of 010000 words, each in a little-endian 32-bit word and a
+**The drum file.** It holds 32 tracks of 4096 words, each in a little-endian 32-bit word and a
 file shorter than the drum capacity reads as zeros past its end.
-Every word outside the volume's tracks is left unchanged.
+
 The file grows only to the end of the last track written, a format of a volume past the
 file's end lengthens it to the end of the volume's first track.
-A word of more than 18 bits on the volume's tracks, or a file that is not a whole number of
-words, or is longer than the drum, is refused as not a drum file.
+
+A word using more than 18 bits on the volume's tracks is masked to 18 bits when read or written.
+A file that is not a whole number of words or is longer than the drum is refused as not a
+drum file.
 
 **A running emulator.** The drum reads its file again at the first transfer after the file is
 replaced, a program that mounts the volume after `fstool` has run sees the change.

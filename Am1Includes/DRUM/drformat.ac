@@ -19,10 +19,14 @@ local dfRtn, dfP, dfH, dfQ, dfS, dfFail
 // mounts the handle on it. Without force, a volume whose blocks 1 and 2 hold another program's
 // data is refused; tracks never written read as zeros and are not. Files' blocks are not
 // touched. Sequence breaks are off throughout and turned on again only if they were on.
+// Tracks of 0 keep the size of a volume already starting at the first track, from its
+// directory (drbSetHandle), so a reformat leaves none of its tracks behind; with no such
+// volume they are one track.
 // Entry: AC = the parameter block's 16-bit address: the handle (FS_PHANDLE), the first track
-// (DR_PFIRST), the tracks (DR_PTRACKS) and force (DR_PFORCE, nonzero to format whatever is
-// there). Exit: AC = FS_OK, FS_ENOUNIT for tracks not on the drum, FS_EFOREIGN, or the block
-// layer's error; the handle is mounted only on FS_OK. IO is clobbered. Called via jda.
+// (DR_PFIRST), the tracks (DR_PTRACKS, 0 as above) and force (DR_PFORCE, nonzero to format
+// whatever is there). Exit: AC = FS_OK, FS_ENOUNIT for tracks not on the drum, FS_EFOREIGN, or
+// the block layer's error; the handle is mounted only on FS_OK. IO is clobbered. Called via
+// jda.
 drFormat, 0
     dac dfRtn
     eem

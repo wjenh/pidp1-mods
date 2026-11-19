@@ -84,6 +84,11 @@ AC is the 16-bit address of the parameter block, and AC has the status on return
 Every parameter block here is `FS_PHANDLE` the handle's 16-bit address, then `DR_PFIRST` the
 first track, then `DR_PTRACKS` the tracks, and for `drFormat`, `DR_PFORCE`.
 
+`DR_PTRACKS` of 0 is the volume's size, a program does not need know how many tracks were
+formatted.
+The tracks are as given in the directory in block 1, or else in block 2.
+Opening one reads blocks 1 and 2 into the handle's block buffer.
+
 | Call | Parameter block | Result |
 |---|---|---|
 | `drFormat` | `FS_PHANDLE`, `DR_PFIRST`, `DR_PTRACKS`, `DR_PFORCE` nonzero to force formatting | the handle for an empty directory |
@@ -96,16 +101,21 @@ first track, then `DR_PTRACKS` the tracks, and for `drFormat`, `DR_PFORCE`.
   It refuses with `FS_ENOFS` a volume without a file system, one whose directory's block
   count is not 16 times the tracks given, and one whose recorded first track is not the one
   given.
+  With `DR_PTRACKS` 0 it mounts the volume at the size given in the directory.
   A refused mount leaves the handle not mounted and descriptors of any earlier mount refused.
-- **`drFormat`** writes an empty directory as both copies with the first track in its header and
+- **`drFormat`** writes an empty directory as two copies with the first track in its header and
   mounts the handle for it.
   Without force it refuses with `FS_EFOREIGN` a volume whose blocks 1 and 2 hold another
   program's data.
   Tracks never written read as zeros and are formatted.
   File blocks are not touched.
+  With `DR_PTRACKS` 0 a volume already starting at the first track keeps its size.
+  Giving tracks other than an existing volume's needs force.
 - **`drbSetHandle`** lets a program move a volume's blocks through `fsBRead` and `fsBWrite`
   without mounting it regardless of whether they are in the filesystem or not.
   Refused tracks leave the handle unchanged.
+  With `DR_PTRACKS` 0 it reads blocks 1 and 2 to find the volume's tracks, and an incomplete read
+  returns `FS_EXFER` with the handle set for one track.
 - The block entries move entire blocks and split a run where one crosses a track and where
   its buffer crosses a core bank, since a transfer wraps within both.
   A buffer can cross bank boundaries.
@@ -118,7 +128,7 @@ These are the codes the drum layer returns.
 
 | Code | Name | Meaning on the drum |
 |---|---|---|
-| 1 | `FS_ENOUNIT` | a first track not 0-037, no tracks, or a last track past 037 |
+| 1 | `FS_ENOUNIT` | a first track not 0-037, or a last track past 037 |
 | 016 | `FS_ERANGE` | a first block not on the volume, a count under 1, or blocks running past the volume |
 | 023 | `FS_EXFER` | a transfer didn't complete |
 

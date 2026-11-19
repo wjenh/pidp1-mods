@@ -6,8 +6,8 @@ It covers the directives, the overlay manager the program includes, the loader *
 each costs.
 *UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-This is version 1.8 and covers up through am1 version 5.5; it will be updated as needed.\
-Edit date 13-Nov-2026
+This is version 1.9 and covers up through am1 version 5.5; it will be updated as needed.\
+Edit date 19-Nov-2026
 Add changes for fstool
 
 ## What are overlays?
@@ -771,7 +771,7 @@ drumlist [-i drumfile] [file.ovl ...]
 - a file system volume's tracks with the volume's tracks, name, generation and files otherwise "not initialized".
 
 ```
-Track 24: file system volume of 8 tracks (fstool -D 20,8), generation 2, 1 file
+Track 24: file system volume of 8 tracks (fstool -D 24), generation 2, 1 file
 Track 25: file system volume from track 24
 ```
 

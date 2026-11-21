@@ -2,9 +2,9 @@
 
 This document describes /opt/pidp1-mods/pidp1.config and how to use it.
 
-This is version 1.6; it will be updated as needed.\
-Edit date 7-Nov-2026\
-Default throttleburst changed to 10 usec
+This is version 1.7; it will be updated as needed.\
+Edit date 11-Nov-2026\
+vpanelscale and vpaneliopanel added
 
 ## What is the configuration file?
 
@@ -161,6 +161,13 @@ at a reload.
 | panellevels | newpanel | Brightness levels, 8 to 64 |
 | panelcycletime | newpanel | How often the lamp brightnesses are recomputed, in microseconds |
 | panelscantime | newpanel | The time to scan one row of lamps, in microseconds |
+
+### The on-screen panel
+
+| Setting | Reader | What it does |
+|---|---|---|
+| vpanelscale | vpanel_pdp1 | The window size multiplier, 0.5 to 4.0; 1.0 by default |
+| vpaneliopanel | vpanel_pdp1 | Show the rack top (I/O) panel lamps; true by default |
 
 ### Timing statistics
 

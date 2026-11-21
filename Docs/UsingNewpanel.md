@@ -2,9 +2,9 @@
 
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
-This is version 1.4\
-Edit date 12-Oct-2026\
-Original panel dropped.
+This is version 1.5\
+Edit date 15-Nov-2026\
+vpanel_pdp1 and the web front panel with newpanel
 
 ## An important note about flicker and panel light blips
 
@@ -33,6 +33,13 @@ Command line switches override configuration file settings.
 - b set the maximum brightness, 0-100%
 - r run with real-time thread priority set
 - t enable timing statistics, only used for testing
+
+## With vpanel_pdp1 or the web front panel
+
+vpanel_pdp1 and the front panel of the web interface can run at the same time as newpanel.
+While newpanel runs, they show the physical switches and do not write.
+The lamps of all the panels show the same data.
+See UsingVpanel.md.
 
 ## History
 

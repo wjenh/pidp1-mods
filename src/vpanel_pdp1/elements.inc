@@ -209,17 +209,7 @@ Element switches[] = {
 #undef G
 
 #define G &grid2
-	// run, single step, single inst
-	// NOTE: comment appears copy-pasted from the lights[] group above at
-	// the same grid position (which legitimately IS run/sstep/sinst
-	// status lamps). These three are the SWITCHES at that spot, and
-	// main.c's initpanel()/updatepanel() bind the first one (misc_sw[0])
-	// to SW_POWER, not to any "run" control -- there is no run switch in
-	// the panel_pidp1.h bit enum, only the L5_RUN status-light bit. The
-	// other two (misc_sw[1], misc_sw[2]) ARE single-step/single-instruction
-	// as labeled. Likely a stale/misleading comment rather than a
-	// functional bug, but flagging since the label doesn't match what the
-	// code actually does with the first switch.
+	// power, single step, single inst
 	{ hswitchtex, G, 30.5, 3, 0, 0 },
 	{ hswitchtex, G, 30.5, 4, 0, 0 },
 	{ hswitchtex, G, 30.5, 5, 0, 0 },
@@ -245,4 +235,74 @@ Element keys[] = {
 	{ keytex, G, 28, 19, 0, 0 },
 	{ keytex, G, 31, 19, 0, 0 },
 #undef G
+};
+
+// The rack top (I/O) panel lamps, laid out like the PiDP-1's top panel.
+// Each is { x, y, row, mask }: x is the lamp column 0-17 and y the lamp row 0-3 on grid3,
+// row is the Panel lights/pwmcount row, 7-9, and mask the lamp's bit in it,
+// see updatelights() in pdp1/panel1.c.
+// The labels are in the background art, art/io_panel.png, the positions here must match
+// art/mkvpanelart.py's io_lamps().
+// Unlike the arrays above, nothing depends on the order of the entries.
+IoLamp iolamps[] = {
+	// TAPE READER, the reader buffer, rb
+	{ 0,  0, 7, 0400000 },
+	{ 1,  0, 7, 0200000 },
+	{ 2,  0, 7, 0100000 },
+	{ 3,  0, 7, 0040000 },
+	{ 4,  0, 7, 0020000 },
+	{ 5,  0, 7, 0010000 },
+	{ 6,  0, 7, 0004000 },
+	{ 7,  0, 7, 0002000 },
+	{ 8,  0, 7, 0001000 },
+	{ 9,  0, 7, 0000400 },
+	{ 10, 0, 7, 0000200 },
+	{ 11, 0, 7, 0000100 },
+	{ 12, 0, 7, 0000040 },
+	{ 13, 0, 7, 0000020 },
+	{ 14, 0, 7, 0000010 },
+	{ 15, 0, 7, 0000004 },
+	{ 16, 0, 7, 0000002 },
+	{ 17, 0, 7, 0000001 },
+
+	// TAPE READER status
+	{ 0,  1, 8, 0400000 },	// BINARY, rby
+	{ 2,  1, 8, 0200000 },	// NAC, rcp
+	{ 4,  1, 8, 0100000 },	// RC 1, rc bit 1
+	{ 6,  1, 8, 0040000 },	// RC 2, rc bit 2
+	{ 8,  1, 8, 0020000 },	// CLUTCH, rcl
+
+	// MEMORY, the panel order is not the bit order, inhibit and write are swapped
+	{ 11, 1, 8, 0010000 },	// READ, r
+	{ 13, 1, 8, 0004000 },	// STROBE, rs
+	{ 15, 1, 8, 0001000 },	// INHIBIT, i
+	{ 17, 1, 8, 0002000 },	// WRITE, w
+
+	// TYPEWRITER
+	{ 2,  2, 9, 0400000 },	// STATUS, tbs
+	{ 4,  2, 9, 0200000 },	// BLACK, not tbb
+	{ 6,  2, 9, 0100000 },	// TYO, tyo
+	{ 8,  2, 9, 0040000 },	// NAC, tcp
+	// the typewriter buffer, tb, io bits 12-17
+	{ 12, 2, 9, 0020000 },
+	{ 13, 2, 9, 0010000 },
+	{ 14, 2, 9, 0004000 },
+	{ 15, 2, 9, 0002000 },
+	{ 16, 2, 9, 0001000 },
+	{ 17, 2, 9, 0000400 },
+
+	// TAPE PUNCH, the punch buffer, pb, channels 8-4, the sprocket gap, then 3-1
+	{ 0,  3, 8, 0000400 },
+	{ 1,  3, 8, 0000200 },
+	{ 2,  3, 8, 0000100 },
+	{ 3,  3, 8, 0000040 },
+	{ 4,  3, 8, 0000020 },
+	{ 6,  3, 8, 0000010 },
+	{ 7,  3, 8, 0000004 },
+	{ 8,  3, 8, 0000002 },
+	{ 10, 3, 9, 0000200 },	// ON, punon
+	{ 12, 3, 9, 0000100 },	// NAC, pcp
+
+	{ 15, 3, 9, 0000040 },	// DEFER 2, df2
+	{ 17, 3, 9, 0000020 },	// OV 2, ov2
 };

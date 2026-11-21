@@ -12,6 +12,8 @@
 #    start refuses while one is already running, restart no longer sleeps
 # 07-Nov-26 wje (Claude) the soroban choice: start the Soroban typewriter terminal with web or
 #    apps, when there is a desktop
+# 13-Nov-26 Claude: start the web server with go run . so its front panel, panel.go, is built too
+# 15-Nov-26 Claude: the virtual front panel, vpanel_pdp1, only with a desktop, as for Soroban
 
 # The install directory; PIDP1_ROOT points it elsewhere, for testing.
 root="${PIDP1_ROOT:-/opt/pidp1-mods}"
@@ -223,6 +225,9 @@ do_start() {
 	if [ "$frontpanel" = "pidp" ]; then
 		echo starting PiDP-1 hardware front panel driver
 	        nohup bin/panel_pidp1 > /dev/null 2>&1 &
+	elif [ "$frontpanel" = "virtual" ] && [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+		# Without a desktop SDL falls back to an offscreen driver, the panel would run unseen.
+		echo "on-screen virtual front panel not started: no desktop; the web front panel works without one"
 	elif [ "$frontpanel" = "virtual" ]; then
 		echo starting on-screen virtual front panel, not PiDP-1 hardware
 		echo use
@@ -256,7 +261,8 @@ do_start() {
 	elif [ "$interface" = "web" ]; then
 		echo start web server
 		cd "$root/web_pdp1"
-		nohup go run "$root/web_pdp1/pdpsrv.go" > /dev/null 2>&1 &
+		# go run . builds every .go file here, pdpsrv.go and panel.go; the process is still named pdpsrv.
+		nohup go run . > /dev/null 2>&1 &
 		cd "$root"
 	elif [ "$interface" = "apps" ]; then
 		echo start apps

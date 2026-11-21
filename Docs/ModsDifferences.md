@@ -86,6 +86,7 @@ Some of these have been mentioned above.
 - Type 23 drum, DCS, Type 340 display, Type 33 symbol generator, Type 62 and 64 line printers, BBN clock
 - all of the demo programs that use IOTs not in the original branch
 These also use am1.
+- on-screen panel vpanel_pdp1 with the rack top (I/O) panel, window scaling and hardware panel mirroring; a front panel in the web interface.
 
 ## Additions that are independent of any branch
 

@@ -24,13 +24,32 @@
  * 1-Oct-2026 Claude: Makefile rebuilds on a change to any included file.
  * 4-Oct-2026 wje panel lights were not turning off when the power switch was turned off
  * 8-Nov-2026 Claude: lights take each pwm count's difference from its last read instead of resetting the count.
+ * 11-Nov-2026 Claude: add the rack top (I/O) panel lamps above the console, rows 7-9 of the Panel lights;
+ *                    add a window scale factor, -s or vpanelscale; darker switch and key levers;
+ *                    all art at 2x so it is sharp when scaled, see art/mkvpanelart.py
+ * 11-Nov-2026 Claude: with the hardware panel's driver running, mirror its switches instead of
+ *                    writing them;
+ *                    never overwrite switch words someone else changed, take their values instead
+ * 14-Nov-2026 Claude: the hardware panel is always the authority, -m and -a removed;
+ *                    a change by another writer takes the keys too, so a key held in the browser stays held
+ * 15-Nov-2026 Claude: each mouse button press looks for the hardware panel driver first,
+ *                    thus a click never writes while the driver runs
+ * 18-Nov-2026 Claude: the mouse lets go only of a key it pressed, not one taken from another writer
  */
 #include <stdio.h>
+#include <unistd.h>
+#include <math.h>
+#include <dirent.h>
 #include "common.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 
 #include "panel_pidp1.h"
+#include "configuration.h"
+
+#ifndef CONFIG_FILE
+#define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
+#endif
 
 #define nil NULL
 
@@ -49,6 +68,61 @@
 // arrays so this program has no runtime asset-file dependency.
 #include "art/panelart.inc"
 #include "art/pdp1art.inc"
+#include "art/ioart.inc"
+
+// Logical layout, in pixels at scale 1.
+// The console art is CONSOLE_W x CONSOLE_H.
+// The rack top (I/O) panel, when shown, is a strip IO_H high above it, so the console moves down by IO_H.
+// The I/O panel's lamp grid, IO_*, MUST match art/mkvpanelart.py, which drew the labels for it.
+#define CONSOLE_W   800
+#define CONSOLE_H   448
+#define IO_H        220
+#define IO_XSCL     (12.95f * 800.0f / 500.0f)
+#define IO_X0       (CONSOLE_W / 2.0f - 8.5f * IO_XSCL)
+#define IO_Y0       33.0f
+#define IO_YSCL     52.0f
+
+// All the art is made at ART_SCALE times the logical size, each piece is drawn into a
+// rectangle 1/ART_SCALE its pixel size, so it is sharp when the window is scaled up.
+// MUST match ART_SCALE in art/mkvpanelart.py.
+#define ART_SCALE   2
+
+// Window scale factor limits.
+#define MIN_SCALE   0.5f
+#define MAX_SCALE   4.0f
+
+// The window scale factor, vpanelscale or -s.
+// The panel is laid out at scale 1 and SDL scales it, see main().
+static float scale = 1.0f;
+
+// Whether the rack top (I/O) panel is shown, vpaneliopanel or -i/-n.
+static int showIo = 1;
+
+// Who owns the switches.
+// With the hardware panel's driver running, it writes the switch words in the Panel segment
+// several hundred times a second, writing them here as well would make the two fight.
+// So while the driver runs the physical panel is the authority: this mirrors its switches
+// and works the switches itself only when the driver isn't running.
+// The lamps are shared either way, each reader takes differences of the pwm counts.
+
+// Set while the switches mirror the hardware panel's, see checkMode().
+static int mirroring = 0;
+
+// The hardware panel driver's process names: newpanel, run through the bin/panel_pidp1 link
+// as the scripts do or directly.
+static const char *hwPanelNames[] = { "panel_pidp1", "newpanel" };
+
+// How often, in ms, to look for the hardware panel driver.
+#define HWCHECK_MS  1000
+
+// The switch words, sw0-sw3, as this last wrote them, and whether it has written them since
+// it last became active.
+// Before each write they are compared with the segment: a difference means someone else wrote
+// them, the hardware panel's driver just starting for example. Its values are taken instead
+// of being overwritten, and the driver is looked for at once rather than at the next HWCHECK_MS.
+// Otherwise a stale POWER off written here could reach pdp1, which power clears on seeing it.
+static int lastSw[4];
+static int haveWritten = 0;
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
@@ -86,6 +160,16 @@ struct Element
     int drawnState;     // state as last drawn; after r, so elements.inc's initializers leave it 0
 };
 
+// One rack top (I/O) panel lamp, see iolamps[] in elements.inc.
+// X, y are its grid3 position, row the Panel lights row, 7-9, and mask its bit in that row.
+typedef struct IoLamp IoLamp;
+struct IoLamp
+{
+	float x, y;
+	int row;
+	int mask;
+};
+
 // Shared-memory Panel struct definition and the sw0/sw1/sw2 bit-field enum
 // (SW_*, KEY_*, L5_*), also used by the emulator (pdp1/panel1.c) and the
 // hardware panel driver (panel_pidp1/newpanel.c). See that header's own
@@ -121,6 +205,7 @@ Element *misc_sw, *ss_sw;
 // spring-loaded "up" position distinct from neutral and "down"
 // (see the state==2 cases in mouse()/updatepanel()).
 SDL_Texture *paneltex;
+SDL_Texture *iotex;
 SDL_Texture *lamptex[2];
 SDL_Texture *switchtex[2];
 SDL_Texture *hswitchtex[2];
@@ -131,6 +216,9 @@ SDL_Texture *keytex[3];
 // right-hand column (run/sstep/sinst, sense switches, program flags, IR).
 // Both are derived from the same `scl` mm-to-pixel factor in init().
 Grid grid1, grid2;
+
+// grid3 covers the rack top (I/O) panel, one unit per lamp column and row.
+Grid grid3;
 
 // Set when the window needs a frame whatever the elements show: the first
 // frame, and after SDL reports the window's contents may be gone.
@@ -144,7 +232,15 @@ int redrawNeeded = 1;
 // Note that this is actual code.
 #include "elements.inc"
 
+// The I/O panel lamp Elements, made from iolamps[] by init().
+Element iolights[nelem(iolamps)];
+
 int computeLightWord(Panel *panelP, int row, u64 expectedcycles);
+void loadConfig(void);
+void usage(void);
+int hwPanelRunning(void);
+void checkMode(void);
+void mirrorSwitches(int withKeys);
 
 // Decodes a baked-in PNG byte array (one of the pdp1art.inc/panelart.inc
 // arrays) into a renderer-owned SDL_Texture. Wraps the raw bytes in an
@@ -195,8 +291,8 @@ float x, y;
 }
 
 // Computes the on-screen pixel rectangle (e->r) for element `e` from its
-// fixed grid-unit position (e->x, e->y) and its current texture's natural
-// size, then stores it back into `e` for later use by ismouseover() (hit
+// fixed grid-unit position (e->x, e->y) and its current texture's
+// size divided by ART_SCALE, then stores it back into `e` for later use by ismouseover() (hit
 // testing) and drawelement() (blit destination). Must be called once per
 // element after every texture is loaded and before the first draw/mouse
 // event; called from init() for every lamp/switch/key.
@@ -209,6 +305,8 @@ putongrid(Element *e)
 {
 	int w, h;
 	SDL_QueryTexture(e->tex[0], nil, nil, &w, &h);
+    w /= ART_SCALE;
+    h /= ART_SCALE;
 	e->r.x = e->grid->xoff - w/2 + e->grid->xscl*e->x;
 	e->r.y = e->grid->yoff - h/2 + e->grid->yscl*e->y;
 	e->r.w = w;
@@ -249,7 +347,7 @@ int
 changed(void)
 {
     return( groupChanged(lights, nelem(lights)) || groupChanged(switches, nelem(switches))
-            || groupChanged(keys, nelem(keys)) );
+            || groupChanged(keys, nelem(keys)) || (showIo && groupChanged(iolights, nelem(iolights))) );
 }
 
 // Renders one complete frame: panel background, then every lamp, switch,
@@ -263,8 +361,26 @@ void
 draw(void)
 {
 unsigned i;
+SDL_Rect consoleRect = { 0, 0, CONSOLE_W, CONSOLE_H };
+SDL_Rect ioRect = { 0, 0, CONSOLE_W, IO_H };
 
-	SDL_RenderCopy(renderer, paneltex, nil, nil);
+    // A window resized to another shape has bars beside the panel, give them the panel's color.
+	SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+	SDL_RenderClear(renderer);
+
+    if( showIo )
+    {
+        // The art is made at ART_SCALE times the logical size, the rectangles scale it to fit.
+        SDL_RenderCopy(renderer, iotex, nil, &ioRect);
+        consoleRect.y = IO_H;
+
+        for(i = 0; i < nelem(iolights); i++)
+        {
+            drawelement(&iolights[i]);
+        }
+    }
+
+	SDL_RenderCopy(renderer, paneltex, nil, &consoleRect);
 
 	for(i = 0; i < nelem(lights); i++)
     {
@@ -301,7 +417,8 @@ init(void)
 {
 unsigned i;
 
-	paneltex = loadtex(pdp1_panel_png, pdp1_panel_png_len);
+	paneltex = loadtex(pdp1_panel_2x_png, pdp1_panel_2x_png_len);
+	iotex = loadtex(io_panel_png, io_panel_png_len);
 	lamptex[0] = loadtex(lamp_off_png, lamp_off_png_len);
 	lamptex[1] = loadtex(lamp_on_png, lamp_on_png_len);
 	switchtex[0] = loadtex(switch_d_png, switch_d_png_len);
@@ -322,6 +439,27 @@ unsigned i;
 
 	grid2 = grid1;
 	grid2.xoff =  1.05 * scl + grid2.xscl/2;
+
+    // With the I/O panel shown, the console is drawn below it.
+    if( showIo )
+    {
+        grid1.yoff += IO_H;
+        grid2.yoff += IO_H;
+    }
+
+    grid3.xscl = IO_XSCL;
+    grid3.yscl = IO_YSCL;
+    grid3.xoff = IO_X0;
+    grid3.yoff = IO_Y0;
+
+	for(i = 0; i < nelem(iolamps); i++)
+    {
+        iolights[i].tex = lamptex;
+        iolights[i].grid = &grid3;
+        iolights[i].x = iolamps[i].x;
+        iolights[i].y = iolamps[i].y;
+		putongrid(&iolights[i]);
+    }
 
 	for(i = 0; i < nelem(lights); i++)
     {
@@ -411,6 +549,12 @@ mouse(int x, int y)
 unsigned i;
 Element *e;
 
+    // Mirroring, the switches and keys show the hardware panel's, clicks do nothing.
+    if( mirroring )
+    {
+        return;
+    }
+
 	for(unsigned i = 0; i < nelem(switches); i++)
     {
 		e = &switches[i];
@@ -436,20 +580,20 @@ Element *e;
 		}
 	}
 
+    // A key's active is set while the mouse holds it. Only then does the mouse let it go: a key taken
+    // from another writer by mirrorSwitches(1), held in the browser for example, stays as that writer has it.
 	for(i = 0; i < nelem(keys); i++)
     {
 		e = &keys[i];
-		if(buttonstate == 0 || !ismouseover(e, x, y))
+		if( (buttonstate & 5) && ismouseover(e, x, y) )
+        {
+			e->state = (buttonstate & 1)?1:2;
+			e->active = 1;
+        }
+		else if( e->active )
         {
 			e->state = 0;
-        }
-		else if(buttonstate & 1)
-        {
-			e->state = 1;
-        }
-		else if(buttonstate & 4)
-        {
-			e->state = 2;
+			e->active = 0;
         }
 	}
 }
@@ -499,19 +643,142 @@ initpanel(void)
 	if(panel == nil)
 		exit(1);
 
-	setnlights(panel->sw0, ta_sw, 16, 0100000);
-	setnlights(panel->sw1, tw_sw, 18, 0400000);
-	setnlights(panel->sw2, ss_sw, 6, 0100000);
-	ext_sw->state = !!(panel->sw0 & SW_EXTEND);
-	misc_sw[0].state = !!(panel->sw0 & SW_POWER);
-	misc_sw[1].state = !!(panel->sw2 & SW_SSTEP);
-	misc_sw[2].state = !!(panel->sw2 & SW_SINST);
+	// Start with the switches where the segment has them, the keys left neutral.
+	mirrorSwitches(0);
 
 	// Prime the PWM integration baselineto the segment's current cyclecount so the first
 	// real pass measures only cycles that elapse after this program attaches,
     // not cycles counted since whatever process created or last reset the segment.
 	lastcyclecount = panel->cyclecount;
     memcpy(lastcount, panel->pwmcount, sizeof(lastcount));
+}
+
+// Returns 1 if the hardware panel's driver is running, else 0.
+// Processes are matched by their exact name in /proc/<pid>/comm, as pdp1central's procCount() does,
+// a pattern could match something else.
+// A running driver shows that frontpanel=pidp is set. It does not show that a PiDP-1 board is
+// connected: the driver uses the GPIO controller of the Pi, which every Pi has.
+int
+hwPanelRunning(void)
+{
+DIR *dirP;
+struct dirent *entP;
+FILE *fP;
+char path[sizeof(entP->d_name) + 16];
+char comm[64];
+unsigned i;
+int found;
+
+    if( !(dirP = opendir("/proc")) )
+    {
+        return(0);
+    }
+
+    found = 0;
+    while( !found && (entP = readdir(dirP)) )
+    {
+        if( (entP->d_name[0] < '0') || (entP->d_name[0] > '9') )
+        {
+            continue;
+        }
+
+        snprintf(path, sizeof(path), "/proc/%s/comm", entP->d_name);
+        if( !(fP = fopen(path, "r")) )
+        {
+            continue;           // it ended while we looked
+        }
+
+        if( fgets(comm, sizeof(comm), fP) )
+        {
+            comm[strcspn(comm, "\n")] = '\0';
+            for(i = 0; i < nelem(hwPanelNames); i++)
+            {
+                if( !strcmp(comm, hwPanelNames[i]) )
+                {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+        fclose(fP);
+    }
+
+    closedir(dirP);
+    return(found);
+}
+
+// Decide whether the switches mirror the hardware panel's or are worked here, see mirroring.
+// Called at startup and every HWCHECK_MS from the main loop.
+// Going from mirroring to active, the on-screen switches already show the last physical
+// positions, so pdp1 sees no change; the keys go back to neutral.
+void
+checkMode(void)
+{
+int want;
+unsigned i;
+
+    want = hwPanelRunning();
+
+    if( want == mirroring )
+    {
+        return;
+    }
+
+    mirroring = want;
+    if( mirroring )
+    {
+        mirrorSwitches(1);
+    }
+    else
+    {
+        haveWritten = 0;        // nothing written yet to compare against
+        for(i = 0; i < nelem(keys); i++)
+        {
+            keys[i].state = 0;
+            keys[i].active = 0;
+        }
+        for(i = 0; i < nelem(switches); i++)
+        {
+            switches[i].active = 0;
+        }
+    }
+
+    SDL_SetWindowTitle(window, mirroring?"PDP-1 console (mirroring hardware panel)":"PDP-1 console");
+}
+
+// Set the on-screen switches, and with withKeys the keys, from the switch words in the segment,
+// the inverse of the packing in updatepanel().
+// At startup the keys are left alone, withKeys 0: a key left pressed in the segment by a program
+// that has gone would otherwise be written back as pressed until the mouse moved.
+// Taken from another writer that is still running, withKeys 1, it is released when that writer lets go.
+void
+mirrorSwitches(int withKeys)
+{
+int sw2;
+
+    setnlights(panel->sw0, ta_sw, 16, 0100000);
+    setnlights(panel->sw1, tw_sw, 18, 0400000);
+    sw2 = panel->sw2;
+    setnlights(sw2, ss_sw, 6, 0100000);
+    ext_sw->state = !!(panel->sw0 & SW_EXTEND);
+    misc_sw[0].state = !!(panel->sw0 & SW_POWER);
+    misc_sw[1].state = !!(sw2 & SW_SSTEP);
+    misc_sw[2].state = !!(sw2 & SW_SINST);
+
+    if( !withKeys )
+    {
+        return;
+    }
+
+    // Key states: 0 neutral, 1 pressed down, 2 lifted up.
+    keys[0].state = (sw2 & KEY_START)?1:((sw2 & KEY_START_UP)?2:0);
+    keys[1].state = (sw2 & KEY_STOP)?1:0;
+    keys[2].state = (sw2 & KEY_CONT)?1:0;
+    keys[3].state = (sw2 & KEY_EXAM)?1:0;
+    keys[4].state = (sw2 & KEY_DEP)?2:0;
+    keys[5].state = (sw2 & KEY_READIN)?1:0;
+    keys[6].state = (sw2 & KEY_READER)?1:((sw2 & KEY_READER_UP)?2:0);
+    keys[7].state = (sw2 & KEY_FEED)?1:0;
 }
 
 // Reads one main-panel light row's worth (18 columns) of panel->pwmcount[][], takes each
@@ -584,29 +851,57 @@ updatepanel(void)
 	int w0, w1, w2, w3, w4, w5, w6;
 	u64 currentcyclecount, expectedcycles;
 
-	sw = getnswitches(ta_sw, 0100000, 16, 1);
-	if(ext_sw->state) sw |= SW_EXTEND;
-	if(misc_sw[0].state) sw |= SW_POWER;
-	panel->sw0 = sw;
+    // Someone else changed the switch words since this wrote them, take theirs and look for the driver now.
+    // If it is there, checkMode() starts mirroring and nothing is written below.
+    // The keys are taken too: a key held in the web front panel stays held until it lets go,
+    // which is another change taken here.
+    if( !mirroring && haveWritten &&
+        ((panel->sw0 != lastSw[0]) || (panel->sw1 != lastSw[1]) || (panel->sw2 != lastSw[2]) ||
+         (panel->sw3 != lastSw[3])) )
+    {
+        mirrorSwitches(1);
+        checkMode();
+    }
 
-	panel->sw1 = getnswitches(tw_sw, 0400000, 18, 1);
+    // Mirroring, show the hardware panel's switches and write nothing.
+    // Otherwise pack the on-screen switches and keys into sw0-sw3 for pdp1.
+    if( mirroring )
+    {
+        mirrorSwitches(1);
+    }
+    else
+    {
+        sw = getnswitches(ta_sw, 0100000, 16, 1);
+        if(ext_sw->state) sw |= SW_EXTEND;
+        if(misc_sw[0].state) sw |= SW_POWER;
+        lastSw[0] = sw;
 
-	sw = getnswitches(ss_sw, 0100000, 6, 1);
-	if(misc_sw[1].state) sw |= SW_SSTEP;
-	if(misc_sw[2].state) sw |= SW_SINST;
-	if(keys[0].state == 1) sw |= KEY_START;
-	if(keys[0].state == 2) sw |= KEY_START_UP;
-	if(keys[1].state == 1) sw |= KEY_STOP;
-	if(keys[2].state == 1) sw |= KEY_CONT;
-	if(keys[3].state == 1) sw |= KEY_EXAM;
-	if(keys[4].state == 2) sw |= KEY_DEP;
-	if(keys[5].state == 1) sw |= KEY_READIN;
-	if(keys[6].state == 1) sw |= KEY_READER;
-	if(keys[6].state == 2) sw |= KEY_READER_UP;
-	if(keys[7].state == 1) sw |= KEY_FEED;
-	panel->sw2 = sw;
+        lastSw[1] = getnswitches(tw_sw, 0400000, 18, 1);
 
-	panel->sw3 = 0;	// no spacewar controllers for now
+        sw = getnswitches(ss_sw, 0100000, 6, 1);
+        if(misc_sw[1].state) sw |= SW_SSTEP;
+        if(misc_sw[2].state) sw |= SW_SINST;
+        if(keys[0].state == 1) sw |= KEY_START;
+        if(keys[0].state == 2) sw |= KEY_START_UP;
+        if(keys[1].state == 1) sw |= KEY_STOP;
+        if(keys[2].state == 1) sw |= KEY_CONT;
+        if(keys[3].state == 1) sw |= KEY_EXAM;
+        if(keys[4].state == 2) sw |= KEY_DEP;
+        if(keys[5].state == 1) sw |= KEY_READIN;
+        if(keys[6].state == 1) sw |= KEY_READER;
+        if(keys[6].state == 2) sw |= KEY_READER_UP;
+        if(keys[7].state == 1) sw |= KEY_FEED;
+        lastSw[2] = sw;
+
+        lastSw[3] = 0;	// no spacewar controllers for now
+
+        // Recorded from what is written, not read back: a read back could pick up another writer's value.
+        panel->sw0 = lastSw[0];
+        panel->sw1 = lastSw[1];
+        panel->sw2 = lastSw[2];
+        panel->sw3 = lastSw[3];
+        haveWritten = 1;
+    }
 
     // With the power off, pdp1 stops advancing cyclecount, the lights need to be forced off.
     if( !(panel->sw0 & SW_POWER) )
@@ -618,14 +913,17 @@ updatepanel(void)
             lights[i].state = 0;
         }
 
+        for(i = 0; i < nelem(iolights); i++)
+        {
+            iolights[i].state = 0;
+        }
+
         // Counts accumulated before pdp1 saw the switch go off are dropped.
         memcpy(lastcount, panel->pwmcount, sizeof(lastcount));
         lastcyclecount = panel->cyclecount;
         return;
     }
 
-	// Lights7-lights9, the I/O panel, are never read
-	// here -- vpanel_pdp1 doesn't display it.
 	currentcyclecount = panel->cyclecount;
 	expectedcycles = currentcyclecount - lastcyclecount;
 	if(expectedcycles != 0)
@@ -665,29 +963,134 @@ updatepanel(void)
 		setnlights(w6, ir_l, 5, 0400000);
 		setnlights(w6, ss_l, 6, 0004000);
 		setnlights(w6, pf_l, 6, 0000040);
+
+        // Rows 7-9, the I/O panel, only when it is shown.
+        // Otherwise they are not read, lastcount[][] for them is never used.
+        if( showIo )
+        {
+            int iow[3];
+            unsigned i;
+
+            iow[0] = computeLightWord(panel, 7, expectedcycles);
+            iow[1] = computeLightWord(panel, 8, expectedcycles);
+            iow[2] = computeLightWord(panel, 9, expectedcycles);
+
+            for(i = 0; i < nelem(iolights); i++)
+            {
+                iolights[i].state = !!(iow[iolamps[i].row - 7] & iolamps[i].mask);
+            }
+        }
 	}
 }
 
 
 
-// Entry point. Initializes the SDL/SDL_image and the fixed 800x448 window,
+// Get our settings from the common config file, /opt/pidp1-mods/pidp1.config
+void
+loadConfig(void)
+{
+ConfigurationP confP;
+ConfigurationSettingP settingP;
+
+    if( !(confP = loadConfigFile(CONFIG_FILE)) )
+    {
+        return;         // no config file found
+    }
+
+    if( (settingP = findConfigurationSetting(confP, "vpanelscale")) )
+    {
+        scale = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;
+    }
+
+    if( (settingP = findConfigurationSetting(confP, "vpaneliopanel")) )
+    {
+        showIo = settingP->onOff;
+    }
+}
+
+void
+usage(void)
+{
+    printf("Usage: vpanel_pdp1 [-s scale] [-i] [-n]\n");
+    printf("-s scale, window size multiplier, %.1f to %.1f, for example 1.5\n", MIN_SCALE, MAX_SCALE);
+    printf("-i, show the rack top (I/O) panel\n");
+    printf("-n, don't show the rack top (I/O) panel\n");
+    printf("While the hardware panel's driver runs, the switches mirror the hardware panel's.\n");
+    exit(1);
+}
+
+// Entry point. Initializes the SDL/SDL_image and the window,
 // loads and positions every panel Element, attaches the shared
 // Panel segment, then runs the display loop forever.
+//
+// Everything is laid out and drawn in logical pixels, the console art's 800 wide.
+// SDL_RenderSetLogicalSize() scales that to the window, and scales mouse event
+// coordinates back, so hit-testing needs no change for the scale factor.
+// The window is resizable, the panel keeps its shape inside it.
 int
-main()
+main(int argc, char *argv[])
 {
 	SDL_Event ev;
+    int opt;
+    Uint32 lastCheck = 0;
+    int logicalH;
+
+    loadConfig();           // command line switches override the config file
+
+    while( (opt = getopt(argc, argv, "s:in")) != -1 )
+    {
+        switch( opt )
+        {
+        case 's':
+            scale = atof(optarg);
+            break;
+
+        case 'i':
+            showIo = 1;
+            break;
+
+        case 'n':
+            showIo = 0;
+            break;
+
+        default:
+            usage();
+            break;
+        }
+    }
+
+    if( optind < argc )
+    {
+        usage();
+    }
+
+    if( !(scale >= MIN_SCALE) )     // also catches nan
+    {
+        scale = MIN_SCALE;
+    }
+    if( scale > MAX_SCALE )
+    {
+        scale = MAX_SCALE;
+    }
+
+    logicalH = CONSOLE_H + (showIo?IO_H:0);
 
 	SDL_Init(SDL_INIT_EVERYTHING);
 	IMG_Init(IMG_INIT_PNG);
 
-	if(SDL_CreateWindowAndRenderer(800, 448, 0, &window, &renderer) < 0)
+    // Smooth scaling for any scale other than 1, this must be set before the textures are made.
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+
+	if(SDL_CreateWindowAndRenderer((int)lroundf(CONSOLE_W * scale), (int)lroundf(logicalH * scale),
+                                   SDL_WINDOW_RESIZABLE, &window, &renderer) < 0)
 		panic("error: SDL_CreateWindowAndRenderer() failed: %s", SDL_GetError());
 	SDL_SetWindowTitle(window, "PDP-1 console");
+    SDL_RenderSetLogicalSize(renderer, CONSOLE_W, logicalH);
 
 	init();
 
 	initpanel();
+    checkMode();
 
 	for(;;)
     {
@@ -700,6 +1103,9 @@ main()
 				break;
 			case SDL_MOUSEBUTTONDOWN:
 				buttonstate |= 1<<(ev.button.button-1);
+                // Look for the hardware panel driver before each press, not only every HWCHECK_MS.
+                // When the driver runs, checkMode() starts mirroring and mouse() ignores the click.
+                checkMode();
 				mouse(ev.button.x, ev.button.y);
 				break;
 			case SDL_MOUSEBUTTONUP:
@@ -722,6 +1128,13 @@ main()
         // updatepanel() runs every pass even when nothing is drawn: it reads
         // pwmcount[][], and a skipped read would put the skipped time into the
         // next window's duty.
+        // Look for the hardware panel's driver now and then, it can start or stop at any time.
+        if( (SDL_GetTicks() - lastCheck) >= HWCHECK_MS )
+        {
+            checkMode();
+            lastCheck = SDL_GetTicks();
+        }
+
 		updatepanel();
 
         // An unchanged frame is not drawn: when exposed, every presented frame

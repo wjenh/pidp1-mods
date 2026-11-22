@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.17\
-Edit date 15-Nov-2026\
-Relabel the pidp1 emulator buttons
+This is version 1.18\
+Edit date 22-Nov-2026\
+The Drums tab's Pick sets drumfile in pidp1.config
 
 ## What is pdp1central?
 
@@ -325,25 +325,38 @@ The drum images in /opt/pidp1-mods/Drums, then what its index.txt lists (see Lib
 and beside them what the chosen image holds, as drumlist lists it: Adventure, a Z-machine story,
 drumupdater's tracks, file system volumes, or overlays.
 
-- Pick puts the chosen image on the drum:
-  1. The drum as it is now is copied to /opt/pidp1-mods/pdp23drum.bak, replacing the last one.
-  2. The tab asks whether to save the current drum to the library first:
-     Save as... opens Save drum's dialog and picks once the drum is saved;
-     Don't save picks at once; Cancel picks nothing, leaving pdp23drum.bak as made.
-  3. The image is copied onto /opt/pidp1-mods/pdp23drum.
-     The emulator reads the new drum in at its next drum transfer, whether it is running or
-     halted.
-     An image shorter than a whole drum is fine; the rest of the drum reads as 0.
+- Pick makes the chosen image the drum by setting drumfile in pidp1.config (UsingType23Drum.md,
+  "The drum file").
+  The drum IOT copies the image into /opt/pidp1-mods/pdp23drum, runs using pdp23drum, and copies
+  pdp23drum back over the image at each stop, power off and exit, and before another image is
+  copied in.
+  - When drumfile already names an image, Pick sets the new one at once in the configuration file.
+    The drum IOT will then handle the update itself.
+  - With no drumfile, pdp23drum is the drum itself and nothing would be copied back, so first:
+    1. The drum as it is now is copied to /opt/pidp1-mods/pdp23drum.bak, replacing the last one.
+    2. The tab asks whether to save the current drum to the library first:
+       Save as... opens Save drum's dialog and picks once the drum is saved;
+       Don't save picks at once; Cancel picks nothing, leaving pdp23drum.bak as made.
+  - With pidp1 running, Pick then reloads the configuration, and the drum IOT copies the image.
+    With pidp1 stopped, the image is copied in when it next starts.
+  - Pick is refused while the Settings tab has unsaved changes, since it saves pidp1.config, and
+    for a path longer than 63 characters or holding a space, which pidp1.config cannot hold.
+  - An image shorter than a whole drum is fine; the rest of the drum reads as 0.
 - Save drum... opens a file dialog in Drums and copies the drum to the chosen file.
   A name with no extension gets .drm.
   A file saved outside Drums also gets an index.txt line, so it is listed.
 
-With no drum file yet, Pick puts the image there without asking, and Save drum has nothing to
-save.
+The tab's last notes name the current drumfile, or say there is none.
 
-**IMPORTANT!** While pidp1 is running, the tab warns that a program writing the drum during a
-Pick or Save drum can leave a mix of old and new words.
-The drum writes its file a few seconds behind the program, so halt the program first to be sure.
+**IMPORTANT!** The image picked is the drum from then on: what a program writes to the drum is
+copied back into that image at the next stop.
+To keep an image as it is, Save drum... it to a new name and pick that.
+
+With no drum file yet, Pick sets drumfile without asking, and Save drum has nothing to save.
+
+While pidp1 is running, the tab warns that a program writing the drum during a Save drum can
+leave a mix of old and new words in the saved file.
+The drum writes pdp23drum a few seconds behind the program, so halt the program first to be sure.
 
 Fast load with overlays writes its tracks onto the drum: a Pick afterwards replaces them, and a
 fast load after a Pick writes over part of the image.

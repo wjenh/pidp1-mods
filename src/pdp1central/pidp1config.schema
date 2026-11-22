@@ -90,6 +90,9 @@ plottersbs|Devices|int|0..15|0|Plotter|reload||The sbs channel the plotter uses,
 plottercks|Devices|int|0..17|7|Plotter|reload||The cks bit the plotter uses, 0-17
 plotterorigin|Devices|int|0..7|0|Plotter|reload||The steps from the paper left edge where the pen starts
 
+# Drum features
+drumfile|Devices|text||/opt/pidp1-mods/pdp23drum|Drum|reload||The drum image copied onto pdp23drum and back; none means pdp23drum itself
+
 # Hardware panel features
 panelbrightness|Panel|int|0..100|100|newpanel|panel-sticky||The brightness cap of the hardware panel's lamps
 panelonalpha|Panel|float|0.0..1.0|0.45|newpanel|panel-sticky||The lamps' turn-on rate

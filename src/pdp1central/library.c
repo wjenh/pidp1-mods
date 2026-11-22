@@ -1,8 +1,8 @@
 // A library of microtape or drum images: the library folder's images and subfolders, then
 // the lines of its index.txt, each a file or a folder.
-// A relative line is taken from the library folder, as mtp takes a relative tape name from Microtapes/.
+// A relative line is taken from the library folder, as mtp takes a relative tape name from Microtapes.
 // A folder shows its images, the files with the library's extension, and its subfolders.
-// A folder the front end has opened shows its/ own entries under it, and also
+// A folder the front end has opened shows its own entries under it, and also
 // the file copy the Drums tab picks and saves with, and a short program run whose output is kept for drumlist.
 // index.txt is rewritten only by libAdd and libDelete, through a temporary file and a rename,
 // keeping every other line as it was.
@@ -58,7 +58,8 @@ static bool rewriteIndex(Library *libP, const IndexLines *linesP);
 static bool writeAll(int fd, const char *bufP, size_t len);
 static int compareItems(const void *aP, const void *bP);
 
-// Set a library up on folder dirP, whose images end in extP (with its dot). Nothing is read yet.
+// Set a library up on folder dirP, whose images end in extP (with its dot).
+// Nothing is read yet.
 // Returns false if out of memory.
 bool
 libInit(Library *libP, const char *dirP, const char *extP)
@@ -75,7 +76,8 @@ libInit(Library *libP, const char *dirP, const char *extP)
 }
 
 // List the library again: the folder's own entries, then index.txt's lines, with the folders in
-// openP (full paths) opened. A folder that cannot be read lists nothing.
+// openP (full paths) opened.
+// A folder that cannot be read lists nothing.
 // Returns false, with libP->error set, if index.txt exists and could not be read; the folder's
 // own entries are still listed.
 bool
@@ -125,7 +127,7 @@ bool shown;
             continue;
         }
 
-        kind = (stat(path, &st) ? LIB_MISSING : (S_ISDIR(st.st_mode) ? LIB_FOLDER : LIB_IMAGE));
+        kind = (stat(path, &st)?LIB_MISSING:(S_ISDIR(st.st_mode)?LIB_FOLDER:LIB_IMAGE));
         if( !addEntry(libP, path, text, kind, 0, i, 0) )
         {
             break;
@@ -208,7 +210,8 @@ bool ok;
 }
 
 // Remove line (counted from 0) from index.txt, if it still names pathP (a full path, as an entry
-// has it) as it did when shown. No file it names is touched.
+// has it) as it did when shown.
+// No file it names is touched.
 // Returns false, with libP->errorText set, if the line changed or the file cannot be written.
 bool
 libDelete(Library *libP, int line, const char *pathP)
@@ -247,7 +250,8 @@ bool ok;
     return(ok);
 }
 
-// Free what libLoad and libInit allocated. No return value.
+// Free what libLoad and libInit allocated.
+// No return value.
 void
 libFree(Library *libP)
 {
@@ -260,8 +264,9 @@ libFree(Library *libP)
 }
 
 // The absolute path inP with its . and .. components taken out, into outP (PATH_MAX bytes),
-// lexically as mtp does: a .. takes off the component before it, and stops at /. Lexically, not
-// with realpath, so it works for a tape that does not exist yet. No return value.
+// lexically as mtp does: a .. takes off the component before it, and stops at / lexically, not
+// with realpath, so it works for a tape that does not exist yet.
+// No return value.
 void
 pathCollapse(const char *inP, char *outP)
 {
@@ -332,8 +337,8 @@ int in, out;
 bool ok;
 
     slashP = strrchr(toP, '/');
-    if( snprintf(tmp, sizeof(tmp), "%.*s.%s.XXXXXX", (int)(slashP ? ((slashP - toP) + 1) : 0), toP,
-        (slashP ? (slashP + 1) : toP)) >= (int)sizeof(tmp) )
+    if( snprintf(tmp, sizeof(tmp), "%.*s.%s.XXXXXX", (int)(slashP?((slashP - toP) + 1):0), toP,
+        (slashP?(slashP + 1):toP)) >= (int)sizeof(tmp) )
     {
         snprintf(errorP, errorLen, "%s: the path is too long", toP);
         return(false);
@@ -396,8 +401,9 @@ bool ok;
 }
 
 // Run argvP[0] with its arguments and wait for it, at most timeoutMs, keeping what it prints on
-// standard output and error in outP (outLen bytes, cut there). Waits, so it is only for a
-// program that answers at once, as drumlist does reading one file; one that runs over is killed.
+// standard output and error in outP (outLen bytes, cut there).
+// Waits, so it is only for a program that responds at once drumlist does reading one file.
+// One that runs over is killed.
 // Returns its exit status, or -1 if it could not be run or was killed.
 int
 runCapture(char *const argvP[], char *outP, size_t outLen, int timeoutMs)
@@ -445,7 +451,7 @@ int status, waited, ready;
     {
         clock_gettime(CLOCK_MONOTONIC, &now);
         waited = (int)(((now.tv_sec - start.tv_sec) * 1000) + ((now.tv_nsec - start.tv_nsec) / 1000000));
-        ready = ((waited < timeoutMs) ? poll(&pfd, 1, (timeoutMs - waited)) : 0);
+        ready = ((waited < timeoutMs)?poll(&pfd, 1, (timeoutMs - waited)):0);
         if( ready == 0 )
         {
             kill(pid, SIGKILL);
@@ -485,10 +491,11 @@ int status, waited, ready;
         return(-1);
     }
 
-    return( WIFEXITED(status) ? WEXITSTATUS(status) : -1 );
+    return( WIFEXITED(status)?WEXITSTATUS(status):-1 );
 }
 
-// Free the entries' strings, leaving the array for reuse. No return value.
+// Free the entries' strings, leaving the array for reuse.
+// No return value.
 static void
 libClear(Library *libP)
 {
@@ -540,8 +547,10 @@ LibEntry *entryP;
 }
 
 // List the folder dirP's subfolders, then its images, each in name order, at depth; a subfolder
-// in openP has its own entries listed under it. Names starting with a dot are left out, and past
-// LIB_FOLDER_MAX entries one LIB_MORE entry counts the rest. No return value.
+// in openP has its own entries listed under it.
+// Names starting with a dot are left out, and past
+// LIB_FOLDER_MAX entries one LIB_MORE entry counts the rest.
+// No return value.
 static void
 listFolder(Library *libP, const char *dirP, int depth, char *const openP[], int openCount)
 {
@@ -610,8 +619,8 @@ int count, cap, i;
 
         // dirP is a full path already, and a name holds no slash, so this needs no pathCollapse.
         snprintf(path, sizeof(path), "%s/%s", dirP, itemsP[i].nameP);
-        snprintf(text, sizeof(text), "%s%s", itemsP[i].nameP, (itemsP[i].folder ? "/" : ""));
-        if( !addEntry(libP, path, text, (itemsP[i].folder ? LIB_FOLDER : LIB_IMAGE), depth, -1, 0) )
+        snprintf(text, sizeof(text), "%s%s", itemsP[i].nameP, (itemsP[i].folder?"/":""));
+        if( !addEntry(libP, path, text, (itemsP[i].folder?LIB_FOLDER:LIB_IMAGE), depth, -1, 0) )
         {
             break;
         }
@@ -645,7 +654,8 @@ int i;
     return(false);
 }
 
-// Read index.txt's lines into linesP. A missing file has no lines.
+// Read index.txt's lines into linesP.
+// A missing file has no lines.
 // Returns false, with *errorP set to errno, if it exists and could not be read.
 static bool
 readIndex(const char *pathP, IndexLines *linesP, int *errorP)
@@ -661,14 +671,14 @@ FILE *fP;
     *errorP = 0;
     if( !(fP = fopen(pathP, "r")) )
     {
-        *errorP = ((errno == ENOENT) ? 0 : errno);
+        *errorP = ((errno == ENOENT)?0:errno);
         return(*errorP == 0);
     }
 
     len = fread(buf, 1, INDEX_MAX_BYTES, fP);
     if( ferror(fP) )
     {
-        *errorP = (errno ? errno : EIO);
+        *errorP = (errno?errno:EIO);
         fclose(fP);
         return(false);
     }
@@ -694,20 +704,21 @@ FILE *fP;
             cap += 64;
         }
 
-        if( !(linesP->linesP[linesP->count] = strndup(cP, (size_t)((nlP ? nlP : endP) - cP))) )
+        if( !(linesP->linesP[linesP->count] = strndup(cP, (size_t)((nlP?nlP:endP) - cP))) )
         {
             *errorP = ENOMEM;
             freeIndex(linesP);
             return(false);
         }
         linesP->count++;
-        cP = (nlP ? (nlP + 1) : endP);
+        cP = (nlP?(nlP + 1):endP);
     }
 
     return(true);
 }
 
-// Free what readIndex allocated. No return value.
+// Free what readIndex allocated.
+// No return value.
 static void
 freeIndex(IndexLines *linesP)
 {
@@ -757,7 +768,7 @@ resolve(const Library *libP, const char *textP, char *outP)
 {
 char joined[PATH_MAX];
 
-    if( snprintf(joined, sizeof(joined), "%s%s%s", ((textP[0] == '/') ? "" : libP->dirP), ((textP[0] == '/') ? "" : "/"),
+    if( snprintf(joined, sizeof(joined), "%s%s%s", ((textP[0] == '/')?"":libP->dirP), ((textP[0] == '/')?"":"/"),
         textP) >= (int)sizeof(joined) )
     {
         return(false);
@@ -856,7 +867,7 @@ const FolderItem *itemBP = bP;
 
     if( itemAP->folder != itemBP->folder )
     {
-        return( itemAP->folder ? -1 : 1 );
+        return( itemAP->folder?-1:1 );
     }
 
     return(strcmp(itemAP->nameP, itemBP->nameP));

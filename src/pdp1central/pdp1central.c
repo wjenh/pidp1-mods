@@ -39,7 +39,9 @@
 // 07-Nov-2026 wje (Claude) - the "Also launch:" row: t30dpy and Soroban, the typewriter terminal,
 //     started by pdp1control.sh; the Companions row's Typewriter is now Soroban.
 // 09-Nov-2026 wje - add choice to the schema, clean out unused items, add missing ones.
-// 15-Nov-2025 wje - rename the pdp1 emulator start and stop buttons to 'Laumch' and 'Terminate'.
+// 15-Nov-2026 wje - rename the pdp1 emulator start and stop buttons to 'Launch' and 'Terminate'.
+// 22-Nov-2026 wje (Claude) - the Drums tab's Pick sets pidp1.config's drumfile, which the drum
+//     plugin copies in, instead of copying the image onto pdp23drum.
 
 #include <errno.h>
 #include <limits.h>
@@ -1470,36 +1472,122 @@ size_t len;
     }
 }
 
-// Put drumPickPath on the drum: copied onto pdp23drum through a rename, which the drum plugin
-// watches for, so the emulator reads the whole new drum in at its next transfer.
+// Whether pidp1.config can take the drumfile line: it is written through the Settings tab's
+// writer, so not over unsaved edits there, and the file is read again if it changed on disk.
+// Returns false, with the reason shown, if it cannot.
+static bool
+drumConfigReady(void)
+{
+    if( countChanges().total > 0 )
+    {
+        appError("drum not picked: the Settings tab has unsaved changes; save or revert them first");
+        return(false);
+    }
+
+    if( diskConflict || confChangedOnDisk(diskCfP) )
+    {
+        loadConfig();       // no unsaved edits, so nothing is dropped
+    }
+
+    return(true);
+}
+
+// The image pidp1.config's drumfile names, into bufP (CONF_MAX_VALUE + 1 bytes).
+// Returns NULL when pdp23drum is the drum itself: no drumfile line, an empty one, or one that
+// names pdp23drum, which the drum plugin takes as no drumfile.
+static const char *
+currentDrumFile(char *bufP)
+{
+struct stat fileSt, drumSt;
+
+    if( !getValue(diskCfP, "drumfile", bufP) || !bufP[0] || !strcmp(bufP, drumPath) )
+    {
+        return(NULL);
+    }
+
+    if( !stat(bufP, &fileSt) && !stat(drumPath, &drumSt) && (fileSt.st_dev == drumSt.st_dev) &&
+        (fileSt.st_ino == drumSt.st_ino) )
+    {
+        return(NULL);
+    }
+
+    return(bufP);
+}
+
+// Put drumPickPath on the drum: pidp1.config's drumfile is set to it, and the drum plugin copies
+// it over pdp23drum, after copying the drum back to the image drumfile named before. With pidp1
+// running, a reload makes the plugin take the new name now, or at the next dcl if a transfer
+// is under way; with pidp1 stopped, it is copied in at the next start.
 static void
 putDrum(void)
 {
-char error[512];
-
-    if( !fileCopy(drumPickPath, drumPath, error, sizeof(error)) )
+    if( !drumConfigReady() )
     {
-        appError("drum not picked: %s", error);
         return;
     }
 
-    appLog("the drum now holds %s; the emulator reads it in at its next drum transfer", drumPickPath);
+    if( !confSet(editCfP, "drumfile", drumPickPath) || !confSave(editCfP) )
+    {
+        appError("drum not picked: %s", editCfP->errorText);
+        confFree(editCfP);
+        editCfP = confCopy(diskCfP);
+        refreshOtherNames();
+        return;
+    }
+
+    confFree(diskCfP);
+    diskCfP = confCopy(editCfP);
+    diskConflict = false;
+    appLog("saved %s: drumfile=%s", configPath, drumPickPath);
     if( pdp1Count > 0 )
     {
-        appLog("pidp1 is running: a program writing the drum just then can leave a mix of the two drums");
+        appLog("reloading: the drum plugin copies it onto pdp23drum");
+        queueScript("reload");
+    }
+    else
+    {
+        appLog("pidp1 copies it onto pdp23drum when it next starts");
     }
 }
 
-// Pick: keep the drum as it is in pdp23drum.bak (owner, D1), then ask whether to save it to the
-// library first. With no drum file yet there is nothing to keep, and the image goes on at once.
+// Pick: set drumfile to the image. When drumfile already names an image, the drum plugin copies
+// the drum back to it first, so the pick is made at once. When pdp23drum is the drum itself,
+// nothing would be copied back: keep the drum in pdp23drum.bak (owner, D1), then ask whether to
+// save it to the library first. With no drum file yet there is nothing to keep.
 static void
 pickDrum(const char *pathP)
 {
 char error[512];
+char current[CONF_MAX_VALUE + 1];
+const char *currentP;
+
+    // configuration.c reads a value with %63s, so a longer name or a space would be cut short.
+    if( (strlen(pathP) > CONF_MAX_VALUE) || strpbrk(pathP, " \t") )
+    {
+        appError("drum not picked: pidp1.config's drumfile takes a path of up to %d characters with no "
+            "space; move or rename %s", CONF_MAX_VALUE, pathP);
+        return;
+    }
+
+    if( !drumConfigReady() )
+    {
+        return;
+    }
 
     snprintf(drumPickPath, sizeof(drumPickPath), "%s", pathP);
-    if( access(drumPath, F_OK) )
+    currentP = currentDrumFile(current);
+    if( currentP && !strcmp(currentP, pathP) )
     {
+        appLog("drumfile already names %s; nothing to pick", pathP);
+        return;
+    }
+
+    if( currentP || access(drumPath, F_OK) )
+    {
+        if( currentP )
+        {
+            appLog("the drum goes back to %s before %s is copied in", currentP, pathP);
+        }
         putDrum();
         return;
     }
@@ -3655,15 +3743,17 @@ const LibEntry *entryP;
 }
 
 // The Drums tab: Drums/ and its index.txt, what the chosen image holds, and Pick and Save drum.
-// Pick keeps the drum in pdp23drum.bak, then asks whether to save it first (owner, D1).
+// Pick sets drumfile; with no drumfile it first keeps the drum in pdp23drum.bak and asks whether
+// to save it (owner, D1).
 static void
 drawDrums(struct nk_context *ctxP, float height)
 {
 static const float splitRatios[] = { 0.62f, 0.38f };
 static const float askRatios[] = { 0.55f, 0.15f, 0.15f, 0.15f };
 static const float holdsRatios[] = { 0.99f };
+char current[CONF_MAX_VALUE + 1];
 const LibEntry *entryP;
-const char *lineP, *nlP;
+const char *lineP, *nlP, *currentP;
 float listH;
 bool idle, canAct, haveDrum;
 int rows;
@@ -3748,7 +3838,7 @@ int rows;
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
     if( pdp1Count > 0 )
     {
-        nk_label_colored(ctxP, "pidp1 is running: a program writing the drum during Pick or Save drum can "
+        nk_label_colored(ctxP, "pidp1 is running: a program writing the drum during Save drum can "
             "corrupt the save.", NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
     }
     else
@@ -3757,8 +3847,14 @@ int rows;
             "Save drum has nothing to save."),
             NK_TEXT_LEFT);
     }
-    nk_label(ctxP, "Pick creates a copy of the current drum in pdp23drum.bak.",
-        NK_TEXT_LEFT);
+    if( (currentP = currentDrumFile(current)) )
+    {
+        nk_labelf(ctxP, NK_TEXT_LEFT, "The drum image: drumfile=%s, copied back to it at a stop.", currentP);
+    }
+    else
+    {
+        nk_label(ctxP, "No drumfile: pdp23drum is the drum, and Pick keeps it in pdp23drum.bak.", NK_TEXT_LEFT);
+    }
     nk_label(ctxP, "Fast load with overlays writes its tracks onto the drum: Pick first, then load.", NK_TEXT_LEFT);
 }
 

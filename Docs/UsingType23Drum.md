@@ -5,8 +5,8 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-Updated 24-Oct-2026\
-minor corrections
+Updated 22-Nov-2026\
+Updated for the config file alternate drum file
 
 ## What is the Type 23 Parallel Drum?
 
@@ -210,30 +210,44 @@ A write during a power off leaves on the drum the words that were already transf
 
 ## The drum file
 
-The drum's contents live in the file */opt/pidp1-mods/pdp23drum*.
-The drum reads the whole file into memory the first time it is used and transfers use that copy.
+By default, the drum's contents live in the file */opt/pidp1-mods/pdp23drum*.
+However, this can be overridden by the *drumfile* setting in the pidp1.config file.
+Note that this copies the file over pdp23drum, then when the drum file is closed, pdp23drum
+is copied back over the file.
+Thus, pdp23drum becomes the working copy and the alternate file is not updated until the emulator
+halts.
+
+The rules are:
+
+Copy in -\
+At the first start or when a config reload names a new file, that file is copied over pdp23drum in place.
+A transfer under way finishes first, and the new file is copied in at the next dcl.
+Before a new file is copied in, pdp23drum is first copied back to the previous one.
+
+Copy back -\
+This happens at each halt, power off, and before another file is copied in.
+It copies only when pdp23drum has changed since the last copy in or out.
+The copy goes to name.tmp and is renamed over the file so a failed copy never leaves a half-written image.
+
+You can also change *pdp23drum* from outside the emulator while the PDP-1 runs just by manually copying a file over
+pdp23drum but of course that file will not be automatically updated later.
+
+The drum reads the entire file into memory the first time it is used and transfers use that copy.
 A separate thread copies the words a transfer writes to the file, so a slow disk such as an SD card
 never holds up the PDP-1.
-Anything still waiting to be written when the emulator exits is written first.
 
-You can change *pdp23drum* from outside the emulator while the PDP-1 runs.
-As examples, another program can write it like ZMachine's *zloader* does
-or you can copy a saved drum over it, or rename another file onto its name.
+Anything still waiting to be written when the emulator exits or the drum file is changed is written first.
 
-The drum reads the file in again at the first transfer after the other program closes it.
-A transfer made while the other program is still writing gets the drum as it was before, whole.
+The drum reads the file in again at the next transfer.
 A change the drum reads in is reported on the emulator's standard error.
 
-You should make any change while no program is using the drum.
+You should make any manual copying over pdp23drum while no program is using the drum.
 A transfer that writes while the change is being made may overwrite part of it, and the words the
 drum wrote just before can still be on their way to the file, up to a few seconds on a busy SD card.
 Changing the file while the PDP-1 is halted also works, the drum reads it in at the first
 transfer after the halt.
 
-A write to the file that fails is reported on the emulator's standard error, once until a write
-succeeds again.
-The transfer has finished by then, as it would have on the real drum, so *dra* does not
-report it.
+If the drum file can't be opened, the *dra* IOT will return a transfer incomplete error code.
 
 ## An example
 

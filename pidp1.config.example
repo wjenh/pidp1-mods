@@ -69,6 +69,14 @@ muldiv=on
 # This is the 16 channel break system.
 sbs16=off
 
+# By default, the Type 23 drum image file is /opt/pidp1-mods/pdp23drum but it can be overridden by
+# the drumfile entry.
+# This can be changed on the fly, a reload will pick up the new value.
+# If an alternate file is given, it is copied to pdp23drum then pdp23drum is copied back
+# when the drum is stopped.
+# If a relative path is used, it is relative to the directory the emulator is running in.
+# drumfile=/tmp/my.drum
+
 # sdb and dpyshift can conflict.
 # sdb is an extended version of dpy used by the Type 33 Symbol Generator.
 # dpyshift is an extended version of dpy that allows origin-shifting, implemented by sonme PDP-1's.

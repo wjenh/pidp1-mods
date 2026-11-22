@@ -2,9 +2,9 @@
 
 This document describes /opt/pidp1-mods/pidp1.config and how to use it.
 
-This is version 1.6; it will be updated as needed.\
-Edit date 7-Nov-2026\
-Default throttleburst changed to 10 usec
+This is version 1.7; it will be updated as needed.\
+Edit date 22-Nov-2026\
+Add drumfile setting
 
 ## What is the configuration file?
 
@@ -23,7 +23,7 @@ Anything else is a string option, the string following the *=* is its value.
 
 Most options are built-in but new ones can be added for use in IOTs.\
 If an option that is not built in is seen, it is added to a list of extra options that
-can be accessed via functions in the .../src/pdp1/configuration.c library.
+can be accessed via functions in the .../src/blincolnlights/pdp1/configuration.c library.
 An example can be found in the source code for the IOT_45 line printers.
 
 - If it is a boolean setting, the onOff field in the extra option is set.
@@ -51,17 +51,20 @@ Read it before changing a setting.
 
 ### When a change takes effect
 
-Every setting is read when the emulator starts, and most are read again when the file is
-reloaded: pdp1control reload sends the emulator a SIGHUP, and pdp1central's Save does the same.
-The emulator then re-reads its settings, including the throttle and audio ones, and each loaded
-plugin that has an update function re-reads its own. The exceptions:
-- sdb, dpyshift, twoscreens and lightpen, and aperture for the Type 30, are read by their plugins
+Every setting is read when the emulator starts and most are read again when the file is
+reloaded.
+Pdp1control reload sends the emulator a SIGHUP, and pdp1central's Save or Reload does the same.
+The emulator then re-reads its settings and each loaded
+IOT that has an update function re-reads its own settings.
+The exceptions:
+- sdb, dpyshift, twoscreens and lightpen, and aperture for the Type 30, are read by their IOTs
   each time the machine goes to run (START or CONTINUE), so a change applies at the first run
   after the reload.
 - ad1port, ad1remoteport, fasttyo, lptType64, lptLineSpacing, lptLines and lptNoFF are read
-  once, so a change needs the emulator restarted. So does displaytiming, for the Type 30's
-  timing; the Type 340's follows a reload.
-- The panel settings are read by the hardware panel driver, which pdp1control reloadpanel
+  once, so a change needs the emulator restarted, as does displaytiming for the Type 30's
+  timing.
+  The Type 340's follows a reload.
+- The panel settings are read by the hardware panel driver which pdp1control reloadpanel
   reloads; panelrealtime applies only when the driver starts.
 - guilightpen applies when pdp1_periph starts.
 -  aperture, two340charsets, pidp1timing and the panel settings keep their old
@@ -103,7 +106,7 @@ plugin that has an update function re-reads its own. The exceptions:
 | twoscreens | IOT_7 | Dual Type 30 screens, untested |
 | lightpen | IOT_7, IOT_27 | Lightpen support on the Type 30 and the Type 33 |
 | aperture | pdp1, IOT_7 | The lightpen's aperture, for the Type 340 and the Type 30 |
-| two340charsets | Type 340 plugin | Lower-shift characters from a second character set |
+| two340charsets | Type 340 IOT | Lower-shift characters from a second character set |
 | guilightpen | pdp1_periph | The lightpen in the unified control gui |
 | type30lightpen | p7sim | The lightpen in the standalone Type 30 display |
 | type30size | p7sim | The standalone Type 30 display's size |
@@ -128,15 +131,16 @@ Read Docs/UsingAudio.md before changing these.
 | Setting | Reader | What it does |
 |---|---|---|
 | fasttyo | IOT_3 | Typewriter output at 200 characters a second instead of 10 |
-| lptType64 | IOT_45 | A Type 64 line printer instead of a Type 62 |
+| lptType64 | Printer IOT | A Type 64 line printer instead of a Type 62 |
 | lptLineSpacing | IOT_45 | Lines advanced for each spacing setting |
-| lptLines | IOT_45 | Lines per page |
-| lptNoFF | IOT_45 | Newlines instead of a form feed character |
-| microtapesbs | Microtape plugin | The Type 550 microtape's sequence break channel; 2 by default |
+| lptLines | Printer IOT | Lines per page |
+| lptNoFF | Printer IOT | Newlines instead of a form feed character |
+| microtapesbs | Microtape IOT | The Type 550 microtape's sequence break channel; 2 by default |
+| drumfile | Drum IOT | The file to load into pdp23drum as the working image, none by default |
 
 ### The plotter
 
-Read Docs/UsingThePlotter.md before changing these. Each is read when the plugin loads and again
+Read Docs/UsingThePlotter.md before changing these. Each is read when the IOT loads and again
 at a reload.
 
 | Setting | Reader | What it does |
@@ -167,7 +171,7 @@ at a reload.
 | Setting | Reader | What it does |
 |---|---|---|
 | pidp1timing | pdp1 | Append the emulator's timing to /tmp/pidp1-timing.txt at each stop |
-| displaytiming | pdp1, Type 340 plugin | Append the display threads' timing to /tmp/pidp1-340timing.txt and /tmp/pidp1-dpytiming.txt |
+| displaytiming | pdp1, Type 340 IOT | Append the display threads' timing to /tmp/pidp1-340timing.txt and /tmp/pidp1-dpytiming.txt |
 
 ### No longer used
 

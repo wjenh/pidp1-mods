@@ -8,6 +8,10 @@
  * card or disk never holds the emulator thread. After any halt, and after another program closes
  * the file it wrote or renames a file over it, the file is looked at again, so a change made to
  * it is read in before the next transfer, with the machine running or not.
+ * The config file's drumfile setting names a drum image kept elsewhere. It is copied over pdp23drum
+ * at the first start, or when a config reload names it, and pdp23drum is copied back over it each
+ * time the drum file is closed: at a STOP or power off, at the emulator's exit, and before another
+ * file is copied in. An hlt instruction's halt does not close it.
  *
  * wje 20-Jun-2026 - cleanup, begin this revision history, wasn't initially included
  * wje 3-Jul-2026 - set TE error if a write fails
@@ -46,6 +50,7 @@
  *    A full track waits for its address like any other transfer.
  *    A dba break clears busy.
  * 22-Oct-2026 wje - replace stderr output with proper logging
+ * 22-Nov-2026 wje - allow the drum file to be changed via the config file
  */
 
 #include <errno.h>
@@ -61,11 +66,13 @@
 
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
+#include "configuration.h"
 #include "writeBehind.h"
 
 //#define DOLOGGING
 #include "iotLogger.h"
 #define LOG_START 0
+#define LOG_CONFIG 0
 #define LOG_IOT 0
 #define LOG_POLL 0
 #define LOG_HSC 0
@@ -75,7 +82,7 @@
 #define LOG_READ 0
 #define LOG_WRITE 0
 #define LOG_FILE_WATCH 0         // the drum file changed on disk, or cannot be resolved or watched
-#define LOG_WRITE_ERROR 1        // a failed write-back; LOG_WRITE is the write path's debug lines
+#define LOG_WRITE_ERROR 0        // a failed write-back; LOG_WRITE is the write path's debug lines
 
 // Flag for busy for the cks instruction.
 // DRP set is busy, cleared by operation completion, dia, or dba,
@@ -139,10 +146,18 @@ static bool teError;
 static bool started;                // iotStart() has run once
 static bool haltedWhileArmed;       // the machine halted while a transfer or a dba break waited
 static uint64_t haltEndTime;        // simtime of the last halted pass that saw it
-static bool powerCleared;           // a power clear came; the next iotIOPoll() clears busy in cks
+static bool powerCleared;           // a power clear came, the next iotIOPoll() clears busy in cks
 
 static HSCChannelP chanP;   // how we get data
 static HSCRequest request;
+
+// The drumfile setting.
+// pdp23drum holds a copy of savedFile and is copied back to it.
+// Both are empty for no setting and when pdp23drum is the drum and nothing is copied.
+static char savedFile[PATH_MAX];    // the file pdp23drum was last copied from
+static char wantedFile[PATH_MAX];   // the file the configuration names, switchDrum() makes it savedFile
+static struct stat syncedStamp;     // pdp23drum as the last copy in or out left it
+static bool synced;                 // syncedStamp is set
 
 static void readDrumToBuffer(Word *, int, int, int);
 static void writeBufferToDrum(Word *, int, int, int);
@@ -158,6 +173,13 @@ static int drumLoc(PDP1 *pdp1P);
 static int drumLocAt(uint64_t time);
 static void resumeAfterHalt(void);
 static int movedWords(void);
+static void configure(void);
+static void switchDrum(void);
+static void closeDrum(void);
+static bool saveDrum(void);
+static bool copyFile(const char *fromP, const char *toP);
+static bool sameFile(const char *aP, const char *bP);
+static void atExit(void) __attribute__((destructor));
 
 int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
@@ -240,10 +262,10 @@ uint64_t settleEnd;
         {
             // dra, return current drum 'counter' in the IO register, along with status
             IO(pdp1P) = drumLoc(pdp1P);
-            if( teError )
+            if( teError || (drumFd < 0))
             {
-                // Manual says we set bits 0 and 2: a transfer a halt cut short, or one the
-                // channel refused.
+                // Manual says we set bits 0 and 2: a transfer a halt cut short, one the
+                // channel refused, or now added, if there is no drum file.
                 IO(pdp1P) |= 0500000;
                 teError = false;
             }
@@ -400,11 +422,7 @@ iotStart()
         wbP = wbCreate(WBMAXBYTES);
     }
 
-    if( drumFd < 0 )
-    {
-        drumFd = open(DRUMFILE, O_RDWR + O_CREAT, 0666);
-        iotCondLog(LOG_START, "IOT 61 drumFd = %d\n", drumFd);
-    }
+    configure();
 
     // After the open, so the file exists for realpath().
     if( !watchTried )
@@ -434,25 +452,18 @@ iotStart()
     }
 }
 
-// The close waits in the queue behind the drum's pending writes.
+void
+iotUpdate(void)     // a config reload was given
+{
+    configure();
+}
+
+
 // The next start opens the file again, and the next transfer looks at it again.
 void
 iotStop()
 {
-    if( drumFd >= 0 )
-    {
-        if( wbP )
-        {
-            wbClose(wbP, drumFd);
-        }
-        else
-        {
-            close(drumFd);
-        }
-
-        drumFd = -1;
-    }
-
+    closeDrum();
     lookAtFile = true;
 
     iotCondLog(LOG_START, "IOT 61 stopped\n");
@@ -503,18 +514,9 @@ bool reopened;
 
         writeBufferToDrum(writeBuffer, drumWriteField, drumAddr, count);
 
-        if( reopened && (drumFd >= 0) )
+        if( reopened )
         {
-            if( wbP )
-            {
-                wbClose(wbP, drumFd);
-            }
-            else
-            {
-                close(drumFd);
-            }
-
-            drumFd = -1;
+            closeDrum();        // the STOP's copy back did not have these words
         }
     }
 
@@ -604,7 +606,7 @@ int count;
             requestPending = false;
             CKS(pdp1P) &= ~CKS_DRP;         // and not busy
             initiateBreak(sbsChan);
-            enablePolling(dbaPending ? 1 : 0);
+            enablePolling(dbaPending?1:0);
             iotCondLog(LOG_HSC, "HSCexcute returned %d, failed.\n", stat);
             return;
         }
@@ -654,7 +656,7 @@ int count;
         }
 
         initiateBreak(sbsChan);
-        enablePolling(dbaPending ? 1 : 0);
+        enablePolling(dbaPending?1:0);
         iotCondLog(LOG_POLL, "IOT 61 completed transfer.\n");
 
 #ifdef LOG_TOTALTIME
@@ -718,7 +720,7 @@ int wordCount;
 
     if( dbaPending && (haltEndTime >= breakTime) )
     {
-        breakTime = haltEndTime + ((uint64_t)((wordCount < 1) ? 1 : wordCount) * 8500ULL);
+        breakTime = haltEndTime + ((uint64_t)((wordCount < 1)?1:wordCount) * 8500ULL);
         iotCondLog(LOG_BREAK, "halt passed the dba address, break waits %d words\n", wordCount);
     }
 }
@@ -811,6 +813,7 @@ int drumRemainderCount = 0;
 }
 
 // Called by dcl before a transfer uses the drum's copy.
+// dcl has dropped any transfer, so a drum image the configuration changed is copied in here.
 // The first transfer reads the file in.
 // If another program closes the file it wrote or renames one over it, the file is read in again.
 // After a halt, the file is compared with what the load or our last write left.
@@ -822,6 +825,11 @@ int drumRemainderCount = 0;
 static void
 checkImage(void)
 {
+    if( strcmp(savedFile, wantedFile) != 0 )
+    {
+        switchDrum();
+    }
+
     readWatch();
     if( !imageLoaded )
     {
@@ -1055,7 +1063,7 @@ ssize_t n;
 
     if( drumFd < 0 )
     {
-        return;
+        return;     // a drum file couldn't be opened, nothing we can do
     }
 
     dataP = (const char *)&drumImage[(drumField * 4096) + drumAddr];
@@ -1099,7 +1107,8 @@ struct stat st;
     {
         if( !writeFailReported )
         {
-            iotCondLog(LOG_WRITE_ERROR, "drum: writing %s failed: %s; the file is out of date\n", DRUMFILE, strerror(errno));
+            iotCondLog(LOG_WRITE_ERROR, "drum: writing %s failed: %s; the file is out of date\n",
+                DRUMFILE, strerror(errno));
             writeFailReported = true;
         }
         return;
@@ -1117,4 +1126,291 @@ struct stat st;
         drumStamp = st;
     }
     pthread_mutex_unlock(&stampLock);
+}
+
+// Reads the drumfile setting from the pidp1.config file, at each start and at a config reload.
+// With no entry, or one naming pdp23drum itself, pdp23drum is the drum and nothing is copied.
+// A new name is copied in now if no transfer is under way, else at the next dcl: a transfer finishes
+// on the contents it started on, as its words were already taken from or are going to the drum's copy.
+// After a halt closed pdp23drum, it is opened again.
+// No return value.
+static void
+configure(void)
+{
+ConfigurationSettingP settingP;
+const char *nameP;
+
+    nameP = "";
+    settingP = findConfigurationSetting(getConfiguration(), "drumfile");
+    if( settingP && settingP->strvalueP && settingP->strvalueP[0] )
+    {
+        nameP = settingP->strvalueP;
+    }
+
+    if( nameP[0] && sameFile(nameP, DRUMFILE) )
+    {
+        nameP = "";                 // pdp23drum itself, under another name
+    }
+
+    if( strlen(nameP) >= sizeof(wantedFile) )
+    {
+        iotCondLog(LOG_CONFIG, "IOT 61, drum: drum file name too long, ignored.\n");
+        nameP = wantedFile;
+    }
+
+    if( strcmp(nameP, wantedFile) != 0 )
+    {
+        snprintf(wantedFile, sizeof(wantedFile), "%s", nameP);
+        iotCondLog(LOG_CONFIG, "IOT 61, drum: drum file set to '%s'.\n", wantedFile[0]?wantedFile:DRUMFILE);
+    }
+
+    if( drumFd < 0 )
+    {
+        drumFd = open(DRUMFILE, O_RDWR + O_CREAT, 0666);
+        iotCondLog(LOG_CONFIG, "IOT 61 drumFd = %d\n", drumFd);
+    }
+
+    if( (strcmp(savedFile, wantedFile) != 0) && !requestPending && !ioBusy )
+    {
+        switchDrum();
+    }
+}
+
+// Makes wantedFile the drum image, called only with no transfer under way.
+// pdp23drum is first copied back to the file it came from so the old image keeps the drum's writes.
+// The copy is in place so the drum's descriptor, a symlink at pdp23drum and the watch all stay good.
+// The next transfer reads the new contents in.
+// A file that cannot be read or an old image that cannot be copied back leaves the drum as it is,
+// otherwise the copy in would lose the drum's contents.
+// No return value.
+static void
+switchDrum(void)
+{
+    if( wantedFile[0] && (access(wantedFile, R_OK) != 0) )
+    {
+        iotCondLog(LOG_CONFIG, "IOT 61, drum: drum file '%s' can't be read (%s), the drum is unchanged.\n",
+            wantedFile, strerror(errno));
+        snprintf(wantedFile, sizeof(wantedFile), "%s", savedFile);  // not tried again at each dcl
+        return;
+    }
+
+    if( !saveDrum() )
+    {
+        iotCondLog(LOG_CONFIG, "IOT 61, drum: '%s' not copied in, %s could not be saved to '%s'.\n",
+            wantedFile, DRUMFILE, savedFile);
+        snprintf(wantedFile, sizeof(wantedFile), "%s", savedFile);
+        return;
+    }
+
+    if( wantedFile[0] )
+    {
+        if( !copyFile(wantedFile, DRUMFILE) )
+        {
+            iotCondLog(LOG_CONFIG, "IOT 61, drum: copying '%s' to %s failed (%s).\n",
+                wantedFile, DRUMFILE, strerror(errno));
+        }
+
+        // The copy's close raised an event for pdp23drum, which the load below makes moot.
+        readWatch();
+        synced = (stat(DRUMFILE, &syncedStamp) == 0);
+    }
+
+    snprintf(savedFile, sizeof(savedFile), "%s", wantedFile);
+    imageLoaded = false;
+    lookAtFile = false;
+    fileEvent = false;
+    iotCondLog(LOG_CONFIG, "IOT 61, drum: %s now holds '%s'\n", DRUMFILE, savedFile[0]?savedFile:DRUMFILE);
+}
+
+// Closes pdp23drum, at a STOP, a power off or the exit, and copies it back to the file it came from.
+// With nothing to copy back the close waits in the queue behind the drum's pending writes.
+// No return value.
+static void
+closeDrum(void)
+{
+    if( drumFd < 0 )
+    {
+        return;
+    }
+
+    if( savedFile[0] )
+    {
+        saveDrum();             // drains the queue
+        close(drumFd);
+    }
+    else if( wbP )
+    {
+        wbClose(wbP, drumFd);
+    }
+    else
+    {
+        close(drumFd);
+    }
+
+    drumFd = -1;
+}
+
+// At the emulator's exit, or an unload of the plugin.
+// An exit calls no iotStop(), so pdp23drum is copied back here, else the copy in at the next start
+// would put the file's older contents over the drum's writes since the last STOP.
+// writeBehind.c's own destructor may already have finished the queue; wbDrain() then returns at once.
+// No return value.
+static void
+atExit(void)
+{
+    if( savedFile[0] )
+    {
+        closeDrum();
+    }
+}
+
+// Copies pdp23drum back to savedFile, once the drum's queued writes are done.
+// Skipped if pdp23drum is as the last copy in or out left it: a STOP then costs a stat and not a copy
+// of the whole drum.
+// Returns true if savedFile holds pdp23drum, or there is no savedFile.
+static bool
+saveDrum(void)
+{
+struct stat st;
+
+    if( !savedFile[0] )
+    {
+        return(true);
+    }
+
+    if( wbP )
+    {
+        wbDrain(wbP);
+    }
+
+    if( synced && (stat(DRUMFILE, &st) == 0)
+        && (st.st_dev == syncedStamp.st_dev) && (st.st_ino == syncedStamp.st_ino)
+        && (st.st_size == syncedStamp.st_size)
+        && (st.st_mtim.tv_sec == syncedStamp.st_mtim.tv_sec) && (st.st_mtim.tv_nsec == syncedStamp.st_mtim.tv_nsec) )
+    {
+        return(true);
+    }
+
+    if( !copyFile(DRUMFILE, savedFile) )
+    {
+        iotCondLog(LOG_WRITE_ERROR, "drum: copying %s back to '%s' failed (%s)\n",
+            DRUMFILE, savedFile, strerror(errno));
+        return(false);
+    }
+
+    synced = (stat(DRUMFILE, &syncedStamp) == 0);
+    return(true);
+}
+
+// Copies the file fromP to toP.
+// A copy to pdp23drum is made in place, keeping its inode for the drum's descriptor.
+// A copy to any other file goes to toP.tmp and is renamed over toP, so a failed copy back never
+// leaves a partial image where the only good one was.
+// Returns true on success, else false with errno set.
+static bool
+copyFile(const char *fromP, const char *toP)
+{
+bool inPlace;
+bool ok;
+int inFd;
+int outFd;
+int err;
+ssize_t n;
+ssize_t done;
+ssize_t w;
+
+static char buf[65536];
+char tmp[PATH_MAX + 8];
+
+    inPlace = (strcmp(toP, DRUMFILE) == 0);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", toP);
+
+    if( (inFd = open(fromP, O_RDONLY)) < 0 )
+    {
+        return(false);
+    }
+
+    if( (outFd = open((inPlace?toP:tmp), (O_WRONLY | O_CREAT | O_TRUNC), 0666)) < 0 )
+    {
+        err = errno;
+        close(inFd);
+        errno = err;
+        return(false);
+    }
+
+    ok = true;
+    err = 0;
+    for( ;; )
+    {
+        n = read(inFd, buf, sizeof(buf));
+        if( (n < 0) && (errno == EINTR) )
+        {
+            continue;
+        }
+
+        if( n < 0 )
+        {
+            ok = false;
+            err = errno;
+            break;
+        }
+
+        if( n == 0 )
+        {
+            break;
+        }
+
+        for( done = 0; done < n; done += w )
+        {
+            w = write(outFd, buf + done, (size_t)(n - done));
+            if( (w < 0) && (errno == EINTR) )
+            {
+                w = 0;
+                continue;
+            }
+
+            if( w <= 0 )
+            {
+                ok = false;
+                err = (w < 0)?errno:ENOSPC;
+                break;
+            }
+        }
+
+        if( !ok )
+        {
+            break;
+        }
+    }
+
+    close(inFd);
+    if( (close(outFd) != 0) && ok )
+    {
+        ok = false;
+        err = errno;
+    }
+
+    if( ok && !inPlace && (rename(tmp, toP) != 0) )
+    {
+        ok = false;
+        err = errno;
+    }
+
+    if( !ok && !inPlace )
+    {
+        unlink(tmp);
+    }
+
+    errno = err;
+    return(ok);
+}
+
+// Returns true if both names exist and are the same file, a symlink or hard link included.
+static bool
+sameFile(const char *aP, const char *bP)
+{
+struct stat a;
+struct stat b;
+
+    return( (stat(aP, &a) == 0) && (stat(bP, &b) == 0) && (a.st_dev == b.st_dev) && (a.st_ino == b.st_ino) );
 }

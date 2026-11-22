@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 24-Oct-2026\
-minor corrections
+Updated 22-Nov-2026\
+waits and completion pulses
 
 ## What is DCS2?
 
@@ -141,14 +141,25 @@ See the section on Telnet cr/lf procesing for more detail.
 
 ## Notes on waits, completion pulses, and channel starvation
 
-Only one command, *rwe*, below, will honor either the wait bit (i) or the completion pulse request.
-All others will always immediately return.
+Only one command, *rwe*, below, waits.
+All others always return at once with or without i.
 
-Why? Remember that this is an asynchronous socket communications layer. Blocking in a wait could mean that other
+*tcb*, *ssb*, *tcc* and all the extended commands have bit 6 (004000) as part of the command
+so for them bit 6 is not a request for a completion pulse and they give none.
+Given with i, they give the completion at once.
+*rch*, *rcr*, *rrc* and *rsc*, whose commands do not use bit 6, set completion immediately if the program
+asks for one with i or C.
+
+A break routine must not give a bare *rwe*, or *rch*, *rcr*, *rrc* or *rsc* with C if the program was in a
+wait.
+
+Why? Remember that this is an asynchronous socket communications layer.
+Blocking in a wait could mean that other
 active channels you have opened would not get serviced until the current wait completed.
 This is not good for the socket world, you could lose data.
 
-So why does *rwe* wait? Because it isn't waiting on one channel, it responds to any event on any channel and so
+So why does *rwe* wait?
+Because it isn't waiting on one channel, it responds to any event on any channel and so
 can't result in a service blocking wait.
 
 If you want to not have to check busy flags constantly, you should use *rwe* or interrupts to know when some
@@ -355,7 +366,7 @@ And the new extended commands:
     ```
     There is no input or output, the IO register will be unchanged.
     ```
-    This is the only command that will block, and it will always block.
+    This is the only command that will block.
     Why? Because any event on any channel will release the wait and so
     avoid starving channels, no wait can occur on a single channel.
 
@@ -363,7 +374,10 @@ And the new extended commands:
     a previously-full transmit buffer becomes available to write, the remote end closed a connection,
     or for any socket error.
 
-    If the wait bit is not set, op code 725122, it will return immediately.
+    If the wait bit is not set, it will return immediately and the completion pulse not given.
+    The next event gives it.
+    Wait for it with ioh, 730000, as with C on other devices,
+    before any other IOT that waits or the event will end that IOT's wait instead.
 
 - roc 725222 override current channel
     ```

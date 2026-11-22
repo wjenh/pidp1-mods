@@ -9,39 +9,18 @@
  * 4-Jul-2026 wje (Claude) - handle a short send() of the CR/LF pair in TCC/TCB
  *    instead of silently dropping the un-sent byte
  * 15-Jul-2026 wje (Claude) - expand bit 0 into full telnet mode.
- *    It provides limited IAC parsing/escaping on the wire, WILL/WONT/DO/DONT refused,
- *    SB..SE subnegotiation skipped, IAC IAC unescaped.
- *    A one-time character-mode greeting is sent to a newly-accepted server connection
- *    and symmetric cr/lf collapsing on input is done.
- *    None of this is visible to the PDP-1 program, it still only ever sees plain
- *    Flex or ASCII data characters.
- *    Renamed CNTL_CRLF/RQST_CRLF to CNTL_TELNET/RQST_TELNET to reflect the wider scope.
- *    The dcs2defs.ah file was updated with the new mnemonic dcftel.
  * 13-Sep-2026 wje (Claude) - add modify-channel support, varius bug fixed.
  *    Add scb modify request, type 0, general, echo and the interrupt settings.
- *    scb clear and rebind take their channel from IO bits 12-17, as documented.
- *    Every error site builds the documented error word and records it for rle.
- *    Echo happens when the program reads a character, never on arrival, and a
- *    received 0377 is echoed as IAC IAC in telnet mode.
- *    Interrupts held while an earlier one was in progress are requested after rci,
- *    and rci always clears the channel's interrupt state.
- *    rch/rcr without rchclr keep the IO bits above the character.
- *    An epoll_wait() error no longer walks the event table, and every event
- *    epoll_wait() returns is handled.
  *    Bytes 0200-0377 are read correctly where char is signed (x86).
- * 15-Sep-2026 wje (Claude) - beter telnet negotiation added, telnet state
- *    reset on a connection open.
- *    The three options the the greeting offers, our ECHO, our SGA, and the client's SGA
- *    are negotiated by a cut-down RFC 1143 Q method, every other option is refused.
- *    A server channel's per-connection state, pushback, un-sent tail, negotiation,
- *    is cleared on every accept and at rebind, nothing from one connection persists.
+ * 15-Sep-2026 wje (Claude) - beter telnet negotiation added, telnet state reset on a connection open.
  * 15-Sep-2026 wje (Claude) - telnet mode now follows the standard for a bare CR.
- *    A received CR NUL is taken as CR LF (RFC 1123), so the NUL never reaches the
- *    program, and a CR the program sends, or an echoed CR with no LF after it,
- *    goes out as CR NUL (RFC 854).
  * 29-Sep-2026 wje (Claude) - polling is a simtime deadline on the device time base, not a
- *    count of executed cycles, so it also runs while the machine is halted: every 100 us while
+ *    count of executed cycles so it also runs while the machine is halted, every 100 us while
  *    a line is connected, and every 5 ms while none is.
+ * 22-Nov-2026 wje (Claude) - a command with bit 6 set completes only when the program sets bit 5, i.
+ *    Bit 6 is part of some commands, not a request for a completion pulse.
+ *    Bits 5 and 6 together, as in rcs i, no longer hang.
+ *    Every rwe arms its completion, rwe i waits for an event, a bare rwe returns and ioh must be used.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,6 +73,12 @@
 #define TCB     040
 #define SSB     041
 #define TCC     050
+
+// A command code with this bit has the instruction's bit 6 (004000) in it.
+#define CMD_B6  040
+
+// The instruction's bit 5 (010000), the in-out wait: the program's i.
+#define IOT_B5  010000
 
 // The extended commands
 #define SCB     042
@@ -435,6 +420,14 @@ char wbuf[8];
     clear_io = cmd & 020;
     cmd &= ~020;
     chanP = 0;
+
+    // Bit 6 is part of this command's code, so the CPU's completion request says only that
+    // the program gave the command. A completion given then would end a wait that a sequence
+    // break interrupted, so only the program's own i asks for one, and it ends the i's wait.
+    if( cmd & CMD_B6 )
+    {
+        completion = ((MB(pdp1P) & IOT_B5) != 0);
+    }
 
     switch( cmd )                       // see what operation we do
     {
@@ -819,12 +812,9 @@ char wbuf[8];
         break;
 
     case RWE:                           // wait for any event
-        iotLog("RWE called, completion %d, io %d\n", completion, IO(pdp1P));
-        if( completion )
-        {
-            need_general_completion = true;
-            iotLog("RWE set wait\n");
-        }
+        // Every rwe arms completion.
+        iotLog("RWE called, wait %d, io %d\n", completion, IO(pdp1P));
+        need_general_completion = true;
         break;
 
     case ROC:                           // override current channel
@@ -1309,10 +1299,9 @@ uint64_t interval;
 
 // Request the interrupts that canPost() held back while an earlier interrupt on the
 // same channel was in progress.
-// rci clears the in-progress state and leaves the held kinds in interrupts_queued,
-// so a channel that is enabled, not in an interrupt, and has something held gets
-// one interrupt for all of them now, postInterrupt() ors them into interrupts_in_process
-// so rcs shows every cause.
+// rci clears the in-progress state and leaves held types in interrupts_queued.
+// A channel now gets  one interrupt for all of them, postInterrupt() ors them into interrupts_in_process
+// so rcs shows them all.
 // Nothing is requested while the sequence break system is off, as canPost() does.
 // A type 0 modify that enables interrupts with a character already waiting also
 // leaves CNTL_IOR here, this is the only place held interrupts are requested.
@@ -1882,7 +1871,8 @@ clearConnectionState(ChannelP chanP)
 // Returns NONE if the byte was fully consumed by the protocol layer, else the data byte.
 // State is kept in the channel so this survives a non-blocking recv() running dry
 // mid-sequence, exactly as flexo_rcv_pushback already does for Flex shift codes.
-// Scope is deliberately limited: a complete option command goes to negotiateOption(),
+// Scope is deliberately limited.
+// A complete option command goes to negotiateOption(),
 // which negotiates only the options the greeting offered and refuses the rest, and
 // subnegotiation content is discarded rather than interpreted.
 // The NUL of a CR NUL is passed as an LF.  RFC 854 sends a CR that has no LF after it
@@ -2170,8 +2160,6 @@ bool isFlex;
 // If a shift is needed, buffer the real character and return the shift code.
 // If there is no character to read, return NONE, -1, or FAIL, -2.
 // Otherwise returns the character, 0-0377 in ascii mode, a Concise code in Flexo mode.
-// ch is unsigned and ch2 an int: with a plain char, which is signed on x86, a byte
-// 0200-0377 came back negative and was taken for NONE or FAIL.
 int
 getChar(ChannelP chanP)
 {

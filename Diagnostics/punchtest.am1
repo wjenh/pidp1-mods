@@ -1,40 +1,8 @@
 PUNCH TEST -- exercises the ppa/ppb dynamic IOT plugin (IOTs/Punch/IOT_5.c, IOT_6.c)
 /*
- * punchtest.am1 -- punches known data via ppa (alphanumeric, device 5) and ppb
- * (binary, device 6) so the resulting tape can be byte-verified against this
- * program's expected output, below.
+ * punchtest.am1 -- punches known data via ppa and ppb so the resulting tape
+ * can be byte-verified against this program's expected output, below.
  *
- * Background:
- *   The punch (ppa/ppb) used to be serviced directly in pdp1.c's iot_pulse()/
- *   handleio(). It was extracted into a dynamic IOT plugin on 19-Jun-2026,
- *   mirroring the earlier rpa/rpb (Reader) extraction. Unlike the Reader, the
- *   Punch plugin uses the cycle-count poll mechanism (enablePolling()/iotPoll(),
- *   see IOTs/Clock/IOT_32.c for precedent) rather than an unconditional poll, so
- *   this program also exercises that timing path -- each ppa/ppb pulse has to
- *   survive a real ~3174-cycle (~15.87ms simulated) delay before its byte
- *   actually lands on the tape.
- *
- * Flag bits on ppa/ppb/ioh -- READ THIS BEFORE CHANGING THIS PROGRAM:
- *   The reserved mnemonics for the "73-family" IOT devices (rpa, rpb, tyo, ppa,
- *   ppb, dpy, ioh) already have the wait bit (B5/i) baked into their base
- *   opcode value (see Tools/AM1/permsyms.def). That means:
- *     - bare "ppa" and "ppa i" assemble identically -- both block the CPU
- *       until the device signals completion. Written explicitly as "i" below
- *       for clarity, matching the project convention in Diagnostics/dcstest.am1.
- *     - "ppa C" is a trap: OR-ing C onto a base that already has bit5 set
- *       leaves BOTH B5 and B6 set, which matches neither the IOWANTWAIT nor
- *       IOWANTCOMPLETE pattern in pdp1.c, so nac comes out 0 -- no completion
- *       at all, silently.
- *     - the correct, documented idiom for genuine non-blocking "C" mode on
- *       these devices is "<dev>-i C" (subtract the baked-in i, then OR in C)
- *       -- this is exactly how dpyc (=724007) is defined as shorthand for
- *       "dpy-i C" in the assembler's own syntax reference, and how pong.am1/
- *       lightpen.am1 use "dpy-i C ...col"/"gpl C" followed later by a bare
- *       "ioh" to synchronize.
- *     - bare "ioh" (device 0, no device-specific pulse) already has bit5 set
- *       too, so it blocks until the *next* pending completion (ios) is
- *       signalled by whichever device is mid-transfer, exactly the "wait for
- *       completion later" half of the C idiom.
  *
  * Structure:
  *   1. Punch 'A','B' via ppa, synchronous (blocking) mode.
@@ -66,14 +34,6 @@ PUNCH TEST -- exercises the ppa/ppb dynamic IOT plugin (IOTs/Punch/IOT_5.c, IOT_
  *   confirming the framing math is its own inverse.
  *
  *   Total: 7 bytes on the tape, in order: 101 102 103 104 212 234 256 (octal).
- *
- * Assembler: am1 v1.28+
- * Assemble:  am1 punchtest.am1   // binary (rim-loadable) output is the default;
-                                  // -b is redundant here and -r would strip the rim
-                                  // loader, which we want for an executable program
- * The punch output lands wherever pdp1's p_fd points -- by default punch.out
- * in the emulator's working directory, or wherever the "p <file>" network
- * command last redirected it.
  */
 
 octal

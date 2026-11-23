@@ -21,6 +21,8 @@
  *    Bit 6 is part of some commands, not a request for a completion pulse.
  *    Bits 5 and 6 together, as in rcs i, no longer hang.
  *    Every rwe arms its completion, rwe i waits for an event, a bare rwe returns and ioh must be used.
+ * 22-Nov-2026 wje (Claude) - a command given with i completes at once even while a bare rwe's
+ *    completion is pending; only rwe's own completion waits for an event.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -889,7 +891,10 @@ char wbuf[8];
         return(0);              // unknown
     }
 
-    if( completion && !need_general_completion )
+    // Only rwe's completion waits, for an event. A completion a bare rwe still has pending does
+    // not hold back this command's: the machine has one sync flip-flop for all devices, and the
+    // program takes the rwe's completion with ioh.
+    if( completion && (cmd != RWE) )
     {
         IOCOMPLETE(pdp1P); // we are finished already, we don't block at all
     }

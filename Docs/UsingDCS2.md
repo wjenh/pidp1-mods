@@ -149,7 +149,8 @@ For them, bit 6 is not a request for a completion pulse and they do not issue on
 Given with i, they complete at once.
 
 *rch*, *rcr*, *rrc* and *rsc*, whose commands do not use bit 6, set completion immediately if the program
-asks for one with either i or C.
+asks for one with i.
+C is bit 6, so do not use it at all with these commands.
 
 Note that only *one* can be set.
 The PDP-1 hardware will not issue any completion pulse if both are set.

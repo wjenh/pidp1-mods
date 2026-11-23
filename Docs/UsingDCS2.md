@@ -144,11 +144,15 @@ See the section on Telnet cr/lf procesing for more detail.
 Only one command, *rwe*, below, waits.
 All others always return at once with or without i.
 
-*tcb*, *ssb*, *tcc* and all the extended commands have bit 6 (004000) as part of the command
-so for them bit 6 is not a request for a completion pulse and they give none.
-Given with i, they give the completion at once.
+*tcb*, *ssb*, *tcc* and all the extended commands have bit 6 (004000) as part of the command.
+For them, bit 6 is not a request for a completion pulse and they do not issue one.
+Given with i, they complete at once.
+
 *rch*, *rcr*, *rrc* and *rsc*, whose commands do not use bit 6, set completion immediately if the program
-asks for one with i or C.
+asks for one with either i or C.
+
+Note that only *one* can be set.
+The PDP-1 hardware will not issue any completion pulse if both are set.
 
 A break routine must not give a bare *rwe*, or *rch*, *rcr*, *rrc* or *rsc* with C if the program was in a
 wait.

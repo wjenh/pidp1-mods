@@ -1,8 +1,8 @@
 # Using the BBN Timesharing Clock
 
 This is version 1.2\
-Edit date 15-Nov-2026\
-Fix some typos.
+Edit date 22-Nov-2026\
+Clarify use of i and C together
 
 This document explains how to use the BBN timesharing clock.
 
@@ -84,8 +84,10 @@ is cleared.
 When the count reaches 0, bit 13, 0000020, in the cks check status instruction return value will be a 1.
 The flag will be reset when the counter is started again or if a reset, via setting a count of 0, is done.
 
-This honors the i, wait for completion and c, issue a completion pulse flags in the IOT call,
-so a program can delay for a period without any additional coding needed or use the iot wait instruction, 720000.
+This honors the i, wait for completion and C, issue a completion pulse flags in the IOT call,
+so a program can delay for a period without any additional coding needed *or* use the iot wait instruction, 730000.
+However, both cannot be used at the same time.
+The PDP-1 hardware will not issue a completion pulse if both are set.
 
 The countdown timer is independent of the rest of the clock. The primary clock does not need to be enabled
 for it to work.

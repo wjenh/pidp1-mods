@@ -1,12 +1,3 @@
-// An extended implementation of the BBN timesharing clock
-#include "iotHandler.h"
-
-//#define DOLOGGING
-#include "iotLogger.h"
-
-// cks bit 13 is set when the countdown timer completes, cleared when counter is set again or reset
-#define COUNTER_CKS_FLAG 0000020
-
 // An extended implementation of the PDP-1D timeshare clock.
 // IOT 32 reads the current 1ms counter, 0-59999 dec.
 //
@@ -34,7 +25,21 @@
 // countdown's from its IOT, so a count of N takes N ms. One deadline serves both, at the earlier
 // of the two next times.
 //
+// The i and c bits: a read completes at once. An IOT 2032 that enables the clock with no interrupt
+// completes on the next 1 ms tick, and an IOT 2132 that starts a count completes when it reaches 0;
+// otherwise both complete at once. Each IOT decides from its own operation only: one owed by an
+// earlier IOT does not hold back this one's, as the machine has one sync flip-flop for all devices.
+//
 // 04-Oct-2026 Claude power clear stops the clock and the countdown and clears CKS 020.
+// 22-Nov-2026 Claude an IOT's own completion no longer waits for one an earlier IOT still has pending.
+
+#include "iotHandler.h"
+
+//#define DOLOGGING
+#include "iotLogger.h"
+
+// cks bit 13 is set when the countdown timer completes, cleared when counter is set again or reset
+#define COUNTER_CKS_FLAG 0000020
 
 #define TICKNS MSTONS(1)
 
@@ -63,6 +68,7 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 {
 int op;
 int i;
+int deferred;       // this IOT's completion comes later, from iotDeadline()
 
     if( pulse )
     {
@@ -70,6 +76,7 @@ int i;
     }
 
     lastPdp1P = pdp1P;
+    deferred = 0;
     iotLog("In clk iot mb %o dev %o\n", MB(pdp1P), dev);
 
     if( (MB(pdp1P) & 03700) == 02000 )     // IOT 2032, pay attention to rest
@@ -120,6 +127,7 @@ int i;
             pdp1P->sbs16 = 1;
         }
 
+        deferred = completeNeeded;
         armDeadline();
     }
     else if( (MB(pdp1P) & 03700) == 02100 )     // IOT 2132, countdown timer
@@ -142,6 +150,7 @@ int i;
             iotLog("IOT 2132, countdown cleared\n");
         }
 
+        deferred = counterCompleteNeeded;
         armDeadline();
         AC(pdp1P) = i;
     }
@@ -153,7 +162,7 @@ int i;
         }
     }
 
-    IOCOMPLETE_IFNEEDED(pdp1P, completion && !completeNeeded && !counterCompleteNeeded);
+    IOCOMPLETE_IFNEEDED(pdp1P, completion && !deferred);
     return(1);
 }
 
@@ -224,10 +233,9 @@ uint64_t now;
     armDeadline();
 }
 
-// Called once when the power switch goes off. Power clear clears the in-out control flip-flops
-// (F17 3-45 and 6-3), so the clock is left as at load: disabled, its count at 0, both interrupts off,
-// no countdown and no completion owed, and the countdown's CKS 020 clear. The core has disarmed
-// the deadline. sbs16 is not the clock's: the core restores it from the configuration.
+// Called once when the power switch is turned off.
+// The clock is  disabled, its count set to 0, both interrupts off,
+// no countdown and no completion pending, and the countdown's CKS 020 clear.
 // No return value.
 void
 iotPowerClear(void)
@@ -248,7 +256,7 @@ iotPowerClear(void)
     }
 }
 
-// Arms the one deadline at the earlier of the next tick and the next count, or cancels it when
+// Arms the deadline at the earlier of the next tick and the next count or cancels it when
 // neither the clock nor the countdown is running.
 static void
 armDeadline(void)

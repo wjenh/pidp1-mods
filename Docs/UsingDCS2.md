@@ -152,15 +152,10 @@ Given with i, they complete at once.
 asks for one with i.
 C is bit 6, so do not use it at all with these commands.
 
-Note that only *one* can be set.
-The PDP-1 hardware will not issue any completion pulse if both are set.
-
-A break routine must not give a bare *rwe*, or *rch*, *rcr*, *rrc* or *rsc* with C if the program was in a
-wait.
-
-Why? Remember that this is an asynchronous socket communications layer.
-Blocking in a wait could mean that other
-active channels you have opened would not get serviced until the current wait completed.
+Why do the others not wait?
+Remember that this is an asynchronous socket communications layer.
+Blocking in a wait could mean that other active channels you have opened would
+not get serviced until the current wait completed.
 This is not good for the socket world, you could lose data.
 
 So why does *rwe* wait?
@@ -169,6 +164,10 @@ can't result in a service blocking wait.
 
 If you want to not have to check busy flags constantly, you should use *rwe* or interrupts to know when some
 socket event has occurred.
+
+Note that only *one* of i or C can be set.
+The PDP-1 hardware will not issue any completion pulse if both are set.
+A break routine must not give a bare *rwe* with C if the program was in a wait.
 
 It's also a very bad idea to pay attention to just one channel, assuming you have multiple channels open.
 The primary commands use the current channel and must unlock it for another channel to be automatically selected.

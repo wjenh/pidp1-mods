@@ -42,6 +42,7 @@
 // 15-Nov-2026 wje - rename the pdp1 emulator start and stop buttons to 'Launch' and 'Terminate'.
 // 22-Nov-2026 wje (Claude) - the Drums tab's Pick sets pidp1.config's drumfile, which the drum
 //     plugin copies in, instead of copying the image onto pdp23drum.
+// 24-Nov-2026 pporch/wje - apply mouse-down delay fix from pporch
 
 #include <errno.h>
 #include <limits.h>
@@ -4432,6 +4433,11 @@ bool actionEnded;       // a click or key press ended in this frame
                 }
                 dragWindow(windowP, &event);
                 nk_sdl_handle_event(&event);
+                // Give the UI a frame to handle the press before a queued release.
+                if( (event.type == SDL_MOUSEBUTTONDOWN) && (event.button.button == SDL_BUTTON_LEFT) )
+                {
+                    break;
+                }
             } while( SDL_PollEvent(&event) );
         }
         nk_sdl_handle_grab();

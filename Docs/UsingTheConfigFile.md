@@ -155,6 +155,20 @@ at a reload.
 | plottercks | IOT_73 | The cks bit of the plotter's free flag; 7 by default |
 | plotterorigin | IOT_73 | Where the pen starts, in steps from the left edge |
 
+### The IBM 1301 disk
+
+Read Docs/UsingIBM1301Disk.md before changing these.
+Each is read when the IOT loads and again at a reload.
+The first two take effect once no disk command is busy.
+
+| Setting | Reader | What it does |
+|---|---|---|
+| ibm1301modules | IOT_10 | Modules installed, 1 to 10; 2 by default |
+| ibm1301file | IOT_10 | Each module's image file, a %d in it for the module number, /opt/pidp1-mods/ibm1301m%d by default |
+| ibm1301format | IOT_10 | The modules' format key-lock switches at WRITE allowing DWRF, off by default |
+| ibm1301sbs | IOT_10 | The sequence break channel, 0 to 15, 6 by default |
+| ibm1301cks | IOT_10 | The cks bit of end, unusual end, or attention, 0 to 17, 10 by default |
+
 ### The hardware panel
 
 | Setting | Reader | What it does |

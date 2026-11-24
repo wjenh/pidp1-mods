@@ -1,0 +1,119 @@
+#ifndef IBM1301DEFS_AH
+#define IBM1301DEFS_AH
+/*
+ * Definitions for the IBM 1301 disk as the Stanford PDP-1 accessed it, through an IBM 7631
+ * file controller.
+ */
+
+// The disk adapter, device 10.
+#define S_DRS iot 10        // reset the adapter and the 7631
+#define S_DEN iot 110       // answer end, unusual end and attention
+#define S_DSN iot 410       // sense, the ten status characters going to core
+#define S_DRD iot 510       // read, data going to core
+#define S_DWR iot 610       // write, format write or write check, data coming from core
+#define S_DCT iot 710       // control, the order coming from core
+
+// The 131D data channel, devices 46 and 36.
+#define S_SID iot 1346      // IO bits 2-17 the core address of the first word, bank in 2-5
+#define S_SWD iot 546       // IO bits 6-17 the word count, 0 for 4096
+#define S_RLD iot 1336      // IO = the address of the next word the channel would move
+#define S_SDF iot 146       // stop data flow
+
+// The adapter word, left in IO by every device-10 IOT.
+#define S_AEND 400000       // end, not yet answered
+#define S_AUEND 200000      // unusual end, not yet answered, its reason found by a sense
+#define S_AATTN 100000      // attention, an access come to rest, not yet answered
+#define S_ABUSY 040000      // a command is in progress
+#define S_AREFUSED 020000   // this IOT's command was not started
+#define S_ACHAN 010000      // the 131D channel is moving words
+#define S_ASIX 004000       // six-bit mode (DSBM), clear for eight-bit (DEBM)
+
+// The cks bit of end, unusual end or attention, at the default ibm1301cks setting of 10.
+#define S_CKS 000200
+
+// The order codes, as their two six-bit characters.
+// DSEK, "80", is 10 00.
+#define S_DNOP 0000
+#define S_DREL 0004
+#define S_DEBM 0010
+#define S_DSBM 0011
+#define S_DSEK 1000
+#define S_DVSR 1002
+#define S_DWRF 1003
+#define S_DVTN 1004
+#define S_DVCY 1005         // not recreated, an invalid code
+#define S_DWRC 1006
+#define S_DSAI 1007
+#define S_DVTA 1010
+#define S_DVHA 1011         // not recreated, an invalid code
+
+// The decimal digit of n at place p (1, 0d10, 0d100, 0d1000), as a BCD character.
+#define S_DIGIT(n, p) (((n) / (p)) - (((n) / ((p) * 0d10)) * 0d10))
+
+// A ten-character order in six-bit mode, four words, with the access digit 0.
+// op is an order code above, mod the module 0-9, track the track number 0-9999 (give it in
+// decimal, 0d1234), id the two record-identifier characters as one 12-bit value.
+// The digits are BCD, the values 0-9.
+#define S_ORDER(op, mod, track, id) \
+    ((op) << 6); \
+    ((mod) << 14) | (S_DIGIT(track, 0d1000) << 6) | S_DIGIT(track, 0d100); \
+    (S_DIGIT(track, 0d10) << 14) | (S_DIGIT(track, 1) << 6) | (((id) >> 6) & 77); \
+    (((id) & 77) << 14)
+
+// A two-character order (DNOP, DREL, DEBM, DSBM) in six-bit mode, one word.
+#define S_ORDER2(op) ((op) << 6)
+
+// The same two orders in eight-bit mode, five words and one word.
+// Two characters go to a word, each in its nine-bit half.
+#define S_ORDER8(op, mod, track, id) \
+    ((((op) >> 6) & 77) << 11) | ((op) & 77); \
+    (mod); \
+    (S_DIGIT(track, 0d1000) << 11) | S_DIGIT(track, 0d100); \
+    (S_DIGIT(track, 0d10) << 11) | S_DIGIT(track, 1); \
+    ((((id) >> 6) & 77) << 11) | ((id) & 77)
+#define S_ORDER28(op) (((((op) >> 6) & 77) << 11) | ((op) & 77))
+
+/*
+ * The status word is ten characters, sent by S_DSN as four words in six-bit mode (characters
+ * 0-2, 3-5, 6-8, then 9 and two zero characters).
+ * The masks below are each character's bits.
+ * S_STW(c) is the word character c is in, S_STB(c, m) mask m moved to its place in that word.
+ */
+#define S_STW(c) ((c) / 3)
+#define S_STB(c, m) ((m) << ((2 - ((c) - (((c) / 3) * 3))) * 6))
+
+// Character 0, the summary.
+#define S_SUM_OPINT 20      // operator intervention, never raised here
+#define S_SUM_PROG 04       // program check, from a bit of character 1 or invalid address
+#define S_SUM_DATA 02       // data check, from a response, data compare or parity check
+#define S_SUM_EXC 01        // exceptional condition, from a bit of character 3
+
+// Character 1, program check.
+#define S_PC_SEQ 20         // invalid sequence
+#define S_PC_CODE 04        // invalid code
+#define S_PC_FMT 02         // format check
+#define S_PC_NOREC 01       // no record found
+
+// Character 2, invalid address and the data checks.
+#define S_DC_ADDR 20        // invalid address (a program check)
+#define S_DC_RESP 04        // response check, the channel not answering at a halt
+#define S_DC_CMP 02         // data compare check, a write check finding a difference
+#define S_DC_PAR 01         // parity or check-character check, never raised here
+
+// Character 3, exceptional condition.
+#define S_EX_INOP 20        // access inoperative
+#define S_EX_NRDY 04        // access not ready, as it is moving
+#define S_EX_DSCC 02        // disk storage circuit check, the image file having failed
+#define S_EX_FCCC 01        // file control circuit check, never raised here
+
+// Character 4, data mode.
+#define S_MD_CHINT 20       // channel interrupt, never raised here
+#define S_MD_SIX 04         // six-bit mode
+
+// Characters 5-7, attention by module.
+// Character 5 holds modules 0-3, 6 holds 4-7, 7 holds 8 and 9.
+#define S_AT_C(mod) (5 + ((mod) / 4))
+#define S_AT_K(mod) ((mod) - (((mod) / 4) * 4))
+#define S_AT_M(mod) (20 >> (S_AT_K(mod) + ((S_AT_K(mod) + 3) / 4)))
+
+#endif

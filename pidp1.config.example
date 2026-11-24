@@ -276,6 +276,20 @@ fasttyo=false
 # Where the pen starts, in steps from the left edge.
 #plotterorigin=0
 
+# Settings for the IOT 10 IBM 1301 disk, see Docs/UsingIBM1301Disk.md.
+# The values shown are the defaults.
+# The modules installed, 1 to 10, numbered from 0.
+#ibm1301modules=2
+# Each module's image file, %d for the module number.
+# A missing file is created, formatted, at the first disk IOT; dsk1301 make creates one beforehand.
+#ibm1301file=/opt/pidp1-mods/ibm1301m%d
+# The format key-lock switches, when on allows a program to rewrite a cylinder's format with DWRF.
+#ibm1301format=off
+# The sequence break channel for end, unusual end, and attention, 0 to 15.
+#ibm1301sbs=6
+# The cks bit that is 1 while end, unusual end, or attention is up, 0 to 17.
+#ibm1301cks=10
+
 # These settings are for the 4 channel D/A used by dacmusic.
 # The converter output level, a number, 1.0 is the default and normally shouldn't be changed.
 #dacgain=1.0

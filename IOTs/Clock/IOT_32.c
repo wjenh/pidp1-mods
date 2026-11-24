@@ -11,7 +11,7 @@
 // MMMM is the channel to use for the 1 min interrupt.
 // mmmm is the channel to use for the 32 ms interrupt.
 //
-// IOT 32 with bits 7 amd 11 set is an extension, set countdown timer, IOT 2132:
+// IOT 32 with bits 7 amd 11 set is a nonstandard extension, set countdown timer, IOT 2132:
 // AC register contains flags:
 // ecc cct ttt ttt ttt ttt
 // e enables interrupts for the timer
@@ -30,8 +30,19 @@
 // otherwise both complete at once. Each IOT decides from its own operation only: one owed by an
 // earlier IOT does not hold back this one's, as the machine has one sync flip-flop for all devices.
 //
+// IOT 32 with bits 7 amd 10 set is a nonstandard extension, read simtime, IOT 2232:
+// AC register contains the low 18 bits of simtime / 1000
+// IO register contains the next higher 18 bits of simtime / 1000
+// This is purely for emulator debugging, it is not at all historically relevant.
+// Note that simtime is a 64 bit quantity and is in nanoseconds.
+// The value here is simtime / 1000, microseconds
+// The low 18 bits of the microsecond value is in AC.
+// The next highest 18 bits are in IO.
+// The value will wrap around approximately every 1145 minutes.
+//
 // 04-Oct-2026 Claude power clear stops the clock and the countdown and clears CKS 020.
 // 22-Nov-2026 Claude an IOT's own completion no longer waits for one an earlier IOT still has pending.
+// 24-Nov-2026 wje add simtime debugging 'clock'
 
 #include "iotHandler.h"
 
@@ -153,6 +164,11 @@ int deferred;       // this IOT's completion comes later, from iotDeadline()
         deferred = counterCompleteNeeded;
         armDeadline();
         AC(pdp1P) = i;
+    }
+    else if( (MB(pdp1P) & 03700) == 02200 )     // IOT 2232, debug clock
+    {
+        AC(pdp1P) = (pdp1P->simtime / 1000) & 0777777;
+        IO(pdp1P) = ((pdp1P->simtime / 1000) >> 18) & 0777777;
     }
     else
     {

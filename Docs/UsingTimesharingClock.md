@@ -1,8 +1,8 @@
 # Using the BBN Timesharing Clock
 
-This is version 1.2\
-Edit date 22-Nov-2026\
-Clarify use of i and C together
+This is version 1.3\
+Edit date 24-Nov-2026\
+Addition of the debugging clock
 
 This document explains how to use the BBN timesharing clock.
 
@@ -34,6 +34,10 @@ However, some control funtionality has been added that is invoked by using IOT 2
 It uses the AC register to control the clock.
 
 Why the AC? Because all IOTs 30-37 automatically clear the IO register when invoked!
+
+A special 'clock' is also added that returns the emulator's internal time as a 36 bit value that has
+been scaled to microseconds.
+This is strictly for emulator testing, it is completely non-historical and should not be generally used.
 
 # The IOT
 
@@ -96,3 +100,15 @@ If the SBS16 system is not enabled, the interrupt channel is ignored and uses th
 by the SBS system.  It can be enabled by issuing IOT cls 4000.
 
 The mnemonics are in the macro include file CLOCK/clockdefs.mh for use with the m1pp preprocessor.
+
+IOT 2232, read simtime
+```
+Returns:
+AC - simtime / 1000
+IO - (simtime / 1000) >> 18
+```
+This is the debugging simtime clock.
+Internally, simtime is in nanoseconds.
+This returns the low 36 bits of (simtime / 1000), microseconds.
+It will wrap approximately every 1145 minutes.
+Neither i nor C has any effect, it always returns and completes immediately.

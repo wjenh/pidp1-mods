@@ -1,0 +1,6 @@
+Debugging simtime clock test
+// This just issues IOT 2232, fetching the clock into IO and AC, and loops
+100/
+top, iot 2232
+    jmp top
+start top

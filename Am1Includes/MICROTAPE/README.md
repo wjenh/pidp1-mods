@@ -52,6 +52,7 @@ A program includes `MICROTAPE/microtape.ah`, which brings in `FILESYSTEM/fs.ah`,
 
 Each is called as the file system's are: `farjda` (`memory.ah`) from any bank, AC the 16-bit
 address of the parameter block, AC the status on return.
+`mtbRead` and `mtbWrite`, and the calls made through them, return with the overflow flag clear.
 
 | Call | Parameter block | Result |
 |---|---|---|

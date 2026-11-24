@@ -11,6 +11,7 @@
  * 21-Jun-2026 wje minor revision for some timing changes
  * 3-Jul-2026 wje minor cleanup, also avoid extraneous IO completions
  * 16-Nov-2026 wje rework, was too complicated
+ * 24-Nov-2026 Claude a reset now leaves the flex shift lower case, as documented, not upper
 */
 
 #include <stdio.h>
@@ -36,6 +37,9 @@
 
 #define DEFAULTFILE "/tmp/pdp1lpt.txt"
 #define BUFSIZE 120     // 120 column printer
+
+// flexToAscii keeps the shift as 0 for lower case and 1 for upper, not as the LCS and UCS codes
+#define SHIFTLOWER 0
 
 // Some versions of the Type 62 could do 600 lpm.
 #define TYPE62LINEDELAY 16  // milliseconds per
@@ -82,7 +86,7 @@ static int spacing62[] = {
     -1          // marker for formfeed
     };
 
-static int curShift = LCS;          // used for the flex shift char processing
+static int curShift = SHIFTLOWER;   // used for the flex shift char processing
 static int bufLoc;                  // location to place next character in buffer
 static int lineNo;                  // number of lines done
 static int linesPerPage = 66;       // override in config
@@ -212,7 +216,7 @@ FILE *newfP;
         lineNo = 1;
         bufLoc = 0;
         memset(buffer, 0, sizeof(buffer));
-        curShift = LCS;
+        curShift = SHIFTLOWER;
         asciiMode = false;                      // also resets to the default flexo mode
         delaytime = 0;
 
@@ -307,7 +311,7 @@ FILE *newfP;
         }
 
         bufLoc = 0;
-        curShift = LCS;
+        curShift = SHIFTLOWER;
         memset(buffer, 0, sizeof(buffer));
     }
 
@@ -363,7 +367,7 @@ FILE *newfP;
 
         // reset the buffer and shift state
         bufLoc = 0;
-        curShift = LCS;
+        curShift = SHIFTLOWER;
         memset(buffer, 0, sizeof(buffer));
 
         // Stdio holds a write error until the flush, so the flush is where the line's text
@@ -425,7 +429,7 @@ FILE *newfP;
                 // and reset
                 bufLoc = 0;
                 memset(buffer, 0, sizeof(buffer));
-                curShift = LCS;
+                curShift = SHIFTLOWER;
                 iotPollCancel();                    // just in case
                 if( inWait )
                 {
@@ -459,7 +463,7 @@ FILE *newfP;
             lineNo = 1;
             bufLoc = 0;
             memset(buffer, 0, sizeof(buffer));
-            curShift = LCS;
+            curShift = SHIFTLOWER;
         }
 
         noWait = true;
@@ -516,7 +520,7 @@ iotPowerClear(void)
 {
     bufLoc = 0;
     memset(buffer, 0, sizeof(buffer));
-    curShift = LCS;
+    curShift = SHIFTLOWER;
     asciiMode = false;
     inWait = false;
     wantCompletion = false;

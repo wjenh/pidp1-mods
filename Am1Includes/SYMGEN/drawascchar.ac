@@ -1,5 +1,5 @@
 #ifndef TYPE33DRAWASCCHAR
-#define TYPE33DRAASCWCHAR
+#define TYPE33DRAWASCCHAR
 #include <SYMGEN/type33iots.ah>
 #include <SYMGEN/ascchars.ac>
 

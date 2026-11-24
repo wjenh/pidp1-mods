@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 22-Nov-2026\
-waits and completion pulses
+Updated 24-Nov-2026\
+more detail on pending character counts
 
 ## What is DCS2?
 
@@ -333,6 +333,11 @@ And the new extended commands:
     On call, IO register bits 12-17 should contain the channel number to check.
     On return the IO register will contain the number of bytes currently waiting to be read.
     ```
+    The count includes a byte the channel has already taken from the connection and not yet
+    given to the program, and in Flexo mode the character pending after seeing a shift code.
+    In telnet mode it also counts protocol bytes still in the connection which are not passed
+    to programs, so it can indicate more than the program can actually read.
+    To tell if a character is actually available, test rcs's dsfrdy bit.
 
 - rci 724522 clear and reset interrupt status
     ```

@@ -30,7 +30,7 @@ getTimeHHMMSS,
     jmp i rtn       // 16 bit address style return
 
 // getTimeMMDDYY gets the current time of day and sets the current month and day
-// into AC, month in the high 9 bits as a binary number 1-11, day in the low 9 bits
+// into AC, month in the high 9 bits as a binary number 1-12, day in the low 9 bits
 // as a binary number 1-31.
 // IO will contain the year as a binary number 2000-2511.
 // Called via jsp, extended memory safe.

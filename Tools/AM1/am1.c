@@ -176,6 +176,7 @@
  * 12-Nov-2026 wje - the 1Dop warning was only enabled for macro, now for am1 also
  * 17-Nov-2026 wje - flexo '\\' left the ascii for \ instead of the flexo char, an empty text string
  *    properly created an empty word but gave the word count as 0
+ * 24-Nov-2026 claude - optflow.c: the comment on counting isb as an enable gives the measured reason
 */
 #include <unistd.h>
 #include <stdlib.h>

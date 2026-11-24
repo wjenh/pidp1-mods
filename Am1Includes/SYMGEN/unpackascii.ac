@@ -6,7 +6,7 @@
 // into a buffer of two words per character consisting of the 2 words to be given to gpl and gpr.
 // This results in the fastest possible rendering speed.
 // AC contains the address of the list produced by text.
-// A word following the last entry must be 013, stop.
+// The list ends at its first character of 0.
 // IO contains the address of the buffer to place the results in.
 // Uses AC and IO registers.
 // Returns the word-pair count in IO.

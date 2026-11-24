@@ -26,7 +26,8 @@ loop,
      cli
      iot rcs
      lai
-     and [dsfful dsfser dsfcls
+     // a full transmit buffer (dsfful) says nothing about reading
+     and [dsfser dsfcls
      sza
      jmp err
      lai

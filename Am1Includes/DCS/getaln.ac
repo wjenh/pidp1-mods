@@ -27,6 +27,7 @@ local rtn, next, loop, done, bad, mem
         jmp next        // eem is on, ok to continue
         lai             // off, mask the addresses
         and [07777]
+        lia             // the masked buffer address back to IO, for next's dio
         lac rtn
         and [07777]
         dac rtn

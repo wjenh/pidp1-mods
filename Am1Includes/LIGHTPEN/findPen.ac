@@ -11,7 +11,7 @@
 // These must be defined in the encompassing code.
 // Called via jsp.
 findPen,
-    local loop, rtn
+    local loop, rtn, drawline
     dap rtn
 
     lac findAperture

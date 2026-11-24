@@ -2,7 +2,7 @@
 #define TYPE340HALT_AC
 // This is a tiny bit of code that will ensure no Type 340 program is currently running.
 // It doesn't include type340defs.ah to avoid any symbol conflicts.
-// Usage: jsp t340halt
+// Usage: jsp type340halt
 
 type340halt,
     local rtn, prog

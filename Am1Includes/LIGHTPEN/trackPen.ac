@@ -17,7 +17,7 @@
 
 trackPen,      // xPosition and yPosition are the center of the tracking location.
     local rtn, hit, miss, ck1, ck1a, ck2, ck2a, ctr
-    addlocal ydelta, ydelta, lpx, lpy
+    addlocal xdelta, ydelta, lpx, lpy
     dap rtn
 
     lac trackAperture

@@ -6,7 +6,7 @@
 // Uses AC and IO registers.
 // Called via jsp.
 numbertofio,
-    local rtn
+    local rtn, bad
     dap rtn
     lai
     spa
@@ -18,7 +18,7 @@ numbertofio,
     sza i
     lio [020
     jmp rtn
-bad, cla    // just return a space
+bad, cli    // just return a space, FIODEC 0
 rtn, jmp .
     endloc
 #endif

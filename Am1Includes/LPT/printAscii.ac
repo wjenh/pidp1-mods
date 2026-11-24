@@ -7,6 +7,8 @@
 // Call via jda printAscii.
 // This is only for the Type 62 line printer.
 
+#include <LPT/type62defs.ah>
+
 printAscii, 0
     local rtn, done, loop, finish
     dap rtn

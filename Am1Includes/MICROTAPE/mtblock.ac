@@ -7,7 +7,8 @@
 // block and buffer by their 16-bit addresses. Each entry is entered by jda, farjda
 // (memory.ah) from another bank, with AC the 16-bit address of its parameter block
 // (microtape.ah, MTB_PDRIVE to MTB_PBUF; for the handle's entries fs.ah, FS_BHANDLE to
-// FS_BBUF); it returns with the window open and AC the status, FS_OK or an FS_E code. Not
+// FS_BBUF); it returns with the window open and AC the status, FS_OK or an FS_E code. mtbRead
+// and mtbWrite, and so the handle's entries, return with the overflow flag clear. Not
 // reentrant; not to be called from a break routine.
 // A call blocks until it is done and leaves the tape stopped. Sequence breaks are off
 // throughout and turned on again at the end only if they were on (FS_SBS_RESTORE). The tape
@@ -17,6 +18,7 @@
 // device-independent; its names from FILESYSTEM/fs.ah.
 // 12-Nov-2026, Claude: mtbSetHandle zeros the header's device words in the handle, which a
 // format now keeps.
+// 24-Nov-2026, Claude: mtbRead and mtbWrite clear the overflow flag their checksum adds leave.
 
 #ifndef MTBLOCK_AC
 #define MTBLOCK_AC
@@ -40,7 +42,7 @@ local mbRtn, mbPar, mbWr, mbWm, mbDrv, mbBlk, mbCnt, mbAt, mbSbm, mbStat, mbWc, 
 // Read blocks from a drive into memory.
 // Entry: AC = the parameter block's 16-bit address: the drive, the first block, the count
 // and the buffer's 16-bit address (MTB_PDRIVE to MTB_PBUF). Exit: AC = the status; the
-// buffer holds count x MTWDS words. IO is clobbered. Called via jda.
+// buffer holds count x MTWDS words; the overflow flag is clear. IO is clobbered. Called via jda.
 mtbRead, 0
     dac mbRtn
     lac mtbRead
@@ -295,12 +297,16 @@ mw6,
     jmp mw2
     jmp mf1
 
-// The call's end: breaks restored as they were, the status returned to the caller.
+// The call's end: breaks restored as they were, the overflow flag cleared, the status returned
+// to the caller. The checksum adds can leave the flag set, and a caller that tests overflow
+// after the call would misread it.
 // Entry: AC = the status. Reached by jmp.
 mbExit,
     dac mbStat
     FS_SBS_RESTORE(mbSbm)
     lac mbStat
+    szo                         // clears the flag; the skip, taken when it was clear, passes the nop
+    nop
     jmp i mbRtn
 mbNoDrv,
     law FS_ENOUNIT

@@ -1,7 +1,7 @@
 #ifndef MEMCPY_AH
 #define MEMCPY_AH
 // Copy from one location to another.
-// AC has the count of words to copy.
+// AC has the count of words to copy; a count of 0 or less, -0 included, copies nothing.
 // The word following the call has the address to copy from.
 // The next word has the address to copy to.
 // Call using jda.
@@ -26,6 +26,10 @@ ok,
     dio dest
     idx rtn
     lac memcpy
+    spa
+    jmp i rtn   // a negative count, -0 included: nothing to copy
+    sza i
+    jmp i rtn   // a count of 0: its cma, -0, would run the loop until the count wrapped
     cma
 loop, add [1
     lsw

@@ -1,4 +1,4 @@
-#ifndef PRINTASCI64I_AH
+#ifndef PRINTASCII64_AH
 #define PRINTASCII64_AH
 // Code to send a line of text produced by the 'ascii' assembler directive to the printer.
 // IO has one of the LPT_x line spacing values for terminating the line,

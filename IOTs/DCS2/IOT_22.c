@@ -23,6 +23,8 @@
  *    Every rwe arms its completion, rwe i waits for an event, a bare rwe returns and ioh must be used.
  * 22-Nov-2026 wje (Claude) - a command given with i completes at once even while a bare rwe's
  *    completion is pending; only rwe's own completion waits for an event.
+ * 24-Nov-2026 Claude - rpc counts the bytes the channel holds as well as the socket's, so a
+ *    character rcs reports ready is counted.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -725,10 +727,23 @@ char wbuf[8];
             {
                 IO(pdp1P) = 0;
             }
+
+            // Bytes already taken off the socket are still to be read: the poll's telnet peek or
+            // the cr/lf lookahead keeps one, and a Flexo case change keeps the real character
+            // behind the shift code it returned.
+            if( chanP->crlf_stash_valid )
+            {
+                IO(pdp1P) += 1;
+            }
+
+            if( hasRcvPushback(chanP) )
+            {
+                IO(pdp1P) += 1;
+            }
         }
         break;
 
-    case RCI:                           // extended command, clear interrupt
+    case RCI:                          // extended command, clear interrupt
         i = IO(pdp1P) & 077;
         if( i >= NUM_CHANS )
         {

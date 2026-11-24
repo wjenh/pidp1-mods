@@ -371,10 +371,11 @@ int addr;
     return(addr / OPTSBS_FRAMESIZE);
 }
 
-// Is a word a sequence-break enable command: esm, asc or isb?  (isb runs a
-// handler even with the system off; lsm, dsc and cbs are not enables.)  The
-// device code alone decides, since asc and isb carry a channel in the sub
-// field and the wait bits may be set; a data word that decodes as one counts
+// Is a word a sequence-break enable command: esm, asc or isb?  (An isb with
+// the system off is held and taken at the next esm, so a handler can still
+// run; lsm, dsc and cbs are not enables.)  The device code alone decides,
+// since asc and isb carry a channel in the sub field and the wait bits may
+// be set; a data word that decodes as one counts
 // too.  Over-counting only keeps frames, which only withholds rewrites.
 // Returns the mnemonic, or NILP when the word is not an enable or is NILP.
 const char *

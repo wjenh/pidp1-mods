@@ -231,6 +231,5 @@ shifttab,           // a list of rar instructons to get the bit into the correct
 // Shared locals
 listRtn, 0
 wordRtn, 0
-eemOn, 0
 endloc
 #endif

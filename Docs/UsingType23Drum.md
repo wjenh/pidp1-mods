@@ -5,8 +5,8 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-Updated 22-Nov-2026\
-Updated for the config file alternate drum file
+Updated 23-Nov-2026\
+The busy flag during a transfer clarified
 
 ## What is the Type 23 Parallel Drum?
 
@@ -161,7 +161,22 @@ The define *drmsch* is 020, bit 13.
 ## How do I know it's done?
 
 If you aren't using the interrupt mode, execute a cks, check status, instruction and test bit 17 of IO.
-Bit 17 is the drum's busy flag: it is 1 while a transfer is in progress, and 0 once the last word has moved.
+Bit 17 is the drum's busy flag.
+It is 1 while a transfer is in progress, and 0 once the last word has moved.
+A *dba* is the exception.
+Its break clears busy when the drum reaches the indicated address as the transfer starts,
+see *dba* above.
+
+While a transfer runs, each word steals a memory cycle from the program every 8.5us, and an instruction that
+needs two or more cycles, such as *lac*, *dio*, *and* or *idx*, is restarted each time, as on the real PDP-1.
+Such an instruction cannot finish until the transfer has ended and the program stalls until the transfer completes.
+Only one-cycle instructions run during a transfer, IOTs such as *cks* and *dra*, operate and skip
+instructions, shifts, and a direct *jmp*.
+
+A loop waiting on busy still ends right after the last word, but it runs only occasionally.
+Counting its loops does not time the transfer.
+
+The drum's position from *dra* repeats every 4096 words, a full-track transfer ends where it started.
 
 The define *CKSDRM* is 01, bit 17.
 

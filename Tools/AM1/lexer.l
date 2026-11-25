@@ -348,32 +348,52 @@ type340[ \t]+           {
                             return(TYPE340);
                         }
 
-flexo[ \t][^\n;]{1,3}   {
-                        int i, ch, shift, nshifts, nchars;
-                        char *cP;
-                        int rslt;
+flexo[ \t][^\n;]*       {
+                        // The operand is the rest of the statement, so the word is
+                        // packed by codes, not by source characters: an escape is two
+                        // characters and one code, a case change one character and two.
+                        int ch, shift, ncodes, nkept, rslt;
+                        char *cP, *endP;
 
-                            cP = yytext;
-                            // skip to the argument
-                            while( *cP && !isspace(*cP) )
+                            cP = yytext + strlen("flexo");
+                            while( (*cP == ' ') || (*cP == '\t') )
                             {
                                 ++cP;
                             }
 
-                            while( isspace(*cP) )
+                            // A // at the operand's start or after a blank starts the
+                            // line's comment, which goes back to the comment rule; a /
+                            // anywhere else is a character.
+                            for( endP = cP; *endP; ++endP )
                             {
-                                ++cP;
+                                if( (endP[0] == '/') && (endP[1] == '/') &&
+                                    ((endP == cP) || (endP[-1] == ' ') || (endP[-1] == '\t')) )
+                                {
+                                    break;
+                                }
                             }
 
-                            nchars = strlen(cP);
-                            for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
+                            // Trailing blanks would only add space codes the padding
+                            // gives anyway, and could push a full word over three codes.
+                            while( (endP > cP) &&
+                                ((endP[-1] == ' ') || (endP[-1] == '\t') || (endP[-1] == '\r')) )
+                            {
+                                --endP;
+                            }
+
+                            if( endP == cP )
+                            {
+                                verror("flexo has no characters");
+                            }
+
+                            ncodes = nkept = shift = rslt = 0;
+                            while( cP < endP )
                             {
                                 if( *cP == '\\' )           // special directive, red, black, newline, or itself
                                 {
                                     ++cP;
-                                    ++i;
 
-                                    if( nchars <= 0 )
+                                    if( cP >= endP )
                                     {
                                         verror("invalid \\ in flexo, no directive character");
                                     }
@@ -393,11 +413,11 @@ flexo[ \t][^\n;]{1,3}   {
                                         break;
 
                                     case '\\':
-                                        ch = '\202';      // there is no backslash in flexo, ' is usual
+                                        ch = asciiToFlexo(*cP, &shift);  // the table's backslash, shifted 020
                                         break;
 
                                     default:
-                                        verror("\\%c in text is not valid", *cP);
+                                        verror("\\%c in flexo is not valid", *cP);
                                         // never returns, just to shut up overly-picky c compilers
                                         ch = NONE;
                                     }
@@ -414,31 +434,44 @@ flexo[ \t][^\n;]{1,3}   {
                                     ch = FLEX_SPACE;
                                 }
 
-                                rslt <<= 6;
-                                rslt |= ch;
-
-                                if( (ch != CSHIFT) && (ch != CUNSHIFT) )
+                                // a case change is its own code, then the character's
+                                if( (ch == CSHIFT) || (ch == CUNSHIFT) )
                                 {
-                                    ++cP;
+                                    if( ncodes < 3 )
+                                    {
+                                        rslt = (rslt << 6) | ch;
+                                    }
+                                    ++ncodes;
+                                    ch = asciiToFlexo(*cP, &shift);
                                 }
-                                else
+
+                                if( ncodes < 3 )
                                 {
-                                    ++nshifts;
+                                    rslt = (rslt << 6) | ch;
+                                }
+                                ++ncodes;
+                                ++cP;
+
+                                if( ncodes <= 3 )
+                                {
+                                    ++nkept;    // every code of this character is in the word
                                 }
                             }
 
-                            if( (nchars + nshifts) > 3 )
+                            if( ncodes > 3 )
                             {
                                 vwarn(WARN_FLEX,
-                                "only the first %d characters used because shift/unshift codes needed",
-                                nchars - nshifts);
+                                "only the first %d characters used, the operand needs %d codes and a word holds 3",
+                                nkept, ncodes);
                             }
 
-                            while( nchars++ < 3 )
+                            while( ncodes++ < 3 )
                             {
                                 rslt <<= 6;
                             }
 
+                            // the comment, if any, is scanned again by its own rule
+                            yyless(endP - yytext);
                             yylval.ival = rslt;
                             return(FLEXO);
                         }
@@ -1148,7 +1181,7 @@ octal                   { decimalMode = false; }
                                     break;
 
                                 case '\\':
-                                    rslt = asciiToFlexo(tmpc, &shift);  // flexo char is backarrow
+                                    rslt = asciiToFlexo(tmpc, &shift);  // flexo char is a right-arrow
                                     break;
 
                                 default:

@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 3.8 and covers up through am1 version 5.9; it will be updated as needed.\
-Edit date 11-Nov-2026\
-Small change, additional info for / vs // interpretation.
+This is version 3.9 and covers up through am1 version 5.13; it will be updated as needed.\
+Edit date 25-Nov-2026\
+Flexo packs codes: its sequences, upper case, comments and the backslash at a line's end.
 
 ## What is **am1**?
 
@@ -343,7 +343,7 @@ The warnings are:
 - bref, a symbol with a bank reference is used but generating macro code
 - stop, a stop statement is used but generating macro code
 - locals, a local symbol hides a global symbol or an endlocal does not match the scoping depth, repeats
-- flex, a flexo op is used but shift codes make it exceed 3 characters, repeats
+- flex, a flexo operand needs more than 3 codes, shift codes and sequences counted, repeats
 - vars, a variables statement was used but there are no variables to emit, repeats
 - memory, an expression's address is the same as one that already has had code written to it, but see below
 - law, a law -n or law out of the range law i 07777 to law 07777 was used, repeats and enabled by default
@@ -1218,8 +1218,12 @@ Regardless of the radix, the proper binary representation results.
 ## Flexo
 
 This packs up to 3 flex/concise characters into an 18-bit word.
-The first character is in the high 6 bits, the next in the middle 6 bits, the last in the low 6 bits.
-If not enough characters are given to fill the word, the space character, octal 0, is used.
+The first characters is in the high 6 bits, the next in the middle 6 bits, the last in the low 6 bits.
+If fewer than 3 characters are given, the word is filled with the space code, octal 0.
+
+The operand is the rest of the statement.
+It ends at a *;*, at the end of the line, or at a *//* comment that follows a blank.
+A blank inside the operand is a space character, trailing blanks are dropped.
 
 **NOTE:** Remember that upper and lower case characters require a shift character, so something like
 ```
@@ -1227,10 +1231,18 @@ flexo Ok?
 ```
 will not do what you expect.
 That sequence actually requires 6 characters, uppershift, O, lowershift, k, uppershift, ?.
-Unlike **macro1**, this is detected and a warning given.
+Unlike **macro1**, this is detected and a warning given, the *flex* warning,
+and only the first 3 are used.
+No shift is added after the last character, *flexo A* is only uppershift, A.
+You must remember the shift state for subsequent directives.
 
-Flexo supports the same 3 special sequences as *Text*, following.\
-Remember that only 3 characters can be used, each sequence is a character.
+Flexo supports the same 4 special sequences as *Text*, following.
+*\\B*, *\\R* and *\\n* are one code each.
+*\\\\* is two, uppershift and the backslash.
+Remember that a lower case character after it needs a lowershift.
+
+A *\\\\* at the end of a line must be followed by *;* or a comment.
+Like **cpp**, the preprocessor joins a line that ends in a backslash to the next one.
 
 ## Text
 
@@ -1256,7 +1268,7 @@ Unlike the *ascii* directive, there is no end marker. You must know in your prog
 Safe practice would be to put a marker word following the text with a value to indicate no more words.
 The flex/concise stop code, 013, is a good choice.
 
-Additionally, 3 special sequences are supported.
+Additionally, 4 special sequences are supported.
 These are introduced by a backslash, \\.
 The sequences are:
 
@@ -1265,7 +1277,9 @@ The sequences are:
 | \\B      | insert a ribbon black-shift code, 034 |
 | \\R      | insert a ribbon red-shift code, 035 |
 | \\n      | insert a carriage-return code, 077 |
-| \\\\     | an actual backslash, equivalent to shifted 002 |
+| \\\\     | an actual backslash, shifted 020, with the uppershift it needs |
+
+Note that there is no backslash flex/concise character, it maps to the right-arrow character.
 
 Example:
 ```

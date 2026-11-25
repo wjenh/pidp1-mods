@@ -1,0 +1,48 @@
+Test rg78: flexo packs codes, not source characters
+// Each word is derived by hand from the shared table, Tools/UtilLibs/flexoConversion.c:
+// a 61, b 62, c 63, / 21, space 00, O 46, k 42; an upper-case letter is its
+// lower-case code after upper shift 74, lower shift is 72; backslash is shifted
+// 20, ? shifted 21; \n 77, \B 34, \R 35. A word holds the first three codes,
+// padded with space codes; no shift code is added after the last character.
+100/
+// 77, padded
+    flexo \n
+// a, 77, b: 617762
+    flexo a\nb
+// upper shift, backslash: 742000; the ; ends the operand
+    flexo \\;
+// a, upper shift, backslash: 617420
+    flexo a\\;
+// upper shift, backslash, lower shift; a not kept: 742072
+    flexo \\a
+// a, b, upper shift; backslash not kept: 616274
+    flexo ab\\;
+// upper shift, backslash, lower shift: 742072
+    flexo \\ab
+// a, upper shift, backslash: 617420
+    flexo a\\b
+// upper shift, A: 746100
+    flexo A
+// upper shift, A, lower shift: 746172
+    flexo Ab
+// a, upper shift, B: 617462
+    flexo aB
+// upper shift, O, lower shift: 744672
+    flexo Ok?
+// a, b, c: 616263
+    flexo abc
+// a comment after a line-end backslash keeps the preprocessor from joining the next line: 742000
+    flexo \\ // the manual's form
+// the same: 616274
+    flexo ab\\ // the manual's form
+// black, red, carriage return: 343577
+    flexo \B\R\n
+// a, then the comment: 610000
+    flexo a // a comment after one character
+// a, space, b: 610062
+    flexo a b
+// a, slash, b: 612162
+    flexo a/b
+// a, b, c; d not kept: 616263
+    flexo abcd
+stop

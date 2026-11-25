@@ -1001,6 +1001,52 @@ else
 fi
 echo ""
 
+# rg78: flexo packs codes, not source characters. An escape is one code, a case
+# change adds its shift code, and the word holds the first three; a // at the
+# operand's start or after a blank is the line's comment.
+#   1. the words, checked by its .ref, derived by hand from the shared table
+#   2. with no -W nothing is printed; with -W=flex each operand of more than
+#      three codes is warned about once, on its own line, with the characters
+#      kept and the codes needed, and nothing else is warned about
+#   3. the refusals, written here: a lone backslash, an unknown escape, and an
+#      operand with no characters
+run_test rg78_flexo_escapes        "$SCRIPT_DIR/rg78_flexo_escapes.am1"
+"$AM1" -W=flex -I"$SCRIPT_DIR" "$SCRIPT_DIR/rg78_flexo_escapes.am1" > "$WORK/rg78_w.log" 2>&1
+want="$(printf '%s\n' '17 1 4' '19 2 4' '21 1 5' '23 2 5' '27 1 4' '31 1 6' '37 2 4' '47 3 4')"
+got="$(awk '
+    /WARNING:/ {
+        if( match($0, /only the first [0-9]+ characters used, the operand needs [0-9]+ codes and a word holds 3$/) ) {
+            split(substr($0, RSTART), w, " ")
+            kept = w[4]; need = w[10]
+        } else {
+            print "other: " $0
+        }
+        next
+    }
+    /^at line/ && kept != "" { l = $3; sub(/,/, "", l); print l, kept, need; kept = "" }
+' "$WORK/rg78_w.log")"
+if [ ! -s "$WORK/rg78_flexo_escapes.log" ] && [ "$got" = "$want" ]; then
+    echo "PASS:  rg78_warnings"
+    pass=$((pass+1))
+else
+    echo "FAIL:  rg78_warnings (want nothing without -W, and with -W=flex exactly: line, characters kept, codes)"
+    echo "$want" | sed 's/^/       want /'
+    echo "$got" | sed 's/^/       got  /'
+    sed 's/^/       /' "$WORK/rg78_flexo_escapes.log"
+    fail=$((fail+1))
+    FAILURES+=("rg78_warnings")
+fi
+
+rg78_refuse() {   # leg name, operand, the message
+    printf 'Test rg78: a refused flexo operand\n100/\n    flexo %s\nstop\n' "$2" > "$WORK/rg78_$1.am1"
+    run_test rg78_$1 "$WORK/rg78_$1.am1" --xfail --xmsg "$3"
+}
+rg78_refuse lone_backslash 'ab\;'  'invalid \ in flexo, no directive character'
+rg78_refuse unknown_escape '\x'    '\x in flexo is not valid'
+rg78_refuse empty          ';'     'flexo has no characters'
+rg78_refuse comment_only   '// c'  'flexo has no characters'
+echo ""
+
 # Not a failure: an --xfail test never gets far enough to have words to
 # compare, and rg34 is checked through its listing instead. It is printed so a
 # new test cannot quietly join the suite with nothing but an exit code behind

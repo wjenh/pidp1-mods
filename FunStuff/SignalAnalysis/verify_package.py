@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from drum import validate_signal
+from tape import filesystem_tool
 
 
 def main():
@@ -23,8 +24,9 @@ def main():
     for path in images:
         info=validate_signal(path.read_bytes())
         print(f"PASS {path.name}: {info['sample_tracks']} track(s), {info['valid_samples']} samples")
-    tool=Path(os.environ.get('PDP1_ROOT','/opt/pidp1-mods'))/'bin/mtfs'
-    if tool.is_file():
+    tool=filesystem_tool(os.environ.get('PDP1_ROOT','/opt/pidp1-mods'),required=False)
+    if tool is not None:
+        print('Using filesystem tool: '+str(tool))
         from tape import validate_recording,from_drum
         with tempfile.TemporaryDirectory(prefix='saw-package-check-') as td:
             for name,source in [('APOLLO11','Apollo11.drm'),('TWOTONE','SignalAnalysis.drm'),('CHANGING','SignalAnalysis-Changing.drm')]:
@@ -34,7 +36,7 @@ def main():
                 data=out.read_bytes();validate_recording(data)
                 if data!=from_drum((root/'samples'/source).read_bytes()):raise ValueError('Tape samples differ from supplied source: '+name)
                 print('PASS tape recording '+name)
-    else:print('Tape image hash checked; content extraction skipped because mtfs is unavailable here')
+    else:print('Tape image hash checked; content extraction skipped because neither fstool nor mtfs is available here')
     print(f'PASS {len(entries)} distributed files; no live devices accessed')
 
 

@@ -1,6 +1,6 @@
 # Validation of the 10 November 2026 preview v3
 
-The source and preassembled program in this package match the version running on Phillip's PiDP-1 with Type 23 acquisition and Type 340 display. Hardware/device interfaces have been tested on that installation; Bill's installation remains a compatibility test.
+The source in this checkout corresponds to the program tested on Phillip's PiDP-1 with Type 23 acquisition and Type 340 display. Official source checkouts generate programs with `make`; standalone preview archives may contain preassembled programs. Hardware/device interfaces have been tested on that installation; Bill's installation remains a compatibility test.
 
 Completed development checks:
 
@@ -13,9 +13,9 @@ Completed development checks:
 
 These CPU integration checks use the installed emulator CPU object with deterministic device adapters. They verify instruction execution, data and device-call sequencing; they do not emulate all real device timing. Live checks on the Pi separately confirmed acquisition, continuous refresh, the displayed controls and spectra, and zero fault/overflow counters. The user confirmed the gain change looked correct.
 
-`make check` in this package checks file hashes and recording format/checksums only. It does not rerun the development CPU tests or certify another machine's device configuration. The complete development suite remains in the Mac development workspace.
+`make check` in this package checks file hashes and recording format/checksums only. It does not rerun the development CPU tests or certify another machine's device configuration. The development suite is included under `tests/`, with targets in `Makefile.tests`.
 
-The documents `signal-analysis-workstation.md` and `target-preflight.md` record the design and integration history, including earlier proposals. This README, TRY-IT guide and running source describe the shipped behavior.
+The documents `signal-analysis-workstation.md` and `target-preflight.md` record the design and integration history, including earlier proposals. The README, FIRST-TEST guide and running source describe the shipped behavior.
 
 ## Display update prompted by Bill's review
 
@@ -67,3 +67,31 @@ A repeated live load exposed a device-reported missed word (FS_EBADBLOCK), so th
 Because the live host occasionally missed a few words in a long transfer, the final loader uses independently retryable 1024-word reads, at most five attempts per read, rather than restarting the entire recording. Injected missed-word recovery verifies every resulting RAM word, and a warm-tape test starts the head beyond the recording and verifies reverse search and loading. The final full Apollo test again matched all samples and 146 spectra.
 
 The final chunked live load completed in 39.74 seconds with no retry needed in that run. All 36864 words were read back from the live machine's RAM and matched the original Apollo payload exactly. Subsequent 30-second continuous analysis measured 12–26 ms with one interval over 25 ms among 1840 completed passes; no faults or FFT overflows occurred. The raw drum hash was unchanged. This replaces the early single-read prototype as the release behavior.
+
+## v5 on-screen tape picker (13 November 2026)
+
+The full existing `make test` suite and the 146-frame tape/drum Apollo checks passed with the picker. The new isolated CPU/Type-550 test drives the real guest pen ISR: a runtime TWOTONE load matches all 4096 samples and the FFT oracle; Cancel preserves the old recording RAM and spectrum; a held press is debounced; PREV/NEXT navigate 11 entries; a nine-character filename opens correctly; an invalid file returns to the picker, refuses Cancel after invalidating RAM, and can be replaced successfully without restarting. Source tape hashes remain unchanged. A boot test also starts with a stale interactive-error flag and verifies that startup clears it.
+
+Live T30dpy mouse testing opened LOAD FILE, listed the actual three supplied files, marked TWOTONE, loaded it through the Type 550, and matched all 4096 RAM samples to the calibration drum. The reported peaks were bins 32 and 64 (512 and 1024 CPS), fault 0, overflow 0. Reopening, selecting CHANGING, and cancelling returned to TWOTONE and continuous analysis. The captured picker image is `file-picker.png`. The live tape image remains read-only.
+
+The idle picker showed roughly 8–9 ms display intervals and TWOTONE analysis around 20 ms. Initial Apollo analysis in this session reached 28 ms, with two intervals over 25 ms in the first 1085 completed passes. These are observations under this host load; the new controls do not establish a hard 25-ms bound. Loading uses the existing independent paced scene and is excluded from ordinary display timing.
+
+## v6 loading indicators (13 November 2026)
+
+The complete suite, modal picker tests, and 146-frame Apollo checks through tape and drum passed. The new display-stream interpreter executes 96 animation frames with zero CPU steps/interrupts, checks SAVE/DDS return ownership and all coordinates, and predicts about 149 ms per orientation. The real CPU/Type-550 trace is `(0,0), (0,16), (4,16), (8,16), (12,16), (16,16)` for calibration. A recovered missed word produces the same trace, and five persistent failed attempts leave zero completed blocks. The Apollo integration test finishes at 144/144.
+
+Live startup loading on the Pi visibly rotated during a wait with the counter steady at 008/144; two captured frames show different bright orientations. The recording subsequently reached 144/144. All 36,864 sample/padding RAM words matched the Apollo drum source, with fault 0 and FFT overflow 0. The live run recovered five individual missed-word events across the load while a screen recording was being captured. Timing depends on host load and tape position; no deadline guarantee is implied. `loading.png` and `loading.mp4` show the actual display. Original tape/drum contents remain unchanged.
+
+## v6.1 fstool host compatibility (13 November 2026)
+
+Eight host-selection tests pass: fstool preference, legacy fallback, non-executable preference handling, explicit path/PATH overrides, missing tools, installation isolation, no published image when a tool is absent, and no retry with mtfs after a real fstool error. The original six tape-format/drive-assignment tests also pass.
+
+On the Pi, Bill's fstool was built from the current official source and installed alongside the existing mtfs. Each utility packed a new temporary image containing all three sample recordings; both utilities extracted each writer's files byte-for-byte. Image hashes and read-only publishing were checked. Automatic packing/selection through a custom root and explicit mtfs override both passed. The affected CPU/Type-550 loader/error/retry tests, modal file-picker tests, and full 36,864-word/146-spectrum Apollo integration passed using fstool-created images. These tests use isolated media and do not operate the live station. Guest code, numerical arithmetic and preassembled binaries are unchanged.
+
+## v6.1 compatibility with upstream 035c84a (18 November 2026)
+
+The latest upstream fstool and AM1 5.11 were built in an isolated Pi directory from `035c84a3bacff55d599d54629056f2de859a64a2`. Both workstation programs and all test variants were rebuilt against the current includes and the unchanged PDP-1 CPU object. The decoded drum-mode and tape-mode program memory words and entry addresses exactly match the installed v6 programs, although the RIM container hashes differ between assembler versions.
+
+All fourteen suites passed: host tools, real fstool/legacy-mtfs cross-reading, drum, WAV, tape format, FFT core, frontend, gain, refresh scheduling, changing signal, tape loader, picker, loading animation, and full Apollo tape integration. The Apollo run checked all 36,864 sample/padding words and 146 FFT/power frames, completed the counter at 144/144, reported no fault/overflow, performed no drum reads, and left its tape unchanged. The animation interpreter checked 96 autonomous display frames, safe coordinates, and return-word ownership.
+
+These are isolated model/CPU tests, not a new wall-clock refresh measurement or live reload. The normal tape commands used by the station remain compatible with fstool 1.3; these results do not certify unrelated unified-filesystem drum formatting or every damaged-directory recovery case. No mounted media or running emulator was changed by the tests.

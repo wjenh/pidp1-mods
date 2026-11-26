@@ -1,0 +1,97 @@
+// Loading indicators, field 0. The display's autonomous SAVE/DDS chain rotates
+// the line while the CPU is blocked inside mtMount/fsRead (sequence breaks off).
+// This spinner is a display heartbeat, not proof of transport/data progress.
+// The CPU separately credits four 256-word data blocks after each complete read.
+// Numbers are changed only while the beam is stopped; no torn decimal counters.
+// Both entries use full cross-field JSP returns; all helpers/scratch are private.
+loading_begin,dac l_return
+        lem
+        dzm l_loaded
+        dzm l_total
+        jmp l_render
+loading_update,dac l_return
+        lem
+l_render,lio [haltlist:1]
+        dla
+l_wait,t340dss
+        jmp l_wait
+        lac l_loaded
+        dac l_value
+        lac [loading_count:1]
+        add [1]
+        dac l_target
+        jsp l_decimal
+        lac l_total
+        dac l_value
+        lac [loading_total:1]
+        add [1]
+        dac l_target
+        lac l_total
+        sza
+        jmp l_total_known
+        lac [picker_glyphs+0d13]  // '-' in DEC SIXBIT
+        dac l_unknown
+        law i 3
+        dac l_digits
+l_unknown_loop,lac i l_unknown
+        eem
+        dac i l_target
+        lem
+        lac l_target
+        add [2]
+        dac l_target
+        isp l_digits
+        jmp l_unknown_loop
+        jmp l_resume
+l_total_known,jsp l_decimal
+l_resume,lio [loading_scene:1]
+        dla
+        eem
+        jmp i l_return
+
+// Three digits suffice for the maximum 176 data blocks. Decimal conversion
+// uses bounded subtraction, so it does not depend on DIV register conventions.
+l_decimal,dap l_decret
+        law l_divisors
+        dac l_divptr
+        law i 3
+        dac l_digits
+l_digit,dzm l_digitvalue
+l_subtract,lac l_value
+        sub i l_divptr
+        sma
+        jmp l_accept
+        jmp l_emitdigit
+l_accept,dac l_value
+        idx l_digitvalue
+        jmp l_subtract
+l_emitdigit,lac l_digitvalue
+        add [picker_glyphs+0d16] // '0' in DEC SIXBIT
+        dac l_glyph
+        lac i l_glyph
+        eem
+        dac i l_target
+        lem
+        lac l_target
+        add [2]
+        dac l_target
+        idx l_divptr
+        isp l_digits
+        jmp l_digit
+        jmp i l_decret
+l_return,0
+l_decret,0
+l_loaded,0
+l_total,0
+l_value,0
+l_target,0
+l_unknown,0
+l_divptr,0
+l_digits,0
+l_digitvalue,0
+l_glyph,0
+l_divisors,
+        0d100
+        0d10
+        1
+#include "generated/loading-animation.ac"

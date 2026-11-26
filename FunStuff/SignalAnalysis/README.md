@@ -2,7 +2,7 @@
 
 A signal-analysis workstation that runs a **256-point fixed-point FFT on the emulated PDP-1** and draws the waveform and power spectrum with a Type 340 display. Recordings come from a Type 23 drum image or named files on a Type 550 Microtape.
 
-Created by **Phillip Porch** for the PiDP-1, using [wjenh/pidp1-mods](https://github.com/wjenh/pidp1-mods). The current preview is **v4**, with read-only Microtape loading.
+Created by **Phillip Porch** for the PiDP-1, using [wjenh/pidp1-mods](https://github.com/wjenh/pidp1-mods). The current development preview is **v6.1** (host-tool compatibility update), with an on-screen Microtape file picker, an autonomous loading spinner, and a data-block counter.
 
 ![Signal Station displaying the Apollo recording](docs/signal-station.png)
 
@@ -16,6 +16,8 @@ The PDP-1 performs the FFT and power calculation. Host tools prepare sample reco
 - Interrupt-driven display refresh with BBN millisecond-clock measurements.
 - Checksummed Type 23 drum acquisition with bounded DMA requests.
 - Named Microtape recordings, loaded read-only into extended RAM before analysis.
+- On-screen LOAD FILE button, a paged tape directory, and runtime recording selection without rebuilding.
+- A rotating loading indicator that runs during blocking tape seeks, plus a count of completed data blocks.
 - WAV preparation with channel selection, anti-alias resampling and explicit gain.
 - Preassembled programs, complete station source, sample media and optional development tests.
 
@@ -40,24 +42,29 @@ The v4 build was tested with pidp1-mods revision [`a81ef4b`](https://github.com/
 - Hardware multiply/divide enabled.
 - Type 340 display and Type 342 character support, with the display viewer open.
 - BBN clock at IOT 032 and sequence-break support.
-- Type 23 drum support for drum mode; Type 550 Microtape support and `bin/mtfs` for tape mode.
+- Type 23 drum support for drum mode; Type 550 Microtape support and `bin/fstool` for tape mode (`bin/mtfs` is supported on older installations).
 - `core1D` or `all1D` enabled for the filesystem library. The numerical kernel itself retains its original-instruction-set implementation.
 - Local command port **1040**, compatible AD1 debugger port **1044**, and the installed AM1-aware `bin/fastload`.
 
-AM1 and the installed include files are required to rebuild or change the selected tape recording. FFmpeg and ffprobe are needed only to import another WAV. A compatible newer emulator revision may work but has not been established by the original validation.
+AM1 and the installed include files are required to build the programs or change the selected tape recording. FFmpeg and ffprobe are needed only to import another WAV. The v6.1 source also passed isolated compatibility tests against pidp1-mods `035c84a` and AM1 5.11 on 18 November 2026; see [the validation record](docs/VALIDATION.md).
 
 ## Install and check
 
-Signal Station is included in this checkout under `FunStuff/SignalAnalysis`. From the installed pidp1-mods directory:
+Keep the installation directory name **SignalAnalysis** under `FunStuff`; the loader and supplied relative tape path use that layout. If that directory already exists, keep the previous installation separately before installing this one.
+
+In an updated official pidp1-mods checkout:
 
 ```sh
-cd FunStuff/SignalAnalysis
+cd /opt/pidp1-mods/FunStuff/SignalAnalysis
 make check
+make
 ```
 
-Keep the directory name **SignalAnalysis** under `FunStuff`; the loader and supplied relative tape path use that layout. The standalone repository and downloadable preview packages are also available at [ppporch/SignalAnalysis](https://github.com/ppporch/SignalAnalysis).
+For a separate installation from the standalone repository, clone it into a new `FunStuff/SignalAnalysis` directory. Do not nest another checkout inside an existing station installation.
 
-`make check` verifies the shipped file hashes and sample-image formats without operating the emulator. When the installed `mtfs` is available, it also extracts all three supplied tape recordings and compares them with the corresponding drum samples. Run this integrity check before editing or rebuilding. Developers can use `make manifest` to refresh hashes for reviewed, staged files before committing changes.
+The archived [v4 ZIP](https://github.com/ppporch/SignalAnalysis/blob/main/dist/SignalAnalysis-preview-2026-11-12-v4.zip) predates the on-screen file picker. The [v6 preview ZIP](https://github.com/ppporch/SignalAnalysis/blob/main/dist/SignalAnalysis-preview-2026-11-13-v6.zip) includes the picker and loading indicators but predates fstool discovery. Use the current source tree or v6.1 package for the host-tool update.
+
+`make check` verifies the shipped file hashes and sample-image formats without operating the emulator. When the installed `fstool` (or legacy `mtfs`) is available, it also extracts all three supplied tape recordings and compares them with the corresponding drum samples. Run this integrity check before editing or rebuilding. Developers can use `make manifest` to refresh hashes for reviewed, staged files before committing changes.
 
 For a different installation root, pass `PDP1_ROOT=/your/pidp1-mods` to make. Keep the `FunStuff/SignalAnalysis` layout. The current debugger/command ports remain fixed at 1044/1040.
 
@@ -70,9 +77,11 @@ cd /opt/pidp1-mods/FunStuff/SignalAnalysis
 make run-tape
 ```
 
+The host tools prefer `bin/fstool` in the selected installation and fall back to `bin/mtfs` only when fstool is unavailable. Packing also accepts `--root` for another installation or `--tool` for an explicit executable. A failed fstool operation is reported directly.
+
 The default is **drive 8 / APOLLO11**. Drive 8 must be free or already assigned to this image. The launcher validates the selected file, saves a core snapshot, backs up tape assignments before changing them, and adds a write-locked assignment while preserving other drives. The guest loads the recording through the real emulated Type 550 into RAM. It issues no image-creation mount, format or write calls.
 
-A loading screen remains visible during tape movement. The final live Apollo test took approximately **40 seconds**, including the first FFT. Time depends on tape position and any retries; allow up to three minutes before the launcher reports a timeout. Once loaded, analysis proceeds from RAM and the tape stays stopped.
+A loading screen remains visible during tape movement. Its rotating line runs independently of the CPU, even during a long seek. **DATA BLOCKS 000 / 144** shows Apollo payload progress, advancing four blocks after each successful read. The total shows `---` until the header is validated; directory/header blocks are excluded. See the [loading-indicator guide](docs/LOADING.md). The final live Apollo test took approximately **40 seconds**, including the first FFT. Time depends on tape position and any retries; allow up to three minutes before the launcher reports a timeout. Once loaded, analysis proceeds from RAM and the tape stays stopped.
 
 The sample tape contains:
 
@@ -82,14 +91,11 @@ The sample tape contains:
 | `TWOTONE` | One-second 512/1024 CPS calibration |
 | `CHANGING` | One-second sequence of changing calibration tones |
 
-To select another supplied recording, halt first:
+To select another recording **while the station is running in tape mode**, left-click **LOAD FILE** at the upper right of the display. Select a filename, release the mouse button, then click **LOAD**. **PREV/NEXT** navigate eight files per page; **CANCEL** returns to the existing spectrum before a load begins. Leave the pen released for about a quarter second between actions.
 
-```sh
-python3 tape.py configure --name CHANGING
-make run-tape
-```
+The directory is read from the currently selected tape. Full nine-character filenames are supported. All occupied directory entries are listed; the loader validates the chosen file before analysis. A failed runtime load returns to the picker. Once loading has started, choose a valid recording to recover: Cancel cannot restore RAM that has been partly overwritten.
 
-Changing the name rebuilds the program and requires AM1 plus the current include files. See the [Microtape guide](docs/MICROTAPE.md) for another drive/image, the recording format and WAV-to-tape preparation.
+The sense switches retain their settings and the new recording starts at its first frame. The next program load uses the configured startup default. `python3 tape.py configure --name CHANGING` remains available to change the startup default (halt, configure, then `make run-tape`; this rebuild requires AM1). See the [file-picker guide](docs/FILE-PICKER.md) and [Microtape guide](docs/MICROTAPE.md) for details.
 
 ## Run from the drum
 
@@ -130,11 +136,11 @@ The Type 340 handler restarts scans independently of FFT progress and changes di
 
 The final v4 live check measured **12–26 ms** intervals, with one pass over 25 ms among 1840 completed passes in a 30-second observation. This is a measured run, not a hard real-time guarantee for every recording or host load.
 
-Microtape calls disable sequence breaks and can block for seconds, so tape access occurs only during loading. Reads are in 1024-word chunks, with at most five attempts for device-level bad-block/missed-word errors. The complete recording must still pass its length, checksum and zero-padding checks before any FFT starts. Invalid application data is not silently retried or analyzed.
+Microtape calls disable sequence breaks and can block for seconds, so tape access occurs only during startup, directory mounting, or modal loading. The autonomous loading scene refreshes during those calls; FFT analysis is paused. Reads are in 1024-word chunks, with at most five attempts for device-level bad-block/missed-word errors. The complete recording must still pass its length, checksum and zero-padding checks before any FFT starts. Invalid application data is not silently retried or analyzed.
 
 Windowing, automatic normalization, previous-frame navigation, light-pen menus and live acquisition are not implemented. Very quiet frames may still have no visible peaks after fixed-point truncation. A partially filled final logical second is zero-padded and currently has no on-screen padding indicator.
 
-Original fault codes 1–5 halt the CPU. Tape faults 6–8 keep a readable error scene refreshing; halt before correcting and reloading. Details are in the [Microtape guide](docs/MICROTAPE.md).
+Original fault codes 1–5 halt the CPU. Startup tape faults 6–8 keep a readable error scene refreshing; halt before correcting and reloading. Runtime picker load errors return to the picker for another selection. Details are in the [Microtape guide](docs/MICROTAPE.md).
 
 ## Development and validation
 
@@ -157,9 +163,11 @@ Key source files:
 - [frontend.ac](frontend.ac): acquisition and scene construction.
 - [display.ac](display.ac): display-completion interrupt handler and timing.
 - [tape-loader.ac](tape-loader.ac): read-only guest loader and validation.
+- [loading.ac](loading.ac): autonomous loading animation and completed-block counter.
+- [picker.ac](picker.ac): dynamic tape directory, light-pen selection, modal display ownership, and reload recovery.
 - [tape.py](tape.py), [drum.py](drum.py), [live.py](live.py): host preparation, guarded selection and loading/status.
 
-Machine-specific snapshots, tape assignments, runtime journals and temporary test products are intentionally excluded from Git. Preassembled `.rim` programs and matching `.sym` files are included for operation; listings/maps can be regenerated with AM1.
+Machine-specific snapshots, tape assignments, runtime journals and temporary test products are intentionally excluded from Git. This official repository keeps assembly source and tables; `make` generates the `.rim` programs and matching `.sym` files required for operation. Those build products are ignored by Git. Standalone preview archives may include preassembled programs.
 
 ## Credits and license
 

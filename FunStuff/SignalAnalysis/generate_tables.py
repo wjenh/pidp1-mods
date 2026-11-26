@@ -10,6 +10,15 @@ ROOT = Path(__file__).resolve().parent
 def encode(n):
     return n if n >= 0 else MASK ^ -n
 
+def glyph_word(char):
+    # Same ASCII mapping as AM1 / Type 342. An explicit shift prevents a previous
+    # underscore/bracket glyph from changing the next uppercase filename letter.
+    special={'\\':0o52,'[':0o53,']':0o54,'_':0o60,'^':0o67}
+    lower=char in special
+    code=special[char] if lower else ord(char)-64 if '@'<=char<='Z' else ord(char)
+    return ((0o36 if lower else 0o35)<<12)|(code<<6)|0o37
+
+
 def generate():
     dest = ROOT / 'generated'
     dest.mkdir(exist_ok=True)
@@ -29,7 +38,7 @@ def generate():
         put(f'scale({size}) intensity(5) lpoff next(point)')
         put(f'y(0d{y}) next(point)')
         put(f'x(0d{x}) next(character)')
-        put('type340 "'+text+'"')
+        put('type340 "\\U'+text+'"')
     def loading_pause():
         # Unlit X-positioning words cost 35 us each on the Type 340. Pace the
         # autonomous loading/error lists to roughly 10+ ms, rather than redrawing
@@ -60,13 +69,44 @@ def generate():
     lines += ['sceneend,','source_drum,']
     label(680,930,'DRUM')
     lines += ['source_drum_end,','source_tape,']
-    label(680,930,f'TAPE {cfg["drive"]} {cfg["name"]}')
+    label(600,930,f'TAPE {cfg["drive"]}')
+    put('scale(1) intensity(5) lpoff next(point)')
+    put('y(0d930) next(point)')
+    put('x(0d700) next(parameter)')
+    lines += ['source_tape_name,']
+    for char in cfg['name'].ljust(9):
+        put('next(character)')
+        put(f'{glyph_word(char):06o}')
+    lines += ['source_tape_name_end,']
+    put('scale(1) intensity(4) lpon next(point)')
+    put('y(0d980) next(point)')
+    put('x(0d700) next(character)')
+    put('type340 "\\ULOAD FILE"')
+    put('lpoff')
     lines += ['source_tape_end,','loading_scene,']
-    label(128,600,f'LOADING {cfg["name"]}')
+    put('next(subroutine)')
+    put('jump loading_spin:0 next(parameter)')
+    lines += ['loading_common,']
+    label(128,600,'READING MICROTAPE')
     label(128,550,f'MICROTAPE DRIVE {cfg["drive"]}')
+    label(128,470,'DATA BLOCKS')
+    put('scale(1) intensity(4) lpoff next(point)')
+    put('y(0d470) next(point)')
+    put('x(0d310) next(parameter)')
+    lines += ['loading_count,']
+    for char in '000':
+        put('next(character)');put(f'{glyph_word(char):06o}')
+    label(370,470,'/')
+    put('scale(1) intensity(4) lpoff next(point)')
+    put('y(0d470) next(point)')
+    put('x(0d400) next(parameter)')
+    lines += ['loading_total,']
+    for char in '---':
+        put('next(character)');put(f'{glyph_word(char):06o}')
     loading_pause()
     put('next(subroutine)')
-    put('jump loading_scene:1 next(parameter)')
+    lines += ['loading_return,']
+    put('jump loading_spin:0 next(parameter)')
     lines += ['loading_error,']
     label(128,600,'TAPE LOAD FAILED')
     label(128,550,'CHECK TAPE AND FILE NAME')
@@ -89,6 +129,29 @@ def generate():
     lines += ['tracknumsend,','assert tracknumsend-tracknums == 040, "track number encoding size"','framenums,']
     for n in range(16):put(f'type340 "{n:02d}"')
     lines += ['framenumsend,','assert framenumsend-framenums == 020, "frame number encoding size"']
+    glyphs=['// DEC SIXBIT -> explicit shift, glyph, END (one Type 342 word).', 'picker_glyphs,']
+    for n in range(64):
+        glyphs.append(f'        {glyph_word(chr(n+32)):06o}')
+    (dest/'picker-glyphs.ac').write_text('\n'.join(glyphs)+'\n')
+    saved=lines
+    lines=['// Autonomous Type 340 animation. DDS clears SAVE before any text END.', 'loading_spin,']
+    for orientation in range(4):
+        for repeat in range(12):
+            put('next(subroutine)')
+            put(f'save loading_line{orientation}:0 next(subroutine)')
+    put('next(subroutine)')
+    put('jump loading_spin:0 next(parameter)')
+    for n,(dx,dy) in enumerate([(40,0),(28,28),(0,40),(28,-28)]):
+        lines += [f'loading_line{n},']
+        put('deposit loading_return:1 next(parameter)')
+        put('scale(0) intensity(4) lpoff next(point)')
+        put(f'y(0d{600-dy//2}) next(point)')
+        put(f'x(0d{440-dx//2}) next(vector)')
+        put(f'visible deltax(0d{dx}) deltay(0d{abs(dy)}) '+('down ' if dy<0 else '')+'end')
+        put('next(subroutine)')
+        put('jump loading_common:1 next(parameter)')
+    (dest/'loading-animation.ac').write_text('\n'.join(lines)+'\n')
+    lines=saved
     (dest/'scene.ac').write_text('\n'.join(lines)+'\n')
 
 

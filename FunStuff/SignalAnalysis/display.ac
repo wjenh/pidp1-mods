@@ -8,6 +8,10 @@
 // Reading run-time milliseconds is not a host wall-clock deadline guarantee.
 0200/
 display_isr,
+        t340dsp
+        jmp display_notpen
+        jmp pen_hit
+display_notpen,
         t340dss
         jmp display_done        // a drum completion can use the same break channel
         t340dsv

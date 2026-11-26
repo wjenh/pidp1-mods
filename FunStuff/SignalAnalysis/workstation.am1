@@ -8,6 +8,17 @@ PiDP-1 Signal Analysis Workstation - Type 23 drum and Type 340
         0
         0
         jmp display_isr
+4/
+pen_hit,t340drc
+        dio pen_word
+        rck
+        dio pen_time
+        idx pen_serial
+        t340drs
+        jmp display_done
+pen_word,0
+pen_time,0
+pen_serial,0
 0100/
 done,   0
 ovfcnt, 0
@@ -45,8 +56,14 @@ go,     lem
         dzm done
         dzm fault
         dzm keys
+        dzm pen_serial
+        dzm p_seen
+        dzm p_modal
+        lac [-0d1000]
+        dac p_lasttime
         dzm yields
         eem
+        dzm i [t_interactive:4]  // a panel restart must not inherit runtime error returns
         jsp i [uireset:1]
         lac i [source_mode:4]
         lem
@@ -83,7 +100,10 @@ analyse,eem
         jmp advance
         hlt
 #endif
-idle,   jsp uiyield
+idle,   jsp picker_service
+        sza
+        jmp analyse
+        jsp uiyield
         eem
         jsp i [gaincheck:1]
         lem
@@ -130,6 +150,11 @@ input,
 4400/
 bitrev,
 #include "generated/bitrev.ac"
+5000/
+#include "picker.ac"
+#include "loading.ac"
+constants
+assert . <= 010000, "file picker exceeds field 0"
 bank 1
 0100/
 #include "ui-state.ac"

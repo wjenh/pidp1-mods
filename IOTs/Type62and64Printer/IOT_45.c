@@ -11,7 +11,7 @@
  * 21-Jun-2026 wje minor revision for some timing changes
  * 3-Jul-2026 wje minor cleanup, also avoid extraneous IO completions
  * 16-Nov-2026 wje rework, was too complicated
- * 24-Nov-2026 Claude a reset now leaves the flex shift lower case, as documented, not upper
+ * 24-Nov-2026 wje rework shift state, was not correct
 */
 
 #include <stdio.h>
@@ -38,7 +38,7 @@
 #define DEFAULTFILE "/tmp/pdp1lpt.txt"
 #define BUFSIZE 120     // 120 column printer
 
-// flexToAscii keeps the shift as 0 for lower case and 1 for upper, not as the LCS and UCS codes
+// flexToAscii keeps shift as 0 for lower case and 1 for upper
 #define SHIFTLOWER 0
 
 // Some versions of the Type 62 could do 600 lpm.
@@ -291,7 +291,7 @@ FILE *newfP;
     // This needs to be separate because the 62 and 64 handle overstrikes differently.
     // This is the Type 62 prl path (bare OVER) and the Type 64 pas-with-x=0 path.
     // Neither actually prints anything here, but the real printer still ran
-    // its print cycle without advancing the paper, so this needs the same completion
+    // its print cycle without advancing the paper so this needs the same completion
     // delay as an actual print.
     if( actions & OVER )
     {
@@ -370,9 +370,8 @@ FILE *newfP;
         curShift = SHIFTLOWER;
         memset(buffer, 0, sizeof(buffer));
 
-        // Stdio holds a write error until the flush, so the flush is where the line's text
-        // and spacing are known to be written.
-        // A failed write closes the file, so the next IOT opens it again.
+        // Stdio holds a write error until the flush
+        // A failed write closes the file, the next IOT opens it again.
         if( (fflush(outfP) == EOF) || ferror(outfP) )
         {
             iotCondLog(LOG45FILE, "Write to '%s' failed\n", filenameP);
@@ -383,8 +382,8 @@ FILE *newfP;
         inWait = true;
     }
 
-    // lpf sets its own result, the file it names is opened here.
-    // If the name cannot be read or/ the file cannot be opened, nothing changes.
+    // lpf sets the output file, opened here.
+    // If the name cannot be read or the file cannot be opened, nothing changes.
     // The file in use, its name, and the buffer are kept as-is.
     if( actions == LPF )
     {
@@ -475,7 +474,7 @@ FILE *newfP;
         iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + delaytime));
     }
 
-    // A failed IOT did nothing and armed no deadline, it completes at once.
+    // A failed IOT did nothing and armed no completion, it completes at once.
     if( (noWait || fail) && completion )
     {
         IOCOMPLETE(pdp1P);                  // this IOT never waits
@@ -496,7 +495,7 @@ FILE *newfP;
 
 // Our 'interrupt' handler.
 // The print or spacing delay is over.
-// The delays are simtime based so cycles the drum, the 340 steals, and a halt do not count.
+// The delays are simtime based.
 void
 iotDeadline(PDP1 *pdp1P)
 {
@@ -512,7 +511,7 @@ iotDeadline(PDP1 *pdp1P)
 
 // Called once when the power switch goes off.
 // Power clear resets the printer's control.
-// The characters loaded and not printed are dropped, the shift goes back to lower case, the mode to
+// The characters loaded and not printed are dropped, the shift state is reset to lower case, the mode to
 // flexo, and a print or spacing under way is dropped, along with its completion flag.
 // The paper does not move, the line count stays as it is.
 void

@@ -42,9 +42,8 @@ at that interval.  An effort is made to simulate this.
 A transfer will take (counts for drum to reach starting drum address + number of words to read/write) * 8.5 us.
 The start can come up to two word times after the drum reaches the starting address; after that each word is
 moved within one 5 us cycle of its own 8.5 us drum word time.
-A full 4096-word transfer is the exception: it uses every address of the field, so it starts at once instead of
-waiting for the drum to reach the starting address. Each word still goes between the same drum and core
-addresses as if it had waited.
+A full 4096-word transfer waits for its starting address the same way. Docs/UsingType23Drum.md says how to pick
+the address so the wait is short.
 
 The data moves through high speed channel 1 one word at a time, each word taking one stolen 5 us cycle at its
 own 8.5 us drum word time, so core changes word by word during the transfer, as it did on the hardware.
@@ -59,7 +58,7 @@ A DBA, DWC, DCL sequence takes two breaks: the dba's as the transfer starts, the
 A halt does not drop a transfer. The drum keeps turning while the machine is halted, but no word moves.
 A halt is a hlt, the STOP switch, an ad1 stop or a single step; Continue, Start and read-in resume it alike.
    Halted before the first word: after resume the transfer waits for the drum to reach its starting address
-      again, up to one revolution, about 35 ms. A full 4096-word transfer still starts at once.
+      again, up to one revolution, about 35 ms. A full 4096-word transfer waits the same way.
       A dba break not yet taken waits for its address the same way.
    Halted after the first word: at resume the transfer ends with the transfer error set, dra IO bits 0
       and 2, busy clears and the end break is requested. Core, for a read, or the drum, for a write,

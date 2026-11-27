@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 24-Nov-2026\
-more detail on pending character counts
+Updated 27-Nov-2026\
+Update for rci behavior
 
 ## What is DCS2?
 
@@ -353,6 +353,8 @@ And the new extended commands:
     An event that happens on the channel while its interrupt is being handled is held, not lost.
     Once rci has been done, the held events are requested as one new interrupt,
     and rcs will show all of their causes.
+    With r enabled, a character still waiting to be read when rci is done requests a new interrupt,
+    so one that arrived after the routine's last read is not missed.
     rci should be the last thing an interrupt routine does for its channel.
     Doing it earlier allows that next interrupt to be requested while the routine is still running.
 
@@ -650,6 +652,8 @@ Bit 17  is open
 
 When an interrupt occurs, bits 7-9 can be used to determine why.
 More than one can be set if events were held while an earlier interrupt was being handled.
+Bits 7-9 belong to the channel: they stay set from its interrupt until its rci,
+whether or not other channels interrupt in between.
 For connects or disconnects, bits 15 and 11 will indicate the state.
 For bit 9, bit 13 shows whether a character is waiting, and bit 14 clear shows the transmit buffer has room.
 

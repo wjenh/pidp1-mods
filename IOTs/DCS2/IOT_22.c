@@ -25,6 +25,10 @@
  *    completion is pending; only rwe's own completion waits for an event.
  * 24-Nov-2026 Claude - rpc counts the bytes the channel holds as well as the socket's, so a
  *    character rcs reports ready is counted.
+ * 27-Nov-2026 Claude/wje - rcs bits 7-9 show the channel's own interrupt in progress, not the last
+ *    channel to interrupt.
+ *    A character still waiting after rci will again set its flag so a telnet character that arrives
+ *    during a break will be signaled.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -287,7 +291,6 @@ static int cur_chan = -1;       // which channel is currently selected, -1 for n
 static bool cur_chan_locked;
 static int send_chan = -1;      // if one was selected by ssb
 static int last_intr_chan = -1; // last channel that interrupted
-static int last_intr_reason;    // the CNTL_Ixx cause
 static bool need_general_completion = false;    // need a completion pulse for a non-channel-specific operation
 
 static Channel channels[NUM_CHANS];
@@ -360,7 +363,6 @@ ChannelP chanP;
 
         last_error = 0;
         last_intr_chan = -1;
-        last_intr_reason = 0;
         cur_chan = -1;
         cur_chan_locked = false;
         send_chan = -1;
@@ -808,22 +810,24 @@ char wbuf[8];
                 IO(pdp1P) |= STATUS_CHAN;
             }
 
-            if( i == last_intr_chan )
+            // The flags are this channel's.
+            // Two channels can request before an rcs, and a routine that
+            // gives rci only where these bits indicate a break would never re-arm the first.
+            // interrupts_in_process is non-zero only while the channel's interrupt is in
+            // progress, rci clears it.
+            if( chanP->interrupts_in_process & CNTL_IOR )
             {
-                if( last_intr_reason & CNTL_IOR )
-                {
-                    IO(pdp1P) |= STATUS_IOR;
-                }
+                IO(pdp1P) |= STATUS_IOR;
+            }
 
-                if( last_intr_reason & CNTL_IOE )
-                {
-                    IO(pdp1P) |= STATUS_IOE;
-                }
+            if( chanP->interrupts_in_process & CNTL_IOE )
+            {
+                IO(pdp1P) |= STATUS_IOE;
+            }
 
-                if( last_intr_reason & CNTL_IOC )
-                {
-                    IO(pdp1P) |= STATUS_IOC;
-                }
+            if( chanP->interrupts_in_process & CNTL_IOC )
+            {
+                IO(pdp1P) |= STATUS_IOC;
             }
         }
         break;
@@ -1325,6 +1329,13 @@ uint64_t interval;
 // Nothing is requested while the sequence break system is off, as canPost() does.
 // A type 0 modify that enables interrupts with a character already waiting also
 // leaves CNTL_IOR here, this is the only place held interrupts are requested.
+// A received character is a level, not an edge: a channel with r on and a character
+// still waiting asks again once its interrupt is no longer in progress.
+// Without telnet the poll's EPOLLIN already does this, the byte stays in the socket.
+// In telnet mode the poll's peek takes the byte into crlf_stash, so a character that
+// arrives during the break, which canPost() does not hold since an IOR is in progress,
+// leaves nothing in the socket for EPOLLIN, and only this asks for it.
+// A character the routine has already read is not waiting, so it never asks twice.
 void
 postHeldInterrupts(PDP1P pdp1P)
 {
@@ -1340,12 +1351,22 @@ ChannelP chanP;
     {
         chanP = &channels[i];
 
-        if( isTrue(chanP->control_flags, (CNTL_OPEN | CNTL_IE)) &&
-            !chanP->interrupt_issued && chanP->interrupts_queued )
+        if( !isTrue(chanP->control_flags, (CNTL_OPEN | CNTL_IE)) || chanP->interrupt_issued )
+        {
+            continue;
+        }
+
+        if( chanP->interrupts_queued )
         {
             iotLog("Posting held interrupts %o on chan %d\n", chanP->interrupts_queued, i);
             postInterrupt(chanP, chanP->interrupts_queued);
             chanP->interrupts_queued = 0;
+        }
+        else if( (chanP->control_flags & CNTL_IOR) && (chanP->control_flags & CNTL_CONNECTED) &&
+                 hasChar(chanP) )
+        {
+            iotLog("Posting IOR for a waiting character on chan %d\n", i);
+            postInterrupt(chanP, CNTL_IOR);
         }
     }
 }
@@ -1716,7 +1737,6 @@ postInterrupt(ChannelP chanP, int kind)
         // Otherwise an IOR held by modifyChannel() and then posted by the poll would
         // interrupt a second time, after rci, for a character already read.
         chanP->interrupts_queued &= ~kind;
-        last_intr_reason = chanP->interrupts_in_process;
         last_intr_chan = chanP->chan_no;
     }
 }
